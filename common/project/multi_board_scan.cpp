@@ -271,6 +271,26 @@ scanConnectorPads( const wxFileName& aPcbFile )
                 if( netRe.Matches( padBlock ) )
                     info.netName = netRe.GetMatch( padBlock, 1 );
 
+                // Heuristic electrical type from pad net name.
+                // Proper extraction would walk the connector symbol's
+                // pin definitions; this v1 covers the common power /
+                // ground case which is what triggers the ERC matrix
+                // for the GND-to-5V short scenario. Anything that
+                // doesn't match these prefixes stays at PT_PASSIVE,
+                // which is the no-op for the matrix.
+                static const wxRegEx powerRe(
+                        wxT( "^(\\+?[0-9]+(\\.[0-9]+)?V[A-Z0-9_]*"
+                             "|GND|VCC|VDD|VSS|VBUS|VBAT|VREF|VOUT|VIN"
+                             "|AGND|DGND|PGND|SGND"
+                             "|\\+?V[A-Z0-9_]+)$" ),
+                        wxRE_DEFAULT | wxRE_ICASE );
+
+                if( !info.netName.IsEmpty() && powerRe.IsValid()
+                    && powerRe.Matches( info.netName ) )
+                {
+                    info.electricalType = ELECTRICAL_PINTYPE::PT_POWER_IN;
+                }
+
                 pads.push_back( info );
             }
 
@@ -406,21 +426,26 @@ MultiBoardScanConnectorPads( const wxFileName& aPcbFile )
 }
 
 
-std::set<std::pair<wxString, wxString>>
-MultiBoardCollectCrossBoardEndpointsForSubProject( const wxFileName& aSubProjectPro )
+namespace
 {
-    std::set<std::pair<wxString, wxString>> result;
 
+/**
+ * Shared core: walks up to the container, finds this sub-project's
+ * UUID entry, then invokes `aPerEndpoint` once per cross-board net
+ * endpoint that targets this sub-project. Both public collectors are
+ * thin wrappers around this helper.
+ */
+template <typename PerEndpointFn>
+void forEachCrossBoardEndpoint( const wxFileName& aSubProjectPro,
+                                 PerEndpointFn aPerEndpoint )
+{
     if( !aSubProjectPro.IsOk() || !aSubProjectPro.FileExists() )
-        return result;
+        return;
 
     wxFileName subPro( aSubProjectPro );
     subPro.Normalize( wxPATH_NORM_ABSOLUTE | wxPATH_NORM_DOTS );
     wxString subProAbs = subPro.GetFullPath();
 
-    // Walk up looking for a sibling .kicad_pro that lists this sub-project.
-    // Same 6-level cap + heuristic as the existing MBS lookup; M5.2 will
-    // replace it with an explicit parent reference.
     wxFileName searchDir( subPro );
     searchDir.SetFullName( wxEmptyString );
 
@@ -445,7 +470,6 @@ MultiBoardCollectCrossBoardEndpointsForSubProject( const wxFileName& aSubProject
             if( !probe.IsMultiBoardContainer() )
                 continue;
 
-            // Find this sub-project in the container's list to get its UUID.
             KIID matchedUuid;
             bool matched = false;
 
@@ -474,15 +498,49 @@ MultiBoardCollectCrossBoardEndpointsForSubProject( const wxFileName& aSubProject
                 for( const MB_CROSS_BOARD_NET_ENDPOINT& ep : net.endpoints )
                 {
                     if( ep.subProjectUuid == matchedUuid )
-                        result.insert( { ep.componentRef, ep.pinNumber } );
+                        aPerEndpoint( net, ep );
                 }
             }
 
-            return result;   // first match wins
+            return;   // first match wins
         }
 
         searchDir.RemoveLastDir();
     }
+}
+
+} // anonymous namespace
+
+
+std::set<std::pair<wxString, wxString>>
+MultiBoardCollectCrossBoardEndpointsForSubProject( const wxFileName& aSubProjectPro )
+{
+    std::set<std::pair<wxString, wxString>> result;
+
+    forEachCrossBoardEndpoint( aSubProjectPro,
+            [&]( const MB_CROSS_BOARD_NET&, const MB_CROSS_BOARD_NET_ENDPOINT& ep )
+            {
+                result.insert( { ep.componentRef, ep.pinNumber } );
+            } );
+
+    return result;
+}
+
+
+std::vector<MULTI_BOARD_CROSS_BOARD_BINDING>
+MultiBoardCollectCrossBoardBindingsForSubProject( const wxFileName& aSubProjectPro )
+{
+    std::vector<MULTI_BOARD_CROSS_BOARD_BINDING> result;
+
+    forEachCrossBoardEndpoint( aSubProjectPro,
+            [&]( const MB_CROSS_BOARD_NET& net, const MB_CROSS_BOARD_NET_ENDPOINT& ep )
+            {
+                MULTI_BOARD_CROSS_BOARD_BINDING b;
+                b.componentRef = ep.componentRef;
+                b.pinNumber    = ep.pinNumber;
+                b.netName      = net.name;
+                result.push_back( std::move( b ) );
+            } );
 
     return result;
 }

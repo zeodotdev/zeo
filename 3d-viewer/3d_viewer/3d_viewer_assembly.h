@@ -36,6 +36,7 @@ class BOARD;
 class BOARD_ADAPTER;
 class CAMERA;
 class EDA_3D_CANVAS;
+class MATE_GIZMO;
 class PROJECT;
 class REPORTER;
 class RENDER_3D_OPENGL;
@@ -403,6 +404,43 @@ public:
      */
     std::vector<MATE_EDGE> BuildMateGraph() const;
 
+    // ========== M6.D-phase-2 mate visualization ==========
+
+    /**
+     * Toggle the per-frame "draw mate gizmos" pass in the 3D viewer.
+     * When on, every active mate pair shows as a coloured rod with
+     * spheres at the connector centres. Default: on.
+     */
+    void SetShowMateGizmos( bool aShow ) { m_showMateGizmos = aShow; }
+
+    bool GetShowMateGizmos() const { return m_showMateGizmos; }
+
+    /**
+     * Highlight one mate pair in the gizmo render. The matching pair
+     * draws bright + larger; all other pairs fade. Pass an empty
+     * string to clear the selection.
+     *
+     * The id is the canonical
+     * `instanceA_uuid|footprintRefA|instanceB_uuid|footprintRefB`
+     * form (lower instance UUID first; ties broken by footprint ref)
+     * — matching what `BuildMateGraph` keys mate pairs on. The panel
+     * supplies this string for any tree row, so both auto and custom
+     * pairs can be highlighted.
+     */
+    void SetSelectedMatePair( const wxString& aPairId );
+
+    const wxString& GetSelectedMatePair() const { return m_selectedMatePairId; }
+
+    /**
+     * Build the canonical mate-pair id from the four addressing parts.
+     * Both auto and custom pairs use the same encoding so panel rows
+     * and the gizmo's ENTRY.matePairId match by string equality.
+     */
+    static wxString MakeMatePairId( const KIID&     aInstanceA,
+                                    const wxString& aFootprintRefA,
+                                    const KIID&     aInstanceB,
+                                    const wxString& aFootprintRefB );
+
     // ========== Collision Detection ==========
 
     /**
@@ -562,6 +600,25 @@ private:
      */
     MATE_RESIDUAL ComputeMateResidual( const MATE_PAIR& aPair ) const;
 
+    /**
+     * Push fresh entries into `m_mateGizmo` from the current mate
+     * graph. No return value (mutates the gizmo) so the public header
+     * doesn't need to expose the gizmo's nested ENTRY type.
+     */
+    void rebuildMateGizmoEntries();
+
+    /**
+     * Compute the world-space (shared 3D units, post Y-invert)
+     * position of a footprint's pad-centroid on the given instance.
+     * Mirrors the pose math `RedrawAll` applies so the gizmo lines
+     * up exactly with the rendered footprint. Returns false when the
+     * footprint can't be resolved (logged as a missing mate).
+     */
+    bool projectFootprintCentroidToWorld( const BOARD_3D_INSTANCE& aInst,
+                                          const BOARD_ADAPTER&     aAdapter,
+                                          const wxString&          aFootprintRef,
+                                          glm::vec3&               aOutWorld ) const;
+
     std::vector<BOARD_3D_INSTANCE>  m_boardInstances;
     std::vector<COLLISION_RESULT>   m_lastCollisions;
     std::vector<MATE_RESIDUAL>      m_lastMateResiduals;
@@ -595,6 +652,22 @@ private:
     /// Initialized by InitRenderers once all per-instance adapters
     /// have built their local factors.
     double                          m_sharedBiuTo3Dunits = 1.0;
+
+    // ========== M6.D-phase-2 mate visualization ==========
+
+    /// Lazily built in InitRenderers (needs a live GL context). Drawn
+    /// after every per-instance Redraw in `RedrawAll` when
+    /// `m_showMateGizmos` is true.
+    std::unique_ptr<MATE_GIZMO>     m_mateGizmo;
+
+    /// User-controllable toggle for the mate-gizmo render pass.
+    /// Default on so the visualization is discoverable.
+    bool                            m_showMateGizmos = true;
+
+    /// Currently-selected mate pair identifier (canonical encoded
+    /// string from `MakeMatePairId`). Empty string = no selection
+    /// → all gizmos render at full intensity.
+    wxString                        m_selectedMatePairId;
 };
 
 #endif // VIEWER_3D_ASSEMBLY_H

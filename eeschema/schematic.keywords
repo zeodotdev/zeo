@@ -45,6 +45,7 @@ dot
 duplicate_pin_numbers_are_jumpers
 edge_clock_high
 effects
+electrical_type
 embedded_fonts
 embedded_files
 end

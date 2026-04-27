@@ -4036,11 +4036,12 @@ SCH_MODULE_BLOCK* SCH_IO_KICAD_SEXPR_PARSER::parseModuleBlock()
 
         case T_pin:
         {
-            KIID     pinUuid;
-            wxString pinComponent;
-            wxString pinNumber;
-            wxString pinName;
-            VECTOR2I localPosition;
+            KIID               pinUuid;
+            wxString           pinComponent;
+            wxString           pinNumber;
+            wxString           pinName;
+            VECTOR2I           localPosition;
+            ELECTRICAL_PINTYPE elecType = ELECTRICAL_PINTYPE::PT_PASSIVE;
 
             for( token = NextTok(); token != T_RIGHT; token = NextTok() )
             {
@@ -4080,8 +4081,14 @@ SCH_MODULE_BLOCK* SCH_IO_KICAD_SEXPR_PARSER::parseModuleBlock()
                     NeedRIGHT();
                     break;
 
+                case T_electrical_type:
+                    NeedSYMBOL();
+                    elecType = ElectricalPinTypeFromString( FromUTF8() );
+                    NeedRIGHT();
+                    break;
+
                 default:
-                    Expecting( "uuid, component, number, name, at" );
+                    Expecting( "uuid, component, number, name, at, electrical_type" );
                 }
             }
 
@@ -4091,6 +4098,7 @@ SCH_MODULE_BLOCK* SCH_IO_KICAD_SEXPR_PARSER::parseModuleBlock()
             pin->SetPinUuid( pinUuid );
             pin->SetComponentRef( pinComponent );
             pin->SetPinNumber( pinNumber );
+            pin->SetType( elecType );
             pin->ConstrainOnEdge( absPos, true );  // picks nearest edge + clamps
 
             block->AddPin( pin );

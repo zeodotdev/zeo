@@ -152,6 +152,21 @@ public:
     int TestLabelMultipleWires();
 
     /**
+     * Multi-board ERC: validate connectivity of SCH_MODULE_BLOCK pins on
+     * the MBS schematic. Catches:
+     *  - module pin with no wire attached (dangling boundary)
+     *  - cross-board net with only one module pin endpoint (not actually
+     *    cross-board — wired locally to nothing useful)
+     *
+     * Only fires meaningfully on the MBS schematic (FRAME_MBSCH); on
+     * regular schematics the loop simply finds no module blocks and
+     * returns zero violations.
+     *
+     * @return the error count (warnings)
+     */
+    int TestCrossBoardConnectivity();
+
+    /**
      * Test symbols for changed library symbols and broken symbol library links.
      * @return the number of issues found
      */

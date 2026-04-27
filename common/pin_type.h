@@ -80,6 +80,30 @@ inline wxString GetCanonicalElectricalTypeName( ELECTRICAL_PINTYPE aType )
     return msgPinElectricType[static_cast<int>( aType )];
 }
 
+
+/**
+ * Inverse of `GetCanonicalElectricalTypeName`. Used when reading an
+ * electrical-pin-type token back from disk (e.g. MBS module pins).
+ * Unknown names degrade to PT_PASSIVE so old files keep loading.
+ */
+inline ELECTRICAL_PINTYPE ElectricalPinTypeFromString( const wxString& aName )
+{
+    if( aName == wxT( "input" ) )           return ELECTRICAL_PINTYPE::PT_INPUT;
+    if( aName == wxT( "output" ) )          return ELECTRICAL_PINTYPE::PT_OUTPUT;
+    if( aName == wxT( "bidirectional" ) )   return ELECTRICAL_PINTYPE::PT_BIDI;
+    if( aName == wxT( "tri_state" ) )       return ELECTRICAL_PINTYPE::PT_TRISTATE;
+    if( aName == wxT( "passive" ) )         return ELECTRICAL_PINTYPE::PT_PASSIVE;
+    if( aName == wxT( "free" ) )            return ELECTRICAL_PINTYPE::PT_NIC;
+    if( aName == wxT( "unspecified" ) )     return ELECTRICAL_PINTYPE::PT_UNSPECIFIED;
+    if( aName == wxT( "power_in" ) )        return ELECTRICAL_PINTYPE::PT_POWER_IN;
+    if( aName == wxT( "power_out" ) )       return ELECTRICAL_PINTYPE::PT_POWER_OUT;
+    if( aName == wxT( "open_collector" ) )  return ELECTRICAL_PINTYPE::PT_OPENCOLLECTOR;
+    if( aName == wxT( "open_emitter" ) )    return ELECTRICAL_PINTYPE::PT_OPENEMITTER;
+    if( aName == wxT( "no_connect" ) )      return ELECTRICAL_PINTYPE::PT_NC;
+
+    return ELECTRICAL_PINTYPE::PT_PASSIVE;
+}
+
 enum class GRAPHIC_PINSHAPE
 {
     LINE,

@@ -31,7 +31,8 @@
 SCH_MODULE_PIN::SCH_MODULE_PIN( SCH_MODULE_BLOCK* aParent, const VECTOR2I& aPos,
                                 const wxString& aText ) :
         SCH_HIERLABEL( aPos, aText, SCH_MODULE_PIN_T ),
-        m_side( SHEET_SIDE::UNDEFINED )
+        m_side( SHEET_SIDE::UNDEFINED ),
+        m_electricalType( ELECTRICAL_PINTYPE::PT_PASSIVE )
 {
     SetParent( aParent );
     m_layer = LAYER_SHEETLABEL;
@@ -273,6 +274,7 @@ bool SCH_MODULE_PIN::operator==( const SCH_ITEM& aOther ) const
     return m_side == other->m_side
            && m_componentRef == other->m_componentRef
            && m_pinNumber == other->m_pinNumber
+           && m_electricalType == other->m_electricalType
            && SCH_HIERLABEL::operator==( aOther );
 }
 
@@ -311,4 +313,5 @@ void SCH_MODULE_PIN::swapData( SCH_ITEM* aItem )
     std::swap( m_pinUuid, other->m_pinUuid );
     std::swap( m_componentRef, other->m_componentRef );
     std::swap( m_pinNumber, other->m_pinNumber );
+    std::swap( m_electricalType, other->m_electricalType );
 }

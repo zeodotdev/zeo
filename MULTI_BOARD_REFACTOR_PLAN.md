@@ -72,16 +72,16 @@ class once the field set is settled. ~30 min.
 
 ### Cross-board verification (P1)
 
-The "real" multi-board ERC and the one new DRC check.
-
-| Item | Where | Notes |
+| Item | Where | Status |
 |---|---|---|
-| Cross-board ERC rules (M5.8) | new check provider in `eeschema/erc/` | Validates boundary pins: unconnected, driver conflicts, type mismatch, pin-count match. Runs from MBS editor. |
-| Binding DRC check (M8.4) | new check provider in `pcbnew/drc/` | Verifies each connector pad's net matches the MBS-declared net for that block pin. Only fires when project has a container. |
-| DRC port to container model (M5.5) | `pcbnew/drc/drc_engine_cross_board.cpp` | Engine still iterates legacy `BOARD_INFO`; port to `GetSubProjects()` + `GetCrossBoardNets()` so M5.1 loader fallback becomes useful and `CheckConnectorMatching` actually runs. |
-| Flesh out DRC stubs (M5.6) | `drc_engine_cross_board.cpp` | `CheckSignalIntegrity` and `CheckPowerDistribution` are TODOs. |
+| Binding DRC check (M8.4) | new `drc_test_provider_cross_board_binding.cpp` | ✓ done (2026-04-27) — auto-fires from pcbnew DRC when project is a multi-board sub-project; checks each declared cross-board endpoint resolves to an existing connector pad on this board with the expected net |
+| Cross-board ERC rules (M5.8) | `ERC_TESTER::TestCrossBoardConnectivity` in `eeschema/erc/erc.{h,cpp}` | ✓ done (2026-04-27) — runs whenever ERC is invoked; checks (a) unconnected module pins (no wire / dangling), (b) single-endpoint nets that touch only one block, (c) pin-to-pin matrix walk reusing `ERC_SETTINGS::GetPinMapValue` (same machinery as regular schematic ERC) — emits `ERCE_PIN_TO_PIN_ERROR/WARNING` for incompatible pin-type pairs and `ERCE_POWERPIN_NOT_DRIVEN` for power nets without a driver. Catches GND↔5V shorts when both pins are PT_POWER_IN with no PT_POWER_OUT on the net. |
+| Module pin electrical type | `SCH_MODULE_PIN::m_electricalType` + persistence + heuristic extractor in `multi_board_scan.cpp` | ✓ done (2026-04-27) — pads with net names matching power/ground patterns (GND, VCC, +5V, VBUS, etc.) get PT_POWER_IN, others stay PT_PASSIVE. Round-trips via new `(electrical_type "...")` token in `.kicad_sch`. Proper extraction from sub-project connector symbol pin defs deferred to v2. |
+| MBS ERC button | `eeschema/toolbars_mbsch_editor.cpp` | ✓ done (2026-04-27) — `SCH_ACTIONS::runERC` re-added to the MBSCH top toolbar; uses the standard `DIALOG_ERC` (since MBSCH inherits from `SCH_EDIT_FRAME`). |
+| DRC port to container model (M5.5) | `pcbnew/drc/drc_engine_cross_board.cpp` | pending — unwired engine still iterates legacy `BOARD_INFO`. M8.4 sidesteps it; M5.5 only matters if we want the pairwise N-board cross-checks the legacy engine started |
+| Flesh out DRC stubs (M5.6) | `drc_engine_cross_board.cpp` | pending — `CheckSignalIntegrity` / `CheckPowerDistribution` TODOs. Depend on M5.5 |
 
-Estimate: ~3-4 sessions total.
+**M8.4 details:** new helper `MultiBoardCollectCrossBoardBindingsForSubProject` returns full `(componentRef, pinNumber, netName)` triples by walking up to the container `.kicad_pro`. The test provider iterates them and emits `DRCE_GENERIC_ERROR` for: missing connector footprint, missing pin number on the connector, pad with no net assigned, or pad net != MBS-declared net (after stripping leading `/` for sheet-path-prefixed labels).
 
 ### 3D viewer — finish what's started (P1)
 

@@ -24,6 +24,7 @@
 #include <kiid.h>
 #include <sch_label.h>
 #include <sch_sheet_pin.h>  // for SHEET_SIDE enum
+#include <pin_type.h>      // ELECTRICAL_PINTYPE
 
 class SCH_MODULE_BLOCK;
 
@@ -91,6 +92,19 @@ public:
     const wxString& GetPinNumber()    const { return m_pinNumber; }
     void            SetPinNumber( const wxString& aNum ) { m_pinNumber = aNum; }
 
+    /**
+     * Electrical pin type sourced from the connector symbol's pin
+     * definition on the sub-project. Mirrors SCH_PIN's `m_type`. Used by
+     * MBS-side ERC to drive the standard pin-to-pin connectivity matrix
+     * (output↔output collisions, power-in not driven, etc.) — same
+     * machinery as regular schematic ERC, just including module pins.
+     *
+     * Defaults to PT_PASSIVE so blocks created before pin types are
+     * scanned trigger no spurious matrix violations.
+     */
+    ELECTRICAL_PINTYPE GetType() const { return m_electricalType; }
+    void               SetType( ELECTRICAL_PINTYPE aType ) { m_electricalType = aType; }
+
     // SCH_ITEM / EDA_ITEM overrides ------------------------------------------
 
     void Move( const VECTOR2I& aMoveVector ) override { Offset( aMoveVector ); }
@@ -134,6 +148,8 @@ private:
     KIID       m_pinUuid;
     wxString   m_componentRef;   ///< e.g. "J1" — source connector in the sub-project
     wxString   m_pinNumber;      ///< e.g. "3"  — pin number on that connector
+
+    ELECTRICAL_PINTYPE m_electricalType;   ///< Mirrors SCH_PIN::m_type for ERC purposes
 };
 
 #endif // SCH_MODULE_PIN_H

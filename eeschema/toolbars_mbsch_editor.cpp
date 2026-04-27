@@ -136,6 +136,14 @@ std::optional<TOOLBAR_CONFIGURATION> MBSCH_EDIT_TOOLBAR_SETTINGS::DefaultToolbar
               .AppendAction( SCH_ACTIONS::mirrorV )
               .AppendAction( SCH_ACTIONS::mirrorH );
 
+        // ERC stays in. The cross-board connectivity test (M5.8)
+        // surfaces unwired module pins and single-endpoint nets that
+        // pretend to cross boards but actually don't — both
+        // genuinely-MBS issues that the regular ERC infrastructure
+        // catches once invoked from this frame.
+        config.AppendSeparator()
+              .AppendAction( SCH_ACTIONS::runERC );
+
         // Multi-board management group: surfaces the project-manager
         // actions that make sense while the MBSCH is the active
         // editor. Each delegates via SCH_EDITOR_CONTROL to the KiCad

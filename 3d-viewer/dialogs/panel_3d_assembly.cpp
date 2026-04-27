@@ -115,17 +115,20 @@ void PANEL_3D_ASSEMBLY::createControls()
     posSizer->AddGrowableCol( 1, 1 );
 
     posSizer->Add( new wxStaticText( this, wxID_ANY, _( "X:" ) ), 0, wxALIGN_CENTER_VERTICAL );
-    m_posXCtrl = new wxTextCtrl( this, wxID_ANY, "0", wxDefaultPosition, wxSize( 60, -1 ) );
+    m_posXCtrl = new wxTextCtrl( this, wxID_ANY, "0", wxDefaultPosition, wxSize( 60, -1 ),
+                                  wxTE_PROCESS_ENTER );
     posSizer->Add( m_posXCtrl, 0 );
     posSizer->Add( new wxStaticText( this, wxID_ANY, _( "mm" ) ), 0, wxALIGN_CENTER_VERTICAL );
 
     posSizer->Add( new wxStaticText( this, wxID_ANY, _( "Y:" ) ), 0, wxALIGN_CENTER_VERTICAL );
-    m_posYCtrl = new wxTextCtrl( this, wxID_ANY, "0", wxDefaultPosition, wxSize( 60, -1 ) );
+    m_posYCtrl = new wxTextCtrl( this, wxID_ANY, "0", wxDefaultPosition, wxSize( 60, -1 ),
+                                  wxTE_PROCESS_ENTER );
     posSizer->Add( m_posYCtrl, 0 );
     posSizer->Add( new wxStaticText( this, wxID_ANY, _( "mm" ) ), 0, wxALIGN_CENTER_VERTICAL );
 
     posSizer->Add( new wxStaticText( this, wxID_ANY, _( "Z:" ) ), 0, wxALIGN_CENTER_VERTICAL );
-    m_posZCtrl = new wxTextCtrl( this, wxID_ANY, "0", wxDefaultPosition, wxSize( 60, -1 ) );
+    m_posZCtrl = new wxTextCtrl( this, wxID_ANY, "0", wxDefaultPosition, wxSize( 60, -1 ),
+                                  wxTE_PROCESS_ENTER );
     posSizer->Add( m_posZCtrl, 0 );
     posSizer->Add( new wxStaticText( this, wxID_ANY, _( "mm" ) ), 0, wxALIGN_CENTER_VERTICAL );
 
@@ -138,17 +141,20 @@ void PANEL_3D_ASSEMBLY::createControls()
     rotSizer->AddGrowableCol( 1, 1 );
 
     rotSizer->Add( new wxStaticText( this, wxID_ANY, _( "X:" ) ), 0, wxALIGN_CENTER_VERTICAL );
-    m_rotXCtrl = new wxTextCtrl( this, wxID_ANY, "0", wxDefaultPosition, wxSize( 60, -1 ) );
+    m_rotXCtrl = new wxTextCtrl( this, wxID_ANY, "0", wxDefaultPosition, wxSize( 60, -1 ),
+                                  wxTE_PROCESS_ENTER );
     rotSizer->Add( m_rotXCtrl, 0 );
     rotSizer->Add( new wxStaticText( this, wxID_ANY, _( "°" ) ), 0, wxALIGN_CENTER_VERTICAL );
 
     rotSizer->Add( new wxStaticText( this, wxID_ANY, _( "Y:" ) ), 0, wxALIGN_CENTER_VERTICAL );
-    m_rotYCtrl = new wxTextCtrl( this, wxID_ANY, "0", wxDefaultPosition, wxSize( 60, -1 ) );
+    m_rotYCtrl = new wxTextCtrl( this, wxID_ANY, "0", wxDefaultPosition, wxSize( 60, -1 ),
+                                  wxTE_PROCESS_ENTER );
     rotSizer->Add( m_rotYCtrl, 0 );
     rotSizer->Add( new wxStaticText( this, wxID_ANY, _( "°" ) ), 0, wxALIGN_CENTER_VERTICAL );
 
     rotSizer->Add( new wxStaticText( this, wxID_ANY, _( "Z:" ) ), 0, wxALIGN_CENTER_VERTICAL );
-    m_rotZCtrl = new wxTextCtrl( this, wxID_ANY, "0", wxDefaultPosition, wxSize( 60, -1 ) );
+    m_rotZCtrl = new wxTextCtrl( this, wxID_ANY, "0", wxDefaultPosition, wxSize( 60, -1 ),
+                                  wxTE_PROCESS_ENTER );
     rotSizer->Add( m_rotZCtrl, 0 );
     rotSizer->Add( new wxStaticText( this, wxID_ANY, _( "°" ) ), 0, wxALIGN_CENTER_VERTICAL );
 
@@ -177,22 +183,36 @@ void PANEL_3D_ASSEMBLY::createControls()
     // accept Mark primary / Disable / Delete.
     wxStaticBoxSizer* matesBox = new wxStaticBoxSizer( wxVERTICAL, this, _( "Mates" ) );
 
-    m_matesTree = new wxTreeCtrl( this, wxID_ANY, wxDefaultPosition, wxSize( -1, 140 ),
+    m_showMatesCheck = new wxCheckBox( this, wxID_ANY, _( "Show mate gizmos in 3D" ) );
+    m_showMatesCheck->SetValue( true );
+    m_showMatesCheck->SetToolTip(
+            _( "Overlay coloured rods and spheres on each connector mate pair." ) );
+    matesBox->Add( m_showMatesCheck, 0, wxBOTTOM, 4 );
+
+    m_matesTree = new wxTreeCtrl( this, wxID_ANY, wxDefaultPosition, wxSize( -1, 180 ),
                                    wxTR_DEFAULT_STYLE | wxTR_HIDE_ROOT | wxTR_SINGLE );
+    // Min size guarantees the tree stays visible even when the panel
+    // is short; without this the sizer can collapse it to 0px and the
+    // tree rows (and the buttons that depend on selecting them) become
+    // unreachable.
+    m_matesTree->SetMinSize( wxSize( -1, FromDIP( 160 ) ) );
     matesBox->Add( m_matesTree, 1, wxEXPAND | wxBOTTOM, 5 );
 
     wxBoxSizer* matesButtonSizer = new wxBoxSizer( wxHORIZONTAL );
     m_addMateButton     = new wxButton( this, wxID_ANY, _( "+ Add" ) );
+    m_editMateButton    = new wxButton( this, wxID_ANY, _( "Edit…" ) );
     m_markPrimaryButton = new wxButton( this, wxID_ANY, _( "Primary" ) );
     m_disableMateButton = new wxButton( this, wxID_ANY, _( "Disable" ) );
     m_deleteMateButton  = new wxButton( this, wxID_ANY, _( "Delete" ) );
 
     m_addMateButton->SetToolTip( _( "Add a custom mate (mounting hole, override, etc.)" ) );
+    m_editMateButton->SetToolTip( _( "Edit the selected custom mate (or double-click)" ) );
     m_markPrimaryButton->SetToolTip( _( "Force this pair as primary on its board edge" ) );
     m_disableMateButton->SetToolTip( _( "Disable an auto-derived mate" ) );
     m_deleteMateButton->SetToolTip( _( "Delete the selected custom mate" ) );
 
     matesButtonSizer->Add( m_addMateButton,     1, wxRIGHT, 3 );
+    matesButtonSizer->Add( m_editMateButton,    1, wxRIGHT, 3 );
     matesButtonSizer->Add( m_markPrimaryButton, 1, wxRIGHT, 3 );
     matesButtonSizer->Add( m_disableMateButton, 1, wxRIGHT, 3 );
     matesButtonSizer->Add( m_deleteMateButton,  1 );
@@ -234,13 +254,28 @@ void PANEL_3D_ASSEMBLY::bindEvents()
 
     m_layoutModeChoice->Bind( wxEVT_CHOICE, &PANEL_3D_ASSEMBLY::onLayoutModeChanged, this );
 
-    m_posXCtrl->Bind( wxEVT_TEXT_ENTER, &PANEL_3D_ASSEMBLY::onPositionChanged, this );
-    m_posYCtrl->Bind( wxEVT_TEXT_ENTER, &PANEL_3D_ASSEMBLY::onPositionChanged, this );
-    m_posZCtrl->Bind( wxEVT_TEXT_ENTER, &PANEL_3D_ASSEMBLY::onPositionChanged, this );
+    // Commit position / rotation on Enter OR when the field loses focus
+    // (clicking away, tabbing). Without the focus binding, a user who
+    // types a number then clicks the canvas never fires the handler.
+    auto bindCommit = [this]( wxTextCtrl* aCtrl, void (PANEL_3D_ASSEMBLY::*aHandler)( wxCommandEvent& ) )
+    {
+        aCtrl->Bind( wxEVT_TEXT_ENTER, aHandler, this );
+        aCtrl->Bind( wxEVT_KILL_FOCUS,
+                     [this, aHandler]( wxFocusEvent& aEvt )
+                     {
+                         wxCommandEvent dummy;
+                         (this->*aHandler)( dummy );
+                         aEvt.Skip();
+                     } );
+    };
 
-    m_rotXCtrl->Bind( wxEVT_TEXT_ENTER, &PANEL_3D_ASSEMBLY::onRotationChanged, this );
-    m_rotYCtrl->Bind( wxEVT_TEXT_ENTER, &PANEL_3D_ASSEMBLY::onRotationChanged, this );
-    m_rotZCtrl->Bind( wxEVT_TEXT_ENTER, &PANEL_3D_ASSEMBLY::onRotationChanged, this );
+    bindCommit( m_posXCtrl, &PANEL_3D_ASSEMBLY::onPositionChanged );
+    bindCommit( m_posYCtrl, &PANEL_3D_ASSEMBLY::onPositionChanged );
+    bindCommit( m_posZCtrl, &PANEL_3D_ASSEMBLY::onPositionChanged );
+
+    bindCommit( m_rotXCtrl, &PANEL_3D_ASSEMBLY::onRotationChanged );
+    bindCommit( m_rotYCtrl, &PANEL_3D_ASSEMBLY::onRotationChanged );
+    bindCommit( m_rotZCtrl, &PANEL_3D_ASSEMBLY::onRotationChanged );
 
     m_resetPositionsButton->Bind( wxEVT_BUTTON, &PANEL_3D_ASSEMBLY::onResetPositions, this );
 
@@ -253,7 +288,11 @@ void PANEL_3D_ASSEMBLY::bindEvents()
     // M6.D-phase-2 mates UI bindings
     m_matesTree->Bind( wxEVT_TREE_SEL_CHANGED,
                        &PANEL_3D_ASSEMBLY::onMateTreeSelectionChanged, this );
+    m_matesTree->Bind( wxEVT_TREE_ITEM_ACTIVATED,
+                       &PANEL_3D_ASSEMBLY::onMateTreeActivated, this );
+    m_showMatesCheck->Bind(    wxEVT_CHECKBOX, &PANEL_3D_ASSEMBLY::onShowMatesToggled, this );
     m_addMateButton->Bind(     wxEVT_BUTTON, &PANEL_3D_ASSEMBLY::onAddCustomMate,    this );
+    m_editMateButton->Bind(    wxEVT_BUTTON, &PANEL_3D_ASSEMBLY::onEditCustomMate,   this );
     m_markPrimaryButton->Bind( wxEVT_BUTTON, &PANEL_3D_ASSEMBLY::onMarkMatePrimary,  this );
     m_disableMateButton->Bind( wxEVT_BUTTON, &PANEL_3D_ASSEMBLY::onDisableMate,      this );
     m_deleteMateButton->Bind(  wxEVT_BUTTON, &PANEL_3D_ASSEMBLY::onDeleteCustomMate, this );
@@ -425,6 +464,10 @@ void PANEL_3D_ASSEMBLY::onResetPositions( wxCommandEvent& aEvent )
 
 void PANEL_3D_ASSEMBLY::onMateConnectors( wxCommandEvent& aEvent )
 {
+    wxLogMessage( wxT( "[MATE] onMateConnectors fired, checked=%d manager=%p" ),
+                  m_mateConnectorsCheck->GetValue() ? 1 : 0,
+                  static_cast<void*>( m_manager ) );
+
     if( !m_manager )
         return;
 
@@ -436,6 +479,7 @@ void PANEL_3D_ASSEMBLY::onMateConnectors( wxCommandEvent& aEvent )
 
     UpdateSelectedBoardControls();
     refresh3DView();
+    RefreshMatesTree();
 }
 
 
@@ -604,6 +648,9 @@ void PANEL_3D_ASSEMBLY::RefreshMatesTree()
 
     std::vector<MATE_EDGE> edges = m_manager->BuildMateGraph();
 
+    wxLogMessage( wxT( "[PANEL] RefreshMatesTree: %zu edges from BuildMateGraph" ),
+                  edges.size() );
+
     for( const MATE_EDGE& edge : edges )
     {
         wxString edgeLabel =
@@ -683,6 +730,10 @@ void PANEL_3D_ASSEMBLY::updateMateButtons()
     // Add is always available when a project is loaded.
     m_addMateButton->Enable( m_manager && m_manager->GetBoardInstances().size() >= 2 );
 
+    // Edit only on CUSTOM rows (AUTO mates aren't user-data; the user
+    // can derive a CUSTOM override via Primary/Disable instead).
+    m_editMateButton->Enable( isCustomLeaf );
+
     // Mark primary works on any leaf — for AUTO it creates a new
     // CUSTOM PRIMARY override; for CUSTOM it bumps role to PRIMARY.
     m_markPrimaryButton->Enable( haveSelection );
@@ -701,7 +752,43 @@ void PANEL_3D_ASSEMBLY::updateMateButtons()
 void PANEL_3D_ASSEMBLY::onMateTreeSelectionChanged( wxTreeEvent& aEvent )
 {
     updateMateButtons();
+
+    // Drive the 3D mate-gizmo highlight. Both auto and custom rows
+    // get a stable id (canonical-form string) that matches what
+    // ASSEMBLY_3D_MANAGER computes for each gizmo entry — so either
+    // kind highlights consistently.
+    if( m_manager )
+    {
+        wxTreeItemId sel = m_matesTree->GetSelection();
+        auto         it  = m_mateTreeRows.find( sel.IsOk() ? sel.GetID() : nullptr );
+
+        if( it != m_mateTreeRows.end() && !it->second.isEdgeNode )
+        {
+            m_manager->SetSelectedMatePair(
+                    ASSEMBLY_3D_MANAGER::MakeMatePairId( it->second.instanceA,
+                                                         it->second.footprintRefA,
+                                                         it->second.instanceB,
+                                                         it->second.footprintRefB ) );
+        }
+        else
+        {
+            m_manager->SetSelectedMatePair( wxEmptyString );
+        }
+
+        refresh3DView();
+    }
+
     aEvent.Skip();
+}
+
+
+void PANEL_3D_ASSEMBLY::onShowMatesToggled( wxCommandEvent& aEvent )
+{
+    if( !m_manager )
+        return;
+
+    m_manager->SetShowMateGizmos( m_showMatesCheck->GetValue() );
+    refresh3DView();
 }
 
 
@@ -713,8 +800,10 @@ namespace
 class ADD_CUSTOM_MATE_DIALOG : public wxDialog
 {
 public:
-    ADD_CUSTOM_MATE_DIALOG( wxWindow* aParent, ASSEMBLY_3D_MANAGER* aManager ) :
-            wxDialog( aParent, wxID_ANY, _( "Add Custom Mate" ),
+    ADD_CUSTOM_MATE_DIALOG( wxWindow* aParent, ASSEMBLY_3D_MANAGER* aManager,
+                            const CUSTOM_MATE* aPrefill = nullptr ) :
+            wxDialog( aParent, wxID_ANY,
+                      aPrefill ? _( "Edit Custom Mate" ) : _( "Add Custom Mate" ),
                       wxDefaultPosition, wxDefaultSize,
                       wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER ),
             m_manager( aManager )
@@ -762,8 +851,51 @@ public:
         if( m_instances.size() >= 2 )
             m_boardB->SetSelection( 1 );
 
+        // Edit mode: pre-select the boards / footprints / role / type
+        // matching the existing custom mate so the user can modify a
+        // single field instead of re-creating the row.
+        if( aPrefill )
+        {
+            for( size_t i = 0; i < m_instances.size(); i++ )
+            {
+                if( m_instances[i]->subProjectUuid == aPrefill->endA.subProjectUuid )
+                    m_boardA->SetSelection( static_cast<int>( i ) );
+
+                if( m_instances[i]->subProjectUuid == aPrefill->endB.subProjectUuid )
+                    m_boardB->SetSelection( static_cast<int>( i ) );
+            }
+
+            switch( aPrefill->type )
+            {
+            case CUSTOM_MATE_TYPE::MOUNTING_HOLE: m_typeChoice->SetSelection( 1 ); break;
+            case CUSTOM_MATE_TYPE::ALIGNMENT:     m_typeChoice->SetSelection( 2 ); break;
+            default:                              m_typeChoice->SetSelection( 0 ); break;
+            }
+
+            switch( aPrefill->role )
+            {
+            case CUSTOM_MATE_ROLE::SECONDARY: m_roleChoice->SetSelection( 1 ); break;
+            case CUSTOM_MATE_ROLE::DISABLED:  m_roleChoice->SetSelection( 2 ); break;
+            default:                          m_roleChoice->SetSelection( 0 ); break;
+            }
+        }
+
         rebuildFootprintList( m_boardA, m_fpA );
         rebuildFootprintList( m_boardB, m_fpB );
+
+        if( aPrefill )
+        {
+            // Footprint refs need to be selected after the lists are
+            // populated for each board's current selection.
+            int idxFpA = m_fpA->FindString( aPrefill->endA.footprintRef );
+            int idxFpB = m_fpB->FindString( aPrefill->endB.footprintRef );
+
+            if( idxFpA != wxNOT_FOUND )
+                m_fpA->SetSelection( idxFpA );
+
+            if( idxFpB != wxNOT_FOUND )
+                m_fpB->SetSelection( idxFpB );
+        }
 
         m_boardA->Bind( wxEVT_CHOICE,
                         [this]( wxCommandEvent& )
@@ -903,6 +1035,74 @@ void PANEL_3D_ASSEMBLY::onAddCustomMate( wxCommandEvent& aEvent )
     updateMateButtons();
     UpdateSelectedBoardControls();
     refresh3DView();
+}
+
+
+void PANEL_3D_ASSEMBLY::onEditCustomMate( wxCommandEvent& aEvent )
+{
+    if( !m_manager )
+        return;
+
+    wxTreeItemId sel = m_matesTree->GetSelection();
+    auto         it  = m_mateTreeRows.find( sel.IsOk() ? sel.GetID() : nullptr );
+
+    if( it == m_mateTreeRows.end() || it->second.isEdgeNode || it->second.isAuto )
+        return;
+
+    const KIID&                    targetUuid = it->second.customMateUuid;
+    const std::vector<CUSTOM_MATE>& mates      = m_manager->GetCustomMates();
+    auto                            cm         = std::find_if( mates.begin(), mates.end(),
+                                          [&]( const CUSTOM_MATE& m ) { return m.uuid == targetUuid; } );
+
+    if( cm == mates.end() )
+        return;
+
+    ADD_CUSTOM_MATE_DIALOG dlg( this, m_manager, &( *cm ) );
+
+    if( dlg.ShowModal() != wxID_OK )
+        return;
+
+    CUSTOM_MATE updated;
+
+    if( !dlg.BuildResult( updated ) )
+    {
+        wxMessageBox( _( "Pick two distinct boards and a footprint on each." ),
+                      _( "Edit Custom Mate" ), wxOK | wxICON_WARNING, this );
+        return;
+    }
+
+    // Preserve the original UUID so the mate stays the same row
+    // (BuildResult returns a fresh default-UUID record).
+    updated.uuid = targetUuid;
+
+    if( !m_manager->UpdateCustomMate( updated ) )
+    {
+        wxMessageBox( _( "Couldn't update the custom mate." ),
+                      _( "Edit Custom Mate" ), wxOK | wxICON_ERROR, this );
+        return;
+    }
+
+    if( m_manager->GetState().mateConnectors )
+        m_manager->MateConnectors();
+
+    RefreshMatesTree();
+    updateMateButtons();
+    UpdateSelectedBoardControls();
+    refresh3DView();
+}
+
+
+void PANEL_3D_ASSEMBLY::onMateTreeActivated( wxTreeEvent& aEvent )
+{
+    // Double-click activate routes to Edit on a CUSTOM row. AUTO rows
+    // and edge headers ignore activation — there's nothing to edit.
+    auto it = m_mateTreeRows.find( aEvent.GetItem().IsOk() ? aEvent.GetItem().GetID() : nullptr );
+
+    if( it == m_mateTreeRows.end() || it->second.isEdgeNode || it->second.isAuto )
+        return;
+
+    wxCommandEvent dummy;
+    onEditCustomMate( dummy );
 }
 
 

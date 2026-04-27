@@ -97,10 +97,13 @@ private:
 
     // M6.D-phase-2 custom mate handlers
     void onAddCustomMate( wxCommandEvent& aEvent );
+    void onEditCustomMate( wxCommandEvent& aEvent );
     void onMarkMatePrimary( wxCommandEvent& aEvent );
     void onDisableMate( wxCommandEvent& aEvent );
     void onDeleteCustomMate( wxCommandEvent& aEvent );
     void onMateTreeSelectionChanged( wxTreeEvent& aEvent );
+    void onMateTreeActivated( wxTreeEvent& aEvent );    ///< double-click → edit
+    void onShowMatesToggled( wxCommandEvent& aEvent );
 
     /**
      * Rebuild the mates tree from the manager's current mate graph
@@ -162,8 +165,10 @@ private:
     wxButton*               m_exportSTEPButton;
 
     // M6.D-phase-2 mates UI
+    wxCheckBox*             m_showMatesCheck;
     wxTreeCtrl*             m_matesTree;
     wxButton*               m_addMateButton;
+    wxButton*               m_editMateButton;
     wxButton*               m_markPrimaryButton;
     wxButton*               m_disableMateButton;
     wxButton*               m_deleteMateButton;

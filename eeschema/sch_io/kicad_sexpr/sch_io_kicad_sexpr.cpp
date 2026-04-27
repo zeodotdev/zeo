@@ -1256,6 +1256,14 @@ void SCH_IO_KICAD_SEXPR::saveModuleBlock( SCH_MODULE_BLOCK* aModuleBlock )
         m_out->Print( "(at %s %s)",
                       EDA_UNIT_UTILS::FormatInternalUnits( schIUScale, localPos.x ).c_str(),
                       EDA_UNIT_UTILS::FormatInternalUnits( schIUScale, localPos.y ).c_str() );
+
+        // Electrical type — drives MBS-side pin-to-pin ERC. Stored
+        // as the canonical lowercase token ("input", "output", ...)
+        // matching what `pin_type.h::GetCanonicalElectricalTypeName`
+        // returns; round-tripped via `ElectricalPinTypeFromString`.
+        m_out->Print( "(electrical_type %s)",
+                      m_out->Quotew( GetCanonicalElectricalTypeName( pin->GetType() ) ).c_str() );
+
         m_out->Print( ")" );
     }
 

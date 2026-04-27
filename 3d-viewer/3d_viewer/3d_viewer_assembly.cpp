@@ -31,6 +31,7 @@
 
 #include "3d_canvas/board_adapter.h"
 #include "3d_canvas/eda_3d_canvas.h"
+#include "3d_rendering/opengl/mate_gizmo.h"
 #include "3d_rendering/opengl/render_3d_opengl.h"
 #include <gal/3d/camera.h>
 #include <board.h>
@@ -351,8 +352,14 @@ void ASSEMBLY_3D_MANAGER::HideAllBoards()
 
 void ASSEMBLY_3D_MANAGER::MateConnectors()
 {
+    wxLogMessage( wxT( "[MATE] MateConnectors() entry: project=%p instances=%zu" ),
+                  static_cast<void*>( m_project ), m_boardInstances.size() );
+
     if( !m_project || m_boardInstances.size() < 2 )
+    {
+        wxLogMessage( wxT( "[MATE] early return: no project or <2 instances" ) );
         return;
+    }
 
     m_lastMateResiduals.clear();
 
@@ -363,10 +370,50 @@ void ASSEMBLY_3D_MANAGER::MateConnectors()
     // in m_lastMateResiduals (consumed by M6.E DRC panel).
     std::vector<MATE_EDGE> edges = BuildMateGraph();
 
+    wxLogMessage( wxT( "[MATE] BuildMateGraph returned %zu edges, "
+                       "cross_board_nets=%zu, custom_mates=%zu" ),
+                  edges.size(),
+                  m_project->GetProjectFile().GetCrossBoardNets().size(),
+                  m_project->GetProjectFile().GetCustomMates().size() );
+
+    for( size_t i = 0; i < edges.size(); i++ )
+    {
+        wxLogMessage( wxT( "[MATE]   edge[%zu]: instA=%s instB=%s pairs=%zu weight=%d" ),
+                      i,
+                      edges[i].instanceA.AsString(),
+                      edges[i].instanceB.AsString(),
+                      edges[i].pairs.size(),
+                      edges[i].totalWeight );
+
+        for( size_t k = 0; k < edges[i].pairs.size(); k++ )
+        {
+            const MATE_PAIR& p = edges[i].pairs[k];
+            wxLogMessage( wxT( "[MATE]     pair[%zu]: %s↔%s pinCount=%d "
+                               "forced=%d alignOnly=%d nonElec=%d" ),
+                          k, p.footprintRefA, p.footprintRefB, p.pinCount,
+                          p.forcedPrimary ? 1 : 0,
+                          p.alignmentOnly ? 1 : 0,
+                          p.nonElectrical ? 1 : 0 );
+        }
+    }
+
     if( edges.empty() )
+    {
+        wxLogMessage( wxT( "[MATE] no edges — boards stay at current positions" ) );
         return;
+    }
 
     SolveMatePoses( edges );
+
+    wxLogMessage( wxT( "[MATE] SolveMatePoses done — instance positions:" ) );
+
+    for( const BOARD_3D_INSTANCE& inst : m_boardInstances )
+    {
+        wxLogMessage( wxT( "[MATE]   inst '%s' uuid=%s pos=(%.2f,%.2f,%.2f) rot=(%.1f,%.1f,%.1f)" ),
+                      inst.displayName, inst.uuid.AsString(),
+                      inst.position.x, inst.position.y, inst.position.z,
+                      inst.rotation.x, inst.rotation.y, inst.rotation.z );
+    }
 
     m_state.mateConnectors = true;
 }
@@ -777,7 +824,13 @@ bool ASSEMBLY_3D_MANAGER::PlaceChildOnParent( const BOARD_3D_INSTANCE& aParent,
     // only ones on the footprint, which is the common case.
     auto padCentroid = []( FOOTPRINT* fp ) -> VECTOR2I
     {
-        VECTOR2I sum( 0, 0 );
+        // Sum in 64-bit. Single coords are 32-bit BIU (nm) but a board
+        // placed far from the BIU origin (e.g. at 150 mm = 1.5×10⁸ nm)
+        // accumulates past INT32_MAX (~2.15×10⁹) within ~14 pads, then
+        // wraps. The wrap produced bizarre centroids ~18 mm for boards
+        // actually centered around 147 mm and put the gizmos floating
+        // far from the connectors.
+        VECTOR2L sum( 0, 0 );
         int      count = 0;
 
         for( PAD* pad : fp->Pads() )
@@ -785,14 +838,17 @@ bool ASSEMBLY_3D_MANAGER::PlaceChildOnParent( const BOARD_3D_INSTANCE& aParent,
             if( !pad->IsOnLayer( F_Cu ) && !pad->IsOnLayer( B_Cu ) )
                 continue;
 
-            sum += pad->GetPosition();
+            const VECTOR2I& p = pad->GetPosition();
+            sum.x += p.x;
+            sum.y += p.y;
             count++;
         }
 
         if( count == 0 )
             return fp->GetPosition();
 
-        return VECTOR2I( sum.x / count, sum.y / count );
+        return VECTOR2I( static_cast<int>( sum.x / count ),
+                         static_cast<int>( sum.y / count ) );
     };
 
     // Side detection: majority of pads on F_Cu vs B_Cu. Mixed (through-
@@ -824,6 +880,51 @@ bool ASSEMBLY_3D_MANAGER::PlaceChildOnParent( const BOARD_3D_INSTANCE& aParent,
     // user's optional offset taking responsibility for fine alignment.
     const bool padAOnTop = aPrimary.nonElectrical ? true  : dominantSide( fpA );
     const bool padBOnTop = aPrimary.nonElectrical ? false : dominantSide( fpB );
+
+    // Diagnostic — prints connector centroids in mm, side detection,
+    // and pad layer counts for each footprint so the placement math
+    // is fully traceable from the log.
+    auto countPadLayers = []( FOOTPRINT* fp, int& aTop, int& aBot, int& aBoth )
+    {
+        aTop = aBot = aBoth = 0;
+        for( PAD* pad : fp->Pads() )
+        {
+            const bool t = pad->IsOnLayer( F_Cu );
+            const bool b = pad->IsOnLayer( B_Cu );
+            if( t && b )       aBoth++;
+            else if( t )       aTop++;
+            else if( b )       aBot++;
+        }
+    };
+
+    int topA = 0, botA = 0, bothA = 0, topB = 0, botB = 0, bothB = 0;
+    countPadLayers( fpA, topA, botA, bothA );
+    countPadLayers( fpB, topB, botB, bothB );
+
+    wxLogMessage( wxT( "[MATE] PlaceChildOnParent: parent='%s' child='%s' "
+                       "primary=%s↔%s parentRot=(%.1f,%.1f,%.1f) parentFlipped=%d" ),
+                  aParent.displayName, aChild.displayName,
+                  aPrimary.footprintRefA, aPrimary.footprintRefB,
+                  aParent.rotation.x, aParent.rotation.y, aParent.rotation.z,
+                  ( std::abs( aParent.rotation.x - 180.0f ) < 0.1f
+                    && std::abs( aParent.rotation.y ) < 0.1f
+                    && std::abs( aParent.rotation.z ) < 0.1f ) ? 1 : 0 );
+
+    wxLogMessage( wxT( "[MATE]   fpA pads: top=%d bot=%d both(TH)=%d → padAOnTop=%d  "
+                       "centroidA=(%.3f, %.3f) mm" ),
+                  topA, botA, bothA, padAOnTop ? 1 : 0,
+                  padCentroidA.x / 1.0e6, padCentroidA.y / 1.0e6 );
+
+    wxLogMessage( wxT( "[MATE]   fpB pads: top=%d bot=%d both(TH)=%d → padBOnTop=%d  "
+                       "centroidB=(%.3f, %.3f) mm" ),
+                  topB, botB, bothB, padBOnTop ? 1 : 0,
+                  padCentroidB.x / 1.0e6, padCentroidB.y / 1.0e6 );
+
+    wxLogMessage( wxT( "[MATE]   sameEffectiveSide=%d → child rotation=%s, "
+                       "dz sign=%s" ),
+                  ( padAOnTop == padBOnTop ) ? 1 : 0,
+                  ( padAOnTop == padBOnTop ) ? "180° X" : "0°",
+                  padAOnTop ? "+zGap" : "-zGap" );
 
     // Account for parent's existing flip when projecting its mate side
     // into world frame. Phase-1 only supports 0° / 180° X-rotation, so
@@ -1477,6 +1578,21 @@ bool ASSEMBLY_3D_MANAGER::RedrawAll( bool aIsMoving, REPORTER* aStatusReporter,
         requestAnother = true;
     }
 
+    // M6.D-phase-2: mate gizmo render pass. Runs AFTER every per-
+    // instance Redraw so the gizmo geometry overlays the boards. Uses
+    // the camera's view matrix directly (no per-instance pose) — the
+    // gizmo entries already carry world-space coords computed from the
+    // same pose math the renderer used.
+    if( m_showMateGizmos && !firstPass && m_camera )
+    {
+        if( !m_mateGizmo )
+            m_mateGizmo = std::make_unique<MATE_GIZMO>();
+
+        rebuildMateGizmoEntries();
+        m_mateGizmo->Render( m_camera->GetViewMatrix(),
+                             m_camera->GetProjectionMatrix() );
+    }
+
     // All-hidden case: nothing drew, so nothing cleared. Clear to the
     // adapter's bg-bottom color so the viewport shows the normal
     // background instead of a stale frame or a black flash.
@@ -1542,4 +1658,207 @@ void ASSEMBLY_3D_MANAGER::ReleaseOpenGL()
     // current. Adapters are preserved (CPU-side only).
     m_instanceRenderers.clear();
     m_cameraFitPending = false;
+
+    // Mate gizmo also owns a GLU quadric — destroy under the same
+    // lock so the GLU teardown runs against the right context.
+    m_mateGizmo.reset();
+}
+
+
+void ASSEMBLY_3D_MANAGER::SetSelectedMatePair( const wxString& aPairId )
+{
+    m_selectedMatePairId = aPairId;
+}
+
+
+wxString ASSEMBLY_3D_MANAGER::MakeMatePairId( const KIID&     aInstanceA,
+                                              const wxString& aFootprintRefA,
+                                              const KIID&     aInstanceB,
+                                              const wxString& aFootprintRefB )
+{
+    // Canonical ordering: lower instance UUID first; ties broken by
+    // footprint ref. Matches the keying used in BuildMateGraph so the
+    // same physical pair always encodes to the same id regardless of
+    // which side the panel iterated first.
+    KIID     iA = aInstanceA;
+    KIID     iB = aInstanceB;
+    wxString rA = aFootprintRefA;
+    wxString rB = aFootprintRefB;
+
+    if( iB < iA || ( iA == iB && rB < rA ) )
+    {
+        std::swap( iA, iB );
+        std::swap( rA, rB );
+    }
+
+    return iA.AsString() + wxT( "|" ) + rA + wxT( "||" ) + iB.AsString() + wxT( "|" ) + rB;
+}
+
+
+bool ASSEMBLY_3D_MANAGER::projectFootprintCentroidToWorld(
+        const BOARD_3D_INSTANCE& aInst,
+        const BOARD_ADAPTER&     aAdapter,
+        const wxString&          aFootprintRef,
+        glm::vec3&               aOutWorld ) const
+{
+    FOOTPRINT* fp = findFootprintByRef( aInst.board.get(), aFootprintRef );
+
+    if( !fp )
+        return false;
+
+    // Pad-centroid in BIU. Same logic the placement solver uses so the
+    // gizmo lands exactly where the pose math placed the connector.
+    // 64-bit accumulator — the running sum overflows int32 once a board
+    // placed >~150 mm from origin gets past ~14 pads (each is ~1.5×10⁸
+    // nm; INT32_MAX is ~2.15×10⁹). Without this the wrap produced
+    // garbage centroids and the gizmo floated far from the actual pads.
+    VECTOR2L sum( 0, 0 );
+    int      count = 0;
+
+    for( PAD* pad : fp->Pads() )
+    {
+        if( !pad->IsOnLayer( F_Cu ) && !pad->IsOnLayer( B_Cu ) )
+            continue;
+
+        const VECTOR2I& p = pad->GetPosition();
+        sum.x += p.x;
+        sum.y += p.y;
+        count++;
+    }
+
+    const VECTOR2I centroidBIU =
+            ( count > 0 ) ? VECTOR2I( static_cast<int>( sum.x / count ),
+                                       static_cast<int>( sum.y / count ) )
+                          : fp->GetPosition();
+
+    // Mirror RedrawAll's pose composition for this single point.
+    const double localFactor  = aAdapter.BiuTo3dUnits();
+    const double scaleFactor  = ( localFactor != 0.0 )
+                                        ? m_sharedBiuTo3Dunits / localFactor
+                                        : 1.0;
+    const float  sharedF      = static_cast<float>( m_sharedBiuTo3Dunits );
+    const float  biuPerMm     = 1.0e6f;
+
+    // Footprint board-local 3D — note Y is inverted at footprint render
+    // (see render_3d_opengl.cpp:1140). Z is 0 (board centre plane) for
+    // the gizmo so it appears at the connector's anchor, not buried in
+    // copper.
+    const glm::vec3 local3D( static_cast<float>( centroidBIU.x ) * localFactor,
+                             -static_cast<float>( centroidBIU.y ) * localFactor,
+                             0.0f );
+
+    glm::vec3 localShared = local3D * static_cast<float>( scaleFactor );
+
+    SFVEC3F   lc = aAdapter.GetBoardCenter();
+    glm::vec3 localCenterShared( lc.x * static_cast<float>( scaleFactor ),
+                                 lc.y * static_cast<float>( scaleFactor ),
+                                 lc.z * static_cast<float>( scaleFactor ) );
+
+    glm::mat4 R = glm::mat4( 1.0f );
+    R = glm::rotate( R, glm::radians( aInst.rotation.z ), glm::vec3( 0, 0, 1 ) );
+    R = glm::rotate( R, glm::radians( aInst.rotation.y ), glm::vec3( 0, 1, 0 ) );
+    R = glm::rotate( R, glm::radians( aInst.rotation.x ), glm::vec3( 1, 0, 0 ) );
+
+    glm::vec3 shifted = localShared - localCenterShared;
+    glm::vec4 rotated = R * glm::vec4( shifted, 1.0f );
+    glm::vec3 replaced = glm::vec3( rotated ) + localCenterShared;
+
+    glm::vec3 instShared(  aInst.position.x * biuPerMm * sharedF,
+                          -aInst.position.y * biuPerMm * sharedF,
+                           aInst.position.z * biuPerMm * sharedF );
+
+    SFVEC3F bboxMin, bboxMax;
+    GetAssemblyBoundingBox( bboxMin, bboxMax );
+    SFVEC3F   centerMm = ( bboxMin + bboxMax ) * 0.5f;
+    glm::vec3 centerShared(  centerMm.x * biuPerMm * sharedF,
+                            -centerMm.y * biuPerMm * sharedF,
+                             centerMm.z * biuPerMm * sharedF );
+
+    aOutWorld = replaced + instShared - centerShared;
+    return true;
+}
+
+
+void ASSEMBLY_3D_MANAGER::rebuildMateGizmoEntries()
+{
+    std::vector<MATE_GIZMO::ENTRY> entries;
+
+    if( !m_mateGizmo )
+        return;
+
+    std::vector<MATE_EDGE> edges = BuildMateGraph();
+
+    // Quick lookup from instance UUID → BOARD_ADAPTER index so we can
+    // pose-project pads using the right per-board scale + centroid.
+    std::map<KIID, size_t> adapterIndexByInst;
+
+    for( size_t i = 0; i < m_boardInstances.size(); i++ )
+        adapterIndexByInst.emplace( m_boardInstances[i].uuid, i );
+
+    const bool anySelected = !m_selectedMatePairId.IsEmpty();
+
+    for( const MATE_EDGE& edge : edges )
+    {
+        const MATE_PAIR* primary = PickPrimaryPair( edge );
+
+        for( const MATE_PAIR& p : edge.pairs )
+        {
+            const auto itA = adapterIndexByInst.find( p.instanceA );
+            const auto itB = adapterIndexByInst.find( p.instanceB );
+
+            if( itA == adapterIndexByInst.end() || itB == adapterIndexByInst.end() )
+                continue;
+
+            const size_t idxA = itA->second;
+            const size_t idxB = itB->second;
+
+            if( idxA >= m_instanceAdapters.size() || idxB >= m_instanceAdapters.size() )
+                continue;
+
+            const BOARD_ADAPTER* adapterA = m_instanceAdapters[idxA].get();
+            const BOARD_ADAPTER* adapterB = m_instanceAdapters[idxB].get();
+
+            if( !adapterA || !adapterB )
+                continue;
+
+            glm::vec3 worldA, worldB;
+
+            if( !projectFootprintCentroidToWorld( m_boardInstances[idxA], *adapterA,
+                                                   p.footprintRefA, worldA ) )
+                continue;
+
+            if( !projectFootprintCentroidToWorld( m_boardInstances[idxB], *adapterB,
+                                                   p.footprintRefB, worldB ) )
+                continue;
+
+            MATE_GIZMO::ENTRY e;
+            e.posA   = worldA;
+            e.posB   = worldB;
+            e.source = ( p.customMateUuid == KIID( 0 ) ) ? MATE_GIZMO::SOURCE::AUTO
+                                                         : MATE_GIZMO::SOURCE::CUSTOM;
+
+            // Role precedence for the gizmo: alignmentOnly outranks
+            // primary because PickPrimaryPair already filters those
+            // out — if a pair is alignmentOnly we definitely won't
+            // select it as primary.
+            if( p.alignmentOnly )
+                e.role = MATE_GIZMO::ROLE::SECONDARY;
+            else if( primary && &p == primary )
+                e.role = MATE_GIZMO::ROLE::PRIMARY;
+            else
+                e.role = MATE_GIZMO::ROLE::SECONDARY;
+
+            // Identity is the canonical pair-key string — same
+            // encoding both auto and custom rows produce in the
+            // panel, so selecting EITHER kind highlights its gizmo.
+            e.matePairId  = MakeMatePairId( p.instanceA, p.footprintRefA,
+                                            p.instanceB, p.footprintRefB );
+            e.selected    = anySelected && ( e.matePairId == m_selectedMatePairId );
+            e.anySelected = anySelected;
+
+            entries.push_back( e );
+        }
+    }
+
+    m_mateGizmo->SetEntries( std::move( entries ) );
 }

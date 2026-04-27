@@ -22,6 +22,7 @@
 #define KICAD_MULTI_BOARD_SCAN_H
 
 #include <kicommon.h>
+#include <pin_type.h>
 #include <wx/filename.h>
 #include <wx/string.h>
 
@@ -41,6 +42,19 @@ struct MULTI_BOARD_PAD_INFO
 {
     wxString padNumber;   ///< "1", "A12", "GND"...
     wxString netName;     ///< "" if the pad has no net, else e.g. "+3V3"
+
+    /**
+     * Best-effort electrical pin type derived from the pad's net name.
+     * Lets MBS-side ERC drive the same pin-to-pin matrix the regular
+     * schematic ERC uses — power_in pins on conflicting nets surface
+     * as "power not driven" / "pin to pin" violations.
+     *
+     * Defaults to PT_PASSIVE; populated by `scanConnectorPads` based
+     * on whether the netname looks like a power or ground net. Heuristic
+     * — proper extraction would walk the connector symbol's pin defs
+     * in the sub-project schematic, deferred for v2.
+     */
+    ELECTRICAL_PINTYPE electricalType = ELECTRICAL_PINTYPE::PT_PASSIVE;
 };
 
 
@@ -106,5 +120,34 @@ KICOMMON_API wxString MultiBoardPinLabel( const wxString& aRef,
  */
 KICOMMON_API std::set<std::pair<wxString, wxString>>
 MultiBoardCollectCrossBoardEndpointsForSubProject( const wxFileName& aSubProjectPro );
+
+
+/**
+ * One MBS-declared binding: which connector pad on this sub-project
+ * carries which cross-board net. Returned by
+ * `MultiBoardCollectCrossBoardBindingsForSubProject` and consumed by
+ * the cross-board binding DRC check.
+ */
+struct KICOMMON_API MULTI_BOARD_CROSS_BOARD_BINDING
+{
+    wxString componentRef;   ///< Connector ref on this sub-project, e.g. "J1"
+    wxString pinNumber;      ///< Pad number on the connector, e.g. "3"
+    wxString netName;        ///< MBS-declared canonical net name
+};
+
+
+/**
+ * Like `MultiBoardCollectCrossBoardEndpointsForSubProject` but returns
+ * full binding info: each entry carries the MBS-declared net name in
+ * addition to the (componentRef, pinNumber) pair. Used by the DRC
+ * check that verifies each connector pad on this board carries the
+ * net the MBS declares for that block pin.
+ *
+ * Empty result has the same meanings as the simpler variant: no
+ * container found, container failed to load, or no bindings declared
+ * for this sub-project.
+ */
+KICOMMON_API std::vector<MULTI_BOARD_CROSS_BOARD_BINDING>
+MultiBoardCollectCrossBoardBindingsForSubProject( const wxFileName& aSubProjectPro );
 
 #endif // KICAD_MULTI_BOARD_SCAN_H

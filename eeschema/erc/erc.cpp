@@ -40,6 +40,8 @@
 #include <project/project_file.h>
 #include <project/multi_board_scan.h>
 #include <project/net_settings.h>
+#include <sch_module_block.h>
+#include <sch_module_pin.h>
 #include <sch_bus_entry.h>
 #include <sch_edit_frame.h>
 #include <sch_marker.h>
@@ -1290,6 +1292,239 @@ int ERC_TESTER::TestPinToPin()
 }
 
 
+int ERC_TESTER::TestCrossBoardConnectivity()
+{
+    int warnings = 0;
+
+    if( !m_schematic )
+        return 0;
+
+    SCH_SCREEN* rootScreen = m_schematic->RootScreen();
+
+    if( !rootScreen )
+        return 0;
+
+    // Collect every module pin on the MBS along with the wire net (if
+    // any) it sits on. Module pins inherit from SCH_HIERLABEL, so the
+    // connection_graph already groups them — we walk the cached nets
+    // from this tester rather than re-running the graph.
+    std::vector<SCH_MODULE_PIN*> allModulePins;
+
+    for( SCH_ITEM* item : rootScreen->Items() )
+    {
+        if( item->Type() != SCH_MODULE_BLOCK_T )
+            continue;
+
+        SCH_MODULE_BLOCK* block = static_cast<SCH_MODULE_BLOCK*>( item );
+
+        for( SCH_MODULE_PIN* pin : block->GetPins() )
+            allModulePins.push_back( pin );
+    }
+
+    if( allModulePins.empty() )
+        return 0;   // nothing MBS-related on this schematic
+
+    // For each module pin, find which net subgraph it belongs to and
+    // count how many module pins share that net. Single-pin nets are
+    // either unwired or wired only to a same-board destination — both
+    // mean the user hasn't actually wired this connector pin to another
+    // sub-project.
+    std::map<wxString, std::vector<SCH_MODULE_PIN*>> modulePinsByNet;
+    std::vector<SCH_MODULE_PIN*>                     unconnectedPins;
+
+    for( SCH_MODULE_PIN* pin : allModulePins )
+    {
+        SCH_CONNECTION* conn = pin->Connection();
+        wxString        netName = conn ? conn->Name() : wxString();
+
+        if( netName.IsEmpty() || pin->IsDangling() )
+        {
+            unconnectedPins.push_back( pin );
+            continue;
+        }
+
+        modulePinsByNet[netName].push_back( pin );
+    }
+
+    // ---- Unconnected MBS pin ----
+    if( m_settings.IsTestEnabled( ERCE_PIN_NOT_CONNECTED ) )
+    {
+        for( SCH_MODULE_PIN* pin : unconnectedPins )
+        {
+            std::shared_ptr<ERC_ITEM> ercItem = ERC_ITEM::Create( ERCE_PIN_NOT_CONNECTED );
+
+            wxString blockRef;
+            if( SCH_MODULE_BLOCK* parent = pin->GetParent() )
+                blockRef = parent->GetMbsReference();
+
+            wxString detail = wxString::Format(
+                    _( "Module pin %s/%s on block %s is not wired to a "
+                       "cross-board net." ),
+                    pin->GetComponentRef(), pin->GetPinNumber(),
+                    blockRef.IsEmpty() ? wxString( wxT( "?" ) ) : blockRef );
+
+            ercItem->SetItems( pin );
+            ercItem->SetErrorMessage( detail );
+
+            SCH_MARKER* marker = new SCH_MARKER( std::move( ercItem ), pin->GetPosition() );
+            rootScreen->Append( marker );
+            warnings++;
+        }
+    }
+
+    // ---- Cross-board net: pin-type matrix + driver checks ----
+    // For each net that genuinely spans 2+ blocks, walk its module
+    // pins through the same ERC pin-to-pin matrix the regular
+    // schematic ERC uses (`ERC_SETTINGS::GetPinMapValue`). This is
+    // what catches GND↔5V shorts: both pins are PT_POWER_IN, neither
+    // is a driver, so the net fires "power not driven". Pair-wise
+    // mismatches (output↔output etc.) emit ERCE_PIN_TO_PIN_ERROR /
+    // WARNING the same way TestPinToPin does for symbol pins.
+    //
+    // Single-endpoint nets (one block, or all pins on one block)
+    // emit a generic warning — they're not actually cross-board.
+    bool emitSingleEndpoint = m_settings.IsTestEnabled( ERCE_GENERIC_WARNING );
+    bool emitDriverCheck    = m_settings.IsTestEnabled( ERCE_PIN_NOT_DRIVEN )
+                              || m_settings.IsTestEnabled( ERCE_POWERPIN_NOT_DRIVEN );
+    bool emitMatrix         = m_settings.IsTestEnabled( ERCE_PIN_TO_PIN_ERROR )
+                              || m_settings.IsTestEnabled( ERCE_PIN_TO_PIN_WARNING );
+
+    for( const auto& [netName, pins] : modulePinsByNet )
+    {
+        std::set<SCH_MODULE_BLOCK*> distinctBlocks;
+
+        for( SCH_MODULE_PIN* pin : pins )
+        {
+            if( SCH_MODULE_BLOCK* parent = pin->GetParent() )
+                distinctBlocks.insert( parent );
+        }
+
+        if( distinctBlocks.size() < 2 )
+        {
+            if( emitSingleEndpoint )
+            {
+                for( SCH_MODULE_PIN* pin : pins )
+                {
+                    std::shared_ptr<ERC_ITEM> ercItem = ERC_ITEM::Create( ERCE_GENERIC_WARNING );
+
+                    wxString detail = wxString::Format(
+                            _( "Net '%s' touches only one module block — "
+                               "not a cross-board net. Wire it to a pin on "
+                               "a different block, or remove the wiring." ),
+                            netName );
+
+                    ercItem->SetItems( pin );
+                    ercItem->SetErrorMessage( detail );
+
+                    SCH_MARKER* marker = new SCH_MARKER( std::move( ercItem ),
+                                                          pin->GetPosition() );
+                    rootScreen->Append( marker );
+                    warnings++;
+                }
+            }
+
+            continue;
+        }
+
+        // ---- Driver check for power nets ----
+        // If any module pin is PT_POWER_IN and no pin on the net is
+        // PT_POWER_OUT, the net has no power source. Catches
+        // GND-only, 5V-only, AND GND↔5V wired-together cases (since
+        // both halves are PT_POWER_IN with no driver).
+        bool isPowerNet = false;
+        bool hasPowerDriver = false;
+
+        for( SCH_MODULE_PIN* pin : pins )
+        {
+            ELECTRICAL_PINTYPE t = pin->GetType();
+
+            if( t == ELECTRICAL_PINTYPE::PT_POWER_IN )
+                isPowerNet = true;
+
+            if( t == ELECTRICAL_PINTYPE::PT_POWER_OUT )
+                hasPowerDriver = true;
+        }
+
+        if( emitDriverCheck && isPowerNet && !hasPowerDriver )
+        {
+            for( SCH_MODULE_PIN* pin : pins )
+            {
+                if( pin->GetType() != ELECTRICAL_PINTYPE::PT_POWER_IN )
+                    continue;
+
+                std::shared_ptr<ERC_ITEM> ercItem =
+                        ERC_ITEM::Create( ERCE_POWERPIN_NOT_DRIVEN );
+
+                wxString blockRef;
+                if( SCH_MODULE_BLOCK* parent = pin->GetParent() )
+                    blockRef = parent->GetMbsReference();
+
+                wxString detail = wxString::Format(
+                        _( "Cross-board net '%s' has power input pins "
+                           "(e.g. %s/%s on block %s carrying '%s') but "
+                           "no power-output driver — likely a power-rail "
+                           "short or missing source." ),
+                        netName, pin->GetComponentRef(), pin->GetPinNumber(),
+                        blockRef.IsEmpty() ? wxString( wxT( "?" ) ) : blockRef,
+                        pin->GetText() );
+
+                ercItem->SetItems( pin );
+                ercItem->SetErrorMessage( detail );
+
+                SCH_MARKER* marker = new SCH_MARKER( std::move( ercItem ),
+                                                      pin->GetPosition() );
+                rootScreen->Append( marker );
+                warnings++;
+            }
+        }
+
+        // ---- Pairwise pin-type matrix ----
+        // Cycle through every pair of module pins on this net and look
+        // up the ERC matrix. Same machinery the regular ERC uses for
+        // SCH_PIN; just driven by SCH_MODULE_PIN here.
+        if( emitMatrix )
+        {
+            for( size_t i = 0; i < pins.size(); ++i )
+            {
+                for( size_t j = i + 1; j < pins.size(); ++j )
+                {
+                    PIN_ERROR severity = m_settings.GetPinMapValue(
+                            pins[i]->GetType(), pins[j]->GetType() );
+
+                    if( severity == PIN_ERROR::OK )
+                        continue;
+
+                    int errCode = ( severity == PIN_ERROR::PP_ERROR )
+                                          ? ERCE_PIN_TO_PIN_ERROR
+                                          : ERCE_PIN_TO_PIN_WARNING;
+
+                    std::shared_ptr<ERC_ITEM> ercItem = ERC_ITEM::Create( errCode );
+
+                    wxString detail = wxString::Format(
+                            _( "Cross-board net '%s': pins of type %s and %s "
+                               "are connected (%s/%s ↔ %s/%s)." ),
+                            netName,
+                            ElectricalPinTypeGetText( pins[i]->GetType() ),
+                            ElectricalPinTypeGetText( pins[j]->GetType() ),
+                            pins[i]->GetComponentRef(), pins[i]->GetPinNumber(),
+                            pins[j]->GetComponentRef(), pins[j]->GetPinNumber() );
+
+                    ercItem->SetItems( pins[i], pins[j] );
+                    ercItem->SetErrorMessage( detail );
+
+                    SCH_MARKER* marker = new SCH_MARKER( std::move( ercItem ),
+                                                          pins[i]->GetPosition() );
+                    rootScreen->Append( marker );
+                    warnings++;
+                }
+            }
+        }
+    }
+
+    return warnings;
+}
+
+
 int ERC_TESTER::TestMultUnitPinConflicts()
 {
     int errors = 0;
@@ -2170,6 +2405,18 @@ void ERC_TESTER::RunTests( DS_PROXY_VIEW_ITEM* aDrawingSheet, SCH_EDIT_FRAME* aE
 
     if( m_settings.IsTestEnabled( ERCE_GROUND_PIN_NOT_GROUND ) )
         TestGroundPins();
+
+    // Cross-board connectivity (M5.8). Cheap and self-gating: no
+    // module blocks on the schematic = no work, no markers.
+    if( m_settings.IsTestEnabled( ERCE_PIN_NOT_CONNECTED )
+        || m_settings.IsTestEnabled( ERCE_GENERIC_WARNING )
+        || m_settings.IsTestEnabled( ERCE_PIN_NOT_DRIVEN )
+        || m_settings.IsTestEnabled( ERCE_POWERPIN_NOT_DRIVEN )
+        || m_settings.IsTestEnabled( ERCE_PIN_TO_PIN_ERROR )
+        || m_settings.IsTestEnabled( ERCE_PIN_TO_PIN_WARNING ) )
+    {
+        TestCrossBoardConnectivity();
+    }
 
     if( m_settings.IsTestEnabled( ERCE_STACKED_PIN_SYNTAX ) )
         TestStackedPinNotation();

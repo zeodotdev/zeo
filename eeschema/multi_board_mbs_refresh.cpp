@@ -574,6 +574,7 @@ MBS_REFRESH_RESULT ApplyMbsRefreshChanges( SCH_SCREEN& aMbsScreen,
                 auto* pin = new SCH_MODULE_PIN( block, absPos, pinLabel );
                 pin->SetComponentRef( ch->componentRef );
                 pin->SetPinNumber( padInfo.padNumber );
+                pin->SetType( padInfo.electricalType );
                 pin->ConstrainOnEdge( absPos, true );
 
                 block->AddPin( pin );
@@ -626,6 +627,7 @@ MBS_REFRESH_RESULT ApplyMbsRefreshChanges( SCH_SCREEN& aMbsScreen,
             auto* pin = new SCH_MODULE_PIN( ch->existingBlock, absPos, label );
             pin->SetComponentRef( ch->componentRef );
             pin->SetPinNumber( ch->pinNumber );
+            pin->SetType( ch->padInfo.electricalType );
             pin->ConstrainOnEdge( absPos, true );
 
             ch->existingBlock->AddPin( pin );

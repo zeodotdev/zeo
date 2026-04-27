@@ -716,6 +716,34 @@ int SCH_EDITOR_CONTROL::RefreshMbsFromSubProjects( const TOOL_EVENT& aEvent )
     m_frame->OnModify();
     m_frame->GetCanvas()->Refresh( true );
 
+    // Hand the freshly-added blocks to the move tool so the user can
+    // place them with a single click instead of having them dropped at
+    // wherever nextFreeSlot picked. Mirrors the PCB sync flow where new
+    // footprints attach to the cursor on import. We deliberately don't
+    // set IS_NEW — that flag drives wire-bending special cases in the
+    // move tool which don't apply to module blocks. Move completes as a
+    // position modification on already-committed items; cancelling the
+    // move just leaves blocks at their default nextFreeSlot positions
+    // (still recoverable via Undo).
+    if( !res.newlyAddedBlocks.empty() )
+    {
+        SCH_SELECTION_TOOL* selTool = m_toolMgr->GetTool<SCH_SELECTION_TOOL>();
+
+        if( selTool )
+        {
+            m_toolMgr->RunAction( ACTIONS::selectionClear );
+
+            for( SCH_MODULE_BLOCK* block : res.newlyAddedBlocks )
+                selTool->AddItemToSel( block, /*aQuietMode=*/true );
+
+            // PostAction runs the move tool after the current event
+            // loop unwinds. No follow-up message box — the placement
+            // itself is the user-visible feedback.
+            m_toolMgr->PostAction( SCH_ACTIONS::move );
+            return 0;
+        }
+    }
+
     wxMessageBox( res.summary, _( "Refresh Module Blocks" ),
                   wxOK | wxICON_INFORMATION, m_frame );
 

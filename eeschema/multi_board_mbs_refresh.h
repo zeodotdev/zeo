@@ -105,6 +105,12 @@ struct MBS_REFRESH_RESULT
     int pathsUpdated  = 0;
     int uuidsStamped  = 0;
     wxString summary;
+
+    /// Pointers to blocks created by ADD_BLOCK during this apply, in the
+    /// order they were placed. Caller can grab these to run an
+    /// interactive "click-to-place" hand-off (mirrors the PCB sync flow
+    /// where new footprints attach to the cursor).
+    std::vector<SCH_MODULE_BLOCK*> newlyAddedBlocks;
 };
 
 

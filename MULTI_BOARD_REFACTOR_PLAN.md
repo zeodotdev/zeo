@@ -41,32 +41,27 @@ in the current code path. M5.2 (replace directory walk with explicit
 parent-project ref) will let both suppression paths share a single
 lookup.
 
-### Refresh-placement preview UX (P1)
+### Refresh-placement preview UX ✓ done (2026-04-27)
 
-**Today:** when the user runs Refresh, ADD_BLOCK changes are committed
-immediately at `nextFreeSlot(screen)` positions. New blocks pop into
-existence wherever the auto-layout decided.
+| Item | Where | Status |
+|---|---|---|
+| Track newly-added blocks across the apply | `eeschema/multi_board_mbs_refresh.h` `MBS_REFRESH_RESULT::newlyAddedBlocks` | ✓ vector populated by ADD_BLOCK case |
+| Hand new blocks to the move tool after apply | `eeschema/tools/sch_editor_control.cpp` RefreshMbsFromSubProjects | ✓ select all new blocks, `PostAction(SCH_ACTIONS::move)` |
+| Skip post-apply summary modal when blocks placed interactively | same | ✓ placement itself is the visual feedback |
 
-**Desired:** mirror the "Update PCB from Schematic" pattern — newly-
-added blocks attach to the cursor in a transparent/preview state, the
-user clicks once to drop them as a group at their chosen location.
-Optionally drag to reposition before clicking.
+**Outcome:** click Apply on the refresh dialog → new blocks appear
+briefly at default positions, then attach to the cursor as a group;
+one click drops them at the chosen location. Cancel mid-move leaves
+them at the default positions (still recoverable via Undo). Existing
+changes (REMOVE / RENAME / PATH_DRIFT / etc.) commit immediately —
+only ADD_BLOCK triggers interactive placement.
 
-**Mechanism:**
-- `ApplyMbsRefreshChanges` gains an `aInteractivePlacement` flag (or a
-  separate "preview-then-place" entry point).
-- In that mode, ADD_BLOCK still creates the block + pins, but the block
-  gets `IS_NEW | IS_MOVING` flags and is *not* committed.
-- After apply finishes, hand the new-blocks selection to the move tool;
-  user clicks once to drop, or Esc to cancel.
-- Existing changes (REMOVE / RENAME / etc.) still commit immediately —
-  only ADD_BLOCK gets the preview treatment.
-
-**Files:** `eeschema/multi_board_mbs_refresh.cpp` ApplyMbsRefreshChanges,
-`eeschema/dialogs/dialog_mbs_refresh.cpp` apply path,
-`eeschema/tools/sch_editor_control.cpp` RefreshMbsFromSubProjects.
-
-Estimate: ~1 session.
+**Deliberate non-feature:** real semi-transparent (alpha-blended)
+preview rendering. The selection-overlay highlight that the move tool
+applies during drag gives sufficient "this is being placed" signal
+without painter work. If literal alpha-blend is wanted later, it's a
+small painter addition (`SCH_PAINTER::draw(SCH_MODULE_BLOCK)` checks
+`block->IsMoving()` and reduces opacity).
 
 ### Properties dialog polish (P2)
 

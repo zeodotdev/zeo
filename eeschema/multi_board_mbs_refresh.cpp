@@ -589,6 +589,7 @@ MBS_REFRESH_RESULT ApplyMbsRefreshChanges( SCH_SCREEN& aMbsScreen,
                 aView->Add( block );
 
             result.blocksAdded++;
+            result.newlyAddedBlocks.push_back( block );
             break;
         }
 

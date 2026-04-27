@@ -396,14 +396,14 @@ void MBSCH_EDIT_FRAME::crossProbeHighlightPart( const wxString& aRef,
     if( !selTool )
         return;
 
-    m_toolManager->RunAction( ACTIONS::selectionClear );
-
+    // No selectionClear here: callers (KiwayMailIn) batch multiple specs
+    // and clear once at the start. Clearing per-spec would leave only
+    // the last item in the selection, breaking lasso / shift-click which
+    // both round-trip a multi-item $SELECT through this handler.
     EDA_ITEM* target = matchedPin ? static_cast<EDA_ITEM*>( matchedPin )
                                   : static_cast<EDA_ITEM*>( matchedBlock );
     selTool->AddItemToSel( target );
 
-    // Re-center the canvas on the highlighted block so the user can see
-    // the context immediately; otherwise the highlight may sit off-screen.
     FocusOnItem( target );
     GetCanvas()->Refresh();
 }

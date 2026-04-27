@@ -235,6 +235,18 @@ public:
 
     void OnCloseWindow( wxCloseEvent& event );
 
+    /**
+     * Free GL targets and the OpenGL context. Safe to call multiple
+     * times — the second call is a no-op once m_glRC is null.
+     *
+     * Public so EDA_3D_VIEWER_FRAME can invoke it from its destructor
+     * body BEFORE its members (notably the unique_ptr<ASSEMBLY_3D_MANAGER>)
+     * are destroyed in reverse declaration order. Otherwise the
+     * per-instance renderers held by ASSEMBLY_3D_MANAGER tear down
+     * outside any LockCtx and corrupt other GL canvases (MBS goes white).
+     */
+    void ReleaseOpenGL() { releaseOpenGL(); }
+
 private:
     // The wxPaintEvent event. mainly calls DoRePaint()
     void OnPaint( wxPaintEvent& aEvent );

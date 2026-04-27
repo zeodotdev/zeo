@@ -560,8 +560,15 @@ void SCH_EDIT_FRAME::SendSelectItemsToPcb( const std::vector<EDA_ITEM*>& aItems,
         std::string pcb = aCommand;
         Kiway().ExpressMail( FRAME_PCB_EDITOR, selType, pcb, this );
 
-        std::string mbs = aCommand;
-        Kiway().ExpressMail( FRAME_MBSCH, selType, mbs, this );
+        // Skip self-send: when the sender is MBSCH, fanning $SELECT back
+        // to FRAME_MBSCH lands on our own KiwayMailIn, which would clear
+        // and re-add only the matched items — collapsing multi-item
+        // selections (lasso, shift-click) to the last item.
+        if( GetFrameType() != FRAME_MBSCH )
+        {
+            std::string mbs = aCommand;
+            Kiway().ExpressMail( FRAME_MBSCH, selType, mbs, this );
+        }
 
         // When the SENDER is MBSCH, the sub-project schematic editors
         // (FRAME_SCH) also need the selection to mirror the user's pick

@@ -35,6 +35,7 @@
 #include <gal/3d/camera.h>
 #include <board.h>
 #include <board_design_settings.h>
+#include <board_stackup_manager/board_stackup.h>
 #include <footprint.h>
 #include <multi_board/sub_project_board_loader.h>
 #include <pad.h>
@@ -715,13 +716,37 @@ void ASSEMBLY_3D_MANAGER::InitRenderers( EDA_3D_CANVAS* aCanvas, CAMERA& aCamera
             // finish-match divergence or m_ColorOverrides contamination.
             const SFVEC4F& c = m_instanceAdapters[i]->m_CopperColor;
             const SFVEC4F& bb = m_instanceAdapters[i]->m_BoardBodyColor;
-            wxLogMessage( wxT( "[ASSEMBLY] inst[%zu] display='%s' ref=%s copper=(%.3f,%.3f,%.3f,%.3f) "
-                               "body=(%.3f,%.3f,%.3f,%.3f) biuTo3D=%g" ),
+            const SFVEC4F& mt = m_instanceAdapters[i]->m_SolderMaskColorTop;
+            const SFVEC4F& mb = m_instanceAdapters[i]->m_SolderMaskColorBot;
+            const bool useStackup = sharedCfg ? sharedCfg->m_UseStackupColors : false;
+            wxString maskNameF, maskNameB;
+            if( inst.board )
+            {
+                for( const BOARD_STACKUP_ITEM* it :
+                     inst.board->GetDesignSettings().GetStackupDescriptor().GetList() )
+                {
+                    if( it->GetType() == BS_ITEM_TYPE_SOLDERMASK )
+                    {
+                        if( it->GetBrdLayerId() == F_Mask )
+                            maskNameF = it->GetColor();
+                        else if( it->GetBrdLayerId() == B_Mask )
+                            maskNameB = it->GetColor();
+                    }
+                }
+            }
+            wxLogMessage( wxT( "[ASSEMBLY] inst[%zu] display='%s' ref=%s "
+                               "copper=(%.3f,%.3f,%.3f,%.3f) body=(%.3f,%.3f,%.3f,%.3f) "
+                               "maskTop=(%.3f,%.3f,%.3f,%.3f) maskBot=(%.3f,%.3f,%.3f,%.3f) "
+                               "stackupColors=%d maskNameF='%s' maskNameB='%s' biuTo3D=%g" ),
                           i,
                           inst.displayName,
                           inst.subProjectUuid.AsString(),
                           c.r, c.g, c.b, c.a,
                           bb.r, bb.g, bb.b, bb.a,
+                          mt.r, mt.g, mt.b, mt.a,
+                          mb.r, mb.g, mb.b, mb.a,
+                          useStackup ? 1 : 0,
+                          maskNameF, maskNameB,
                           m_instanceAdapters[i]->BiuTo3dUnits() );
         }
 

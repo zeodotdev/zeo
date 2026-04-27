@@ -22,6 +22,7 @@
 #include "sch_module_pin.h"
 
 #include <bitmaps.h>
+#include <geometry/geometry_utils.h>
 #include <layer_ids.h>
 #include <trigo.h>
 
@@ -179,6 +180,12 @@ bool SCH_MODULE_BLOCK::HitTest( const BOX2I& aRect, bool aContained, int aAccura
         return test.Contains( bbox );
 
     return test.Intersects( bbox );
+}
+
+
+bool SCH_MODULE_BLOCK::HitTest( const SHAPE_LINE_CHAIN& aPoly, bool aContained ) const
+{
+    return KIGEOM::BoxHitTest( aPoly, BOX2I( m_pos, m_size ), aContained );
 }
 
 

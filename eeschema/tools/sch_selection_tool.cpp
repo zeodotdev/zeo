@@ -70,6 +70,8 @@
 #include <sch_symbol.h>
 #include <sch_text.h>
 #include <sch_sheet.h>
+#include <sch_module_block.h>
+#include <sch_module_pin.h>
 #include <tools/ee_grid_helper.h>
 #include <tools/sch_move_tool.h>
 #include <tools/sch_point_editor.h>
@@ -2060,6 +2062,11 @@ bool SCH_SELECTION_TOOL::itemPassesFilter( EDA_ITEM* aItem, SCH_SELECTION_FILTER
     {
     case SCH_SYMBOL_T:
     case SCH_SHEET_T:
+    case SCH_MODULE_BLOCK_T:
+        // Module blocks act as MBS-side stand-ins for symbols/sheets,
+        // so the same "Symbols" filter toggle governs them. Without
+        // this case they fell to default → otherItems, which made
+        // them honor the wrong toggle.
         if( !m_filter.symbols )
         {
             if( aRejected )
@@ -2071,6 +2078,7 @@ bool SCH_SELECTION_TOOL::itemPassesFilter( EDA_ITEM* aItem, SCH_SELECTION_FILTER
 
     case SCH_PIN_T:
     case SCH_SHEET_PIN_T:
+    case SCH_MODULE_PIN_T:
         if( !m_filter.pins )
         {
             if( aRejected )
@@ -2427,6 +2435,18 @@ void SCH_SELECTION_TOOL::SelectMultiple( KIGFX::PREVIEW::SELECTION_AREA& aArea, 
         if( SCH_SHEET* sheet = dynamic_cast<SCH_SHEET*>( item ) )
         {
             for( SCH_SHEET_PIN* pin : sheet->GetPins() )
+            {
+                if( boxMode ? selectionRect.Intersects( pin->GetBoundingBox() )
+                            : KIGEOM::BoxHitTest( aArea.GetPoly(), pin->GetBoundingBox(), true ) )
+                    uniqueCandidates.insert( pin );
+            }
+        }
+        else if( SCH_MODULE_BLOCK* block = dynamic_cast<SCH_MODULE_BLOCK*>( item ) )
+        {
+            // Mirror the SCH_SHEET branch: lasso/rectangle inside the
+            // block bounds should also pick up the block's pins so
+            // they participate in the selection alongside the parent.
+            for( SCH_MODULE_PIN* pin : block->GetPins() )
             {
                 if( boxMode ? selectionRect.Intersects( pin->GetBoundingBox() )
                             : KIGEOM::BoxHitTest( aArea.GetPoly(), pin->GetBoundingBox(), true ) )

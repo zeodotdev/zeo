@@ -290,6 +290,20 @@ void EDA_3D_VIEWER_FRAME::setupFrame()
 
 EDA_3D_VIEWER_FRAME::~EDA_3D_VIEWER_FRAME()
 {
+    // Tear down the OpenGL context FIRST, while every owning object is
+    // still alive. Member destruction order is reverse declaration:
+    // m_assemblyManager is destroyed BEFORE m_canvas (raw pointer
+    // destroyed later by ~wxWindow). If we let that happen, the
+    // assembly manager's per-instance unique_ptr<RENDER_3D_OPENGL>
+    // dtors fire without a LockCtx and corrupt any other live GL
+    // canvas (the MBS GAL canvas would render white).
+    //
+    // EDA_3D_CANVAS::ReleaseOpenGL locks the context, drives
+    // ASSEMBLY_3D_MANAGER::ReleaseOpenGL inside that lock, then
+    // destroys the single-board renderers and the context itself.
+    if( m_canvas )
+        m_canvas->ReleaseOpenGL();
+
     // Shutdown all running tools
     if( m_toolManager )
         m_toolManager->ShutdownAllTools();

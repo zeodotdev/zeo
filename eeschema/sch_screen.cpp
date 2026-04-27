@@ -163,7 +163,12 @@ bool SCH_SCREEN::ClassOf( const EDA_ITEM* aItem )
 
 void SCH_SCREEN::Append( SCH_ITEM* aItem, bool aUpdateLibSymbol )
 {
-    if( aItem->Type() != SCH_SHEET_PIN_T && aItem->Type() != SCH_FIELD_T )
+    // Sheet pins, fields, and module pins are children owned by their
+    // parent (sheet / symbol / module block) — they reach the
+    // schematic through the parent's m_parent chain, so calling
+    // SetParent(screen) here would break that link.
+    if( aItem->Type() != SCH_SHEET_PIN_T && aItem->Type() != SCH_FIELD_T
+        && aItem->Type() != SCH_MODULE_PIN_T )
     {
         // Ensure the item can reach the SCHEMATIC through this screen
         aItem->SetParent( this );
@@ -314,7 +319,10 @@ void SCH_SCREEN::FreeDrawList()
     std::copy_if( m_rtree.begin(), m_rtree.end(), std::back_inserter( delete_list ),
             []( SCH_ITEM* aItem )
             {
-                return ( aItem->Type() != SCH_SHEET_PIN_T && aItem->Type() != SCH_FIELD_T );
+                // Skip child-owned types — their parent owns them and
+                // will free them on its own destruction.
+                return ( aItem->Type() != SCH_SHEET_PIN_T && aItem->Type() != SCH_FIELD_T
+                         && aItem->Type() != SCH_MODULE_PIN_T );
             } );
 
     m_rtree.clear();

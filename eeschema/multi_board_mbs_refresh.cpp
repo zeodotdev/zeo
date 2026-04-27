@@ -646,6 +646,37 @@ MBS_REFRESH_RESULT ApplyMbsRefreshChanges( SCH_SCREEN& aMbsScreen,
         }
     }
 
+    // Sweep zero-pin blocks. These can survive a refresh when the user
+    // checks every REMOVE_PIN for a block but leaves REMOVE_BLOCK
+    // unchecked, or when a sub-project lost its last connector between
+    // refreshes. An MBS block exists to host pins — without any, it's a
+    // bare label that can't take wires, so auto-deletion is safe.
+    {
+        std::vector<SCH_MODULE_BLOCK*> empties;
+
+        for( SCH_ITEM* item : aMbsScreen.Items() )
+        {
+            if( item->Type() != SCH_MODULE_BLOCK_T )
+                continue;
+
+            SCH_MODULE_BLOCK* block = static_cast<SCH_MODULE_BLOCK*>( item );
+
+            if( block->GetPins().empty() && !deletedBlocks.count( block ) )
+                empties.push_back( block );
+        }
+
+        for( SCH_MODULE_BLOCK* block : empties )
+        {
+            if( aView )
+                aView->Remove( block );
+
+            aMbsScreen.Remove( block );
+            deletedBlocks.insert( block );
+            delete block;
+            result.blocksRemoved++;
+        }
+    }
+
     result.summary = wxString::Format(
             _( "Applied: +%d block(s), -%d block(s), +%d pin(s), -%d pin(s), "
                "%d renamed, %d path(s) updated, %d UUID(s) stamped." ),

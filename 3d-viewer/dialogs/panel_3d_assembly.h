@@ -27,6 +27,7 @@
 #include <wx/panel.h>
 #include <kiid.h>
 
+#include <map>
 #include <vector>
 
 class ASSEMBLY_3D_MANAGER;
@@ -36,8 +37,12 @@ class wxButton;
 class wxCheckBox;
 class wxCheckListBox;
 class wxChoice;
+class wxListCtrl;
+class wxListEvent;
 class wxStaticText;
 class wxTextCtrl;
+class wxTreeCtrl;
+class wxTreeEvent;
 
 
 /**
@@ -90,6 +95,25 @@ private:
     void onHideAllBoards( wxCommandEvent& aEvent );
     void onTransparencyChanged( wxCommandEvent& aEvent );
 
+    // M6.D-phase-2 custom mate handlers
+    void onAddCustomMate( wxCommandEvent& aEvent );
+    void onMarkMatePrimary( wxCommandEvent& aEvent );
+    void onDisableMate( wxCommandEvent& aEvent );
+    void onDeleteCustomMate( wxCommandEvent& aEvent );
+    void onMateTreeSelectionChanged( wxTreeEvent& aEvent );
+
+    /**
+     * Rebuild the mates tree from the manager's current mate graph
+     * + custom mates list. Called after any mutation.
+     */
+    void RefreshMatesTree();
+
+    /**
+     * Update the per-row action buttons (Mark primary / Disable /
+     * Delete) based on the currently-selected mate row.
+     */
+    void updateMateButtons();
+
     /**
      * Update the 3D view after a change.
      */
@@ -136,6 +160,30 @@ private:
 
     // Export
     wxButton*               m_exportSTEPButton;
+
+    // M6.D-phase-2 mates UI
+    wxTreeCtrl*             m_matesTree;
+    wxButton*               m_addMateButton;
+    wxButton*               m_markPrimaryButton;
+    wxButton*               m_disableMateButton;
+    wxButton*               m_deleteMateButton;
+
+    /// Per-row metadata attached to mate-tree leaves so the action
+    /// buttons can map a tree selection back to the underlying
+    /// MATE_PAIR / CUSTOM_MATE.
+    struct MATE_TREE_ROW
+    {
+        bool      isEdgeNode;        ///< true for parent rows (board edges)
+        bool      isAuto;            ///< auto-derived (no customMateUuid)
+        KIID      customMateUuid;    ///< null when isAuto
+        KIID      instanceA;
+        KIID      instanceB;
+        wxString  footprintRefA;
+        wxString  footprintRefB;
+    };
+
+    /// Map wxTreeItemIdValue → row metadata. Rebuilt by RefreshMatesTree.
+    std::map<void*, MATE_TREE_ROW> m_mateTreeRows;
 
     // State
     int                     m_selectedBoardIndex;

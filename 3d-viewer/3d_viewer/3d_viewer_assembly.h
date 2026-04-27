@@ -107,6 +107,10 @@ struct BOARD_3D_INSTANCE
  * are stored in canonical order (lower instance UUID first; ties
  * broken by footprint ref) so the same physical mate keys to the same
  * MATE_PAIR regardless of which net's endpoint encountered it first.
+ *
+ * Phase-2 fields (forcedPrimary, alignmentOnly, nonElectrical, custom*)
+ * are zero / empty for auto-derived pairs. They track decorations
+ * applied by user-declared CUSTOM_MATE overrides.
  */
 struct MATE_PAIR
 {
@@ -115,6 +119,31 @@ struct MATE_PAIR
     wxString    footprintRefA;
     wxString    footprintRefB;
     int         pinCount;        ///< number of cross-board net endpoints linking these two footprints
+
+    // ----- M6.D-phase-2 custom-mate decorations -----
+
+    /// Custom PRIMARY override: PickPrimaryPair returns this pair on
+    /// its edge regardless of pinCount.
+    bool        forcedPrimary = false;
+
+    /// Custom SECONDARY: skipped in primary selection, but tracked as
+    /// a residual so the DRC panel can report the misalignment.
+    bool        alignmentOnly = false;
+
+    /// Custom MOUNTING_HOLE / ALIGNMENT: no copper pads, skip the
+    /// dominant-side detection in `PlaceChildOnParent` and rely on
+    /// the optional offset for fine adjustment.
+    bool        nonElectrical = false;
+
+    /// KIID of the originating `CUSTOM_MATE` row in the container
+    /// project file. Null KIID for auto-derived pairs. Lets the UI
+    /// trace a graph edge back to the row the user can edit.
+    KIID        customMateUuid;
+
+    /// Optional placement offset applied after the auto-computed pose.
+    bool        hasOffset = false;
+    double      offsetTx = 0.0, offsetTy = 0.0, offsetTz = 0.0;   ///< mm
+    double      offsetRx = 0.0, offsetRy = 0.0, offsetRz = 0.0;   ///< deg
 };
 
 
@@ -328,6 +357,52 @@ public:
      */
     const std::vector<MATE_RESIDUAL>& GetMateResiduals() const { return m_lastMateResiduals; }
 
+    // ========== M6.D-phase-2 Custom Mate API ==========
+
+    /**
+     * Read-only view of the user-declared mates persisted in the
+     * container `.kicad_pro`. Empty when no project is loaded or in
+     * single-board mode.
+     */
+    const std::vector<struct CUSTOM_MATE>& GetCustomMates() const;
+
+    /**
+     * Append a custom mate to the container's persisted mates list.
+     * The caller fills the mate's fields except `uuid` (auto-assigned
+     * if null). After insertion, the next `MateConnectors()` pass
+     * picks it up; callers that want the new mate to take effect
+     * immediately should call `MateConnectors()` themselves.
+     *
+     * @return UUID of the newly-stored mate, or null KIID on failure
+     *         (no project loaded / not a multi-board container).
+     */
+    KIID AddCustomMate( const struct CUSTOM_MATE& aMate );
+
+    /**
+     * Update an existing custom mate in place (matched by UUID).
+     * @return true if the mate was found and updated.
+     */
+    bool UpdateCustomMate( const struct CUSTOM_MATE& aMate );
+
+    /**
+     * Remove a custom mate by UUID.
+     * @return true if a mate matched and was removed.
+     */
+    bool RemoveCustomMate( const KIID& aMateUuid );
+
+    /**
+     * Compute the current mate graph (auto-derived from cross-board
+     * nets, with custom-mate overrides layered on top) without
+     * actually solving placement. Lets the panel UI inspect what
+     * `MateConnectors()` would do — display source, role, status —
+     * without mutating any pose.
+     *
+     * Side-effect free: callable from a `const` UI handler. Returns
+     * by value because the graph is rebuilt on every call (cheap;
+     * scales with `O(nets · custom_mates)`).
+     */
+    std::vector<MATE_EDGE> BuildMateGraph() const;
+
     // ========== Collision Detection ==========
 
     /**
@@ -437,15 +512,9 @@ private:
     float GetBoardThickness( const BOARD* aBoard ) const;
 
     // ========== M6.D-phase-1 mate solver pipeline ==========
-
-    /**
-     * Walk every `MB_CROSS_BOARD_NET` in the container project and
-     * aggregate cross-net endpoints into connector mate pairs, then
-     * those into board edges. Pairs / edges are keyed by canonical
-     * (instance UUID, footprint ref) ordering so the same physical
-     * mate aggregates regardless of net visit order.
-     */
-    std::vector<MATE_EDGE> BuildMateGraph() const;
+    //
+    // BuildMateGraph() is declared in the public section above so the
+    // panel UI can inspect mate state without re-running placement.
 
     /**
      * BFS-place every reachable instance from a chosen anchor: pick

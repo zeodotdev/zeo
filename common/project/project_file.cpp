@@ -86,6 +86,9 @@ PROJECT_FILE::PROJECT_FILE( const wxString& aFullPath ) :
     m_params.emplace_back( new PARAM_LIST<MB_CROSS_BOARD_NET>( "multi_board.cross_board_nets",
             &m_crossBoardNets, {} ) );
 
+    m_params.emplace_back( new PARAM_LIST<CUSTOM_MATE>( "multi_board.assembly_3d.mates",
+            &m_customMates, {} ) );
+
     m_params.emplace_back( new PARAM_WXSTRING_MAP( "text_variables",
             &m_TextVars, {}, false, true /* array behavior, even though stored as a map */ ) );
 
@@ -1452,6 +1455,145 @@ void from_json( const nlohmann::json& aJson, MB_CROSS_BOARD_NET& aNet )
             MB_CROSS_BOARD_NET_ENDPOINT endpoint;
             from_json( ep, endpoint );
             aNet.endpoints.push_back( endpoint );
+        }
+    }
+}
+
+
+namespace
+{
+
+const char* customMateRoleToStr( CUSTOM_MATE_ROLE aRole )
+{
+    switch( aRole )
+    {
+    case CUSTOM_MATE_ROLE::PRIMARY:   return "primary";
+    case CUSTOM_MATE_ROLE::SECONDARY: return "secondary";
+    case CUSTOM_MATE_ROLE::DISABLED:  return "disabled";
+    }
+    return "primary";
+}
+
+
+CUSTOM_MATE_ROLE customMateRoleFromStr( const std::string& aStr )
+{
+    if( aStr == "secondary" ) return CUSTOM_MATE_ROLE::SECONDARY;
+    if( aStr == "disabled" )  return CUSTOM_MATE_ROLE::DISABLED;
+    return CUSTOM_MATE_ROLE::PRIMARY;
+}
+
+
+const char* customMateTypeToStr( CUSTOM_MATE_TYPE aType )
+{
+    switch( aType )
+    {
+    case CUSTOM_MATE_TYPE::CONNECTOR:     return "connector";
+    case CUSTOM_MATE_TYPE::MOUNTING_HOLE: return "mounting_hole";
+    case CUSTOM_MATE_TYPE::ALIGNMENT:     return "alignment";
+    }
+    return "connector";
+}
+
+
+CUSTOM_MATE_TYPE customMateTypeFromStr( const std::string& aStr )
+{
+    if( aStr == "mounting_hole" ) return CUSTOM_MATE_TYPE::MOUNTING_HOLE;
+    if( aStr == "alignment" )     return CUSTOM_MATE_TYPE::ALIGNMENT;
+    return CUSTOM_MATE_TYPE::CONNECTOR;
+}
+
+
+nlohmann::json customMateEndToJson( const CUSTOM_MATE_END& aEnd )
+{
+    return nlohmann::json{
+        { "sub_project_uuid", aEnd.subProjectUuid.AsString().ToUTF8() },
+        { "footprint_ref",    aEnd.footprintRef.ToUTF8() }
+    };
+}
+
+
+void customMateEndFromJson( const nlohmann::json& aJson, CUSTOM_MATE_END& aEnd )
+{
+    if( aJson.contains( "sub_project_uuid" ) )
+    {
+        aEnd.subProjectUuid =
+                KIID( wxString::FromUTF8( aJson["sub_project_uuid"].get<std::string>().c_str() ) );
+    }
+
+    if( aJson.contains( "footprint_ref" ) )
+        aEnd.footprintRef = wxString::FromUTF8( aJson["footprint_ref"].get<std::string>().c_str() );
+}
+
+} // namespace
+
+
+void to_json( nlohmann::json& aJson, const CUSTOM_MATE& aMate )
+{
+    aJson = nlohmann::json{
+        { "uuid",  aMate.uuid.AsString().ToUTF8() },
+        { "role",  customMateRoleToStr( aMate.role ) },
+        { "type",  customMateTypeToStr( aMate.type ) },
+        { "end_a", customMateEndToJson( aMate.endA ) },
+        { "end_b", customMateEndToJson( aMate.endB ) }
+    };
+
+    // Offset is omitted entirely when not set so the JSON stays small
+    // and round-trips cleanly for the common no-offset case.
+    if( aMate.hasOffset )
+    {
+        aJson["offset"] = nlohmann::json{
+            { "translation",
+              { aMate.offsetTranslation.x, aMate.offsetTranslation.y, aMate.offsetTranslation.z } },
+            { "rotation",
+              { aMate.offsetRotation.x, aMate.offsetRotation.y, aMate.offsetRotation.z } }
+        };
+    }
+}
+
+
+void from_json( const nlohmann::json& aJson, CUSTOM_MATE& aMate )
+{
+    wxCHECK( aJson.is_object(), /* void */ );
+
+    if( aJson.contains( "uuid" ) )
+        aMate.uuid = KIID( wxString::FromUTF8( aJson["uuid"].get<std::string>().c_str() ) );
+
+    if( aJson.contains( "role" ) )
+        aMate.role = customMateRoleFromStr( aJson["role"].get<std::string>() );
+
+    if( aJson.contains( "type" ) )
+        aMate.type = customMateTypeFromStr( aJson["type"].get<std::string>() );
+
+    if( aJson.contains( "end_a" ) )
+        customMateEndFromJson( aJson["end_a"], aMate.endA );
+
+    if( aJson.contains( "end_b" ) )
+        customMateEndFromJson( aJson["end_b"], aMate.endB );
+
+    aMate.hasOffset = false;
+    aMate.offsetTranslation = VECTOR3D( 0.0, 0.0, 0.0 );
+    aMate.offsetRotation    = VECTOR3D( 0.0, 0.0, 0.0 );
+
+    if( aJson.contains( "offset" ) && aJson["offset"].is_object() )
+    {
+        const auto& offset = aJson["offset"];
+
+        if( offset.contains( "translation" ) && offset["translation"].is_array()
+            && offset["translation"].size() == 3 )
+        {
+            aMate.offsetTranslation = VECTOR3D( offset["translation"][0].get<double>(),
+                                                offset["translation"][1].get<double>(),
+                                                offset["translation"][2].get<double>() );
+            aMate.hasOffset = true;
+        }
+
+        if( offset.contains( "rotation" ) && offset["rotation"].is_array()
+            && offset["rotation"].size() == 3 )
+        {
+            aMate.offsetRotation = VECTOR3D( offset["rotation"][0].get<double>(),
+                                             offset["rotation"][1].get<double>(),
+                                             offset["rotation"][2].get<double>() );
+            aMate.hasOffset = true;
         }
     }
 }

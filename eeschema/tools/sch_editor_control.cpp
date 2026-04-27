@@ -25,6 +25,7 @@
 #include "tools/sch_editor_control.h"
 
 #include "multi_board_mbs_refresh.h"
+#include "multi_board_peer_open.h"
 #include "dialogs/dialog_mbs_refresh.h"
 #include <eda_base_frame.h>
 #include <project/project_file.h>
@@ -858,9 +859,13 @@ namespace
  * can't delegate to the manager's SpawnPeerSchematicEditor /
  * SpawnPeerPcbEditor. This replicates the same logic directly,
  * usable from any frame that sits on the container PROJECT.
+ *
+ * Forwarded to as `OpenSubProjectInPeerEditor` (see
+ * `eeschema/multi_board_peer_open.h`) so callers outside this TU
+ * (currently the module-block properties dialog) can reuse the path.
  */
-bool spawnPeerEditor( EDA_DRAW_FRAME* aFrame, const KIID& aSubProjectUuid,
-                      bool aWantPcb )
+bool spawnPeerEditorImpl( EDA_DRAW_FRAME* aFrame, const KIID& aSubProjectUuid,
+                          bool aWantPcb )
 {
     PROJECT_FILE& containerFile = aFrame->Prj().GetProjectFile();
 
@@ -950,6 +955,13 @@ bool spawnPeerEditor( EDA_DRAW_FRAME* aFrame, const KIID& aSubProjectUuid,
 } // anonymous namespace
 
 
+bool OpenSubProjectInPeerEditor( EDA_DRAW_FRAME* aFrame, const KIID& aSubProjectUuid,
+                                 bool aWantPcb )
+{
+    return spawnPeerEditorImpl( aFrame, aSubProjectUuid, aWantPcb );
+}
+
+
 int SCH_EDITOR_CONTROL::MbsOpenSubProjectSchematic( const TOOL_EVENT& aEvent )
 {
     KIID uuid = pickSubProjectUuid( m_frame, _( "Open Sub-Board Schematic" ) );
@@ -957,7 +969,7 @@ int SCH_EDITOR_CONTROL::MbsOpenSubProjectSchematic( const TOOL_EVENT& aEvent )
     if( uuid == niluuid )
         return 0;
 
-    if( !spawnPeerEditor( m_frame, uuid, /*aWantPcb=*/false ) )
+    if( !spawnPeerEditorImpl( m_frame, uuid, /*aWantPcb=*/false ) )
     {
         wxMessageBox( _( "Failed to open the selected sub-board's schematic." ),
                       _( "Open Failed" ), wxOK | wxICON_ERROR, m_frame );
@@ -974,7 +986,7 @@ int SCH_EDITOR_CONTROL::MbsOpenSubProjectPcb( const TOOL_EVENT& aEvent )
     if( uuid == niluuid )
         return 0;
 
-    if( !spawnPeerEditor( m_frame, uuid, /*aWantPcb=*/true ) )
+    if( !spawnPeerEditorImpl( m_frame, uuid, /*aWantPcb=*/true ) )
     {
         wxMessageBox( _( "Failed to open the selected sub-board's PCB." ),
                       _( "Open Failed" ), wxOK | wxICON_ERROR, m_frame );

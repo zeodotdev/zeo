@@ -41,6 +41,40 @@ in the current code path. M5.2 (replace directory walk with explicit
 parent-project ref) will let both suppression paths share a single
 lookup.
 
+### Refresh-placement preview UX (P1)
+
+**Today:** when the user runs Refresh, ADD_BLOCK changes are committed
+immediately at `nextFreeSlot(screen)` positions. New blocks pop into
+existence wherever the auto-layout decided.
+
+**Desired:** mirror the "Update PCB from Schematic" pattern — newly-
+added blocks attach to the cursor in a transparent/preview state, the
+user clicks once to drop them as a group at their chosen location.
+Optionally drag to reposition before clicking.
+
+**Mechanism:**
+- `ApplyMbsRefreshChanges` gains an `aInteractivePlacement` flag (or a
+  separate "preview-then-place" entry point).
+- In that mode, ADD_BLOCK still creates the block + pins, but the block
+  gets `IS_NEW | IS_MOVING` flags and is *not* committed.
+- After apply finishes, hand the new-blocks selection to the move tool;
+  user clicks once to drop, or Esc to cancel.
+- Existing changes (REMOVE / RENAME / etc.) still commit immediately —
+  only ADD_BLOCK gets the preview treatment.
+
+**Files:** `eeschema/multi_board_mbs_refresh.cpp` ApplyMbsRefreshChanges,
+`eeschema/dialogs/dialog_mbs_refresh.cpp` apply path,
+`eeschema/tools/sch_editor_control.cpp` RefreshMbsFromSubProjects.
+
+Estimate: ~1 session.
+
+### Properties dialog polish (P2)
+
+The new `DIALOG_MODULE_BLOCK_PROPERTIES` (eeschema/dialogs/) currently
+uses a hand-rolled wxFlexGridSizer layout — works but not in KiCad's
+standard wxFormBuilder format. Rewrite using a `.fbp` + matching `_base`
+class once the field set is settled. ~30 min.
+
 ### Cross-board verification (P1)
 
 The "real" multi-board ERC and the one new DRC check.

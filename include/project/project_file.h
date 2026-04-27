@@ -24,6 +24,7 @@
 
 #include <common.h> // needed for wxstring hash template
 #include <kiid.h>
+#include <math/vector3.h>
 #include <project/board_project_settings.h>
 #include <settings/json_settings.h>
 #include <settings/nested_settings.h>
@@ -215,6 +216,98 @@ struct KICOMMON_API MB_CROSS_BOARD_NET
         return uuid == aOther.uuid && name == aOther.name && endpoints == aOther.endpoints;
     }
 };
+
+/**
+ * Role a CUSTOM_MATE plays in the M6.D mate solver.
+ *
+ * Custom mates layer on top of the auto-derived (from `MB_CROSS_BOARD_NET`)
+ * mates produced by the 3D viewer's `BuildMateGraph` pass:
+ *
+ *   - PRIMARY  : forces this pair as the primary mate on its board edge,
+ *                overriding the auto pin-count heuristic;
+ *   - SECONDARY: alignment-check only — does not place, just contributes
+ *                a residual to the DRC report;
+ *   - DISABLED : drops a matching auto-derived mate so it is not used at
+ *                all (handy when auto picks the wrong primary).
+ */
+enum class CUSTOM_MATE_ROLE
+{
+    PRIMARY,
+    SECONDARY,
+    DISABLED
+};
+
+
+/**
+ * Class of physical thing being mated. Drives placement heuristics:
+ * CONNECTOR uses pad-centroid + dominant-side flip; non-CONNECTOR types
+ * skip electrical-side detection and rely on the optional offset.
+ */
+enum class CUSTOM_MATE_TYPE
+{
+    CONNECTOR,      ///< Default; references electrical connector pads.
+    MOUNTING_HOLE,  ///< No electrical net — through-hole / standoff mate.
+    ALIGNMENT       ///< Generic mechanical alignment (fiducial, corner, post).
+};
+
+
+/**
+ * One end of a CUSTOM_MATE: identifies a footprint on a sub-project.
+ * Footprints are addressed by reference because their KIID can change
+ * across sub-board re-saves; reference is what the user sees and edits.
+ */
+struct KICOMMON_API CUSTOM_MATE_END
+{
+    KIID     subProjectUuid;  ///< Which sub-project the footprint lives on
+    wxString footprintRef;    ///< Footprint reference (e.g. "J1", "MH1")
+
+    bool operator==( const CUSTOM_MATE_END& aOther ) const
+    {
+        return subProjectUuid == aOther.subProjectUuid && footprintRef == aOther.footprintRef;
+    }
+};
+
+
+/**
+ * User-declared mate that overrides or augments the auto-derived mate
+ * graph (M6.D-phase-2). Lives in container `.kicad_pro` under
+ * `multi_board.assembly_3d.mates[]` — survives sub-project re-edits and
+ * is project-scoped, not schematic-scoped (mating is an assembly fact,
+ * not an electrical fact).
+ */
+struct KICOMMON_API CUSTOM_MATE
+{
+    KIID                uuid;
+    CUSTOM_MATE_ROLE    role;
+    CUSTOM_MATE_TYPE    type;
+    CUSTOM_MATE_END     endA;
+    CUSTOM_MATE_END     endB;
+
+    /// True when an offset override is present. Without it the solver
+    /// applies the auto-computed pose; with it, the solver applies
+    /// (auto-pose) ∘ (offset translation, then offset rotation).
+    bool                hasOffset;
+    VECTOR3D            offsetTranslation;   ///< mm (X, Y, Z)
+    VECTOR3D            offsetRotation;      ///< degrees (X, Y, Z)
+
+    CUSTOM_MATE() :
+            role( CUSTOM_MATE_ROLE::PRIMARY ),
+            type( CUSTOM_MATE_TYPE::CONNECTOR ),
+            hasOffset( false ),
+            offsetTranslation( 0.0, 0.0, 0.0 ),
+            offsetRotation( 0.0, 0.0, 0.0 )
+    {}
+
+    bool operator==( const CUSTOM_MATE& aOther ) const
+    {
+        return uuid == aOther.uuid && role == aOther.role && type == aOther.type
+               && endA == aOther.endA && endB == aOther.endB
+               && hasOffset == aOther.hasOffset
+               && offsetTranslation == aOther.offsetTranslation
+               && offsetRotation == aOther.offsetRotation;
+    }
+};
+
 
 /**
  * For storing PcbNew MRU paths of various types
@@ -427,6 +520,19 @@ public:
         m_crossBoardNets = std::move( aNets );
     }
 
+    /**
+     * Custom (user-declared) mate overrides for the 3D assembly
+     * solver. See `CUSTOM_MATE` for the layered-on-top semantics.
+     */
+    std::vector<CUSTOM_MATE>& GetCustomMates() { return m_customMates; }
+
+    const std::vector<CUSTOM_MATE>& GetCustomMates() const { return m_customMates; }
+
+    void SetCustomMates( std::vector<CUSTOM_MATE> aMates )
+    {
+        m_customMates = std::move( aMates );
+    }
+
     /// Convenience accessor for the MBS schematic filename referenced by
     /// this container project. Empty when the MBS hasn't been created yet.
     const wxString& GetMbsFileName() const { return m_mbsFileName; }
@@ -632,6 +738,10 @@ private:
     /// For container projects: cross-board nets extracted from the MBS.
     std::vector<MB_CROSS_BOARD_NET> m_crossBoardNets;
 
+    /// For container projects: user-declared mates that override or
+    /// augment the auto-derived assembly mate graph (M6.D-phase-2).
+    std::vector<CUSTOM_MATE> m_customMates;
+
     /// For container projects: filename of the multi-board schematic.
     wxString m_mbsFileName;
 
@@ -688,5 +798,11 @@ void from_json( const nlohmann::json& aJson, MB_CROSS_BOARD_NET_ENDPOINT& aEp );
 void to_json( nlohmann::json& aJson, const MB_CROSS_BOARD_NET& aNet );
 
 void from_json( const nlohmann::json& aJson, MB_CROSS_BOARD_NET& aNet );
+
+// Specializations for CUSTOM_MATE
+
+void to_json( nlohmann::json& aJson, const CUSTOM_MATE& aMate );
+
+void from_json( const nlohmann::json& aJson, CUSTOM_MATE& aMate );
 
 #endif

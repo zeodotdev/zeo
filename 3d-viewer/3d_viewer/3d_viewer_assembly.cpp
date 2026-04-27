@@ -458,6 +458,102 @@ std::vector<MATE_EDGE> ASSEMBLY_3D_MANAGER::BuildMateGraph() const
         }
     }
 
+    // M6.D-phase-2: layer user-declared CUSTOM_MATE overrides on top
+    // of the auto-derived pair set. Apply order matters — DISABLED
+    // erases first, then PRIMARY / SECONDARY decorate / create. Two
+    // PRIMARY overrides on the same canonical pair → last-wins; two
+    // PRIMARY on the same edge but different pairs → both keep
+    // forcedPrimary=true and `PickPrimaryPair` picks via UUID
+    // tiebreak (CONFLICT case the panel can warn on).
+    std::map<PairKey, std::vector<KIID>> primaryOverridesByKey;
+
+    for( const CUSTOM_MATE& cm : projectFile.GetCustomMates() )
+    {
+        auto itA = instBySubProj.find( cm.endA.subProjectUuid );
+        auto itB = instBySubProj.find( cm.endB.subProjectUuid );
+
+        if( itA == instBySubProj.end() || itB == instBySubProj.end() )
+            continue;   // sub-board not loaded; surface as MISSING in UI
+
+        // Validate footprint exists on its board so we don't seat a
+        // child against a stale ref. CONNECTOR-type custom mates also
+        // need the footprint to resolve to a real PAD list later in
+        // PlaceChildOnParent — same lookup, same gate.
+        if( !findFootprintByRef( itA->second->board.get(), cm.endA.footprintRef ) )
+            continue;
+
+        if( !findFootprintByRef( itB->second->board.get(), cm.endB.footprintRef ) )
+            continue;
+
+        // Canonical ordering matches the auto-derive loop above so a
+        // user-declared mate keys to the same pair as the auto one.
+        KIID     instA = itA->second->uuid;
+        KIID     instB = itB->second->uuid;
+        wxString refA  = cm.endA.footprintRef;
+        wxString refB  = cm.endB.footprintRef;
+
+        bool swap = ( instB < instA ) || ( instA == instB && refB < refA );
+
+        if( swap )
+        {
+            std::swap( instA, instB );
+            std::swap( refA, refB );
+        }
+
+        PairKey key{ instA, refA, instB, refB };
+
+        switch( cm.role )
+        {
+        case CUSTOM_MATE_ROLE::DISABLED:
+            pairMap.erase( key );
+            break;
+
+        case CUSTOM_MATE_ROLE::PRIMARY:
+        case CUSTOM_MATE_ROLE::SECONDARY:
+        {
+            auto    [it, inserted] = pairMap.emplace( key, MATE_PAIR{} );
+
+            if( inserted )
+            {
+                it->second.instanceA     = instA;
+                it->second.instanceB     = instB;
+                it->second.footprintRefA = refA;
+                it->second.footprintRefB = refB;
+                // pinCount=1 lets the pair survive in the edge graph
+                // even when it's the only inhabitant of a fresh edge
+                // (mounting hole between two boards with no shared
+                // electrical net).
+                it->second.pinCount      = 1;
+            }
+
+            it->second.customMateUuid = cm.uuid;
+            it->second.nonElectrical  = ( cm.type != CUSTOM_MATE_TYPE::CONNECTOR );
+            it->second.hasOffset      = cm.hasOffset;
+            it->second.offsetTx       = cm.offsetTranslation.x;
+            it->second.offsetTy       = cm.offsetTranslation.y;
+            it->second.offsetTz       = cm.offsetTranslation.z;
+            it->second.offsetRx       = cm.offsetRotation.x;
+            it->second.offsetRy       = cm.offsetRotation.y;
+            it->second.offsetRz       = cm.offsetRotation.z;
+
+            if( cm.role == CUSTOM_MATE_ROLE::PRIMARY )
+            {
+                it->second.forcedPrimary = true;
+                it->second.alignmentOnly = false;
+                primaryOverridesByKey[key].push_back( cm.uuid );
+            }
+            else
+            {
+                it->second.alignmentOnly = true;
+                // SECONDARY does NOT force primary — the auto-derived
+                // pair (or another forcedPrimary on the same edge)
+                // still wins primary selection.
+            }
+            break;
+        }
+        }
+    }
+
     // Aggregate connector mate pairs into board edges.
     using EdgeKey = std::tuple<KIID, KIID>;
     std::map<EdgeKey, MATE_EDGE> edgeMap;
@@ -492,10 +588,42 @@ const MATE_PAIR* ASSEMBLY_3D_MANAGER::PickPrimaryPair( const MATE_EDGE& aEdge ) 
     if( aEdge.pairs.empty() )
         return nullptr;
 
-    const MATE_PAIR* best = &aEdge.pairs.front();
+    // Phase-2 precedence: any pair with `forcedPrimary` (a custom
+    // PRIMARY override) wins over the pinCount heuristic. Two forced
+    // primaries on the same edge → CONFLICT — pick the lower
+    // customMateUuid for determinism; the panel surfaces a warning.
+    const MATE_PAIR* forced = nullptr;
 
     for( const MATE_PAIR& p : aEdge.pairs )
     {
+        if( p.alignmentOnly )
+            continue;   // SECONDARY custom mates never win primary
+
+        if( !p.forcedPrimary )
+            continue;
+
+        if( !forced || p.customMateUuid < forced->customMateUuid )
+            forced = &p;
+    }
+
+    if( forced )
+        return forced;
+
+    // No custom override: highest pinCount wins; ties broken by
+    // canonical (refA, refB) ordering for determinism across re-opens.
+    const MATE_PAIR* best = nullptr;
+
+    for( const MATE_PAIR& p : aEdge.pairs )
+    {
+        if( p.alignmentOnly )
+            continue;   // skip SECONDARY-only pairs even without a forced primary
+
+        if( !best )
+        {
+            best = &p;
+            continue;
+        }
+
         if( p.pinCount > best->pinCount )
             best = &p;
         else if( p.pinCount == best->pinCount
@@ -690,8 +818,12 @@ bool ASSEMBLY_3D_MANAGER::PlaceChildOnParent( const BOARD_3D_INSTANCE& aParent,
     const VECTOR2I padCentroidA = padCentroid( fpA );
     const VECTOR2I padCentroidB = padCentroid( fpB );
 
-    const bool padAOnTop = dominantSide( fpA );
-    const bool padBOnTop = dominantSide( fpB );
+    // Phase-2: non-electrical mates (mounting holes, alignment posts)
+    // skip dominant-side detection — there's no copper to vote on.
+    // Default to "opposite-side" semantics (no child flip), with the
+    // user's optional offset taking responsibility for fine alignment.
+    const bool padAOnTop = aPrimary.nonElectrical ? true  : dominantSide( fpA );
+    const bool padBOnTop = aPrimary.nonElectrical ? false : dominantSide( fpB );
 
     // Account for parent's existing flip when projecting its mate side
     // into world frame. Phase-1 only supports 0° / 180° X-rotation, so
@@ -741,6 +873,21 @@ bool ASSEMBLY_3D_MANAGER::PlaceChildOnParent( const BOARD_3D_INSTANCE& aParent,
 
     aChild.position = aParent.position + SFVEC3F( dx, dy, dz );
 
+    // M6.D-phase-2: apply the custom mate's offset override on top of
+    // the auto-computed pose. Translation is added in the parent's
+    // world frame; rotation is added to the child's Euler set so the
+    // existing pose math (Z·Y·X) composes the deltas naturally.
+    if( aPrimary.hasOffset )
+    {
+        aChild.position += SFVEC3F( static_cast<float>( aPrimary.offsetTx ),
+                                    static_cast<float>( aPrimary.offsetTy ),
+                                    static_cast<float>( aPrimary.offsetTz ) );
+
+        aChild.rotation += SFVEC3F( static_cast<float>( aPrimary.offsetRx ),
+                                    static_cast<float>( aPrimary.offsetRy ),
+                                    static_cast<float>( aPrimary.offsetRz ) );
+    }
+
     return true;
 }
 
@@ -780,7 +927,92 @@ bool ASSEMBLY_3D_MANAGER::CanMateConnectors() const
     if( !m_project )
         return false;
 
-    return !m_project->GetProjectFile().GetCrossBoardNets().empty();
+    return !m_project->GetProjectFile().GetCrossBoardNets().empty()
+           || !m_project->GetProjectFile().GetCustomMates().empty();
+}
+
+
+// ========== M6.D-phase-2 Custom Mate API ==========
+
+namespace
+{
+
+// Returns an empty vector reference for the no-project case so callers
+// can iterate without null-checking. Function-local static is safe and
+// avoids lifetime gymnastics — the empty vector outlives every caller.
+const std::vector<CUSTOM_MATE>& emptyCustomMates()
+{
+    static const std::vector<CUSTOM_MATE> kEmpty;
+    return kEmpty;
+}
+
+} // namespace
+
+
+const std::vector<CUSTOM_MATE>& ASSEMBLY_3D_MANAGER::GetCustomMates() const
+{
+    if( !m_project )
+        return emptyCustomMates();
+
+    return m_project->GetProjectFile().GetCustomMates();
+}
+
+
+KIID ASSEMBLY_3D_MANAGER::AddCustomMate( const CUSTOM_MATE& aMate )
+{
+    if( !m_project )
+        return KIID( 0 );
+
+    PROJECT_FILE& pf = m_project->GetProjectFile();
+
+    if( !pf.IsMultiBoardContainer() )
+        return KIID( 0 );
+
+    CUSTOM_MATE stored = aMate;
+
+    // Auto-assign a UUID if the caller passed a null one. Callers that
+    // care about the UUID (e.g. UI rebinding after add) should read
+    // the return value rather than the input mate.
+    if( stored.uuid == KIID( 0 ) )
+        stored.uuid = KIID();
+
+    pf.GetCustomMates().push_back( stored );
+
+    return stored.uuid;
+}
+
+
+bool ASSEMBLY_3D_MANAGER::UpdateCustomMate( const CUSTOM_MATE& aMate )
+{
+    if( !m_project )
+        return false;
+
+    auto& mates = m_project->GetProjectFile().GetCustomMates();
+    auto  it    = std::find_if( mates.begin(), mates.end(),
+                                [&]( const CUSTOM_MATE& m ) { return m.uuid == aMate.uuid; } );
+
+    if( it == mates.end() )
+        return false;
+
+    *it = aMate;
+    return true;
+}
+
+
+bool ASSEMBLY_3D_MANAGER::RemoveCustomMate( const KIID& aMateUuid )
+{
+    if( !m_project )
+        return false;
+
+    auto& mates = m_project->GetProjectFile().GetCustomMates();
+    auto  it    = std::find_if( mates.begin(), mates.end(),
+                                [&]( const CUSTOM_MATE& m ) { return m.uuid == aMateUuid; } );
+
+    if( it == mates.end() )
+        return false;
+
+    mates.erase( it );
+    return true;
 }
 
 

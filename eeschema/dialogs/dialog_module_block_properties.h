@@ -24,36 +24,49 @@
 #include <dialog_shim.h>
 
 class SCH_MODULE_BLOCK;
+class SCH_EDIT_FRAME;
+class WX_GRID;
+class wxNotebook;
 class wxTextCtrl;
+class wxButton;
+class wxCommandEvent;
 
 
 /**
  * Properties editor for a SCH_MODULE_BLOCK in the multi-board schematic
- * editor. Exposes the user-editable fields (display name, MBS reference,
- * size) and shows the immutable sub-project metadata (componentRef,
- * subProjectPath) as read-only context.
- *
- * Pin layout is owned by the refresh flow, so pins are not editable here;
- * they're shown as a count for orientation.
+ * editor. Mirrors `DIALOG_SYMBOL_PROPERTIES` shape — wxNotebook with a
+ * General tab (fields grid + geometry + source link) and a Pin Functions
+ * tab (read-only pin enumeration). Footprint / attributes / library
+ * sections from the symbol dialog are intentionally omitted because they
+ * have no analogue for module blocks (the connector lives on the
+ * sub-project; pins are managed by refresh).
  */
 class DIALOG_MODULE_BLOCK_PROPERTIES : public DIALOG_SHIM
 {
 public:
-    DIALOG_MODULE_BLOCK_PROPERTIES( wxWindow* aParent, SCH_MODULE_BLOCK* aBlock );
+    DIALOG_MODULE_BLOCK_PROPERTIES( SCH_EDIT_FRAME* aFrame, SCH_MODULE_BLOCK* aBlock );
+    ~DIALOG_MODULE_BLOCK_PROPERTIES() override;
 
     bool TransferDataToWindow() override;
     bool TransferDataFromWindow() override;
 
 private:
+    void onOpenSourceSchematic( wxCommandEvent& aEvent );
+
+    SCH_EDIT_FRAME*   m_frame;
     SCH_MODULE_BLOCK* m_block;
 
-    wxTextCtrl*       m_displayName;
-    wxTextCtrl*       m_mbsReference;
-    wxTextCtrl*       m_componentRef;     ///< read-only
-    wxTextCtrl*       m_subProjectPath;   ///< read-only
+    wxNotebook*       m_notebook;
+
+    // General tab
+    WX_GRID*          m_fieldsGrid;
     wxTextCtrl*       m_widthMm;
     wxTextCtrl*       m_heightMm;
-    wxTextCtrl*       m_pinCount;         ///< read-only
+    wxTextCtrl*       m_sourceSchPath;   ///< read-only display of resolved .kicad_sch
+    wxButton*         m_openSourceBtn;
+
+    // Pin Functions tab
+    WX_GRID*          m_pinGrid;
 };
 
 #endif // DIALOG_MODULE_BLOCK_PROPERTIES_H

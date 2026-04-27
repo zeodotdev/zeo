@@ -54,6 +54,8 @@
 #include <sch_marker.h>
 #include <sch_sheet.h>
 #include <sch_sheet_pin.h>
+#include <sch_module_block.h>
+#include <sch_module_pin.h>
 #include <sch_text.h>
 #include <schematic.h>
 #include <symb_transforms_utils.h>
@@ -705,6 +707,20 @@ bool SCH_SCREEN::IsTerminalPoint( const VECTOR2I& aPosition, int aLayer ) const
 
         if( sheetPin && sheetPin->IsConnected( aPosition ) )
             return true;
+
+        // Module block pins are wire endpoints just like sheet pins —
+        // without this branch, clicking on a module pin during wire
+        // draw fails to terminate and the user has to double-click.
+        for( SCH_ITEM* item : Items().Overlapping( SCH_MODULE_BLOCK_T, aPosition ) )
+        {
+            SCH_MODULE_BLOCK* block = static_cast<SCH_MODULE_BLOCK*>( item );
+
+            for( SCH_MODULE_PIN* modPin : block->GetPins() )
+            {
+                if( modPin->IsConnected( aPosition ) )
+                    return true;
+            }
+        }
 
         break;
 

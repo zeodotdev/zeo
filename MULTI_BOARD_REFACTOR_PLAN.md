@@ -16,36 +16,30 @@ in priority order.
 Organized by area then priority. **P0** = blocks user workflows,
 **P1** = important for parity, **P2** = polish / nice-to-have.
 
-### MBS editor — broken edit operations (P0, do first)
+### MBS editor — broken edit operations ✓ done (2026-04-26)
 
-User-confirmed regressions / gaps when interacting with module blocks
-in the MBS editor. Each is a missing `case SCH_MODULE_BLOCK_T:` in a
-tool handler that already handles `SCH_SHEET_T`. Detail in M8.6.
-
-| Item | File | Notes |
+| Item | Where | Status |
 |---|---|---|
-| Delete on a module block does nothing | `eeschema/sch_collectors.cpp` | Add `SCH_MODULE_BLOCK_T` to `DeletableItems` |
-| Rotate / Mirror are no-ops | `eeschema/tools/sch_edit_tool.cpp` | Mirror SCH_SHEET case; block has Rotate / MirrorH/V overrides ready |
-| No drag-corner resize | `eeschema/tools/sch_point_editor.cpp` | Add `MODULE_BLOCK_POINT_EDIT_BEHAVIOR` mirroring `SHEET_POINT_EDIT_BEHAVIOR` |
-| Moving block breaks wire on the *other* end | `eeschema/tools/sch_move_tool.cpp` | Extend `m_specialCaseSheetPins` to include module pins |
-| Wire requires double-click to terminate on module pin | trace through `SCH_LINE::CanConnect` + autostart detection | Earlier fix may have regressed; reproduce + verify |
+| Delete on a module block | `eeschema/sch_collectors.cpp` `DeletableItems` | ✓ added `SCH_MODULE_BLOCK_T` |
+| Rotate / Mirror | `eeschema/tools/sch_edit_tool.cpp` + `SCH_MODULE_BLOCK::Rotate / MirrorHorizontally / MirrorVertically` impls | ✓ block stays axis-aligned, position translates around centre, pins follow via `Move` |
+| Drag-corner resize | `eeschema/tools/sch_point_editor.cpp` new `MODULE_BLOCK_POINT_EDIT_BEHAVIOR` | ✓ corner + edge handles, pin re-snap via `ConstrainOnEdge`, connected-wire pinning |
+| Move-tool wire pinning on the *other* end | `eeschema/tools/sch_move_tool.{h,cpp}` new `m_specialCaseModulePins` map | ✓ four sites parallel to `m_specialCaseSheetPins` |
+| Wire one-click termination on module pin | `eeschema/sch_screen.cpp` `IsTerminalPoint` | ✓ added module-pin branch — was the missing piece (the earlier `SCH_LINE::CanConnect` fix was correct but the wire-draw tool calls `IsTerminalPoint` to decide termination, not `CanConnect`) |
 
-Estimate: ~1 session, all five together (same pattern repeated). Lands
-visible-impact fixes for the MBS editor.
+### Sub-project ERC / DRC noise suppression ✓ done (2026-04-26)
 
-### Sub-project ERC / DRC noise suppression (P0)
-
-Without these, sub-project ERC and DRC are unusable on multi-board
-projects — every cross-board connector pin / pad lights up red. Detail
-in M8.9.1 / M8.9.2.
-
-| Item | File | Notes |
+| Item | Where | Status |
 |---|---|---|
-| ERC suppress no-driver / single-driver / floating-input on cross-board pins | `eeschema/erc/erc.cpp` + test providers | Consult `Prj().GetContainerProject()->GetCrossBoardNets()` |
-| DRC suppress single-pad-net / unconnected on cross-board pads | `pcbnew/drc/drc_test_provider_*.cpp` | Wire up the existing `CONNECTIVITY_DATA::IsCrossBoardConnectorPad` (currently dead code at `connectivity_data.cpp:1255`) |
+| ERC suppress no-driver / power-not-driven on cross-board pins | `eeschema/erc/erc.cpp` `TestPinToPin` | ✓ build cross-board endpoint set at start; mark net as having an external driver when any pin matches |
+| DRC suppress unconnected ratsnest on cross-board pads | `pcbnew/drc/drc_test_provider_connectivity.cpp` | ✓ build cross-board endpoint set at start; skip `DRCE_UNCONNECTED_ITEMS` when source or target pad is on a cross-board connector |
+| Helper: discover cross-board endpoints for a sub-project | new in `common/project/multi_board_scan.{h,cpp}` | ✓ `MultiBoardCollectCrossBoardEndpointsForSubProject` walks up looking for the container, returns set of `(componentRef, pinNumber)` |
 
-Estimate: ~1-2 sessions. The DRC half is mechanical (just wire up an
-existing helper). The ERC half needs a small new check provider.
+**Note:** the suppression deliberately uses the new helper (directory
+walk) instead of `CONNECTIVITY_DATA::IsCrossBoardConnectorPad`, since
+the latter requires `m_multiBoardContext` which is never set anywhere
+in the current code path. M5.2 (replace directory walk with explicit
+parent-project ref) will let both suppression paths share a single
+lookup.
 
 ### Cross-board verification (P1)
 
@@ -68,16 +62,18 @@ What remains:
 | Item | What | Notes |
 |---|---|---|
 | Rotation / flip in pose matrix (M6.C-phase-2 #1) | `3d_viewer_assembly.cpp::RedrawAll` | Currently translation-only; ignored rotation in `BOARD_3D_INSTANCE`. Two-line change + lighting verify. |
-| Connector mating refinements (M6.D) | `MateConnectors` / `CalculateMatingOffset` | Real pad-normal alignment, board-flip respect, component-height-aware Z gap. Highest visible-feature ROI. |
+| Auto-mate from cross-board nets (M6.D-phase-1) | `MateConnectors` rewrite as `BuildMateGraph` + `SolveMatePoses` | Primary-mate-wins, derived from `MULTI_BOARD_SCAN`. Highest visible-feature ROI. |
+| Custom mate declarations + UI (M6.D-phase-2) | `multi_board.assembly_3d.mates` schema + `PANEL_3D_ASSEMBLY` Mates tree | Mounting-hole mates, manual primary override, disable. Persists in container `.kicad_pro`. |
 | Real-geometry collision (M6.E) | new — broad / narrow phase per-component | Today is AABB board-outline only. Use `S3D_CACHE` meshes with per-component AABB then OBB / GJK. |
 | STEP assembly export (M6.F) | finish stub `ExportAssemblySTEP` | Compose per-board STEP shapes into a STEP compound with `TopLoc_Location`. |
-| Persist assembly state (M6.G) | `multi_board.assembly_3d` in container `.kicad_pro` | Per-instance transform + visibility, key by sub-project UUID. |
+| Persist assembly state (M6.G) | `multi_board.assembly_3d` in container `.kicad_pro` | Per-instance transform + visibility, key by sub-project UUID. Schema shared with M6.D-phase-2. |
 | Raytracer multi-instance (M6.C-phase-2 #2) | `create_scene.cpp` | Today the raytracer falls through to single-board. Scene-graph composition. Lowest-priority of these. |
 | Camera auto-frame on open | wire `GetAssemblyBoundingBox()` into initial camera fit | Polish. |
 
-Estimate: M6.D is ~1 session, M6.E is ~1-2, M6.F is ~1-2, M6.G is ~1.
-~4-6 sessions total for the visible features (D/E/F/G); raytracer +
-model-cache dedup + parallel load are deferrable.
+Estimate: M6.D-phase-1 is ~1-2 sessions, phase-2 is ~1-2, M6.E is
+~1-2, M6.F is ~1-2, M6.G is ~1. ~5-9 sessions total for the visible
+features (D/E/F/G); raytracer + model-cache dedup + parallel load are
+deferrable.
 
 ### Project-level integration (P1)
 
@@ -160,9 +156,10 @@ further work:
    verification.
 2. **Week 2:** Cross-board verification (M5.8 ERC + M8.4 binding DRC +
    M5.5/M5.6 DRC port + stubs). Closes the verification story.
-3. **Week 3:** 3D viewer M6.D + M6.E (mating + collision). Highest
-   Altium-parity visible feature.
-4. **Week 4:** 3D viewer M6.F + M6.G (STEP export + persistence).
+3. **Week 3:** 3D viewer M6.D-phase-1 (auto mate from nets) + M6.E
+   (collision). Highest Altium-parity visible feature.
+4. **Week 4:** 3D viewer M6.D-phase-2 (custom mates UI) + M6.F
+   (STEP export) + M6.G (persistence — schema shared with phase-2).
 5. **Week 5:** M7.1 container library.
 6. **Week 6:** M7.2 settings + M8.3 fold sync + UX polish bundle.
 7. **Week 7:** M8.0/M8.1/M8.2 editor UI integration.
@@ -627,7 +624,8 @@ next repaint shows the new position. 3D models load per-renderer
    is read but ignored by `RedrawAll`. Adding a rotation composition
    to the pose matrix is a two-line change, but verifying it behaves
    with the lighting/normal paths is its own small investment — land
-   together with M6.D connector-mating.
+   together with M6.D-phase-1 connector-mating (the auto-mate solver
+   needs rotation for the same-side-flip path).
 2. **Raytracer multi-instance** — the raytracer path falls through to
    rendering only the active instance (single-board via
    `m_3d_render`). Full integration requires
@@ -648,22 +646,206 @@ next repaint shows the new position. 3D models load per-renderer
    hidden, the framebuffer is uncleared (no first pass runs). Add a
    "nothing to render → still clear+background" branch.
 
-### M6.D — Connector mating refinements (~1 session)
+### M6.D — Connector mating
 
-The basic mating in M6.A aligns centres and stacks in Z by board
-thickness + 5 mm. This stage makes it plausible for real hardware.
+The basic mating shipped in M6.A aligns centres and stacks in Z by
+board thickness + 5 mm. M6.D delivers Altium-parity mating in two
+phases: phase-1 derives mate pairs automatically from existing MBS
+cross-board nets; phase-2 layers explicit user-declared mates on top.
 
-1. Mate along pad normals: for a connector pair, compute each pad's
-   surface normal (accounting for board flip) and rotate the second
-   board so the normals are anti-parallel.
-2. Respect board flip: if one sub-board has its connector on the
-   bottom layer, flip the second board 180° about X/Y before mating.
-3. Component-height-aware Z gap: read the connector's 3D model bounds
-   (when available) instead of the 5 mm fallback, so board-to-board
-   headers vs. FPC cables both mate correctly.
-4. Multi-endpoint nets: for nets with >2 endpoints (e.g. a GND plane
-   bridging three boards), mate the first pair and leave the third
-   as-is (user can custom-position, or we pick a heuristic later).
+**Constraint model (both phases): primary-mate-wins.** Each board
+edge in the mate graph has one *primary* mate that fully constrains
+the child board's 6DOF. Additional mates on the same edge become
+*alignment checks* — their residual (translation/rotation error
+against the primary) is reported but never re-solved. This matches
+how Altium MBA, SolidWorks PCB, and mechanical CAD assembly trees
+handle over-constrained graphs in practice; spanning-tree and
+least-squares variants are research-grade and not pursued.
+
+#### M6.D-phase-1 — Auto-derived mates from cross-board nets (~1-2 sessions)
+
+**Source of mates:** every `MB_CROSS_BOARD_NET` endpoint pair implies
+a connector mate. The connector is *implicitly identified* as the
+parent footprint of each endpoint pad — no tagging needed.
+
+1. **Build mate-pair candidates** from `MULTI_BOARD_SCAN`:
+   - For each `MB_CROSS_BOARD_NET` with ≥2 endpoints, group endpoints
+     into board-pair buckets keyed by
+     `(subProjectUuid_A, footprintRef_A, subProjectUuid_B, footprintRef_B)`.
+   - Each bucket is one *connector mate pair*; its weight = total
+     endpoint count (pins) across all nets that landed in it.
+   - Multi-endpoint nets (≥3 endpoints) decompose into all pairwise
+     combinations; primary-mate-wins picks the strongest per edge.
+2. **Build the board mate graph:**
+   - Nodes = `BOARD_3D_INSTANCE`s.
+   - Edges = aggregated mate-pair candidates per board pair, with
+     weight = sum of constituent connector-mate weights.
+3. **Pick anchor + place children:**
+   - Anchor = highest-degree node, ties broken by UUID order
+     (deterministic across re-opens).
+   - BFS from anchor; for each newly visited board, the edge back to
+     an already-placed neighbour is the *primary mate edge*. Within
+     that edge, the highest-weight connector mate pair is the
+     *primary mate pair*.
+   - All other connector mate pairs on the edge → `alignment-check`
+     set, surfaced as residuals (consumed by M6.F collision panel).
+4. **Compute pose for the primary mate pair:**
+   - **Center-of-mate** = mean of pad positions in the mate group
+     (per board, in board-local coords).
+   - **Mate side** for each connector = majority of its pads' copper
+     layer (`F_Cu` vs `B_Cu`); mixed/through-hole connectors fall
+     through to "F_Cu" with a logged warning (custom-mate override
+     in phase-2 closes this loophole).
+   - **Pad normal** = board's outward face normal in world coords,
+     factoring the parent board's existing rotation/flip.
+   - **Same-side handling:** if both connectors are on the same side
+     (F↔F or B↔B), flip the child board 180° about its in-plane axis
+     orthogonal to the connector's pin row so the connector faces the
+     parent. Opposite-side (F↔B): no flip.
+   - **Z gap:** prefer the larger of the two connectors' 3D-model
+     `boundingBox.max.z`; fall back to 5 mm only if no model is
+     available. Saved as a per-mate property so a user nudge sticks.
+   - **Pose composition:** `T(parent_world) · T(parent_mate_center)
+     · R(face_align) · F(flip?) · T(-child_mate_center) ·
+     S(child_scale)` — same shape as the existing assembly pose
+     pipeline, slotted into `MateConnectors` -> `ComputeMatePose`.
+5. **Output:** writes per-instance pose into `BOARD_3D_INSTANCE` and
+   stores the residual list on the manager. `RedrawAll` already
+   consumes per-instance pose; no renderer changes needed.
+6. **Toggle semantics:** "Mate connectors" off → boards return to
+   FLAT layout (or persisted user pose, once M6.G lands). On →
+   `ComputeMates()` recomputes and overwrites poses. User-set offsets
+   while mate is on are preserved as `manual_offset` deltas applied
+   *after* the auto solve (the same hook custom mates will reuse).
+
+**Files touched (phase-1):**
+
+- `3d-viewer/3d_viewer/3d_viewer_assembly.{h,cpp}` —
+  - replace single-pair `MateConnectors` with `BuildMateGraph()`
+    + `SolveMatePoses()` two-phase pipeline;
+  - add `MATE_PAIR`, `MATE_EDGE`, `MATE_RESIDUAL` POD structs in the
+    header;
+  - extend `BOARD_3D_INSTANCE` with `manual_offset` (translation +
+    rotation) applied post-solve.
+- `pcbnew/multi_board/` (read-only consumer) — no schema change;
+  pulls `MULTI_BOARD_SCAN` results that already exist.
+
+**Edge cases worth listing in the implementation:**
+
+- Connector with no 3D model → 5 mm fallback gap, log once per mate.
+- Connector pad on `Edge.Cuts` only (card-edge connector) → treat as
+  same-side as the dominant copper layer.
+- Cross-board net with one endpoint on a non-loaded sub-board (load
+  failure) → mate pair dropped, surface as residual not crash.
+- Cycles in the mate graph (A↔B, B↔C, A↔C) → BFS visits each board
+  once; the unused edge becomes an alignment-check residual.
+
+**Deliverable:** opening any container with cross-board nets shows
+auto-mated boards in the right relative pose without any user
+configuration. Toggle off → flat layout. Residuals reported in the
+log; UI surfacing comes with M6.F.
+
+#### M6.D-phase-2 — Custom mate declarations + UI (~1-2 sessions)
+
+Phase-1 covers the common case (every cross-board net carries
+mateable connectors). Phase-2 adds the escape hatches Altium-parity
+demands: non-electrical mates, manual primary override, and disable.
+
+**When custom mates are needed:**
+
+1. Mounting holes / standoffs / alignment posts — no electrical net,
+   but mechanically constrain the assembly.
+2. Two equal-pin-count connectors between the same boards — phase-1's
+   weight tiebreaker is arbitrary; user picks which is primary.
+3. Card-edge / cable harnesses where the auto pad-normal heuristic
+   gives the wrong face.
+4. Disable a redundant or wrong auto-mate without touching the
+   schematic.
+
+**Data model — container `.kicad_pro` extension:**
+
+```
+multi_board.assembly_3d.mates: [
+  {
+    uuid:     <KIID>,
+    role:     PRIMARY | SECONDARY | DISABLED,
+    end_a:    { sub_project: <KIID>, footprint_ref: "J1",
+                pin_range: [1..10] | null /* whole footprint */ },
+    end_b:    { sub_project: <KIID>, footprint_ref: "J2",
+                pin_range: [1..10] | null },
+    type:     CONNECTOR | MOUNTING_HOLE | ALIGNMENT,
+    offset:   { translation: vec3, rotation: vec3 } | null
+  }, ...
+]
+```
+
+Custom mates live in the container project file, not the MBS sheet
+— they're an assembly fact, not a schematic fact. Auto-derived mates
+remain transient (recomputed every open) so re-running phase-1 stays
+cheap.
+
+**Solver merge in `BuildMateGraph()`:**
+
+1. Build auto mate-pair set (phase-1).
+2. Apply custom mates as overrides:
+   - `DISABLED` → drop the matching auto mate (matched by
+     `(footprint_ref_a, footprint_ref_b)` tuple).
+   - `PRIMARY` → marks this mate as forced-primary on its edge,
+     overriding the pin-count heuristic.
+   - `SECONDARY` → adds to alignment-check set (no placement effect,
+     just residual tracking).
+   - Custom mates with `type ≠ CONNECTOR` and no auto match → add as
+     fresh edges.
+3. `offset` (when present) is applied *after* the auto-computed
+   pose, so a user nudge sticks across re-solves.
+
+**UI in `PANEL_3D_ASSEMBLY` — new "Mates" section** (added below the
+existing instance list / mating toggle):
+
+- **Tree view** grouped by board edge (e.g., "MAIN ↔ IO"). Each
+  edge expands to its mate pairs, annotated with:
+  - source: AUTO or CUSTOM
+  - role: PRIMARY / SECONDARY / DISABLED
+  - status: SATISFIED, RESIDUAL <Δmm, Δ°>, MISSING (footprint not
+    found), CONFLICT (two custom PRIMARY on same edge)
+- **Per-row actions:** Mark primary, Disable, Edit offset, Delete
+  (custom only).
+- **"+ Add custom mate" button** → modal flow:
+  1. Pick board A → footprint A (drop-down filtered to footprints
+     on that board).
+  2. Pick board B → footprint B.
+  3. Type (Connector / Mounting hole / Alignment) and role default.
+  4. Apply → solver recomputes.
+- **Pick-from-3D gesture** (nice-to-have, not required for v1):
+  right-click footprint in canvas → "Start custom mate" → click
+  partner footprint to complete.
+
+**Validation rules surfaced as panel warnings:**
+
+- Two `PRIMARY` custom mates on the same board edge → CONFLICT;
+  solver picks the lower UUID and warns.
+- Custom mate references a footprint that no longer exists on its
+  sub-board → MISSING; row stays in the list (so the user can fix
+  the ref) but is skipped in the solver.
+- Mate creates a graph cycle that BFS can't resolve → CYCLE warning;
+  the back-edge becomes an alignment-check (same as phase-1).
+
+**Files touched (phase-2):**
+
+- `include/project/project_file.h` — add `multi_board.assembly_3d`
+  sub-block (also used by M6.G persistence — coordinate the schema).
+- `common/project/project_file.cpp` — JSON read/write for the
+  custom-mates list.
+- `3d-viewer/3d_viewer/3d_viewer_assembly.{h,cpp}` — extend the
+  graph-merge step in `BuildMateGraph()`; load/save round-trip on
+  frame open/close.
+- `3d-viewer/3d_viewer/panel_3d_assembly.{h,cpp}` — new "Mates"
+  tree view + add/edit dialogs.
+
+**Deliverable:** users can override any auto-mated edge, declare
+mates between mounting holes (no schematic involvement), and disable
+auto-mates that picked the wrong primary. Persists across container
+re-open.
 
 ### M6.E — Collision detection: real geometry (~1-2 sessions)
 
@@ -700,8 +882,10 @@ composes N of those into a single STEP compound.
 ### M6.G — Persistence + polish (~1 session)
 
 1. Persist assembly state (per-instance transform + visibility +
-   transparency) in the container `.kicad_pro` under
-   `multi_board.assembly_3d` — key by sub-project UUID so rename-safe.
+   transparency + manual mate offsets) in the container `.kicad_pro`
+   under `multi_board.assembly_3d` — key by sub-project UUID so
+   rename-safe. Schema is shared with M6.D-phase-2's `mates[]` block;
+   land the schema once, then both stages read/write it.
 2. Restore on frame open.
 3. Default initial layout: FLAT with 20 mm gaps (matches current
    `LoadProjectBoards` behaviour), overridden by persisted state.
@@ -711,16 +895,19 @@ composes N of those into a single STEP compound.
 ### M6 dependencies + order
 
 ```
-M5.1 (sub-project board loader) ──► M6.A ──► M6.B ──► M6.C ──┬─► M6.D
+M5.1 (sub-project board loader) ──► M6.A ──► M6.B ──► M6.C ──┬─► M6.D-phase-1 ──► M6.D-phase-2
                                                               ├─► M6.E
                                                               ├─► M6.F
-                                                              └─► M6.G
+                                                              └─► M6.G ◄──── shared schema with M6.D-phase-2
 ```
 
-M6.A is blocked on M5.1 (the shared board loader). M6.D/E/F/G are
-independent after M6.C and can be scheduled by priority. M6.D is
-highest signal per unit effort — mates board-to-board headers, which
-is the single most visible Altium-parity feature.
+M6.A is blocked on M5.1 (the shared board loader). M6.D-phase-1, M6.E,
+M6.F are independent after M6.C and can be scheduled by priority.
+M6.D-phase-1 is highest signal per unit effort — mates board-to-board
+headers automatically from existing MBS connections, which is the
+single most visible Altium-parity feature. M6.D-phase-2 (custom mates)
+shares its persistence schema with M6.G, so they want to land within
+the same week if possible to avoid schema migration churn.
 
 ### M6 testable outcomes
 
@@ -728,12 +915,19 @@ is the single most visible Altium-parity feature.
 - The 3D viewer opens showing every sub-board laid out flat, each
   with its own 3D models / silkscreen / copper. (M6.C)
 - Toggle "Mate connectors": boards snap at connector pairs with
-  correct flip handling. (M6.D)
+  correct flip handling, primary-mate-wins per board edge, residuals
+  reported. (M6.D-phase-1)
+- Open the "Mates" tree in `PANEL_3D_ASSEMBLY`: every auto-derived
+  mate is listed; user can declare a mounting-hole mate or override
+  the auto-picked primary; choices persist across re-open.
+  (M6.D-phase-2)
 - Run collision check: components overlapping show highlighted;
-  status panel lists the overlapping refs. (M6.E)
+  status panel lists the overlapping refs *and* unsatisfied mate
+  residuals from M6.D. (M6.E)
 - Export STEP: the resulting file opens in FreeCAD / SolidWorks with
   sub-board assemblies as named children. (M6.F)
-- Close and re-open the project: assembly positions persist. (M6.G)
+- Close and re-open the project: assembly positions, custom mates,
+  and per-instance visibility persist. (M6.G)
 
 ---
 

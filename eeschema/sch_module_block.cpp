@@ -22,6 +22,7 @@
 #include "sch_module_pin.h"
 
 #include <bitmaps.h>
+#include <core/mirror.h>
 #include <geometry/geometry_utils.h>
 #include <layer_ids.h>
 #include <trigo.h>
@@ -159,6 +160,57 @@ void SCH_MODULE_BLOCK::Move( const VECTOR2I& aDelta )
     // Keep child pins locked to the block's edges.
     for( SCH_MODULE_PIN* pin : m_pins )
         pin->Move( aDelta );
+}
+
+
+void SCH_MODULE_BLOCK::MirrorHorizontally( int aCenter )
+{
+    int dx = m_pos.x;
+
+    MIRROR( m_pos.x, aCenter );
+    m_pos.x -= m_size.x;
+    dx -= m_pos.x;   // (dx, 0) is the move vector for this transform
+
+    for( SCH_MODULE_PIN* pin : m_pins )
+        pin->MirrorHorizontally( aCenter );
+}
+
+
+void SCH_MODULE_BLOCK::MirrorVertically( int aCenter )
+{
+    int dy = m_pos.y;
+
+    MIRROR( m_pos.y, aCenter );
+    m_pos.y -= m_size.y;
+    dy -= m_pos.y;
+
+    for( SCH_MODULE_PIN* pin : m_pins )
+        pin->MirrorVertically( aCenter );
+}
+
+
+void SCH_MODULE_BLOCK::Rotate( const VECTOR2I& aCenter, bool aRotateCCW )
+{
+    RotatePoint( m_pos, aCenter, aRotateCCW ? ANGLE_90 : ANGLE_270 );
+    RotatePoint( &m_size.x, &m_size.y, aRotateCCW ? ANGLE_90 : ANGLE_270 );
+
+    // 90° rotation flips the size vector sign; normalize back to a
+    // top-left + positive-extent representation so HitTest etc. keep
+    // working unchanged.
+    if( m_size.x < 0 )
+    {
+        m_pos.x += m_size.x;
+        m_size.x = -m_size.x;
+    }
+
+    if( m_size.y < 0 )
+    {
+        m_pos.y += m_size.y;
+        m_size.y = -m_size.y;
+    }
+
+    for( SCH_MODULE_PIN* pin : m_pins )
+        pin->Rotate( aCenter, aRotateCCW );
 }
 
 

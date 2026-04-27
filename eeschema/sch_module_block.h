@@ -122,9 +122,16 @@ public:
 
     void Move( const VECTOR2I& aDelta ) override;
 
-    void MirrorHorizontally( int aCenter ) override {}
-    void MirrorVertically( int aCenter ) override {}
-    void Rotate( const VECTOR2I& aCenter, bool aRotateCCW ) override {}
+    /**
+     * Rotation / mirror semantics: the block stays axis-aligned and
+     * keeps its width/height. We only translate the top-left corner
+     * around the requested center, then move pins by the same delta.
+     * Refresh relays pins on the block edges anyway, so per-pin
+     * orientation tracking would be wasted work.
+     */
+    void MirrorHorizontally( int aCenter ) override;
+    void MirrorVertically( int aCenter ) override;
+    void Rotate( const VECTOR2I& aCenter, bool aRotateCCW ) override;
 
     bool HitTest( const VECTOR2I& aPosition, int aAccuracy = 0 ) const override;
     bool HitTest( const BOX2I& aRect, bool aContained, int aAccuracy = 0 ) const override;

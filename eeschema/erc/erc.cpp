@@ -38,6 +38,7 @@
 #include <sch_pin.h>
 #include <project_sch.h>
 #include <project/project_file.h>
+#include <project/multi_board_scan.h>
 #include <project/net_settings.h>
 #include <sch_bus_entry.h>
 #include <sch_edit_frame.h>
@@ -984,6 +985,37 @@ int ERC_TESTER::TestPinToPin()
 {
     int errors = 0;
 
+    // Multi-board context: pins on a connector that participate in a
+    // cross-board net are driven from another sub-project, so suppress
+    // no-driver / single-driver markers on them. Empty set when this
+    // project isn't a sub-project of any container.
+    std::set<std::pair<wxString, wxString>> crossBoardEndpoints;
+
+    if( m_schematic )
+    {
+        wxString proPath = m_schematic->Project().GetProjectFullName();
+
+        if( !proPath.IsEmpty() )
+        {
+            crossBoardEndpoints = MultiBoardCollectCrossBoardEndpointsForSubProject(
+                    wxFileName( proPath ) );
+        }
+    }
+
+    auto isCrossBoardPin = [&]( SCH_PIN* aPin ) -> bool
+    {
+        if( crossBoardEndpoints.empty() || !aPin )
+            return false;
+
+        SYMBOL* sym = aPin->GetParentSymbol();
+
+        if( !sym )
+            return false;
+
+        wxString ref = sym->GetRef( nullptr, false );
+        return crossBoardEndpoints.count( { ref, aPin->GetNumber() } ) > 0;
+    };
+
     for( const std::pair<NET_NAME_CODE_CACHE_KEY, std::vector<CONNECTION_SUBGRAPH*>> net : m_nets )
     {
         using iterator_t = std::vector<ERC_SCH_PIN_CONTEXT>::iterator;
@@ -1197,7 +1229,25 @@ int ERC_TESTER::TestPinToPin()
             }
         }
 
-        if( needsDriver.Pin() && !hasDriver && !has_noconnect )
+        // If any pin on this net is a cross-board endpoint, the driver
+        // lives on another sub-project board and reaches us through the
+        // physical inter-board connector. Don't flag as undriven here;
+        // the MBS-level ERC owns the boundary check (M5.8).
+        bool hasCrossBoardDriver = false;
+
+        if( !crossBoardEndpoints.empty() )
+        {
+            for( const ERC_SCH_PIN_CONTEXT& ctx : pins )
+            {
+                if( isCrossBoardPin( ctx.Pin() ) )
+                {
+                    hasCrossBoardDriver = true;
+                    break;
+                }
+            }
+        }
+
+        if( needsDriver.Pin() && !hasDriver && !has_noconnect && !hasCrossBoardDriver )
         {
             int err_code = ispowerNet ? ERCE_POWERPIN_NOT_DRIVEN : ERCE_PIN_NOT_DRIVEN;
 

@@ -40,6 +40,8 @@
 #include <sch_line.h>
 #include <sch_bitmap.h>
 #include <sch_sheet.h>
+#include <sch_module_block.h>
+#include <sch_module_pin.h>
 #include <sch_textbox.h>
 #include <sch_table.h>
 #include <sch_sheet_pin.h>
@@ -52,6 +54,7 @@ static const std::vector<KICAD_T> pointEditorTypes = { SCH_SHAPE_T,
                                                        SCH_TEXTBOX_T,
                                                        SCH_TABLECELL_T,
                                                        SCH_SHEET_T,
+                                                       SCH_MODULE_BLOCK_T,
                                                        SCH_ITEM_LOCATE_GRAPHIC_LINE_T,
                                                        SCH_BITMAP_T };
 
@@ -917,6 +920,170 @@ private:
 };
 
 
+/**
+ * Point editor for SCH_MODULE_BLOCK. Mirrors SHEET_POINT_EDIT_BEHAVIOR
+ * with two simplifications: no GetNoConnects equivalent on blocks, and
+ * pins re-snap to the new edge via SCH_MODULE_PIN::ConstrainOnEdge
+ * after the block resizes (sheets handle this via Resize internals).
+ */
+class MODULE_BLOCK_POINT_EDIT_BEHAVIOR : public POINT_EDIT_BEHAVIOR
+{
+public:
+    MODULE_BLOCK_POINT_EDIT_BEHAVIOR( SCH_MODULE_BLOCK& aBlock, SCH_SCREEN& aScreen ) :
+            m_block( aBlock ),
+            m_screen( aScreen )
+    {
+        for( SCH_MODULE_PIN* pin : m_block.GetPins() )
+        {
+            VECTOR2I pinPos = pin->GetPosition();
+
+            for( SCH_ITEM* item : m_screen.Items().Overlapping( SCH_LINE_T, pinPos ) )
+            {
+                SCH_LINE* line = static_cast<SCH_LINE*>( item );
+
+                if( !line->IsWire() && !line->IsBus() )
+                    continue;
+
+                if( line->GetStartPoint() == pinPos )
+                    m_connectedWires.push_back( { pin, line, STARTPOINT } );
+                else if( line->GetEndPoint() == pinPos )
+                    m_connectedWires.push_back( { pin, line, ENDPOINT } );
+            }
+        }
+    }
+
+    void MakePoints( EDIT_POINTS& aPoints ) override
+    {
+        VECTOR2I topLeft = m_block.GetPosition();
+        VECTOR2I botRight = m_block.GetPosition() + m_block.GetSize();
+
+        aPoints.AddPoint( topLeft );
+        aPoints.AddPoint( VECTOR2I( botRight.x, topLeft.y ) );
+        aPoints.AddPoint( VECTOR2I( topLeft.x, botRight.y ) );
+        aPoints.AddPoint( botRight );
+
+        aPoints.AddLine( aPoints.Point( RECT_TOPLEFT ), aPoints.Point( RECT_TOPRIGHT ) );
+        aPoints.Line( RECT_TOP ).SetConstraint( new EC_PERPLINE( aPoints.Line( RECT_TOP ) ) );
+        aPoints.AddLine( aPoints.Point( RECT_TOPRIGHT ), aPoints.Point( RECT_BOTRIGHT ) );
+        aPoints.Line( RECT_RIGHT ).SetConstraint( new EC_PERPLINE( aPoints.Line( RECT_RIGHT ) ) );
+        aPoints.AddLine( aPoints.Point( RECT_BOTRIGHT ), aPoints.Point( RECT_BOTLEFT ) );
+        aPoints.Line( RECT_BOT ).SetConstraint( new EC_PERPLINE( aPoints.Line( RECT_BOT ) ) );
+        aPoints.AddLine( aPoints.Point( RECT_BOTLEFT ), aPoints.Point( RECT_TOPLEFT ) );
+        aPoints.Line( RECT_LEFT ).SetConstraint( new EC_PERPLINE( aPoints.Line( RECT_LEFT ) ) );
+    }
+
+    bool UpdatePoints( EDIT_POINTS& aPoints ) override
+    {
+        VECTOR2I topLeft = m_block.GetPosition();
+        VECTOR2I botRight = m_block.GetPosition() + m_block.GetSize();
+
+        aPoints.Point( RECT_TOPLEFT ).SetPosition( topLeft );
+        aPoints.Point( RECT_TOPRIGHT ).SetPosition( botRight.x, topLeft.y );
+        aPoints.Point( RECT_BOTLEFT ).SetPosition( topLeft.x, botRight.y );
+        aPoints.Point( RECT_BOTRIGHT ).SetPosition( botRight );
+        return true;
+    }
+
+    void UpdateItem( const EDIT_POINT& aEditedPoint, EDIT_POINTS& aPoints, COMMIT& aCommit,
+                     std::vector<EDA_ITEM*>& aUpdatedItems ) override
+    {
+        VECTOR2I topLeft = aPoints.Point( RECT_TOPLEFT ).GetPosition();
+        VECTOR2I topRight = aPoints.Point( RECT_TOPRIGHT ).GetPosition();
+        VECTOR2I botLeft = aPoints.Point( RECT_BOTLEFT ).GetPosition();
+        VECTOR2I botRight = aPoints.Point( RECT_BOTRIGHT ).GetPosition();
+        VECTOR2I newPos = m_block.GetPosition();
+        VECTOR2I newSize = m_block.GetSize();
+
+        bool editedTopRight = isModified( aEditedPoint, aPoints.Point( RECT_TOPRIGHT ) );
+        bool editedBotLeft = isModified( aEditedPoint, aPoints.Point( RECT_BOTLEFT ) );
+        bool editedBotRight = isModified( aEditedPoint, aPoints.Point( RECT_BOTRIGHT ) );
+
+        if( isModified( aEditedPoint, aPoints.Line( RECT_RIGHT ) ) )
+            editedTopRight = true;
+        else if( isModified( aEditedPoint, aPoints.Line( RECT_BOT ) ) )
+            editedBotLeft = true;
+
+        // Minimum block size — keep some room for the header text.
+        const int minDim = schIUScale.MilsToIU( 1000 );
+        RECTANGLE_POINT_EDIT_BEHAVIOR::PinEditedCorner( aEditedPoint, aPoints, minDim, minDim,
+                                                        topLeft, topRight, botLeft, botRight );
+
+        if( isModified( aEditedPoint, aPoints.Point( RECT_TOPLEFT ) )
+            || isModified( aEditedPoint, aPoints.Point( RECT_TOPRIGHT ) )
+            || isModified( aEditedPoint, aPoints.Point( RECT_BOTRIGHT ) )
+            || isModified( aEditedPoint, aPoints.Point( RECT_BOTLEFT ) ) )
+        {
+            newPos = topLeft;
+            newSize = VECTOR2I( botRight.x - topLeft.x, botRight.y - topLeft.y );
+        }
+        else if( isModified( aEditedPoint, aPoints.Line( RECT_TOP ) ) )
+        {
+            newPos = VECTOR2I( m_block.GetPosition().x, topLeft.y );
+            newSize = VECTOR2I( m_block.GetSize().x, botRight.y - topLeft.y );
+        }
+        else if( isModified( aEditedPoint, aPoints.Line( RECT_LEFT ) ) )
+        {
+            newPos = VECTOR2I( topLeft.x, m_block.GetPosition().y );
+            newSize = VECTOR2I( botRight.x - topLeft.x, m_block.GetSize().y );
+        }
+        else if( isModified( aEditedPoint, aPoints.Line( RECT_BOT ) ) )
+        {
+            newSize = VECTOR2I( m_block.GetSize().x, botRight.y - topLeft.y );
+        }
+        else if( isModified( aEditedPoint, aPoints.Line( RECT_RIGHT ) ) )
+        {
+            newSize = VECTOR2I( botRight.x - topLeft.x, m_block.GetSize().y );
+        }
+
+        for( unsigned i = 0; i < aPoints.LinesSize(); ++i )
+        {
+            if( !isModified( aEditedPoint, aPoints.Line( i ) ) )
+                aPoints.Line( i ).SetConstraint( new EC_PERPLINE( aPoints.Line( i ) ) );
+        }
+
+        // Apply position + size, then re-snap each pin to its closest edge
+        // so resizing doesn't leave pins floating inside the block.
+        if( m_block.GetPosition() != newPos )
+            m_block.SetPosition( newPos );
+
+        if( m_block.GetSize() != newSize )
+            m_block.SetSize( newSize );
+
+        for( SCH_MODULE_PIN* pin : m_block.GetPins() )
+            pin->ConstrainOnEdge( pin->GetPosition(), true );
+
+        // Connected wires follow their pins to wherever the snap landed them.
+        for( auto& [pin, line, endpoint] : m_connectedWires )
+        {
+            VECTOR2I newPinPos = pin->GetPosition();
+            bool     needsUpdate = false;
+
+            if( endpoint == STARTPOINT && line->GetStartPoint() != newPinPos )
+                needsUpdate = true;
+            else if( endpoint == ENDPOINT && line->GetEndPoint() != newPinPos )
+                needsUpdate = true;
+
+            if( needsUpdate )
+            {
+                aCommit.Modify( line, &m_screen );
+
+                if( endpoint == STARTPOINT )
+                    line->SetStartPoint( newPinPos );
+                else
+                    line->SetEndPoint( newPinPos );
+
+                aUpdatedItems.push_back( line );
+            }
+        }
+    }
+
+private:
+    SCH_MODULE_BLOCK& m_block;
+    SCH_SCREEN&       m_screen;
+    std::vector<std::tuple<SCH_MODULE_PIN*, SCH_LINE*, int>> m_connectedWires;
+};
+
+
 void SCH_POINT_EDITOR::makePointsAndBehavior( EDA_ITEM* aItem )
 {
     m_editBehavior = nullptr;
@@ -986,6 +1153,12 @@ void SCH_POINT_EDITOR::makePointsAndBehavior( EDA_ITEM* aItem )
     {
         SCH_SHEET& sheet = static_cast<SCH_SHEET&>( *aItem );
         m_editBehavior = std::make_unique<SHEET_POINT_EDIT_BEHAVIOR>( sheet, *m_frame->GetScreen() );
+        break;
+    }
+    case SCH_MODULE_BLOCK_T:
+    {
+        SCH_MODULE_BLOCK& block = static_cast<SCH_MODULE_BLOCK&>( *aItem );
+        m_editBehavior = std::make_unique<MODULE_BLOCK_POINT_EDIT_BEHAVIOR>( block, *m_frame->GetScreen() );
         break;
     }
     case SCH_BITMAP_T:

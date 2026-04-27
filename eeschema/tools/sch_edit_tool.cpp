@@ -45,6 +45,7 @@
 #include <sch_label.h>
 #include <sch_junction.h>
 #include <sch_marker.h>
+#include <sch_module_block.h>
 #include <sch_rule_area.h>
 #include <sch_pin.h>
 #include <sch_sheet_pin.h>
@@ -63,6 +64,7 @@
 #include <dialogs/dialog_junction_props.h>
 #include <dialogs/dialog_shape_properties.h>
 #include <dialogs/dialog_label_properties.h>
+#include <dialogs/dialog_module_block_properties.h>
 #include <dialogs/dialog_text_properties.h>
 #include <dialogs/dialog_tablecell_properties.h>
 #include <dialogs/dialog_table_properties.h>
@@ -411,6 +413,7 @@ bool SCH_EDIT_TOOL::Init()
         case SCH_SYMBOL_T:
         case SCH_SHEET_T:
         case SCH_SHEET_PIN_T:
+        case SCH_MODULE_BLOCK_T:
         case SCH_TEXT_T:
         case SCH_TEXTBOX_T:
         case SCH_TABLE_T:
@@ -731,7 +734,8 @@ const std::vector<KICAD_T> SCH_EDIT_TOOL::RotatableItems = {
     SCH_SHAPE_T,         SCH_RULE_AREA_T,      SCH_TEXT_T,      SCH_TEXTBOX_T,    SCH_TABLE_T,
     SCH_TABLECELL_T, // will be promoted to parent table(s)
     SCH_LABEL_T,         SCH_GLOBAL_LABEL_T,   SCH_GROUP_T,     SCH_HIER_LABEL_T, SCH_DIRECTIVE_LABEL_T,
-    SCH_FIELD_T,         SCH_SYMBOL_T,         SCH_SHEET_PIN_T, SCH_SHEET_T,      SCH_BITMAP_T,
+    SCH_FIELD_T,         SCH_SYMBOL_T,         SCH_SHEET_PIN_T, SCH_SHEET_T,      SCH_MODULE_BLOCK_T,
+    SCH_BITMAP_T,
     SCH_BUS_BUS_ENTRY_T, SCH_BUS_WIRE_ENTRY_T, SCH_LINE_T,      SCH_JUNCTION_T,   SCH_NO_CONNECT_T
 };
 
@@ -929,6 +933,18 @@ int SCH_EDIT_TOOL::Rotate( const TOOL_EVENT& aEvent )
 
             rotPoint = m_frame->GetNearestHalfGridPosition( sheet->GetRotationCenter() );
             sheet->Rotate( rotPoint, !clockwise );
+
+            break;
+        }
+
+        case SCH_MODULE_BLOCK_T:
+        {
+            // Module blocks stay axis-aligned; rotating around the bbox
+            // centre just translates them in the canvas. Same pattern
+            // as the SCH_SHEET branch but using the bbox centre since
+            // blocks don't expose a custom rotation anchor.
+            rotPoint = m_frame->GetNearestHalfGridPosition( head->GetBoundingBox().Centre() );
+            head->Rotate( rotPoint, !clockwise );
 
             break;
         }
@@ -1165,6 +1181,18 @@ int SCH_EDIT_TOOL::Mirror( const TOOL_EVENT& aEvent )
             noConnects = static_cast<SCH_SHEET*>( item )->GetNoConnects();
 
             // Mirror the sheet on itself. Sheets do not have a anchor point.
+            VECTOR2I mirrorPoint = m_frame->GetNearestHalfGridPosition( item->GetBoundingBox().Centre() );
+
+            if( vertical )
+                item->MirrorVertically( mirrorPoint.y );
+            else
+                item->MirrorHorizontally( mirrorPoint.x );
+
+            break;
+        }
+
+        case SCH_MODULE_BLOCK_T:
+        {
             VECTOR2I mirrorPoint = m_frame->GetNearestHalfGridPosition( item->GetBoundingBox().Centre() );
 
             if( vertical )
@@ -2695,7 +2723,25 @@ void SCH_EDIT_TOOL::EditProperties( EDA_ITEM* aItem )
     }
 
     case SCH_NO_CONNECT_T:
-    case SCH_PIN_T: break;
+    case SCH_PIN_T:
+    case SCH_MODULE_PIN_T: break;
+
+    case SCH_MODULE_BLOCK_T:
+    {
+        SCH_COMMIT commit( m_toolMgr );
+        commit.Modify( aItem, m_frame->GetScreen() );
+
+        DIALOG_MODULE_BLOCK_PROPERTIES dlg( m_frame, static_cast<SCH_MODULE_BLOCK*>( aItem ) );
+
+        if( dlg.ShowModal() == wxID_OK )
+        {
+            commit.Push( _( "Edit Module Block Properties" ) );
+            // Block size may have changed; ask the view to redraw outline + pins.
+            getView()->Update( aItem, KIGFX::GEOMETRY );
+        }
+
+        break;
+    }
 
     case SCH_GROUP_T:
         m_toolMgr->RunAction( ACTIONS::groupProperties, static_cast<EDA_GROUP*>( static_cast<SCH_GROUP*>( aItem ) ) );

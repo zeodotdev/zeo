@@ -115,6 +115,7 @@ const std::vector<KICAD_T> SCH_COLLECTOR::DeletableItems =
     SCH_NO_CONNECT_T,
     SCH_SHEET_T,
     SCH_SHEET_PIN_T,
+    SCH_MODULE_BLOCK_T,
     SCH_SYMBOL_T,
     SCH_FIELD_T,        // Will be hidden
     SCH_BITMAP_T,

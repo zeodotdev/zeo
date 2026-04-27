@@ -27,6 +27,7 @@
 #include <kiid.h>
 #include <wildcards_and_files_ext.h>
 
+#include <wx/dir.h>
 #include <wx/ffile.h>
 #include <wx/log.h>
 #include <wx/regex.h>
@@ -402,6 +403,88 @@ std::map<wxString, std::vector<MULTI_BOARD_PAD_INFO>>
 MultiBoardScanConnectorPads( const wxFileName& aPcbFile )
 {
     return scanConnectorPads( aPcbFile );
+}
+
+
+std::set<std::pair<wxString, wxString>>
+MultiBoardCollectCrossBoardEndpointsForSubProject( const wxFileName& aSubProjectPro )
+{
+    std::set<std::pair<wxString, wxString>> result;
+
+    if( !aSubProjectPro.IsOk() || !aSubProjectPro.FileExists() )
+        return result;
+
+    wxFileName subPro( aSubProjectPro );
+    subPro.Normalize( wxPATH_NORM_ABSOLUTE | wxPATH_NORM_DOTS );
+    wxString subProAbs = subPro.GetFullPath();
+
+    // Walk up looking for a sibling .kicad_pro that lists this sub-project.
+    // Same 6-level cap + heuristic as the existing MBS lookup; M5.2 will
+    // replace it with an explicit parent reference.
+    wxFileName searchDir( subPro );
+    searchDir.SetFullName( wxEmptyString );
+
+    for( int depth = 0; depth < 6 && searchDir.GetPath().Length() > 1; ++depth )
+    {
+        wxArrayString files;
+        wxDir::GetAllFiles( searchDir.GetPath(), &files, wxT( "*.kicad_pro" ),
+                            wxDIR_FILES );
+
+        for( const wxString& candidate : files )
+        {
+            wxFileName candFn( candidate );
+
+            if( candFn.GetFullPath() == subProAbs )
+                continue;
+
+            PROJECT_FILE probe( candidate );
+
+            if( !probe.LoadFromFile() )
+                continue;
+
+            if( !probe.IsMultiBoardContainer() )
+                continue;
+
+            // Find this sub-project in the container's list to get its UUID.
+            KIID matchedUuid;
+            bool matched = false;
+
+            for( const SUB_PROJECT_INFO& info : probe.GetSubProjects() )
+            {
+                wxFileName subRel( info.relativePath );
+
+                if( !subRel.IsAbsolute() )
+                    subRel.MakeAbsolute( candFn.GetPath() );
+
+                subRel.Normalize( wxPATH_NORM_ABSOLUTE | wxPATH_NORM_DOTS );
+
+                if( subRel.GetFullPath() == subProAbs )
+                {
+                    matchedUuid = info.uuid;
+                    matched = true;
+                    break;
+                }
+            }
+
+            if( !matched )
+                continue;
+
+            for( const MB_CROSS_BOARD_NET& net : probe.GetCrossBoardNets() )
+            {
+                for( const MB_CROSS_BOARD_NET_ENDPOINT& ep : net.endpoints )
+                {
+                    if( ep.subProjectUuid == matchedUuid )
+                        result.insert( { ep.componentRef, ep.pinNumber } );
+                }
+            }
+
+            return result;   // first match wins
+        }
+
+        searchDir.RemoveLastDir();
+    }
+
+    return result;
 }
 
 

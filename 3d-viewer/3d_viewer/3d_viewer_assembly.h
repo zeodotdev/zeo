@@ -99,6 +99,54 @@ struct BOARD_3D_INSTANCE
 
 
 /**
+ * One connector mate pair derived from cross-board nets, OR declared
+ * by the user in M6.D-phase-2. Two footprints on two distinct board
+ * instances connected by `pinCount` shared net endpoints.
+ *
+ * The (instanceA, footprintRefA) / (instanceB, footprintRefB) tuples
+ * are stored in canonical order (lower instance UUID first; ties
+ * broken by footprint ref) so the same physical mate keys to the same
+ * MATE_PAIR regardless of which net's endpoint encountered it first.
+ */
+struct MATE_PAIR
+{
+    KIID        instanceA;
+    KIID        instanceB;
+    wxString    footprintRefA;
+    wxString    footprintRefB;
+    int         pinCount;        ///< number of cross-board net endpoints linking these two footprints
+};
+
+
+/**
+ * One edge in the board mate graph: every MATE_PAIR between the same
+ * pair of board instances aggregates into a single MATE_EDGE. The
+ * primary mate pair (highest pinCount) constrains the child board's
+ * 6DOF; secondaries become alignment-check residuals.
+ */
+struct MATE_EDGE
+{
+    KIID                    instanceA;
+    KIID                    instanceB;
+    std::vector<MATE_PAIR>  pairs;
+    int                     totalWeight;     ///< sum of all pairs' pinCount
+};
+
+
+/**
+ * Alignment-check residual reported when a non-primary mate pair on
+ * a board edge can't be perfectly satisfied by the primary pair's
+ * pose (over-constrained). Translation in mm, rotation in degrees.
+ */
+struct MATE_RESIDUAL
+{
+    MATE_PAIR   pair;
+    float       residualMm;       ///< euclidean distance between expected and actual mate-center
+    float       residualDeg;      ///< rotational error (currently zero in phase-1)
+};
+
+
+/**
  * Result of a collision check between two 3D objects.
  */
 struct COLLISION_RESULT
@@ -255,8 +303,15 @@ public:
     // ========== Connector Mating ==========
 
     /**
-     * Auto-align boards at connector pairs.
-     * Uses the cross-board connection definitions from the project.
+     * Auto-mate boards at connector pairs derived from the container
+     * project's `MB_CROSS_BOARD_NET` set. Implements primary-mate-wins:
+     * each board edge's strongest connector pair (most pins) places
+     * the child board; secondary pairs become alignment-check residuals
+     * available via `GetMateResiduals()`.
+     *
+     * Pose model in phase-1: translation + 180° X-flip when both
+     * connectors sit on the same copper side. Arbitrary rotation /
+     * non-electrical mates are M6.D-phase-2.
      */
     void MateConnectors();
 
@@ -264,6 +319,14 @@ public:
      * Check if connectors can be mated.
      */
     bool CanMateConnectors() const;
+
+    /**
+     * Alignment-check residuals from the most recent `MateConnectors()`
+     * pass. Each entry is a non-primary mate pair on some board edge
+     * whose pose doesn't perfectly satisfy the primary's placement —
+     * surface in DRC / collision panel (M6.E).
+     */
+    const std::vector<MATE_RESIDUAL>& GetMateResiduals() const { return m_lastMateResiduals; }
 
     // ========== Collision Detection ==========
 
@@ -369,24 +432,70 @@ public:
 
 private:
     /**
-     * Calculate mating offset for a connector pair, addressed by
-     * component reference + pin number on each side. Matches the
-     * `MB_CROSS_BOARD_NET_ENDPOINT` addressing scheme.
-     */
-    SFVEC3F CalculateMatingOffset( const BOARD_3D_INSTANCE& aBoard1,
-                                    const BOARD_3D_INSTANCE& aBoard2,
-                                    const wxString& aConnector1Ref,
-                                    const wxString& aConnector1Pin,
-                                    const wxString& aConnector2Ref,
-                                    const wxString& aConnector2Pin );
-
-    /**
      * Get the board thickness in mm.
      */
     float GetBoardThickness( const BOARD* aBoard ) const;
 
+    // ========== M6.D-phase-1 mate solver pipeline ==========
+
+    /**
+     * Walk every `MB_CROSS_BOARD_NET` in the container project and
+     * aggregate cross-net endpoints into connector mate pairs, then
+     * those into board edges. Pairs / edges are keyed by canonical
+     * (instance UUID, footprint ref) ordering so the same physical
+     * mate aggregates regardless of net visit order.
+     */
+    std::vector<MATE_EDGE> BuildMateGraph() const;
+
+    /**
+     * BFS-place every reachable instance from a chosen anchor: pick
+     * the highest-degree instance as anchor (UUID tiebreak), seat it
+     * at world origin with identity rotation, then for each newly
+     * visited neighbour place the child via its primary mate pair
+     * (highest `pinCount` on the back-edge). Secondary pairs and
+     * cycle-closing edges become entries in `m_lastMateResiduals`.
+     */
+    void SolveMatePoses( const std::vector<MATE_EDGE>& aEdges );
+
+    /**
+     * Pick the primary mate pair for an edge: the pair with the
+     * highest pinCount; ties broken by canonical (footprintRefA,
+     * footprintRefB) ordering for determinism across re-opens.
+     */
+    const MATE_PAIR* PickPrimaryPair( const MATE_EDGE& aEdge ) const;
+
+    /**
+     * Place @p aChild relative to already-placed @p aParent using the
+     * given primary mate pair. Computes the same-side-flip / opposite-
+     * side rule, sets `aChild.position` and `aChild.rotation`.
+     *
+     * @return true on success; false if endpoints don't resolve to
+     *         valid pads (caller treats as residual / dropped mate).
+     */
+    bool PlaceChildOnParent( const BOARD_3D_INSTANCE& aParent,
+                             BOARD_3D_INSTANCE&       aChild,
+                             const MATE_PAIR&         aPrimary );
+
+    /**
+     * Z gap between mated boards along the primary mate axis. Phase-1:
+     * 5 mm fallback. Future: read from the larger of the two
+     * connectors' 3D-model bounding boxes via `S3D_CACHE`.
+     */
+    float ComputeMateZGap( const BOARD_3D_INSTANCE& aA,
+                           const wxString&          aFootprintRefA,
+                           const BOARD_3D_INSTANCE& aB,
+                           const wxString&          aFootprintRefB ) const;
+
+    /**
+     * Compute the residual of a non-primary mate pair after the
+     * primary placement. Walks the parent + child poses, projects each
+     * connector's pad-center to world coords, and reports the gap.
+     */
+    MATE_RESIDUAL ComputeMateResidual( const MATE_PAIR& aPair ) const;
+
     std::vector<BOARD_3D_INSTANCE>  m_boardInstances;
     std::vector<COLLISION_RESULT>   m_lastCollisions;
+    std::vector<MATE_RESIDUAL>      m_lastMateResiduals;
     ASSEMBLY_STATE                  m_state;
     PROJECT*                        m_project;
 

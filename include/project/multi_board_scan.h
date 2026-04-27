@@ -26,6 +26,8 @@
 #include <wx/string.h>
 
 #include <map>
+#include <set>
+#include <utility>
 #include <vector>
 
 
@@ -88,5 +90,21 @@ KICOMMON_API wxFileName EnsureMbsFile( PROJECT_FILE& aContainer,
  */
 KICOMMON_API wxString MultiBoardPinLabel( const wxString& aRef,
                                           const MULTI_BOARD_PAD_INFO& aPad );
+
+
+/**
+ * Walk up from a sub-project's `.kicad_pro` looking for the enclosing
+ * multi-board container, then collect every (componentRef, pinNumber)
+ * pair on this sub-project that participates in a cross-board net.
+ *
+ * Returns an empty set if no container is found within 6 directory
+ * levels, the container's project file fails to load, or this sub-
+ * project has no cross-board endpoints declared in the container.
+ *
+ * Used by ERC / DRC to suppress no-driver / single-pad-net markers
+ * on connector pins that are wired through the multi-board topology.
+ */
+KICOMMON_API std::set<std::pair<wxString, wxString>>
+MultiBoardCollectCrossBoardEndpointsForSubProject( const wxFileName& aSubProjectPro );
 
 #endif // KICAD_MULTI_BOARD_SCAN_H

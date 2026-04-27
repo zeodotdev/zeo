@@ -139,6 +139,7 @@ set( EESCHEMA_DLGS
     dialogs/dialog_lib_new_symbol_base.cpp
     dialogs/dialog_lib_symbol_properties.cpp
     dialogs/dialog_lib_symbol_properties_base.cpp
+    dialogs/dialog_module_block_properties.cpp
     dialogs/dialog_line_properties.cpp
     dialogs/dialog_line_properties_base.cpp
     dialogs/dialog_mbs_refresh.cpp

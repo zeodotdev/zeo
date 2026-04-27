@@ -23,6 +23,7 @@
 
 #include <board.h>
 #include <common.h>
+#include <footprint.h>
 
 #include <connectivity/connectivity_data.h>
 #include <connectivity/connectivity_algo.h>
@@ -31,6 +32,10 @@
 #include <zone.h>
 #include <drc/drc_item.h>
 #include <drc/drc_test_provider.h>
+#include <project.h>
+#include <project/multi_board_scan.h>
+
+#include <wx/filename.h>
 
 
 /*
@@ -216,6 +221,38 @@ bool DRC_TEST_PROVIDER_CONNECTIVITY::Run()
     ii = 0;
     count = connectivity->GetUnconnectedCount( false );
 
+    // Multi-board context: ratsnest edges that touch a cross-board connector
+    // pad are expected to be unrouted on this board because the net continues
+    // off-board through the connector. Suppress DRCE_UNCONNECTED_ITEMS in
+    // that case. Empty set if this project isn't a sub-project of any
+    // multi-board container.
+    std::set<std::pair<wxString, wxString>> crossBoardEndpoints;
+
+    if( PROJECT* prj = board->GetProject() )
+    {
+        wxString proPath = prj->GetProjectFullName();
+
+        if( !proPath.IsEmpty() )
+        {
+            crossBoardEndpoints = MultiBoardCollectCrossBoardEndpointsForSubProject(
+                    wxFileName( proPath ) );
+        }
+    }
+
+    auto isCrossBoardPad = [&]( BOARD_ITEM* aItem ) -> bool
+    {
+        if( crossBoardEndpoints.empty() || !aItem || aItem->Type() != PCB_PAD_T )
+            return false;
+
+        PAD* pad = static_cast<PAD*>( aItem );
+        FOOTPRINT* fp = pad->GetParentFootprint();
+
+        if( !fp )
+            return false;
+
+        return crossBoardEndpoints.count( { fp->GetReference(), pad->GetNumber() } ) > 0;
+    };
+
     connectivity->RunOnUnconnectedEdges(
             [&]( CN_EDGE& edge )
             {
@@ -228,8 +265,14 @@ bool DRC_TEST_PROVIDER_CONNECTIVITY::Run()
                 wxCHECK( edge.GetSourceNode() && !edge.GetSourceNode()->Dirty(), true );
                 wxCHECK( edge.GetTargetNode() && !edge.GetTargetNode()->Dirty(), true );
 
+                BOARD_ITEM* src = edge.GetSourceNode()->Parent();
+                BOARD_ITEM* tgt = edge.GetTargetNode()->Parent();
+
+                if( isCrossBoardPad( src ) || isCrossBoardPad( tgt ) )
+                    return true;   // skip — net continues off-board
+
                 std::shared_ptr<DRC_ITEM> drcItem = DRC_ITEM::Create( DRCE_UNCONNECTED_ITEMS );
-                drcItem->SetItems( edge.GetSourceNode()->Parent(), edge.GetTargetNode()->Parent() );
+                drcItem->SetItems( src, tgt );
                 reportViolation( drcItem, edge.GetSourceNode()->Pos(), UNDEFINED_LAYER );
 
                 return true;

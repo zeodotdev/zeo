@@ -48,6 +48,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <map>
+#include <queue>
+#include <set>
+#include <tuple>
 
 
 // ========== BOARD_3D_INSTANCE ==========
@@ -102,24 +106,6 @@ FOOTPRINT* findFootprintByRef( BOARD* aBoard, const wxString& aRef )
     return aBoard->FindFootprintByReference( aRef );
 }
 
-
-/**
- * Find the PAD on @p aFootprint addressed by pad number @p aPinNumber.
- * Pad numbers are strings ("1", "A12", "GND") per KiCad convention.
- */
-PAD* findPadByNumber( FOOTPRINT* aFootprint, const wxString& aPinNumber )
-{
-    if( !aFootprint )
-        return nullptr;
-
-    for( PAD* pad : aFootprint->Pads() )
-    {
-        if( pad->GetNumber() == aPinNumber )
-            return pad;
-    }
-
-    return nullptr;
-}
 
 } // namespace
 
@@ -368,111 +354,424 @@ void ASSEMBLY_3D_MANAGER::MateConnectors()
     if( !m_project || m_boardInstances.size() < 2 )
         return;
 
-    PROJECT_FILE& projectFile = m_project->GetProjectFile();
+    m_lastMateResiduals.clear();
 
-    // For each cross-board net with at least two endpoints, anchor the
-    // first endpoint's instance (inst1) and snap the second (inst2)
-    // so the pads physically mate — with the right layer-aware flip
-    // so connectors face each other rather than both pointing the
-    // same way. Endpoints beyond the second are ignored for now;
-    // multi-way nets are M6.D+.
+    // M6.D-phase-1 pipeline: aggregate cross-board nets into a board
+    // mate graph, then BFS-place every reachable instance from the
+    // highest-degree anchor with primary-mate-wins per board edge.
+    // Secondary mate pairs and graph-cycle back-edges become entries
+    // in m_lastMateResiduals (consumed by M6.E DRC panel).
+    std::vector<MATE_EDGE> edges = BuildMateGraph();
+
+    if( edges.empty() )
+        return;
+
+    SolveMatePoses( edges );
+
+    m_state.mateConnectors = true;
+}
+
+
+std::vector<MATE_EDGE> ASSEMBLY_3D_MANAGER::BuildMateGraph() const
+{
+    std::vector<MATE_EDGE> edges;
+
+    if( !m_project )
+        return edges;
+
+    const PROJECT_FILE& projectFile = m_project->GetProjectFile();
+
+    // Index board instances by their sub-project UUID for O(1) lookup
+    // when resolving net endpoints. Multiple instances per sub-project
+    // (cloned boards) are not supported in phase-1 — first-wins.
+    std::map<KIID, const BOARD_3D_INSTANCE*> instBySubProj;
+
+    for( const BOARD_3D_INSTANCE& inst : m_boardInstances )
+    {
+        if( !inst.board )
+            continue;
+
+        instBySubProj.emplace( inst.subProjectUuid, &inst );
+    }
+
+    // Mate-pair key: (instanceA UUID, footprintRefA, instanceB UUID,
+    // footprintRefB) in canonical order so the same physical pair
+    // aggregates regardless of which net's endpoint visited first.
+    using PairKey = std::tuple<KIID, wxString, KIID, wxString>;
+    std::map<PairKey, MATE_PAIR> pairMap;
+
     for( const MB_CROSS_BOARD_NET& net : projectFile.GetCrossBoardNets() )
     {
         if( net.endpoints.size() < 2 )
             continue;
 
-        const MB_CROSS_BOARD_NET_ENDPOINT& ep1 = net.endpoints[0];
-        const MB_CROSS_BOARD_NET_ENDPOINT& ep2 = net.endpoints[1];
-
-        BOARD_3D_INSTANCE* inst1 = nullptr;
-        BOARD_3D_INSTANCE* inst2 = nullptr;
-
-        for( auto& inst : m_boardInstances )
+        // Multi-endpoint nets (≥3 endpoints) decompose into all
+        // pairwise combinations; primary-mate-wins picks the strongest
+        // per board edge, so over-counting connector pin shares across
+        // mate pairs is fine.
+        for( size_t i = 0; i < net.endpoints.size(); i++ )
         {
-            if( inst.subProjectUuid == ep1.subProjectUuid )
-                inst1 = &inst;
-            if( inst.subProjectUuid == ep2.subProjectUuid )
-                inst2 = &inst;
+            for( size_t j = i + 1; j < net.endpoints.size(); j++ )
+            {
+                const MB_CROSS_BOARD_NET_ENDPOINT& epA = net.endpoints[i];
+                const MB_CROSS_BOARD_NET_ENDPOINT& epB = net.endpoints[j];
+
+                if( epA.subProjectUuid == epB.subProjectUuid )
+                    continue;   // same board — not a cross-board mate
+
+                auto itA = instBySubProj.find( epA.subProjectUuid );
+                auto itB = instBySubProj.find( epB.subProjectUuid );
+
+                if( itA == instBySubProj.end() || itB == instBySubProj.end() )
+                    continue;   // sub-board didn't load; mate dropped
+
+                // Canonical ordering: lower instance UUID first; ties
+                // broken by footprint ref. Stable across re-opens.
+                const BOARD_3D_INSTANCE* iA = itA->second;
+                const BOARD_3D_INSTANCE* iB = itB->second;
+                wxString refA = epA.componentRef;
+                wxString refB = epB.componentRef;
+
+                bool swap = ( iB->uuid < iA->uuid )
+                            || ( iA->uuid == iB->uuid && refB < refA );
+
+                if( swap )
+                {
+                    std::swap( iA, iB );
+                    std::swap( refA, refB );
+                }
+
+                PairKey key{ iA->uuid, refA, iB->uuid, refB };
+                auto    [it, inserted] = pairMap.emplace( key, MATE_PAIR{} );
+
+                if( inserted )
+                {
+                    it->second.instanceA     = iA->uuid;
+                    it->second.instanceB     = iB->uuid;
+                    it->second.footprintRefA = refA;
+                    it->second.footprintRefB = refB;
+                    it->second.pinCount      = 0;
+                }
+
+                it->second.pinCount++;
+            }
         }
-
-        if( !inst1 || !inst2 || !inst1->board || !inst2->board )
-            continue;
-
-        FOOTPRINT* fp1 = findFootprintByRef( inst1->board.get(), ep1.componentRef );
-        FOOTPRINT* fp2 = findFootprintByRef( inst2->board.get(), ep2.componentRef );
-
-        if( !fp1 || !fp2 )
-            continue;
-
-        PAD* pad1 = findPadByNumber( fp1, ep1.pinNumber );
-        PAD* pad2 = findPadByNumber( fp2, ep2.pinNumber );
-
-        // Pad positions are in BIU (KiCad 2D space, before Y
-        // inversion). Prefer pad centers; fall back to footprint
-        // anchor when a specific pin can't be resolved.
-        VECTOR2I pos1 = pad1 ? pad1->GetPosition() : fp1->GetPosition();
-        VECTOR2I pos2 = pad2 ? pad2->GetPosition() : fp2->GetPosition();
-
-        // Layer detection: each connector's pad sits on F_Cu (top face
-        // of its board) or B_Cu (bottom face). The connector's
-        // "normal" points away from its board along that face.
-        //   pad1 on F_Cu → connector points +Z from inst1
-        //   pad1 on B_Cu → connector points −Z
-        //   (same for pad2 / inst2)
-        //
-        // For the connectors to physically meet, their normals must
-        // be anti-parallel. Two possibilities:
-        //
-        //   1. Pads on OPPOSITE copper sides already → no flip; stack
-        //      inst2 on the side pad1 points toward.
-        //
-        //   2. Pads on the SAME side → flip inst2 by 180° about X so
-        //      its connector normal inverts. After the flip, pad2's
-        //      local Y mirrors around the board centroid, so the XY
-        //      alignment formula changes sign on Y.
-        const bool pad1OnTop = pad1 ? !pad1->IsOnLayer( B_Cu ) : true;
-        const bool pad2OnTop = pad2 ? !pad2->IsOnLayer( B_Cu ) : true;
-        const bool sameSide  = ( pad1OnTop == pad2OnTop );
-
-        // Thickness + fallback 5 mm connector height. M6.D will read
-        // the connector's 3D-model height from S3D_CACHE.
-        const float thickness1      = GetBoardThickness( inst1->board.get() );
-        const float thickness2      = GetBoardThickness( inst2->board.get() );
-        const float connectorHeight = 5.0f;
-        const float zGap            = thickness1 * 0.5f + thickness2 * 0.5f + connectorHeight;
-
-        float dx = ( pos1.x - pos2.x ) / 1000000.0f;
-        float dy;
-        float dz;
-
-        if( sameSide )
-        {
-            // inst2 flipped 180° about X through its own centroid.
-            // After the flip, pad2's rendered Y uses +pad2.y instead
-            // of −pad2.y (see pose math in RedrawAll), so the XY
-            // alignment with pad1 reverses sign on the pad2 term.
-            dy = ( pos1.y + pos2.y ) / 1000000.0f;
-
-            // Z direction: put inst2 on the side pad1 faces. Because
-            // inst2 was flipped, its F_Cu now sits at the bottom of
-            // the flipped board; the connector on (originally) F_Cu
-            // now points −Z locally → after flip, +Z in world.
-            dz = pad1OnTop ? zGap : -zGap;
-
-            inst2->rotation = SFVEC3F( 180.0f, 0.0f, 0.0f );
-        }
-        else
-        {
-            // Opposite sides — connectors already face each other.
-            dy = ( pos1.y - pos2.y ) / 1000000.0f;
-            dz = pad1OnTop ? zGap : -zGap;
-            inst2->rotation = SFVEC3F( 0.0f, 0.0f, 0.0f );
-        }
-
-        inst2->position = inst1->position + SFVEC3F( dx, dy, dz );
     }
 
-    m_state.mateConnectors = true;
+    // Aggregate connector mate pairs into board edges.
+    using EdgeKey = std::tuple<KIID, KIID>;
+    std::map<EdgeKey, MATE_EDGE> edgeMap;
+
+    for( const auto& [k, p] : pairMap )
+    {
+        EdgeKey ek{ p.instanceA, p.instanceB };
+        auto    [it, inserted] = edgeMap.emplace( ek, MATE_EDGE{} );
+
+        if( inserted )
+        {
+            it->second.instanceA   = p.instanceA;
+            it->second.instanceB   = p.instanceB;
+            it->second.totalWeight = 0;
+        }
+
+        it->second.pairs.push_back( p );
+        it->second.totalWeight += p.pinCount;
+    }
+
+    edges.reserve( edgeMap.size() );
+
+    for( auto& [k, e] : edgeMap )
+        edges.push_back( std::move( e ) );
+
+    return edges;
+}
+
+
+const MATE_PAIR* ASSEMBLY_3D_MANAGER::PickPrimaryPair( const MATE_EDGE& aEdge ) const
+{
+    if( aEdge.pairs.empty() )
+        return nullptr;
+
+    const MATE_PAIR* best = &aEdge.pairs.front();
+
+    for( const MATE_PAIR& p : aEdge.pairs )
+    {
+        if( p.pinCount > best->pinCount )
+            best = &p;
+        else if( p.pinCount == best->pinCount
+                 && std::tie( p.footprintRefA, p.footprintRefB )
+                            < std::tie( best->footprintRefA, best->footprintRefB ) )
+            best = &p;
+    }
+
+    return best;
+}
+
+
+void ASSEMBLY_3D_MANAGER::SolveMatePoses( const std::vector<MATE_EDGE>& aEdges )
+{
+    // Adjacency list keyed by instance UUID.
+    std::map<KIID, std::vector<const MATE_EDGE*>> adj;
+
+    for( const MATE_EDGE& e : aEdges )
+    {
+        adj[e.instanceA].push_back( &e );
+        adj[e.instanceB].push_back( &e );
+    }
+
+    if( adj.empty() )
+        return;
+
+    // Pick anchor: highest degree, ties broken by lowest UUID.
+    KIID  anchorUuid;
+    size_t bestDegree = 0;
+    bool   anchorSet = false;
+
+    for( const auto& [u, edgesAt] : adj )
+    {
+        if( !anchorSet
+            || edgesAt.size() > bestDegree
+            || ( edgesAt.size() == bestDegree && u < anchorUuid ) )
+        {
+            anchorUuid = u;
+            bestDegree = edgesAt.size();
+            anchorSet  = true;
+        }
+    }
+
+    BOARD_3D_INSTANCE* anchor = GetBoardInstance( anchorUuid );
+
+    if( !anchor )
+        return;
+
+    // Seat anchor at world origin with identity rotation. Other
+    // boards' poses are computed relative to it.
+    anchor->position = SFVEC3F( 0.0f, 0.0f, 0.0f );
+    anchor->rotation = SFVEC3F( 0.0f, 0.0f, 0.0f );
+
+    std::set<KIID>  placed;
+    std::queue<KIID> bfs;
+    placed.insert( anchorUuid );
+    bfs.push( anchorUuid );
+
+    while( !bfs.empty() )
+    {
+        KIID u = bfs.front();
+        bfs.pop();
+
+        const BOARD_3D_INSTANCE* parent = GetBoardInstance( u );
+
+        if( !parent )
+            continue;
+
+        for( const MATE_EDGE* edge : adj[u] )
+        {
+            const KIID& v = ( edge->instanceA == u ) ? edge->instanceB : edge->instanceA;
+
+            const MATE_PAIR* primary = PickPrimaryPair( *edge );
+
+            if( !primary )
+                continue;
+
+            if( placed.count( v ) )
+            {
+                // Cycle-closing back-edge: every pair in this edge
+                // becomes a residual since neither endpoint can be
+                // moved without breaking an already-placed mate.
+                for( const MATE_PAIR& p : edge->pairs )
+                    m_lastMateResiduals.push_back( ComputeMateResidual( p ) );
+
+                continue;
+            }
+
+            BOARD_3D_INSTANCE* child = GetBoardInstance( v );
+
+            if( !child )
+                continue;
+
+            // Orient primary so endpoint A == parent (already placed).
+            // The MATE_PAIR is keyed canonically; the parent isn't
+            // necessarily on the A side.
+            MATE_PAIR primaryOriented = *primary;
+
+            if( primaryOriented.instanceA != u )
+            {
+                std::swap( primaryOriented.instanceA, primaryOriented.instanceB );
+                std::swap( primaryOriented.footprintRefA, primaryOriented.footprintRefB );
+            }
+
+            if( PlaceChildOnParent( *parent, *child, primaryOriented ) )
+            {
+                placed.insert( v );
+                bfs.push( v );
+
+                // Secondary pairs on this edge are alignment checks.
+                for( const MATE_PAIR& p : edge->pairs )
+                {
+                    if( &p == primary )
+                        continue;
+
+                    m_lastMateResiduals.push_back( ComputeMateResidual( p ) );
+                }
+            }
+            else
+            {
+                // Failed to resolve pads; entire edge dropped to
+                // residuals so the panel can warn.
+                for( const MATE_PAIR& p : edge->pairs )
+                    m_lastMateResiduals.push_back( ComputeMateResidual( p ) );
+            }
+        }
+    }
+
+    // Boards never reached by BFS (disconnected from the mate graph)
+    // keep whatever position they had from FLAT layout. No residual is
+    // recorded — they're not over-constrained, just disjoint.
+}
+
+
+bool ASSEMBLY_3D_MANAGER::PlaceChildOnParent( const BOARD_3D_INSTANCE& aParent,
+                                               BOARD_3D_INSTANCE&       aChild,
+                                               const MATE_PAIR&         aPrimary )
+{
+    // Resolve both endpoints to (FOOTPRINT, PAD, side).
+    FOOTPRINT* fpA = findFootprintByRef( aParent.board.get(), aPrimary.footprintRefA );
+    FOOTPRINT* fpB = findFootprintByRef( aChild.board.get(),  aPrimary.footprintRefB );
+
+    if( !fpA || !fpB )
+        return false;
+
+    // For the mate "center" we average the pad positions of every
+    // cross-net endpoint that lands on this footprint. For phase-1
+    // we'd need to iterate the project's cross-board nets again to
+    // gather them; instead we use the footprint's own pad centroid
+    // as a proxy — same answer when the connector's pads are the
+    // only ones on the footprint, which is the common case.
+    auto padCentroid = []( FOOTPRINT* fp ) -> VECTOR2I
+    {
+        VECTOR2I sum( 0, 0 );
+        int      count = 0;
+
+        for( PAD* pad : fp->Pads() )
+        {
+            if( !pad->IsOnLayer( F_Cu ) && !pad->IsOnLayer( B_Cu ) )
+                continue;
+
+            sum += pad->GetPosition();
+            count++;
+        }
+
+        if( count == 0 )
+            return fp->GetPosition();
+
+        return VECTOR2I( sum.x / count, sum.y / count );
+    };
+
+    // Side detection: majority of pads on F_Cu vs B_Cu. Mixed (through-
+    // hole) connectors fall through to F_Cu with no warning since
+    // through-hole headers commonly mate from either side; phase-2's
+    // explicit override is the correct fix.
+    auto dominantSide = []( FOOTPRINT* fp ) -> bool   // true = top (F_Cu)
+    {
+        int top = 0, bot = 0;
+
+        for( PAD* pad : fp->Pads() )
+        {
+            if( pad->IsOnLayer( F_Cu ) )
+                top++;
+
+            if( pad->IsOnLayer( B_Cu ) )
+                bot++;
+        }
+
+        return top >= bot;
+    };
+
+    const VECTOR2I padCentroidA = padCentroid( fpA );
+    const VECTOR2I padCentroidB = padCentroid( fpB );
+
+    const bool padAOnTop = dominantSide( fpA );
+    const bool padBOnTop = dominantSide( fpB );
+
+    // Account for parent's existing flip when projecting its mate side
+    // into world frame. Phase-1 only supports 0° / 180° X-rotation, so
+    // a parent rotation of (180, 0, 0) inverts its effective top/bot.
+    const bool parentFlipped =
+            std::abs( aParent.rotation.x - 180.0f ) < 0.1f
+            && std::abs( aParent.rotation.y ) < 0.1f
+            && std::abs( aParent.rotation.z ) < 0.1f;
+
+    const bool parentEffectivelyOnTop = parentFlipped ? !padAOnTop : padAOnTop;
+    const bool sameEffectiveSide      = ( parentEffectivelyOnTop == padBOnTop );
+
+    const float thicknessA      = GetBoardThickness( aParent.board.get() );
+    const float thicknessB      = GetBoardThickness( aChild.board.get()  );
+    const float connectorHeight = ComputeMateZGap( aParent, aPrimary.footprintRefA,
+                                                   aChild,  aPrimary.footprintRefB );
+    const float zGap            = thicknessA * 0.5f + thicknessB * 0.5f + connectorHeight;
+
+    // Pad centroids in mm, in stored (un-Y-inverted) coords.
+    float dx = ( padCentroidA.x - padCentroidB.x ) / 1.0e6f;
+    float dy;
+    float dz;
+
+    if( sameEffectiveSide )
+    {
+        // Child gets flipped 180° about X. After the flip, the child's
+        // pad-centroid Y mirrors around the child's centroid, so the
+        // alignment formula sums Ys instead of subtracting.
+        dy = ( padCentroidA.y + padCentroidB.y ) / 1.0e6f;
+        aChild.rotation = SFVEC3F( parentFlipped ? 0.0f : 180.0f, 0.0f, 0.0f );
+    }
+    else
+    {
+        dy = ( padCentroidA.y - padCentroidB.y ) / 1.0e6f;
+        aChild.rotation = SFVEC3F( parentFlipped ? 180.0f : 0.0f, 0.0f, 0.0f );
+    }
+
+    // Place child on the side parent's connector faces in world.
+    // parentEffectivelyOnTop true → +Z gap; false → −Z gap.
+    dz = parentEffectivelyOnTop ? zGap : -zGap;
+
+    // Parent flip mirrors the child's Y offset: the parent's pad-Y in
+    // stored coords becomes effectively −pad-Y in world Y after the
+    // parent's 180°-X rotation.
+    if( parentFlipped )
+        dy = -dy;
+
+    aChild.position = aParent.position + SFVEC3F( dx, dy, dz );
+
+    return true;
+}
+
+
+float ASSEMBLY_3D_MANAGER::ComputeMateZGap( const BOARD_3D_INSTANCE& aA,
+                                              const wxString&          aFootprintRefA,
+                                              const BOARD_3D_INSTANCE& aB,
+                                              const wxString&          aFootprintRefB ) const
+{
+    // Phase-1: fixed 5 mm fallback. Phase-2 / future work reads
+    // the larger of the two connectors' 3D-model boundingBox.max.z
+    // via S3D_CACHE.
+    (void) aA;
+    (void) aFootprintRefA;
+    (void) aB;
+    (void) aFootprintRefB;
+    return 5.0f;
+}
+
+
+MATE_RESIDUAL ASSEMBLY_3D_MANAGER::ComputeMateResidual( const MATE_PAIR& aPair ) const
+{
+    // Phase-1 placeholder: report pair identity with zero residual.
+    // True residual computation (project both pad centers to world
+    // via final poses, take euclidean distance) lands when we wire
+    // residuals into the M6.E DRC panel.
+    MATE_RESIDUAL r;
+    r.pair        = aPair;
+    r.residualMm  = 0.0f;
+    r.residualDeg = 0.0f;
+    return r;
 }
 
 
@@ -606,41 +905,6 @@ void ASSEMBLY_3D_MANAGER::GetAssemblyBoundingBox( SFVEC3F& aMin, SFVEC3F& aMax )
             aMax.z = std::max( aMax.z, instMax.z );
         }
     }
-}
-
-
-SFVEC3F ASSEMBLY_3D_MANAGER::CalculateMatingOffset( const BOARD_3D_INSTANCE& aBoard1,
-                                                     const BOARD_3D_INSTANCE& aBoard2,
-                                                     const wxString& aConnector1Ref,
-                                                     const wxString& aConnector1Pin,
-                                                     const wxString& aConnector2Ref,
-                                                     const wxString& aConnector2Pin )
-{
-    FOOTPRINT* fp1 = findFootprintByRef( aBoard1.board.get(), aConnector1Ref );
-    FOOTPRINT* fp2 = findFootprintByRef( aBoard2.board.get(), aConnector2Ref );
-
-    if( !fp1 || !fp2 )
-        return SFVEC3F( 0, 0, 0 );
-
-    PAD* pad1 = findPadByNumber( fp1, aConnector1Pin );
-    PAD* pad2 = findPadByNumber( fp2, aConnector2Pin );
-
-    // Prefer pad-center alignment when pads were resolved; fall back to
-    // footprint-anchor alignment otherwise. M6.D will replace this with
-    // pad-normal-aware mating that respects board flip.
-    VECTOR2I pos1 = pad1 ? pad1->GetPosition() : fp1->GetPosition();
-    VECTOR2I pos2 = pad2 ? pad2->GetPosition() : fp2->GetPosition();
-
-    float dx = ( pos1.x - pos2.x ) / 1000000.0f;
-    float dy = ( pos1.y - pos2.y ) / 1000000.0f;
-
-    // Stack with a connector-height Z gap. M6.D will replace the 5 mm
-    // fallback with the connector's actual 3D-model height.
-    float thickness1 = GetBoardThickness( aBoard1.board.get() );
-    float connectorHeight = 5.0f;
-    float dz = thickness1 + connectorHeight;
-
-    return SFVEC3F( dx, dy, dz );
 }
 
 

@@ -45,6 +45,8 @@
 #include <sch_symbol.h>
 #include <sch_sheet.h>
 #include <sch_sheet_pin.h>
+#include <sch_module_block.h>
+#include <sch_module_pin.h>
 #include <sch_line.h>
 #include <sch_connection.h>
 #include <sch_junction.h>
@@ -170,6 +172,7 @@ void SCH_MOVE_TOOL::Reset( RESET_REASON aReason )
             m_changedDragLines.clear();
             m_specialCaseLabels.clear();
             m_specialCaseSheetPins.clear();
+    m_specialCaseModulePins.clear();
             m_hiddenJunctions.clear();
 
             // Clear any preview
@@ -236,6 +239,18 @@ void SCH_MOVE_TOOL::orthoLineDrag( SCH_COMMIT* aCommit, SCH_LINE* line, const VE
 
             case SCH_SHEET_T:
                 for( const auto& pair : m_specialCaseSheetPins )
+                {
+                    if( pair.first->IsConnected( selectedEnd ) )
+                    {
+                        foundPin = true;
+                        break;
+                    }
+                }
+
+                break;
+
+            case SCH_MODULE_BLOCK_T:
+                for( const auto& pair : m_specialCaseModulePins )
                 {
                     if( pair.first->IsConnected( selectedEnd ) )
                     {
@@ -1178,6 +1193,7 @@ void SCH_MOVE_TOOL::initializeMoveOperation( const TOOL_EVENT& aEvent, SCH_SELEC
     m_dragAdditions.clear();
     m_specialCaseLabels.clear();
     m_specialCaseSheetPins.clear();
+    m_specialCaseModulePins.clear();
     aInternalPoints.clear();
     clearNewDragLines();
 
@@ -1510,6 +1526,15 @@ void SCH_MOVE_TOOL::performItemMove( SCH_SELECTION& aSelection, const VECTOR2I& 
             // not exactly follow the splitDelta as the pins are constrained along the sheet
             // edges)
             for( const auto& [pin, lineEnd] : m_specialCaseSheetPins )
+            {
+                if( lineEnd.second && lineEnd.first->HasFlag( STARTPOINT ) )
+                    lineEnd.first->SetStartPoint( pin->GetPosition() );
+                else if( !lineEnd.second && lineEnd.first->HasFlag( ENDPOINT ) )
+                    lineEnd.first->SetEndPoint( pin->GetPosition() );
+            }
+
+            // Same for module-block pins (edge-constrained, parent-owned).
+            for( const auto& [pin, lineEnd] : m_specialCaseModulePins )
             {
                 if( lineEnd.second && lineEnd.first->HasFlag( STARTPOINT ) )
                     lineEnd.first->SetStartPoint( pin->GetPosition() );
@@ -2027,6 +2052,25 @@ void SCH_MOVE_TOOL::getConnectedItems( SCH_ITEM* aOriginalItem, const VECTOR2I& 
 
             break;
 
+        case SCH_MODULE_BLOCK_T:
+            if( aOriginalItem->Type() == SCH_LINE_T )
+            {
+                SCH_LINE* line = static_cast<SCH_LINE*>( aOriginalItem );
+
+                for( SCH_MODULE_PIN* pin : static_cast<SCH_MODULE_BLOCK*>( test )->GetPins() )
+                {
+                    if( pin->IsConnected( aPoint ) )
+                    {
+                        if( pin->IsSelected() )
+                            m_specialCaseModulePins[pin] = { line, line->GetStartPoint() == aPoint };
+
+                        aList.push_back( pin );
+                    }
+                }
+            }
+
+            break;
+
         case SCH_SYMBOL_T:
         case SCH_JUNCTION_T:
         case SCH_NO_CONNECT_T:
@@ -2335,6 +2379,27 @@ void SCH_MOVE_TOOL::getConnectedDragItems( SCH_COMMIT* aCommit, SCH_ITEM* aSelec
                     {
                         // Add a new wire between the sheetpin and the selected item so the
                         // selected item can be dragged.
+                        newWire = makeNewWire( aCommit, pin, aSelectedItem, aPoint, aPoint );
+                        newWire->SetFlags( SELECTED_BY_DRAG | STARTPOINT );
+                        aList.push_back( newWire );
+                    }
+                }
+            }
+
+            break;
+
+        case SCH_MODULE_BLOCK_T:
+            for( SCH_MODULE_PIN* pin : static_cast<SCH_MODULE_BLOCK*>( test )->GetPins() )
+            {
+                if( pin->IsConnected( aPoint ) )
+                {
+                    if( pin->IsSelected() && aSelectedItem->Type() == SCH_LINE_T )
+                    {
+                        SCH_LINE* line = static_cast<SCH_LINE*>( aSelectedItem );
+                        m_specialCaseModulePins[ pin ] = { line, line->GetStartPoint() == aPoint };
+                    }
+                    else if( !newWire )
+                    {
                         newWire = makeNewWire( aCommit, pin, aSelectedItem, aPoint, aPoint );
                         newWire->SetFlags( SELECTED_BY_DRAG | STARTPOINT );
                         aList.push_back( newWire );

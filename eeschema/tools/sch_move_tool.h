@@ -39,6 +39,8 @@ class SCH_SHEET_PIN;
 class SCH_JUNCTION;
 class SCH_SELECTION;
 class SCH_SHEET;
+class SCH_MODULE_PIN;
+class SCH_MODULE_BLOCK;
 class SCH_COMMIT;
 class SCH_ITEM;
 class EE_GRID_HELPER;
@@ -196,6 +198,11 @@ private:
     // A map of sheet pins to the line-endings (true == start) they're connected to.  Sheet
     // pins are constrained in their movement so their attached lines must be too.
     std::map<SCH_SHEET_PIN*, std::pair<SCH_LINE*, bool>> m_specialCaseSheetPins;
+
+    // Same machinery as m_specialCaseSheetPins, but for SCH_MODULE_PIN children of
+    // SCH_MODULE_BLOCK. Module pins are edge-constrained the same way sheet pins are,
+    // so a moved block needs its connected wire ends pinned to the new pin positions.
+    std::map<SCH_MODULE_PIN*, std::pair<SCH_LINE*, bool>> m_specialCaseModulePins;
 };
 
 #endif //KICAD_SCH_MOVE_TOOL_H

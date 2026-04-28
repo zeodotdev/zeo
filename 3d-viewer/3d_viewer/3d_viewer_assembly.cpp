@@ -40,9 +40,12 @@
 #include <footprint.h>
 #include <multi_board/sub_project_board_loader.h>
 #include <pad.h>
+#include <pgm_base.h>
 #include <project.h>
 #include <project/multi_board_scan.h>
 #include <project/project_file.h>
+#include <project_pcb.h>
+#include <settings/settings_manager.h>
 
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -157,6 +160,33 @@ void ASSEMBLY_3D_MANAGER::LoadProjectBoards( PROJECT* aProject )
         // layout / mating / collision checks all skip instances that
         // failed to load. Logging is via the loader's wxLogTrace.
         instance.board = LoadSubProjectBoard( *aProject, sub );
+
+        // Load the sub-project (non-active) so its KIPRJMOD context is
+        // available for 3D-model path resolution. Without this, every
+        // sub-board's models that reference `${KIPRJMOD}` resolve
+        // against the CONTAINER's directory and fail to load. The
+        // PROJECT is owned by SETTINGS_MANAGER, not us, so we just
+        // hold a pointer.
+        if( instance.board && proFile.FileExists() )
+        {
+            SETTINGS_MANAGER& mgr     = Pgm().GetSettingsManager();
+            const wxString    proPath = proFile.GetFullPath();
+
+            // SETTINGS_MANAGER::LoadProject is a no-op if already
+            // loaded (e.g. user has the sub-project open in pcbnew).
+            mgr.LoadProject( proPath, /*aSetActive=*/false );
+            instance.subProject = mgr.GetProject( proPath );
+
+            if( instance.subProject )
+            {
+                // Reference-only so we don't reset design-settings paths
+                // (the BOARD already has them from its file load) — we
+                // just need GetProject() to return something with the
+                // right GetProjectPath() so KIPRJMOD resolution works.
+                instance.board->SetProject( instance.subProject,
+                                            /*aReferenceOnly=*/true );
+            }
+        }
 
         m_boardInstances.push_back( std::move( instance ) );
     }
@@ -1297,7 +1327,18 @@ void ASSEMBLY_3D_MANAGER::InitRenderers( EDA_3D_CANVAS* aCanvas, CAMERA& aCamera
         {
             m_instanceAdapters[i] = std::make_unique<BOARD_ADAPTER>();
             m_instanceAdapters[i]->SetBoard( inst.board.get() );
-            m_instanceAdapters[i]->Set3dCacheManager( a3DCache );
+
+            // Route this sub-board to its OWN S3D_CACHE so 3D-model
+            // paths using `${KIPRJMOD}` resolve against the sub-project
+            // directory (not the container's). Without this, virtual /
+            // project-local 3D models silently fail to load.
+            // Falls back to the container's cache when the sub-project
+            // didn't load (best-effort: stock library models still work).
+            S3D_CACHE* cache = inst.subProject
+                                       ? PROJECT_PCB::Get3DCacheManager( inst.subProject )
+                                       : a3DCache;
+            m_instanceAdapters[i]->Set3dCacheManager( cache );
+
             m_instanceAdapters[i]->m_Cfg = sharedCfg;
             // InitSettings builds layer polygons / BVH containers and is
             // the expensive step (~100-500ms per board). We do it once

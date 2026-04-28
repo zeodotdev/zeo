@@ -57,6 +57,16 @@ struct BOARD_3D_INSTANCE
     std::unique_ptr<BOARD>  board;            ///< Loaded board (owned by the manager); may be null
     wxString                displayName;      ///< Display name for the board
 
+    /// The sub-project's PROJECT loaded via SETTINGS_MANAGER::LoadProject
+    /// (non-active). Owned by SETTINGS_MANAGER, NOT this struct — null
+    /// when the sub-project couldn't be loaded. Populated by
+    /// `LoadProjectBoards` so each instance has its own KIPRJMOD context
+    /// for 3D-model resolution; otherwise sub-board models referencing
+    /// `${KIPRJMOD}/...` would be looked up against the *container's*
+    /// directory and fail (the user-visible bug: virtual / project-local
+    /// 3D models silently disappear in multi-board view).
+    PROJECT*                subProject = nullptr;
+
     // Transform
     SFVEC3F                 position;         ///< Position in mm (X, Y, Z)
     SFVEC3F                 rotation;         ///< Rotation in degrees (X, Y, Z)

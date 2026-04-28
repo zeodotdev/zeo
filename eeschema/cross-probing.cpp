@@ -39,6 +39,7 @@
 #include <string_utils.h>
 #include <netlist_exporters/netlist_exporter_kicad.h>
 #include <project/project_file.h>
+#include <project/multi_board_scan.h>
 #include <project/net_settings.h>
 #include <project_sch.h>
 #include <richio.h>
@@ -621,6 +622,36 @@ void SCH_EDIT_FRAME::SendCrossProbeNetName( const wxString& aNetName )
             // each sub-project schematic.
             if( GetFrameType() == FRAME_MBSCH )
                 Kiway().ExpressMail( FRAME_SCH, MAIL_CROSS_PROBE, packet, this );
+
+            // File-based cross-board fan-out. Without this, peer
+            // sub-project highlights only worked when MBSCH was open
+            // (because MBSCH did the per-endpoint translation as part
+            // of its own MAIL_CROSS_PROBE handler). Sender consults
+            // the container .kicad_pro directly so propagation is
+            // robust to MBSCH being closed.
+            //
+            // Skipped when sender IS the MBSCH because MBSCH does its
+            // own per-endpoint fan-out via crossProbeHighlightNet —
+            // duplicating it here would just emit identical packets.
+            if( GetFrameType() != FRAME_MBSCH )
+            {
+                wxString proPath = Prj().GetProjectFullName();
+
+                if( !proPath.IsEmpty() )
+                {
+                    auto probes = MultiBoardCollectCrossBoardProbesForLocalNet(
+                            wxFileName( proPath ), aNetName );
+
+                    for( const auto& probe : probes )
+                    {
+                        std::string p = TO_UTF8(
+                                MultiBoardFormatCrossBoardProbe( probe ) );
+
+                        Kiway().ExpressMail( FRAME_PCB_EDITOR, MAIL_CROSS_PROBE, p, this );
+                        Kiway().ExpressMail( FRAME_SCH, MAIL_CROSS_PROBE, p, this );
+                    }
+                }
+            }
         }
     }
 }

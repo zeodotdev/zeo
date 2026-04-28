@@ -23,11 +23,13 @@
 #include <pad.h>
 #include <project.h>
 #include <project/multi_board_scan.h>
+#include <string_utils.h>
 
 #include <drc/drc_item.h>
 #include <drc/drc_test_provider.h>
 
 #include <wx/filename.h>
+#include <wx/regex.h>
 
 #include <map>
 #include <vector>
@@ -167,24 +169,56 @@ bool DRC_TEST_PROVIDER_CROSS_BOARD_BINDING::Run()
             continue;
         }
 
-        // 4. Pad's local net name should match the MBS-declared name.
-        wxString padNet = pad->GetNetname();
+        // 4. Pad's local net name should match the MBS-declared name,
+        //    after normalising both sides:
+        //     - `UnescapeString` to convert KiCad's `{slash}`,
+        //       `{tilde}`, etc. tokens back to the raw character (the
+        //       pad's stored net name carries these escape sequences;
+        //       the MBS-side label typically doesn't);
+        //     - leading "/" sheet-path prefix (sub-project labels carry
+        //       it, MBS-side names don't);
+        //     - trailing "_<digits>" auto-disambig suffix that KiCad's
+        //       connection graph appends when several subgraphs share
+        //       a label base. Both the pad and the MBS net can carry
+        //       this suffix independently — comparing literal strings
+        //       produces false-positives like "GND_33" ≠ "GND_7" even
+        //       though both are really "GND".
+        auto normaliseNetName = []( wxString aName ) -> wxString
+        {
+            aName = UnescapeString( aName );
 
-        // Strip any leading "/" — sub-project schematic labels carry the
-        // sheet path prefix; the MBS-side name doesn't.
-        wxString padNetLocal = padNet;
+            if( aName.StartsWith( wxT( "/" ) ) )
+                aName = aName.AfterFirst( '/' );
 
-        if( padNetLocal.StartsWith( wxT( "/" ) ) )
-            padNetLocal = padNetLocal.AfterFirst( '/' );
+            static wxRegEx re( wxT( "_[0-9]+$" ) );
 
-        if( padNetLocal != binding.netName && padNet != binding.netName )
+            if( re.IsValid() )
+                re.Replace( &aName, wxEmptyString );
+
+            return aName;
+        };
+
+        wxString padNet     = pad->GetNetname();
+        wxString padNormal  = normaliseNetName( padNet );
+        wxString mbsNormal  = normaliseNetName( binding.netName );
+
+        // Match if normalised forms agree OR the literal strings happen
+        // to agree (cheap shortcut for projects with no escapes / no
+        // disambig where literal compare just works).
+        bool matches = ( padNormal == mbsNormal ) || ( padNet == binding.netName );
+
+        if( !matches )
         {
             std::shared_ptr<DRC_ITEM> drcItem = DRC_ITEM::Create( DRCE_GENERIC_ERROR );
             drcItem->SetItems( pad );
+
+            // Show the unescaped form in the marker so the user sees
+            // "/GPIO10_1" rather than "{slash}GPIO10_1".
             drcItem->SetErrorMessage( wxString::Format(
                     _( "Connector pin %s/%s carries net '%s' but the MBS "
                        "declares cross-board net '%s' for this pin." ),
-                    binding.componentRef, binding.pinNumber, padNet, binding.netName ) );
+                    binding.componentRef, binding.pinNumber,
+                    UnescapeString( padNet ), binding.netName ) );
             reportViolation( drcItem, pad->GetPosition(), pad->GetLayer() );
         }
     }

@@ -26,7 +26,10 @@
 #include "sch_module_pin.h"
 
 #include <algorithm>
+#include <map>
 #include <set>
+
+#include <wx/regex.h>
 
 
 namespace
@@ -57,39 +60,114 @@ KIID subProjectUuidForBlock( const SCH_MODULE_BLOCK& aBlock,
 }   // anonymous namespace
 
 
+namespace
+{
+
+bool isAutoGenLocalNet( const wxString& aName )
+{
+    if( aName.IsEmpty() )
+        return true;
+
+    if( aName.StartsWith( wxT( "Net-(" ) ) )
+        return true;
+
+    if( aName.StartsWith( wxT( "unconnected-" ) ) )
+        return true;
+
+    return false;
+}
+
+
+/**
+ * Strip the trailing `_<digits>` that KiCad's CONNECTION_GRAPH appends
+ * to disambiguate multiple subgraphs sharing a label base. E.g.
+ * `5V_1` → `5V`, `GND_33` → `GND`. Names without the suffix are
+ * returned unchanged. Names that look like real user labels (no
+ * trailing digit suffix) are also returned unchanged.
+ */
+wxString stripDisambigSuffix( const wxString& aName )
+{
+    static wxRegEx re( wxT( "_[0-9]+$" ) );
+
+    if( !re.IsValid() )
+        return aName;
+
+    wxString result = aName;
+    re.Replace( &result, wxEmptyString );
+    return result;
+}
+
+
+/**
+ * Tiny path-compressed union-find indexed by SCH_MODULE_PIN*. We use
+ * this so a single MBS wire can implicitly carry every pin that's
+ * physically on the same local net on a sub-project board (e.g., when
+ * J1.1, J1.2, J1.3 all carry "+5V" locally on board A, wiring J1.1 to
+ * J2.1 on the MBS extends the cross-board net to all five pins).
+ */
+class PIN_UNION_FIND
+{
+public:
+    void add( SCH_MODULE_PIN* aPin )
+    {
+        if( m_parent.find( aPin ) == m_parent.end() )
+            m_parent[aPin] = aPin;
+    }
+
+    SCH_MODULE_PIN* find( SCH_MODULE_PIN* aPin )
+    {
+        SCH_MODULE_PIN* root = aPin;
+
+        while( m_parent[root] != root )
+            root = m_parent[root];
+
+        // Path compression.
+        while( m_parent[aPin] != root )
+        {
+            SCH_MODULE_PIN* next = m_parent[aPin];
+            m_parent[aPin] = root;
+            aPin = next;
+        }
+
+        return root;
+    }
+
+    void unite( SCH_MODULE_PIN* a, SCH_MODULE_PIN* b )
+    {
+        SCH_MODULE_PIN* ra = find( a );
+        SCH_MODULE_PIN* rb = find( b );
+
+        if( ra != rb )
+            m_parent[ra] = rb;
+    }
+
+private:
+    std::map<SCH_MODULE_PIN*, SCH_MODULE_PIN*> m_parent;
+};
+
+} // anonymous namespace
+
+
 std::vector<MB_CROSS_BOARD_NET> ExtractCrossBoardNets( SCHEMATIC& aMbsSchematic,
                                                        const PROJECT_FILE& aMultiBoard )
 {
     std::vector<MB_CROSS_BOARD_NET> nets;
 
-    // Query the CONNECTION_GRAPH. Each subgraph is a connected net; its
-    // items include every SCH_MODULE_PIN the user wired to it (directly
-    // or via an intermediate label). The graph's native naming resolves
-    // the subgraph's net name from attached labels with the standard
-    // driver-priority rules, so a label "BATTERY" on the wire becomes
-    // the net name with zero custom naming logic on our end.
+    SCH_SCREEN* screen = aMbsSchematic.RootScreen();
+
+    if( !screen )
+        return nets;
+
     CONNECTION_GRAPH* graph = aMbsSchematic.ConnectionGraph();
 
     if( !graph )
         return nets;
 
-    const std::vector<CONNECTION_SUBGRAPH*>& subgraphs = graph->GetAllSubgraphs( wxEmptyString );
-    std::set<CONNECTION_SUBGRAPH*> seen;
-
-    // GetAllSubgraphs with empty name is actually a no-op in some KiCad
-    // versions; walk the graph's full subgraph set instead.
-    (void) subgraphs;
-
-    // The authoritative subgraph list is visible via GetResolvedSubgraphName
-    // per driver, but we need to iterate all of them. Use a small helper:
-    // walk every SCH_MODULE_BLOCK in the root screen, fetch the subgraph
-    // containing each pin, dedup by subgraph pointer. Every cross-board
-    // net must contain at least one module pin by definition, so this
-    // enumeration is complete for our purposes.
-    SCH_SCREEN* screen = aMbsSchematic.RootScreen();
-
-    if( !screen )
-        return nets;
+    // ---- Phase 1: enumerate every module pin and seed the union-find ----
+    // Track all pins; we'll union them below by (a) shared local net
+    // name within a block and (b) MBS wire connectivity.
+    PIN_UNION_FIND uf;
+    std::vector<std::pair<SCH_MODULE_BLOCK*, SCH_MODULE_PIN*>> allPins;
 
     for( SCH_ITEM* item : screen->Items() )
     {
@@ -100,61 +178,165 @@ std::vector<MB_CROSS_BOARD_NET> ExtractCrossBoardNets( SCHEMATIC& aMbsSchematic,
 
         for( SCH_MODULE_PIN* pin : block->GetPins() )
         {
-            if( CONNECTION_SUBGRAPH* sg = graph->GetSubgraphForItem( pin ) )
-                seen.insert( sg );
+            uf.add( pin );
+            allPins.emplace_back( block, pin );
         }
     }
 
-    for( CONNECTION_SUBGRAPH* sg : seen )
+    // ---- Phase 2: union by shared local net name within each block ----
+    // J1.1, J1.2, J1.3 all carrying "+5V" on board A's PCB are
+    // physically the same node — collapse them now so a single MBS
+    // wire to any of them pulls the others along.
     {
-        // Collect all module pins in this subgraph, grouped by their
-        // owning block. A subgraph qualifies as "cross-board" only
-        // when its module pins span at least two distinct sub-project
-        // UUIDs — pins that happen to share a local net on one block
-        // don't need cross-board propagation.
-        std::vector<std::pair<SCH_MODULE_BLOCK*, SCH_MODULE_PIN*>> modulePins;
+        std::map<SCH_MODULE_BLOCK*, std::map<wxString, SCH_MODULE_PIN*>> firstByBlockNet;
+
+        for( const auto& [block, pin] : allPins )
+        {
+            wxString localNet = pin->GetText();
+
+            if( isAutoGenLocalNet( localNet ) )
+                continue;
+
+            auto& blockNets = firstByBlockNet[block];
+            auto  it        = blockNets.find( localNet );
+
+            if( it == blockNets.end() )
+                blockNets[localNet] = pin;
+            else
+                uf.unite( it->second, pin );
+        }
+    }
+
+    // ---- Phase 3: union by MBS wire connectivity ----
+    // Each MBS subgraph is a wire net; pins on the same subgraph join.
+    std::set<CONNECTION_SUBGRAPH*> seenSubgraphs;
+    std::map<CONNECTION_SUBGRAPH*, wxString> subgraphLabels;
+
+    for( const auto& [block, pin] : allPins )
+    {
+        if( CONNECTION_SUBGRAPH* sg = graph->GetSubgraphForItem( pin ) )
+        {
+            seenSubgraphs.insert( sg );
+            // Cache the label so we can reuse it for naming the
+            // resulting cross-board net (driver-priority resolution).
+            subgraphLabels[sg] = graph->GetResolvedSubgraphName( sg );
+        }
+    }
+
+    for( CONNECTION_SUBGRAPH* sg : seenSubgraphs )
+    {
+        SCH_MODULE_PIN* anchor = nullptr;
 
         for( SCH_ITEM* item : sg->GetItems() )
         {
-            if( item->Type() == SCH_MODULE_PIN_T )
-            {
-                SCH_MODULE_PIN*   pin   = static_cast<SCH_MODULE_PIN*>( item );
-                SCH_MODULE_BLOCK* block = pin->GetParent();
+            if( item->Type() != SCH_MODULE_PIN_T )
+                continue;
 
-                if( block )
-                    modulePins.emplace_back( block, pin );
-            }
+            SCH_MODULE_PIN* pin = static_cast<SCH_MODULE_PIN*>( item );
+
+            if( !anchor )
+                anchor = pin;
+            else
+                uf.unite( anchor, pin );
         }
+    }
 
-        if( modulePins.size() < 2 )
-            continue;
+    // ---- Phase 4: walk groups, emit cross-board nets ----
+    std::map<SCH_MODULE_PIN*,
+             std::vector<std::pair<SCH_MODULE_BLOCK*, SCH_MODULE_PIN*>>> groups;
 
+    for( const auto& [block, pin] : allPins )
+        groups[uf.find( pin )].emplace_back( block, pin );
+
+    for( auto& [root, members] : groups )
+    {
         std::set<KIID> distinctSubProjects;
 
-        for( const auto& [block, pin] : modulePins )
+        for( const auto& [block, pin] : members )
             distinctSubProjects.insert( subProjectUuidForBlock( *block, aMultiBoard ) );
 
-        // Need ≥2 distinct sub-projects for a *cross*-board net; if all
-        // pins are on one sub-project it's an intra-board connection
-        // that the sub-project's own schematic already handles.
+        // Cross-board requires endpoints on ≥2 distinct sub-projects.
         if( distinctSubProjects.size() < 2 )
             continue;
 
+        // Resolve the canonical net name.
+        //
+        // Both pin labels and KiCad's resolved subgraph names can carry
+        // an auto-disambig "_<N>" suffix when multiple subgraphs share
+        // a base name on the schematic (very common when each
+        // un-bridged "5V" pin gets its own subgraph). Collapse those
+        // suffixes when the stripped form matches another label in the
+        // group — that's KiCad uniquifying, not a real user-typed
+        // distinction.
+        //
+        // Tally votes from both pin labels and subgraph labels, all
+        // normalised through `stripDisambigSuffix`, then pick the
+        // most common base. Falls back to `Net-<uuid>` only if every
+        // candidate was auto-generated.
+        std::map<wxString, int> nameCounts;
+
+        for( const auto& [block, pin] : members )
+        {
+            wxString pinLabel = pin->GetText();
+
+            if( !isAutoGenLocalNet( pinLabel ) )
+                nameCounts[stripDisambigSuffix( pinLabel )]++;
+        }
+
+        std::set<CONNECTION_SUBGRAPH*> groupSubgraphs;
+
+        for( const auto& [block, pin] : members )
+        {
+            if( CONNECTION_SUBGRAPH* sg = graph->GetSubgraphForItem( pin ) )
+                groupSubgraphs.insert( sg );
+        }
+
+        for( CONNECTION_SUBGRAPH* sg : groupSubgraphs )
+        {
+            auto it = subgraphLabels.find( sg );
+
+            if( it == subgraphLabels.end() || it->second.IsEmpty() )
+                continue;
+
+            // Strip "_N" only when the stripped form matches some pin
+            // label we've already counted. That's the signal it's
+            // KiCad's auto-disambig rather than a deliberately-typed
+            // name like "BUS_3V3". User labels survive intact.
+            wxString sgName  = it->second;
+            wxString stripped = stripDisambigSuffix( sgName );
+
+            if( stripped != sgName && nameCounts.count( stripped ) > 0 )
+                nameCounts[stripped]++;
+            else
+                nameCounts[sgName]++;
+        }
+
+        wxString canonicalName;
+        int      bestCount = 0;
+
+        for( const auto& [name, count] : nameCounts )
+        {
+            if( count > bestCount )
+            {
+                bestCount     = count;
+                canonicalName = name;
+            }
+        }
+
         MB_CROSS_BOARD_NET net;
         net.uuid = KIID();
-        net.name = graph->GetResolvedSubgraphName( sg );
 
-        if( net.name.IsEmpty() )
-            net.name = wxString::Format( wxT( "Net-%s" ),
-                                         net.uuid.AsString().SubString( 0, 7 ) );
+        if( canonicalName.IsEmpty() )
+            canonicalName = wxString::Format( wxT( "Net-%s" ),
+                                              net.uuid.AsString().SubString( 0, 7 ) );
 
-        for( const auto& [block, pin] : modulePins )
+        net.name = canonicalName;
+
+        for( const auto& [block, pin] : members )
         {
             MB_CROSS_BOARD_NET_ENDPOINT endpoint;
             endpoint.subProjectUuid = subProjectUuidForBlock( *block, aMultiBoard );
 
-            // Prefer block-level componentRef (the MBS authoritative
-            // value); fall back to the pin's metadata.
             wxString componentRef = block->GetComponentRef();
 
             if( componentRef.IsEmpty() )
@@ -172,7 +354,6 @@ std::vector<MB_CROSS_BOARD_NET> ExtractCrossBoardNets( SCHEMATIC& aMbsSchematic,
         nets.push_back( std::move( net ) );
     }
 
-    // Stable ordering by net name for deterministic output.
     std::sort( nets.begin(), nets.end(),
                []( const MB_CROSS_BOARD_NET& a, const MB_CROSS_BOARD_NET& b )
                {

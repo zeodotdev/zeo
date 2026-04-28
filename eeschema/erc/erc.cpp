@@ -1004,7 +1004,7 @@ int ERC_TESTER::TestPinToPin()
         }
     }
 
-    auto isCrossBoardPin = [&]( SCH_PIN* aPin ) -> bool
+    auto isCrossBoardPin = [&]( SCH_PIN* aPin, const SCH_SHEET_PATH& aSheet ) -> bool
     {
         if( crossBoardEndpoints.empty() || !aPin )
             return false;
@@ -1014,7 +1014,11 @@ int ERC_TESTER::TestPinToPin()
         if( !sym )
             return false;
 
-        wxString ref = sym->GetRef( nullptr, false );
+        // Must pass the actual sheet path here — SCH_SYMBOL::GetRef
+        // dereferences the sheet pointer (calls aSheet->Path()) and
+        // crashes on nullptr. Each ERC_SCH_PIN_CONTEXT carries its own
+        // sheet, so the call site below threads it through.
+        wxString ref = sym->GetRef( &aSheet, false );
         return crossBoardEndpoints.count( { ref, aPin->GetNumber() } ) > 0;
     };
 
@@ -1241,7 +1245,7 @@ int ERC_TESTER::TestPinToPin()
         {
             for( const ERC_SCH_PIN_CONTEXT& ctx : pins )
             {
-                if( isCrossBoardPin( ctx.Pin() ) )
+                if( isCrossBoardPin( ctx.Pin(), ctx.Sheet() ) )
                 {
                     hasCrossBoardDriver = true;
                     break;

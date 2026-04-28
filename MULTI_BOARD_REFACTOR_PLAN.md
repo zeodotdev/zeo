@@ -41,6 +41,84 @@ in the current code path. M5.2 (replace directory walk with explicit
 parent-project ref) will let both suppression paths share a single
 lookup.
 
+### Net-highlight propagation independent of MBSCH-open state ✓ done (2026-04-28)
+
+**Symptom:** highlights propagated correctly only when MBSCH was open
+in the running session. With MBSCH closed: PCB→other PCB and
+SCH→other SCH highlights failed; highlights to peer editors only
+worked through coincidental name collision.
+
+**Root cause:** the only translator of `$NET: <local>` into per-endpoint
+`$PART/$PAD/$PROJECT` cross-probes was `MBSCH_EDIT_FRAME::crossProbeHighlightNet`,
+which only ran when MBSCH was loaded in memory.
+
+**Fix:** moved the translation to a sender-side helper that consults
+the container `.kicad_pro` directly. Works regardless of MBSCH state.
+
+| Item | Where |
+|---|---|
+| `MULTI_BOARD_CROSS_BOARD_PROBE` struct + `MultiBoardCollectCrossBoardProbesForLocalNet` helper | `include/project/multi_board_scan.h`, `common/project/multi_board_scan.cpp` |
+| `MultiBoardFormatCrossBoardProbe` packet formatter | same |
+| `SCH_EDIT_FRAME::SendCrossProbeNetName` calls the helper after the legacy broadcast (skipped when sender IS MBSCH — MBSCH still does its own per-endpoint fan-out) | `eeschema/cross-probing.cpp` |
+| `PCB_EDIT_FRAME::SendCrossProbeNetName` calls the helper unconditionally | `pcbnew/cross-probing.cpp` |
+
+**Match logic in the helper** uses the same normaliser the M8.4 DRC
+binding check uses (UnescapeString + sheet-prefix strip + `_<digits>`
+disambig strip), so `GND_33` in the sub-project graph and `GND` in the
+container's `cross_board_nets` resolve to the same cross-board net.
+
+**Receiver behaviour was already correct** — both eeschema and pcbnew
+already parse `$PROJECT:` scope on `$PART/$PAD` packets, silently skip
+non-matching projects, and don't clear highlights on non-match.
+
+### Auto-disambig suffix normalisation ✓ done (2026-04-27)
+
+KiCad's `CONNECTION_GRAPH` appends `_<digits>` when multiple subgraphs
+share a label base (very common when each unbridged "5V" pin gets its
+own subgraph). That suffix leaks into both:
+
+1. The MBS-side canonical net name produced by `ExtractCrossBoardNets`
+   (you'd see `5V_1` instead of `5V`)
+2. The sub-project pad's resolved net name (`GND_33`, `GND_7`, etc.) —
+   so the M8.4 binding DRC was firing false positives like
+   `Pad carries net 'GND_33' but MBS declares 'GND_7'` even though both
+   were really `GND`.
+
+**Fixes:**
+
+| Where | What |
+|---|---|
+| `multi_board_net_extractor.cpp` | New `stripDisambigSuffix` helper. When tallying name votes for the cross-board net, both pin labels and resolved subgraph names are normalised — but only when the stripped form already appears as a pin label in the group (so user-typed labels like `BUS_3V3` stay intact). |
+| `drc_test_provider_cross_board_binding.cpp` | Compare pad net and MBS net via base-name normalisation (sheet-path prefix + `_<digits>` suffix stripped). Falls back to the original literal-string check, so well-formed projects without disambig still match the same way. |
+
+### Cross-board net extractor: implicit local-net joining ✓ done (2026-04-27)
+
+**Problem:** when board A has J1.1, J1.2, J1.3 all carrying "+5V"
+locally and board B has J2.1, J2.2 also carrying "+5V", drawing one
+MBS wire from any A-pin to any B-pin produced multiple disconnected
+cross-board nets (5V, 5V_1, 5V_2 …) instead of one combined "+5V" net
+spanning all five pins. The user — correctly — expected the implicit
+local short on each board to extend the cross-board net automatically.
+
+**Fix:** rewrote `ExtractCrossBoardNets` (`multi_board_net_extractor.cpp`)
+around a path-compressed union-find on `SCH_MODULE_PIN*`:
+1. Seed every module pin into its own group.
+2. Within each block, union pins sharing a non-auto local net name
+   (`pin->GetText()`) — the local short.
+3. For each MBS subgraph, union all module pins that touch it — the
+   user-drawn cross-board wiring.
+4. Walk groups; emit a `MB_CROSS_BOARD_NET` per group spanning ≥2
+   sub-projects, with **every** pin in the group as an endpoint.
+
+**Naming precedence** for the resulting cross-board net:
+- MBS-side label (from `CONNECTION_GRAPH::GetResolvedSubgraphName`) wins
+- Otherwise: most-frequent non-auto local label among the pins
+- Otherwise: synthesized `Net-<uuid>`
+
+This makes the GND ↔ 5V short ERC check from M5.8 land at MBS-extract
+time too: locally-shorted pins all end up on one net, and the
+`TestCrossBoardConnectivity` matrix walks the combined endpoint list.
+
 ### Refresh-placement preview UX ✓ done (2026-04-27)
 
 | Item | Where | Status |

@@ -61,6 +61,7 @@
 #include <widgets/pcb_design_block_pane.h>
 #include <widgets/kistatusbar.h>
 #include <project_pcb.h>
+#include <project/multi_board_scan.h>
 #include <footprint_library_adapter.h>
 #include <wx/log.h>
 #include <nlohmann/json.hpp>
@@ -620,6 +621,26 @@ void PCB_EDIT_FRAME::SendCrossProbeNetName( const wxString& aNetName )
             // side in place, we use that here.
             Kiway().ExpressMail( FRAME_SCH,   MAIL_CROSS_PROBE, packet, this );
             Kiway().ExpressMail( FRAME_MBSCH, MAIL_CROSS_PROBE, packet, this );
+
+            // File-based cross-board fan-out — works whether or not
+            // MBSCH is open. See the matching block in
+            // SCH_EDIT_FRAME::SendCrossProbeNetName for details.
+            wxString proPath = Prj().GetProjectFullName();
+
+            if( !proPath.IsEmpty() )
+            {
+                auto probes = MultiBoardCollectCrossBoardProbesForLocalNet(
+                        wxFileName( proPath ), aNetName );
+
+                for( const auto& probe : probes )
+                {
+                    std::string p = TO_UTF8(
+                            MultiBoardFormatCrossBoardProbe( probe ) );
+
+                    Kiway().ExpressMail( FRAME_PCB_EDITOR, MAIL_CROSS_PROBE, p, this );
+                    Kiway().ExpressMail( FRAME_SCH,        MAIL_CROSS_PROBE, p, this );
+                }
+            }
         }
     }
 }

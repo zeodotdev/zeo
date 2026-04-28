@@ -150,4 +150,62 @@ struct KICOMMON_API MULTI_BOARD_CROSS_BOARD_BINDING
 KICOMMON_API std::vector<MULTI_BOARD_CROSS_BOARD_BINDING>
 MultiBoardCollectCrossBoardBindingsForSubProject( const wxFileName& aSubProjectPro );
 
+
+/**
+ * One cross-board "ping" the originating frame should send so that a
+ * peer sub-project's editor highlights the corresponding pad/pin.
+ *
+ * Each probe targets a specific (sub-project, connector pin) and is
+ * scoped via `targetSubProjectAbsPath` so the receiving editor can
+ * filter on its own project path before acting (avoids highlighting
+ * unrelated boards that happen to share a connector reference).
+ */
+struct KICOMMON_API MULTI_BOARD_CROSS_BOARD_PROBE
+{
+    wxString targetSubProjectAbsPath;   ///< Absolute path to target .kicad_pro
+    wxString componentRef;              ///< e.g. "J2"
+    wxString pinNumber;                 ///< e.g. "3"
+};
+
+
+/**
+ * Given a sub-project + the local net name the user just clicked on,
+ * walk up to the enclosing multi-board container and return the list
+ * of cross-board probes the sender should fan out so that every other
+ * sub-project on the same cross-board net highlights its corresponding
+ * connector pin.
+ *
+ * Match logic:
+ *  - The container's `cross_board_nets` is consulted.
+ *  - For each cross-board net, an endpoint matches the sender when its
+ *    `subProjectUuid` equals the sender's sub-project's UUID AND the
+ *    endpoint's `pinName` (after Unescape + sheet-prefix strip + `_N`
+ *    disambig strip) equals the sender's local net name (same
+ *    normalisation).
+ *  - The net's canonical `name` is also checked against the sender's
+ *    local name as a fallback (covers MBSCH-canonical broadcasts).
+ *
+ * Probes are emitted for every endpoint of each matching net EXCEPT
+ * the sender's own — the sender already highlighted its local net
+ * directly.
+ *
+ * Returns an empty list when:
+ *  - The sender isn't part of a multi-board container
+ *  - No cross-board net touches this sender on this local net
+ *  - The container's project file fails to load
+ */
+KICOMMON_API std::vector<MULTI_BOARD_CROSS_BOARD_PROBE>
+MultiBoardCollectCrossBoardProbesForLocalNet( const wxFileName& aSubProjectPro,
+                                              const wxString& aLocalNetName );
+
+
+/**
+ * Helper: take a probe and serialise it into the
+ * `$PART: "ref" $PAD: "num" $PROJECT: "<path>"` packet format that the
+ * existing `ExecuteRemoteCommand` handlers in eeschema and pcbnew
+ * already understand for cross-board net highlighting.
+ */
+KICOMMON_API wxString MultiBoardFormatCrossBoardProbe(
+        const MULTI_BOARD_CROSS_BOARD_PROBE& aProbe );
+
 #endif // KICAD_MULTI_BOARD_SCAN_H

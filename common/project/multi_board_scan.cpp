@@ -25,6 +25,7 @@
 #include <project/project_file.h>
 
 #include <kiid.h>
+#include <string_utils.h>
 #include <wildcards_and_files_ext.h>
 
 #include <wx/dir.h>
@@ -543,6 +544,190 @@ MultiBoardCollectCrossBoardBindingsForSubProject( const wxFileName& aSubProjectP
             } );
 
     return result;
+}
+
+
+namespace
+{
+
+/**
+ * Normalise a net name for comparison: strip KiCad escape sequences,
+ * sheet-path prefix, and CONNECTION_GRAPH disambig suffix. Same logic
+ * the DRC binding check and the MBS extractor use.
+ */
+wxString normaliseNetForMatch( wxString aName )
+{
+    aName = UnescapeString( aName );
+
+    if( aName.StartsWith( wxT( "/" ) ) )
+        aName = aName.AfterFirst( '/' );
+
+    static wxRegEx re( wxT( "_[0-9]+$" ) );
+
+    if( re.IsValid() )
+        re.Replace( &aName, wxEmptyString );
+
+    return aName;
+}
+
+} // anonymous namespace
+
+
+std::vector<MULTI_BOARD_CROSS_BOARD_PROBE>
+MultiBoardCollectCrossBoardProbesForLocalNet( const wxFileName& aSubProjectPro,
+                                              const wxString& aLocalNetName )
+{
+    std::vector<MULTI_BOARD_CROSS_BOARD_PROBE> result;
+
+    if( !aSubProjectPro.IsOk() || !aSubProjectPro.FileExists() || aLocalNetName.IsEmpty() )
+        return result;
+
+    wxFileName subPro( aSubProjectPro );
+    subPro.Normalize( wxPATH_NORM_ABSOLUTE | wxPATH_NORM_DOTS );
+    wxString subProAbs = subPro.GetFullPath();
+
+    wxString normLocalNet = normaliseNetForMatch( aLocalNetName );
+
+    // Walk up looking for the enclosing container .kicad_pro. Same
+    // 6-level search as the other lookups; M5.2 will replace this with
+    // an explicit parent reference stored in the .kicad_mbs.
+    wxFileName searchDir( subPro );
+    searchDir.SetFullName( wxEmptyString );
+
+    for( int depth = 0; depth < 6 && searchDir.GetPath().Length() > 1; ++depth )
+    {
+        wxArrayString files;
+        wxDir::GetAllFiles( searchDir.GetPath(), &files, wxT( "*.kicad_pro" ),
+                            wxDIR_FILES );
+
+        for( const wxString& candidate : files )
+        {
+            wxFileName candFn( candidate );
+
+            if( candFn.GetFullPath() == subProAbs )
+                continue;
+
+            PROJECT_FILE container( candidate );
+
+            if( !container.LoadFromFile() )
+                continue;
+
+            if( !container.IsMultiBoardContainer() )
+                continue;
+
+            // Locate this sender's sub-project entry to get its UUID
+            // and so we can compute peer absolute paths relative to
+            // the container's directory.
+            KIID senderUuid;
+            bool matched = false;
+
+            for( const SUB_PROJECT_INFO& info : container.GetSubProjects() )
+            {
+                wxFileName subRel( info.relativePath );
+
+                if( !subRel.IsAbsolute() )
+                    subRel.MakeAbsolute( candFn.GetPath() );
+
+                subRel.Normalize( wxPATH_NORM_ABSOLUTE | wxPATH_NORM_DOTS );
+
+                if( subRel.GetFullPath() == subProAbs )
+                {
+                    senderUuid = info.uuid;
+                    matched = true;
+                    break;
+                }
+            }
+
+            if( !matched )
+                continue;
+
+            // Build a quick lookup from sub-project UUID → absolute
+            // .kicad_pro path so peer probes can be scoped properly.
+            std::map<KIID, wxString> subProjectAbsPaths;
+
+            for( const SUB_PROJECT_INFO& info : container.GetSubProjects() )
+            {
+                wxFileName subRel( info.relativePath );
+
+                if( !subRel.IsAbsolute() )
+                    subRel.MakeAbsolute( candFn.GetPath() );
+
+                subRel.Normalize( wxPATH_NORM_ABSOLUTE | wxPATH_NORM_DOTS );
+                subProjectAbsPaths[info.uuid] = subRel.GetFullPath();
+            }
+
+            // For each cross-board net, decide if it matches the
+            // sender's local net. Two ways:
+            //   (a) one of THIS sub-project's endpoints has a pinName
+            //       that normalises to the same form as aLocalNetName
+            //   (b) the net's canonical name normalises to the same
+            //       form (covers broadcasts that already use the
+            //       canonical name, e.g. MBSCH originating)
+            for( const MB_CROSS_BOARD_NET& net : container.GetCrossBoardNets() )
+            {
+                bool netMatches = false;
+
+                if( normaliseNetForMatch( net.name ) == normLocalNet )
+                    netMatches = true;
+
+                if( !netMatches )
+                {
+                    for( const MB_CROSS_BOARD_NET_ENDPOINT& ep : net.endpoints )
+                    {
+                        if( ep.subProjectUuid != senderUuid )
+                            continue;
+
+                        if( normaliseNetForMatch( ep.pinName ) == normLocalNet )
+                        {
+                            netMatches = true;
+                            break;
+                        }
+                    }
+                }
+
+                if( !netMatches )
+                    continue;
+
+                // Emit a probe for every endpoint that DOESN'T live on
+                // the sender's own sub-project — those are the peers
+                // we need to fan out to.
+                for( const MB_CROSS_BOARD_NET_ENDPOINT& ep : net.endpoints )
+                {
+                    if( ep.subProjectUuid == senderUuid )
+                        continue;
+
+                    auto pathIt = subProjectAbsPaths.find( ep.subProjectUuid );
+
+                    if( pathIt == subProjectAbsPaths.end() )
+                        continue;
+
+                    MULTI_BOARD_CROSS_BOARD_PROBE probe;
+                    probe.targetSubProjectAbsPath = pathIt->second;
+                    probe.componentRef            = ep.componentRef;
+                    probe.pinNumber               = ep.pinNumber;
+                    result.push_back( std::move( probe ) );
+                }
+            }
+
+            return result;   // first matching container wins
+        }
+
+        searchDir.RemoveLastDir();
+    }
+
+    return result;
+}
+
+
+wxString MultiBoardFormatCrossBoardProbe( const MULTI_BOARD_CROSS_BOARD_PROBE& aProbe )
+{
+    // Mirrors the format MBSCH_EDIT_FRAME::crossProbeHighlightNet
+    // emits. The receivers in pcbnew/cross-probing.cpp and
+    // eeschema/cross-probing.cpp already parse this exact shape.
+    return wxString::Format( wxT( "$PART: \"%s\" $PAD: \"%s\" $PROJECT: \"%s\"" ),
+                             aProbe.componentRef,
+                             aProbe.pinNumber,
+                             aProbe.targetSubProjectAbsPath );
 }
 
 

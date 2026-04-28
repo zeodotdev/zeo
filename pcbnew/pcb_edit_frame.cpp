@@ -2389,45 +2389,136 @@ int PCB_EDIT_FRAME::TestStandalone()
     if( Kiface().IsSingle() )
         return 0;
 
-    // Update PCB requires a netlist. Therefore the schematic editor must be running
-    // If this is not the case, open the schematic editor
-    KIWAY_PLAYER* frame = Kiway().Player( FRAME_SCH, true );
+    // Multi-board context: when this PCB is one of several sub-projects
+    // running as KIWAY peers in the same Zeo process, the legacy
+    // `Kiway().Player(FRAME_SCH, true)` lookup returns whichever
+    // FRAME_SCH peer was registered first — *not* one pinned to our
+    // sub-project. Calling OpenProjectFiles on that peer would hijack
+    // its project context and load OUR schematic into a frame
+    // belonging to a sibling board.
+    //
+    // Find an existing SCH peer whose Prj() matches our own. If none
+    // exists, spawn a new one explicitly pinned to our project. The
+    // M4 peer-spawn pattern (CreateKiWindow + SetPrjOverride +
+    // RegisterPeerPlayer) is replicated here since the eeschema-side
+    // generic helper isn't reachable across kiface boundaries.
+    PROJECT* ourProject = &Prj();
+    wxString ourProPath = ourProject->GetProjectFullName();
 
-    // If Kiway() cannot create the eeschema frame, it shows a error message, and
-    // frame is null
-    if( !frame )
-        return -1;
-
-    if( !frame->IsShownOnScreen() )
+    auto matchesOurProject = [&]( KIWAY_PLAYER* aPeer ) -> bool
     {
-        wxEventBlocker blocker( this );
-        wxFileName fn( Prj().GetProjectPath(), Prj().GetProjectName(),
-                       FILEEXT::KiCadSchematicFileExtension );
+        if( !aPeer )
+            return false;
 
-        // Maybe the file hasn't been converted to the new s-expression file format so
-        // see if the legacy schematic file is still in play.
+        EDA_BASE_FRAME* peerFrame = dynamic_cast<EDA_BASE_FRAME*>( aPeer );
+
+        if( !peerFrame )
+            return false;
+
+        // Compare via project file path so a peer pinned via
+        // SetPrjOverride to a sibling project is correctly excluded.
+        return peerFrame->Prj().GetProjectFullName() == ourProPath;
+    };
+
+    KIWAY_PLAYER* match = nullptr;
+
+    // Walk peers first (M4 sub-project frames live here).
+    for( KIWAY_PLAYER* peer : Kiway().GetAllPlayerFrames( FRAME_SCH ) )
+    {
+        if( matchesOurProject( peer ) )
+        {
+            match = peer;
+            break;
+        }
+    }
+
+    // Fallback to the primary player only if it matches us.
+    if( !match )
+    {
+        KIWAY_PLAYER* primary = Kiway().Player( FRAME_SCH, /*doCreate=*/false );
+
+        if( matchesOurProject( primary ) )
+            match = primary;
+    }
+
+    wxFileName fn( Prj().GetProjectPath(), Prj().GetProjectName(),
+                   FILEEXT::KiCadSchematicFileExtension );
+
+    if( !fn.FileExists() )
+    {
+        fn.SetExt( FILEEXT::LegacySchematicFileExtension );
+
         if( !fn.FileExists() )
         {
-            fn.SetExt( FILEEXT::LegacySchematicFileExtension );
+            DisplayErrorMessage( this, _( "The schematic for this board cannot be found." ) );
+            return -2;
+        }
+    }
 
-            if( !fn.FileExists() )
-            {
-                DisplayErrorMessage( this, _( "The schematic for this board cannot be found." ) );
-                return -2;
-            }
+    if( match )
+    {
+        // Found a peer already pinned to our project. Make sure it's
+        // shown (the manager treats hidden frames as "not opened") and
+        // bring ourselves back to the front.
+        if( !match->IsShownOnScreen() )
+        {
+            wxEventBlocker blocker( this );
+            match->Show( true );
+            Raise();
         }
 
-        frame->OpenProjectFiles( std::vector<wxString>( 1, fn.GetFullPath() ) );
+        return 1;
+    }
 
-        // we show the schematic editor frame, because do not show is seen as
-        // a not yet opened schematic by Kicad manager, which is not the case
-        frame->Show( true );
+    // No matching peer — spawn one explicitly pinned to our project.
+    KIFACE* kiface = Kiway().KiFACE( KIWAY::FACE_SCH );
 
-        // bring ourselves back to the front
+    if( !kiface )
+    {
+        DisplayErrorMessage( this, _( "Cannot launch the schematic editor for this board." ) );
+        return -1;
+    }
+
+    // C-style cast matches Kiway::Player()'s pattern — typeinfo has
+    // hidden visibility in kiface DSOs, making dynamic_cast from
+    // outside unreliable even though the hierarchy is correct.
+    KIWAY_PLAYER* player =
+            (KIWAY_PLAYER*) kiface->CreateKiWindow( this, FRAME_SCH, &Kiway(), 0 );
+
+    if( !player )
+    {
+        DisplayErrorMessage( this, _( "Cannot launch the schematic editor for this board." ) );
+        return -1;
+    }
+
+    player->SetPrjOverride( ourProject );
+    Kiway().RegisterPeerPlayer( FRAME_SCH, player->GetId() );
+
+    wxWindowID playerId = player->GetId();
+    KIWAY*     kwPtr    = &Kiway();
+
+    player->Bind( wxEVT_CLOSE_WINDOW,
+                  [kwPtr, playerId]( wxCloseEvent& aEvt )
+                  {
+                      kwPtr->UnregisterPeerPlayer( FRAME_SCH, playerId );
+                      aEvt.Skip();
+                  } );
+
+    {
+        wxEventBlocker blocker( this );
+
+        if( !player->OpenProjectFiles( { fn.GetFullPath() } ) )
+        {
+            Kiway().UnregisterPeerPlayer( FRAME_SCH, playerId );
+            player->Destroy();
+            return -1;
+        }
+
+        player->Show( true );
         Raise();
     }
 
-    return 1;            //Success!
+    return 1;
 }
 
 

@@ -1,1556 +1,368 @@
-# Multi-Board Architecture Refactor — Phase M
+# Multi-Board Architecture — Implementation Reference
 
-Living plan for upgrading Zeo (KiCad fork) to support Altium-style
-multi-board development: container projects, dedicated MBS editor,
-cross-board nets, concurrent multi-editor work, and 3D assembly viewer.
-
-**Status (2026-04-26): ~70% done.** Foundation, MBS editor, cross-probe,
-launcher, peer editors, and the OpenGL 3D assembly compositor are
-landed. The finish-line section below lists the remaining ~30%
-in priority order.
+Living reference for the multi-board (MBS) feature in Zeo. Documents
+the current implementation, key architectural decisions other
+implementers need to know, and the remaining work.
 
 ---
 
-## Finish line — remaining 30%
-
-Organized by area then priority. **P0** = blocks user workflows,
-**P1** = important for parity, **P2** = polish / nice-to-have.
-
-### MBS editor — broken edit operations ✓ done (2026-04-26)
-
-| Item | Where | Status |
-|---|---|---|
-| Delete on a module block | `eeschema/sch_collectors.cpp` `DeletableItems` | ✓ added `SCH_MODULE_BLOCK_T` |
-| Rotate / Mirror | `eeschema/tools/sch_edit_tool.cpp` + `SCH_MODULE_BLOCK::Rotate / MirrorHorizontally / MirrorVertically` impls | ✓ block stays axis-aligned, position translates around centre, pins follow via `Move` |
-| Drag-corner resize | `eeschema/tools/sch_point_editor.cpp` new `MODULE_BLOCK_POINT_EDIT_BEHAVIOR` | ✓ corner + edge handles, pin re-snap via `ConstrainOnEdge`, connected-wire pinning |
-| Move-tool wire pinning on the *other* end | `eeschema/tools/sch_move_tool.{h,cpp}` new `m_specialCaseModulePins` map | ✓ four sites parallel to `m_specialCaseSheetPins` |
-| Wire one-click termination on module pin | `eeschema/sch_screen.cpp` `IsTerminalPoint` | ✓ added module-pin branch — was the missing piece (the earlier `SCH_LINE::CanConnect` fix was correct but the wire-draw tool calls `IsTerminalPoint` to decide termination, not `CanConnect`) |
-
-### Sub-project ERC / DRC noise suppression ✓ done (2026-04-26)
-
-| Item | Where | Status |
-|---|---|---|
-| ERC suppress no-driver / power-not-driven on cross-board pins | `eeschema/erc/erc.cpp` `TestPinToPin` | ✓ build cross-board endpoint set at start; mark net as having an external driver when any pin matches |
-| DRC suppress unconnected ratsnest on cross-board pads | `pcbnew/drc/drc_test_provider_connectivity.cpp` | ✓ build cross-board endpoint set at start; skip `DRCE_UNCONNECTED_ITEMS` when source or target pad is on a cross-board connector |
-| Helper: discover cross-board endpoints for a sub-project | new in `common/project/multi_board_scan.{h,cpp}` | ✓ `MultiBoardCollectCrossBoardEndpointsForSubProject` walks up looking for the container, returns set of `(componentRef, pinNumber)` |
-
-**Note:** the suppression deliberately uses the new helper (directory
-walk) instead of `CONNECTIVITY_DATA::IsCrossBoardConnectorPad`, since
-the latter requires `m_multiBoardContext` which is never set anywhere
-in the current code path. M5.2 (replace directory walk with explicit
-parent-project ref) will let both suppression paths share a single
-lookup.
-
-### Per-board sync pulls cross-board nets from MBS ✓ done (2026-04-28)
-
-PM call: keep the MBS-side bulk push button (handy for N-board projects)
-**and** also have each per-board `Update PCB from Schematic` pull MBS
-cross-board nets in. Two complementary surfaces, both functional in
-isolation.
-
-| Item | Where |
-|---|---|
-| New in-memory cross-board apply (operates on the loaded `BOARD`, mutates `NETINFO_LIST` + per-pad `SetNet`) | `pcbnew/multi_board/cross_board_apply_to_board.{h,cpp}` |
-| `dialog_update_pcb.cpp` calls it after `BOARD_NETLIST_UPDATER::UpdateNetlist` (real-run only — dry-run skipped to avoid messy backout) | `pcbnew/dialogs/dialog_update_pcb.cpp` |
-| Info banner at top of the dialog when project is multi-board: "cross-board nets from the MBS will also be applied to connector pads on this board" | same |
-| Reports each pad reassignment via the dialog's existing `WX_HTML_REPORT_PANEL` (action severity for assignment, warning for missing connectors / pads) | same |
-
-**MBS-wins-on-conflict semantics**: if the local schematic-side sync
-assigns J1.3 to "A_NET" but the MBS contract says J1.3 = "B_NET",
-the apply pass overrides with B_NET and reports `Reassigned J1/3 from
-'A_NET' to MBS cross-board net 'B_NET'.` as a warning so the user
-sees what happened. Rationale: when the user wired two module pins
-together on the MBS they explicitly declared "these are the same
-net everywhere"; that has to override per-board labels that haven't
-been resynced.
-
-The standalone MBS toolbar action (`MbsSyncCrossBoardNets`) stays as a
-bulk-push entry point for N-board projects; behavior unchanged.
-
-### Refresh dialog redesign — settings + streaming console ✓ done (2026-04-28)
-
-Replaced the old per-row `wxCheckListBox` with the
-`Update Schematic from PCB` shape: category toggles on top,
-`WX_HTML_REPORT_PANEL` in the middle, Update / Close buttons at the
-bottom. PM's explicit ask (M8.5).
-
-| Item | Where |
-|---|---|
-| `ApplyMbsRefreshChanges` gains optional `REPORTER*` arg | `eeschema/multi_board_mbs_refresh.{h,cpp}` |
-| Each kind's apply branch reports `ch.Describe()` (info / action / warning per severity) + skipped-because-parent-removed messages + summary trailer | same |
-| Empty-block sweep also reports each removal as `RPT_SEVERITY_ACTION` | same |
-| Dialog rewritten: 7 category checkboxes mapped to `MBS_CHANGE::KIND` values; preview is dry-run via `Describe()`; on Update the apply runs with the panel as the reporter, summary appended at end | `eeschema/dialogs/dialog_mbs_refresh.{h,cpp}` |
-| `RefreshMbsFromSubProjects` simplified to pass-through: build diff → show dialog → consume `dlg.GetResult()` → hand new blocks to move tool | `eeschema/tools/sch_editor_control.cpp` |
-
-Behaviour:
-- User opens dialog → preview shows every change that *would* apply
-  with all categories on; destructive ops (REMOVE_*) styled as warnings.
-- User toggles a category off → preview re-renders without those rows.
-- "Update MBS" → applies, streams progress into the panel, swaps the
-  button label to "Close". Cancel becomes "Close" too.
-- `WX_HTML_REPORT_PANEL` provides search + severity-filter + save-to-file
-  (writes `mbs_refresh_report.txt` in the project dir) for free.
-
-### Net-highlight propagation independent of MBSCH-open state ✓ done (2026-04-28)
-
-**Symptom:** highlights propagated correctly only when MBSCH was open
-in the running session. With MBSCH closed: PCB→other PCB and
-SCH→other SCH highlights failed; highlights to peer editors only
-worked through coincidental name collision.
-
-**Root cause:** the only translator of `$NET: <local>` into per-endpoint
-`$PART/$PAD/$PROJECT` cross-probes was `MBSCH_EDIT_FRAME::crossProbeHighlightNet`,
-which only ran when MBSCH was loaded in memory.
-
-**Fix:** moved the translation to a sender-side helper that consults
-the container `.kicad_pro` directly. Works regardless of MBSCH state.
-
-| Item | Where |
-|---|---|
-| `MULTI_BOARD_CROSS_BOARD_PROBE` struct + `MultiBoardCollectCrossBoardProbesForLocalNet` helper | `include/project/multi_board_scan.h`, `common/project/multi_board_scan.cpp` |
-| `MultiBoardFormatCrossBoardProbe` packet formatter | same |
-| `SCH_EDIT_FRAME::SendCrossProbeNetName` calls the helper after the legacy broadcast (skipped when sender IS MBSCH — MBSCH still does its own per-endpoint fan-out) | `eeschema/cross-probing.cpp` |
-| `PCB_EDIT_FRAME::SendCrossProbeNetName` calls the helper unconditionally | `pcbnew/cross-probing.cpp` |
-
-**Match logic in the helper** uses the same normaliser the M8.4 DRC
-binding check uses (UnescapeString + sheet-prefix strip + `_<digits>`
-disambig strip), so `GND_33` in the sub-project graph and `GND` in the
-container's `cross_board_nets` resolve to the same cross-board net.
-
-**Receiver behaviour was already correct** — both eeschema and pcbnew
-already parse `$PROJECT:` scope on `$PART/$PAD` packets, silently skip
-non-matching projects, and don't clear highlights on non-match.
-
-### Auto-disambig suffix normalisation ✓ done (2026-04-27)
-
-KiCad's `CONNECTION_GRAPH` appends `_<digits>` when multiple subgraphs
-share a label base (very common when each unbridged "5V" pin gets its
-own subgraph). That suffix leaks into both:
-
-1. The MBS-side canonical net name produced by `ExtractCrossBoardNets`
-   (you'd see `5V_1` instead of `5V`)
-2. The sub-project pad's resolved net name (`GND_33`, `GND_7`, etc.) —
-   so the M8.4 binding DRC was firing false positives like
-   `Pad carries net 'GND_33' but MBS declares 'GND_7'` even though both
-   were really `GND`.
-
-**Fixes:**
-
-| Where | What |
-|---|---|
-| `multi_board_net_extractor.cpp` | New `stripDisambigSuffix` helper. When tallying name votes for the cross-board net, both pin labels and resolved subgraph names are normalised — but only when the stripped form already appears as a pin label in the group (so user-typed labels like `BUS_3V3` stay intact). |
-| `drc_test_provider_cross_board_binding.cpp` | Compare pad net and MBS net via base-name normalisation (sheet-path prefix + `_<digits>` suffix stripped). Falls back to the original literal-string check, so well-formed projects without disambig still match the same way. |
-
-### Cross-board net extractor: implicit local-net joining ✓ done (2026-04-27)
-
-**Problem:** when board A has J1.1, J1.2, J1.3 all carrying "+5V"
-locally and board B has J2.1, J2.2 also carrying "+5V", drawing one
-MBS wire from any A-pin to any B-pin produced multiple disconnected
-cross-board nets (5V, 5V_1, 5V_2 …) instead of one combined "+5V" net
-spanning all five pins. The user — correctly — expected the implicit
-local short on each board to extend the cross-board net automatically.
-
-**Fix:** rewrote `ExtractCrossBoardNets` (`multi_board_net_extractor.cpp`)
-around a path-compressed union-find on `SCH_MODULE_PIN*`:
-1. Seed every module pin into its own group.
-2. Within each block, union pins sharing a non-auto local net name
-   (`pin->GetText()`) — the local short.
-3. For each MBS subgraph, union all module pins that touch it — the
-   user-drawn cross-board wiring.
-4. Walk groups; emit a `MB_CROSS_BOARD_NET` per group spanning ≥2
-   sub-projects, with **every** pin in the group as an endpoint.
-
-**Naming precedence** for the resulting cross-board net:
-- MBS-side label (from `CONNECTION_GRAPH::GetResolvedSubgraphName`) wins
-- Otherwise: most-frequent non-auto local label among the pins
-- Otherwise: synthesized `Net-<uuid>`
-
-This makes the GND ↔ 5V short ERC check from M5.8 land at MBS-extract
-time too: locally-shorted pins all end up on one net, and the
-`TestCrossBoardConnectivity` matrix walks the combined endpoint list.
-
-### Refresh-placement preview UX ✓ done (2026-04-27)
-
-| Item | Where | Status |
-|---|---|---|
-| Track newly-added blocks across the apply | `eeschema/multi_board_mbs_refresh.h` `MBS_REFRESH_RESULT::newlyAddedBlocks` | ✓ vector populated by ADD_BLOCK case |
-| Hand new blocks to the move tool after apply | `eeschema/tools/sch_editor_control.cpp` RefreshMbsFromSubProjects | ✓ select all new blocks, `PostAction(SCH_ACTIONS::move)` |
-| Skip post-apply summary modal when blocks placed interactively | same | ✓ placement itself is the visual feedback |
-
-**Outcome:** click Apply on the refresh dialog → new blocks appear
-briefly at default positions, then attach to the cursor as a group;
-one click drops them at the chosen location. Cancel mid-move leaves
-them at the default positions (still recoverable via Undo). Existing
-changes (REMOVE / RENAME / PATH_DRIFT / etc.) commit immediately —
-only ADD_BLOCK triggers interactive placement.
-
-**Deliberate non-feature:** real semi-transparent (alpha-blended)
-preview rendering. The selection-overlay highlight that the move tool
-applies during drag gives sufficient "this is being placed" signal
-without painter work. If literal alpha-blend is wanted later, it's a
-small painter addition (`SCH_PAINTER::draw(SCH_MODULE_BLOCK)` checks
-`block->IsMoving()` and reduces opacity).
-
-### Properties dialog polish (P2)
-
-The new `DIALOG_MODULE_BLOCK_PROPERTIES` (eeschema/dialogs/) currently
-uses a hand-rolled wxFlexGridSizer layout — works but not in KiCad's
-standard wxFormBuilder format. Rewrite using a `.fbp` + matching `_base`
-class once the field set is settled. ~30 min.
-
-### Cross-board verification (P1)
-
-| Item | Where | Status |
-|---|---|---|
-| Binding DRC check (M8.4) | new `drc_test_provider_cross_board_binding.cpp` | ✓ done (2026-04-27) — auto-fires from pcbnew DRC when project is a multi-board sub-project; checks each declared cross-board endpoint resolves to an existing connector pad on this board with the expected net |
-| Cross-board ERC rules (M5.8) | `ERC_TESTER::TestCrossBoardConnectivity` in `eeschema/erc/erc.{h,cpp}` | ✓ done (2026-04-27) — runs whenever ERC is invoked; checks (a) unconnected module pins (no wire / dangling), (b) single-endpoint nets that touch only one block, (c) pin-to-pin matrix walk reusing `ERC_SETTINGS::GetPinMapValue` (same machinery as regular schematic ERC) — emits `ERCE_PIN_TO_PIN_ERROR/WARNING` for incompatible pin-type pairs and `ERCE_POWERPIN_NOT_DRIVEN` for power nets without a driver. Catches GND↔5V shorts when both pins are PT_POWER_IN with no PT_POWER_OUT on the net. |
-| Module pin electrical type | `SCH_MODULE_PIN::m_electricalType` + persistence + heuristic extractor in `multi_board_scan.cpp` | ✓ done (2026-04-27) — pads with net names matching power/ground patterns (GND, VCC, +5V, VBUS, etc.) get PT_POWER_IN, others stay PT_PASSIVE. Round-trips via new `(electrical_type "...")` token in `.kicad_sch`. Proper extraction from sub-project connector symbol pin defs deferred to v2. |
-| MBS ERC button | `eeschema/toolbars_mbsch_editor.cpp` | ✓ done (2026-04-27) — `SCH_ACTIONS::runERC` re-added to the MBSCH top toolbar; uses the standard `DIALOG_ERC` (since MBSCH inherits from `SCH_EDIT_FRAME`). |
-| DRC port to container model (M5.5) | `pcbnew/drc/drc_engine_cross_board.cpp` | pending — unwired engine still iterates legacy `BOARD_INFO`. M8.4 sidesteps it; M5.5 only matters if we want the pairwise N-board cross-checks the legacy engine started |
-| Flesh out DRC stubs (M5.6) | `drc_engine_cross_board.cpp` | pending — `CheckSignalIntegrity` / `CheckPowerDistribution` TODOs. Depend on M5.5 |
-
-**M8.4 details:** new helper `MultiBoardCollectCrossBoardBindingsForSubProject` returns full `(componentRef, pinNumber, netName)` triples by walking up to the container `.kicad_pro`. The test provider iterates them and emits `DRCE_GENERIC_ERROR` for: missing connector footprint, missing pin number on the connector, pad with no net assigned, or pad net != MBS-declared net (after stripping leading `/` for sheet-path-prefixed labels).
-
-### 3D viewer — finish what's started (P1)
-
-OpenGL composition for translation-only is landed (M6.C-phase-1).
-What remains:
-
-| Item | What | Notes |
-|---|---|---|
-| Rotation / flip in pose matrix (M6.C-phase-2 #1) | `3d_viewer_assembly.cpp::RedrawAll` | Currently translation-only; ignored rotation in `BOARD_3D_INSTANCE`. Two-line change + lighting verify. |
-| Auto-mate from cross-board nets (M6.D-phase-1) | `MateConnectors` rewrite as `BuildMateGraph` + `SolveMatePoses` | Primary-mate-wins, derived from `MULTI_BOARD_SCAN`. Highest visible-feature ROI. |
-| Custom mate declarations + UI (M6.D-phase-2) | `multi_board.assembly_3d.mates` schema + `PANEL_3D_ASSEMBLY` Mates tree | Mounting-hole mates, manual primary override, disable. Persists in container `.kicad_pro`. |
-| Real-geometry collision (M6.E) | new — broad / narrow phase per-component | Today is AABB board-outline only. Use `S3D_CACHE` meshes with per-component AABB then OBB / GJK. |
-| STEP assembly export (M6.F) | finish stub `ExportAssemblySTEP` | Compose per-board STEP shapes into a STEP compound with `TopLoc_Location`. |
-| Persist assembly state (M6.G) | `multi_board.assembly_3d` in container `.kicad_pro` | Per-instance transform + visibility, key by sub-project UUID. Schema shared with M6.D-phase-2. |
-| Raytracer multi-instance (M6.C-phase-2 #2) | `create_scene.cpp` | Today the raytracer falls through to single-board. Scene-graph composition. Lowest-priority of these. |
-| Camera auto-frame on open | wire `GetAssemblyBoundingBox()` into initial camera fit | Polish. |
-
-Estimate: M6.D-phase-1 is ~1-2 sessions, phase-2 is ~1-2, M6.E is
-~1-2, M6.F is ~1-2, M6.G is ~1. ~5-9 sessions total for the visible
-features (D/E/F/G); raytracer + model-cache dedup + parallel load are
-deferrable.
-
-### Project-level integration (P1)
-
-Cross-cutting work that gives the container project-level *substance*.
-Detail in M7.
-
-| Item | What | Notes |
-|---|---|---|
-| Container library (M7.1) | New container-tier in `LIBRARY_MANAGER`; lookup precedence GLOBAL → CONTAINER → PROJECT; new `GetContainerProject()` on PROJECT | Lib added in MBSCH visible to every sub-project |
-| Settings propagation (M7.2) | Parallel to M7.1: container `settings.json` overlay between global and project | Reuses `GetContainerProject()` from M7.1 |
-
-Estimate: M7.1 ~3 sessions (incl. dialog UI for scope selector). M7.2
-~2 sessions after pre-impl investigation.
-
-### Editor UI integration (P2 — broad but mechanical)
-
-Catalog of surfaces with confirmed gaps. Pattern in each: extend the
-iterator that walks `SCH_SHEET` hierarchies / iterates per-screen
-items to also recognize module blocks and cross-board nets. Detail in
-M8.0–M8.2.
-
-- **Pre-work (M8.0):** add a `RECURSE_INTO_MODULE_BLOCKS` flag /
-  `RunOnModuleBlocks` helper to iteration utilities. Most items below
-  become 1-line callsite swaps once this lands.
-- **SCH (M8.1):** Net Navigator, Find/Replace, Annotation, Hierarchy
-  pane, Symbol Fields Table, Netlist exporters, BOM, Plotter, Symbol
-  Properties dialog (10 surfaces total).
-- **PCB (M8.2):** Net Inspector, Length tuner, Diff pair finder,
-  Footprint editor xref, BOM/PnP, Pad properties (6 surfaces).
-
-Estimate: ~3 sessions for M8.0; surfaces tackled opportunistically in
-~1 session per pair.
-
-### UX polish (P2)
-
-| Item | Notes |
-|---|---|
-| Refresh dialog redesign (M8.5) | Settings panel + `WX_HTML_REPORT_PANEL` console, modeled on `dialogs/dialog_update_from_pcb.*`. Replaces flat checklist. |
-| Fold MBS push-sync into SCH→PCB sync (M8.3) | Removes the standalone "Sync to PCB" toolbar button; adds detection in `dialog_update_pcb.cpp` |
-| MBS file-format icon + Refresh / Manage Boards toolbar icons | Bundle of small visual items |
-| MBS editor drag/move feel | Snap behavior, label reflow when pins added |
-
-Estimate: ~2 sessions total for everything in this bucket.
-
-### Cleanup (P2)
-
-| Item | What |
-|---|---|
-| M5.2 Replace directory-walk MBS lookup | Store explicit parent-project ref in `.kicad_mbs` instead of walking up 6 levels |
-| M5.3 Replace text-level PCB sync | BOARD-level edits via `PCB_IO_KICAD_SEXPR::LoadBoard()` instead of regex |
-| M5.4 Comment sweep | Remove remaining `.kicad_multi` / `MULTI_BOARD_PROJECT` mentions in comments |
-| M4.2 Global-`Prj()` sweep | ~50-100 shallow call sites in dialogs/tools still hit the global; cross-talks under multi-project |
-
-Estimate: ~2 sessions, opportunistic.
-
-### Agent integration (P2 — separate workstream)
-
-Goal: agent can drive multi-board workflows end-to-end. Detail in M9.
-
-- New Kipy bindings for container, `SCH_MODULE_BLOCK`, refresh, push-sync
-- Tool schemas + Python handlers in `agent/tools/`
-- IPC handlers in `eeschema/api/` and `pcbnew/api/`
-
-Estimate: ~3-4 sessions; deferable until everything else stabilizes.
-
-### Confirmed *not* on the finish line
-
-User confirmed 2026-04-26 these are already addressed and don't need
-further work:
-- M8.9.3 (net classes for cross-board nets)
-- M8.9.4 (visual annotation on connector pins/pads)
-- M8.9.5 (net naming reconciliation)
-- M8.9.6 (highlight-net cross-editor propagation)
-- M8.9.7 (save/load round-trip — verified working)
-
-### Suggested order
-
-1. **Week 1:** P0 items (MBS edit ops + ERC/DRC suppression). Restores
-   user trust in the MBS editor and clears noise from sub-project
-   verification.
-2. **Week 2:** Cross-board verification (M5.8 ERC + M8.4 binding DRC +
-   M5.5/M5.6 DRC port + stubs). Closes the verification story.
-3. **Week 3:** 3D viewer M6.D-phase-1 (auto mate from nets) + M6.E
-   (collision). Highest Altium-parity visible feature.
-4. **Week 4:** 3D viewer M6.D-phase-2 (custom mates UI) + M6.F
-   (STEP export) + M6.G (persistence — schema shared with phase-2).
-5. **Week 5:** M7.1 container library.
-6. **Week 6:** M7.2 settings + M8.3 fold sync + UX polish bundle.
-7. **Week 7:** M8.0/M8.1/M8.2 editor UI integration.
-8. **Week 8+:** M9 agent integration + cleanup.
-
-~6-8 weeks to feature-complete. Compressible if 3D viewer and library
-work parallelize across two contributors.
+## What multi-board looks like
+
+**Container topology.** A multi-board project is a `.kicad_pro` whose
+`PROJECT_FILE::multi_board.container = true` flag is set, plus a
+sibling `.kicad_mbs` schematic at the same level. The container's
+`sub_projects[]` array lists each member sub-project (each is a
+standalone `.kicad_pro` + `.kicad_sch` + `.kicad_pcb` in its own
+subdirectory). The container's `cross_board_nets[]` array records
+which connector pads on which sub-projects share a net.
+
+```
+my_radio.kicad_pro              <-- container (multi_board.container=true)
+my_radio.kicad_mbs              <-- multi-board schematic
+boards/
+  fc/
+    fc.kicad_pro                <-- sub-project (standard layout)
+    fc.kicad_sch
+    fc.kicad_pcb
+  vtx/
+    vtx.kicad_pro
+    vtx.kicad_sch
+    vtx.kicad_pcb
+```
+
+**Frames.** `FRAME_MBSCH` is the multi-board schematic editor; it's
+implemented as `MBSCH_EDIT_FRAME` (subclass of `SCH_EDIT_FRAME`,
+shares the eeschema kiface). `FRAME_SCH` is the regular sub-project
+schematic editor. Both can run as Kiway peers in one process — see
+M4 below.
+
+**Items.** `SCH_MODULE_BLOCK` (subclass of `SCH_ITEM`) renders as a
+rectangle on the MBS, one per connector reference per sub-project.
+Each block owns `SCH_MODULE_PIN` children (subclass of
+`SCH_HIERLABEL`), one per connector pad. Pins carry a
+`(componentRef, pinNumber, netName, electricalType)` tuple persisted
+via the `(electrical_type "...")` token in `.kicad_mbs`.
 
 ---
 
-## Current state (2026-04-26)
+## Architecture
 
-### Landed + runtime-verified
-- Container topology unified under `PROJECT_FILE::multi_board`:
-  `multi_board.container` flag, `sub_projects[]` (SUB_PROJECT_INFO),
-  `cross_board_nets[]` (MB_CROSS_BOARD_NET), `mbs_file`. Legacy
-  `BOARD_INFO` / `CROSS_BOARD_CONNECTION` / `COMPONENT_BOARD_ASSIGNMENT`
-  arrays preserved for the tested single-project multi-PCB modules.
-- `MULTI_BOARD_PROJECT` class + `.kicad_multi` extension **removed**.
-- `.kicad_mbs` extension registered (`FILEEXT::MbsFileExtension`).
-- `FRAME_MBSCH` + `MBSCH_EDIT_FRAME` (subclass of `SCH_EDIT_FRAME`,
-  lives in `eeschema/`). Dispatches through `FACE_SCH`. Trimmed menubar,
-  custom cross-probe handling, saves trigger MBS net extraction.
-- Sub-project scanning (`multi_board_scan.h`) for connectors + pads.
-- MBS rendering via `SCH_MODULE_BLOCK` / `SCH_MODULE_PIN`.
-- Wire-based union-find cross-board net extraction (eeschema).
-- Text-level PCB net sync with reverse propagation + conflict detection.
-- MBS save hook triggering extraction + sync.
-- Multi-board netlist updater (exercised via normal workflow).
-- Component assignment manager (90% functional).
-- **M4 peer editors**: `KIWAY_HOLDER::SetPrjOverride`,
-  `RegisterPeerPlayer`, `SpawnPeerSchematicEditor`, File → Open
-  Sub-Board Schematic in New Window, peer lifecycle + ExpressMail
-  broadcast to all peers of a given FRAME_T.
+### Data flow
 
-### Landed since 2026-04-23
+```
+sub-project schematic ──▶ MBS canvas ──▶ container .kicad_pro
+                          (refresh)      (cross_board_nets[])
+                                                │
+                                                ├──▶ sub-project PCBs
+                                                │      (per-board pull
+                                                │       in dialog_update_pcb,
+                                                │       or bulk push from MBSCH)
+                                                │
+                                                └──▶ ERC / DRC / cross-probe
+```
 
-- **MBS-scoped annotation** (B1/B2/…) — auto-assigned during refresh,
-  serialized via `(mbs_reference "B1")` token in `.kicad_mbs`. Painter
-  shows `B1 — fc/J2` header format; falls back to legacy `Module: name`
-  when ref unset. `nextMbsReference(screen)` helper in
-  `multi_board_mbs_refresh.cpp` finds first free slot.
-- **Cross-probe sender-scoped highlight** — `KIWAY_MAIL_EVENT.GetEventObject()`
-  cast to `EDA_BASE_FRAME` in MBSCH `KiwayMailIn` to identify the sender
-  project; explicit `$PROJECT:` token wins over sender path so
-  ambiguous refs (two boards both have J2) resolve correctly.
-- **Refresh-time view sync** — `ApplyMbsRefreshChanges` now takes a
-  `KIGFX::VIEW*` and calls `view->Add/Remove/Update` for every
-  add/remove/rename/add-pin path. Fixes the post-refresh "blocks
-  disappear until reopen" symptom (RTree mutated without view
-  notification).
-- **Empty-block auto-sweep** — at the end of every
-  `ApplyMbsRefreshChanges`, any block with `GetPins().empty()` is
-  removed from screen + view. Cleans up orphans from prior sessions
-  and from refreshes where pin removals leave a block bare.
-- **Selection (lasso + click)**:
-  - `SCH_MODULE_BLOCK::Visit` override surfaces child pins to the
-    inspector (mirrors `SCH_SHEET::Visit`); pins now reach the
-    selection collector at all.
-  - `SCH_MODULE_BLOCK::HitTest(SHAPE_LINE_CHAIN, bool)` override added
-    via `KIGEOM::BoxHitTest`; lasso (poly) selection now picks up
-    blocks alongside their pins. Box (rect) selection already worked
-    via the existing `HitTest(BOX2I, bool)` override.
-  - `SCH_SELECTION_TOOL::SelectMultiple` lasso branch added for
-    `SCH_MODULE_BLOCK` mirroring the `SCH_SHEET` branch.
-  - `itemPassesFilter`: `SCH_MODULE_BLOCK_T` routes through the
-    "symbols" filter, `SCH_MODULE_PIN_T` routes through the "pins"
-    filter. Was falling to `default → otherItems`.
-  - `GuessSelectionCandidates`: `SCH_MODULE_PIN_T` treated as
-    exact-priority hit alongside `SCH_PIN_T` / `SCH_SHEET_PIN_T` so
-    pin-on-block-edge clicks select the pin, not its parent block.
-  - `SCH_LINE::CanConnect`: `SCH_MODULE_PIN_T` added to the wire
-    endpoint whitelist; wires now terminate on a module pin in one
-    click instead of needing a double-click.
-- **Cross-probe self-loop fix** — two related bugs that together
-  collapsed multi-item MBS selections to a single item:
-  - `MBSCH_EDIT_FRAME::crossProbeHighlightPart` was calling
-    `selectionClear` on every invocation, defeating the multi-spec
-    batching in `KiwayMailIn`. Removed; the loop's `cleared` flag is
-    the sole clear point now.
-  - `SCH_EDIT_FRAME::SendSelectItemsToPcb` was fanning `$SELECT` to
-    `FRAME_MBSCH` even when the sender already was MBSCH, so the
-    packet round-tripped through the MBSCH's own KiwayMailIn. Gated
-    on `GetFrameType() != FRAME_MBSCH`.
-  - Net effect before fix: lasso showed pins highlight one-by-one and
-    only the last survived; shift+click failed identically. Both work
-    now.
-- **`SCH_SCREEN::Append/clear` filters** — `SCH_MODULE_PIN_T` excluded
-  from the rtree (parent block owns lifetime) alongside
-  `SCH_SHEET_PIN_T` / `SCH_FIELD_T`. Defensive.
+1. **Refresh** (`MBSCH_EDIT_FRAME` toolbar): scans each sub-project's
+   schematic + PCB for connector-class symbols (J1, P3, etc.) and
+   their pads, then diffs against the current MBS. Categories:
+   `ADD_BLOCK`, `REMOVE_BLOCK`, `ADD_PIN`, `REMOVE_PIN`, `RENAME_PIN`,
+   `PATH_DRIFT`, `UPGRADE_UUID`. Dialog shows category checkboxes +
+   streaming console; new blocks attach to cursor for placement.
+2. **MBS save** triggers `ExtractCrossBoardNets` (union-find on
+   module pins, joins by shared local net name within a block AND
+   by MBS wire connectivity), writes `cross_board_nets[]` into the
+   container `.kicad_pro`.
+3. **Sub-project sync**:
+   - **Per-board** — `Update PCB from Schematic` runs the standard
+     `BOARD_NETLIST_UPDATER`, then `ApplyCrossBoardNetsToBoard`
+     overrides connector pad nets with MBS-declared values.
+   - **Bulk** — MBSCH toolbar's `Sync to PCB` action does a
+     text-level edit of every sub-project's `.kicad_pcb` directly
+     (no PCB editor open required).
+4. **Verification**:
+   - **MBS ERC** (M5.8) — runs from the MBSCH frame; checks
+     unconnected module pins, single-endpoint cross-board nets, and
+     pin-type matrix conflicts (GND↔5V shorts).
+   - **Sub-project ERC/DRC** — suppresses no-driver / unconnected-pad
+     false positives on cross-board pins (M8.9.1, M8.9.2).
+   - **Binding DRC** (M8.4) — auto-fires in pcbnew DRC; verifies
+     each connector pad carries the MBS-declared net.
+5. **Cross-probe / net highlight** — sender-side file-based fan-out
+   (`MultiBoardCollectCrossBoardProbesForLocalNet`); works whether or
+   not MBSCH is open.
 
-### Landed but code-read only (never exercised at runtime)
-- **3D assembly viewer skeleton** — `ASSEMBLY_3D_MANAGER`
-  (`3d-viewer/3d_viewer/3d_viewer_assembly.{h,cpp}`) and
-  `PANEL_3D_ASSEMBLY` (`3d-viewer/dialogs/panel_3d_assembly.{h,cpp}`).
-  Compiled into the 3d-viewer library but **never instantiated or
-  referenced from `EDA_3D_VIEWER_FRAME`**. Uses the legacy `BOARD_INFO` /
-  `CROSS_BOARD_CONNECTION` data model — has not been ported to the
-  container topology. STEP export is a stub. See Phase M6.
-- **Cross-board DRC** (`pcbnew/drc/drc_engine_cross_board.{h,cpp}`) —
-  `CheckConnectorMatching` partially implemented; `CheckSignalIntegrity`
-  and `CheckPowerDistribution` are TODOs. Blocker:
-  `DRC_ENGINE_CROSS_BOARD::GetBoardByUuid()` returns `nullptr`.
+### Key files
+
+| Concern | File |
+|---|---|
+| Container + sub-project + cross-board-net types | `include/project/project_file.h` |
+| Container scan helpers (connectors, pads, bindings, probes) | `include/project/multi_board_scan.h`, `common/project/multi_board_scan.cpp` |
+| MBS items | `eeschema/sch_module_block.{h,cpp}`, `eeschema/sch_module_pin.{h,cpp}` |
+| MBS frame | `eeschema/mbsch_edit_frame.{h,cpp}`, `eeschema/toolbars_mbsch_editor.cpp` |
+| Refresh diff + apply | `eeschema/multi_board_mbs_refresh.{h,cpp}` |
+| Refresh dialog | `eeschema/dialogs/dialog_mbs_refresh.{h,cpp}` |
+| Cross-board net extractor | `eeschema/multi_board_net_extractor.{h,cpp}` |
+| Bulk push to all sub-project PCBs (text-level) | `common/project/cross_board_pcb_sync.{h,cpp}` |
+| In-memory cross-board apply (per-board pull) | `pcbnew/multi_board/cross_board_apply_to_board.{h,cpp}` |
+| Cross-board ERC | `eeschema/erc/erc.cpp::TestCrossBoardConnectivity` |
+| Cross-board binding DRC | `pcbnew/drc/drc_test_provider_cross_board_binding.cpp` |
+| 3D assembly viewer | `3d-viewer/3d_viewer/3d_viewer_assembly.{h,cpp}`, `3d-viewer/dialogs/panel_3d_assembly.{h,cpp}` |
+| Module block properties dialog | `eeschema/dialogs/dialog_module_block_properties.{h,cpp}` |
+| Sub-project board loader | `pcbnew/multi_board/sub_project_board_loader.{h,cpp}` |
+| Peer SCH/PCB spawning | `eeschema/multi_board_peer_open.h`, `eeschema/tools/sch_editor_control.cpp` (impl) |
+
+---
+
+## Locked-in decisions
+
+1. **Multi-project topology, not multi-board-in-one-project.** Each
+   sub-project is standalone; the container project just lists them.
+   Matches Altium's peer model and lets sub-projects open independently.
+2. **MBS editor is a subclass of `SCH_EDIT_FRAME`, not a separate
+   kiface.** All MBS items live in the eeschema kiface so we share
+   the painter, parser, connection graph, and selection tool. Subclass
+   pattern lets us trim the menubar and override save / cross-probe
+   without splitting the kiface.
+3. **In-process multi-project**, not separate processes. M4 added
+   peer-player support (`KIWAY::RegisterPeerPlayer`,
+   `SetPrjOverride`) so multiple `SCH_EDIT_FRAME`s pinned to
+   different sub-projects can coexist in one Zeo process.
+4. **3D viewer composes multiple `BOARD_ADAPTER`s with per-instance
+   transforms.** Not a merged super-BOARD, not an extended single-
+   adapter. Renderers (`RENDER_3D_OPENGL`) gain "assembly pose"
+   matrices so each instance draws into the same scene. Translation-
+   only composition is landed (M6.C-phase-1); rotation / mating /
+   collision pending.
+5. **Sub-project board loader (`pcbnew/multi_board/sub_project_board_loader.{h,cpp}`)
+   returns owner-managed `std::unique_ptr<BOARD>`, no shared cache.**
+   Used by 3D viewer, cross-board DRC, and (via fallback) the
+   netlist updater.
+6. **MBS cross-board nets are authoritative** for connector-pad net
+   assignments. When schematic-side sync says "net X" and MBS says
+   "net Y" for the same pad, MBS wins; the per-board apply reports
+   the override as a warning. Rationale: wiring two module pins
+   together on the MBS is the user explicitly declaring "these are
+   the same net everywhere" — that has to override per-board labels.
+7. **Container lookup is a directory walk** (up to 6 levels from a
+   sub-project's `.kicad_pro`). Replace with an explicit parent
+   reference stored in the `.kicad_mbs` (M5.2 — see remaining work).
+
+### Kiway constraint
+
+`KIWAY::Prj()` still delegates to `SETTINGS_MANAGER::Prj()` which
+returns the first project in the manager's list. Per-frame project
+resolution is via `KIWAY_HOLDER::SetPrjOverride`. Callers inside
+shared kiface code that hit `Kiway().Prj()` directly will get the
+wrong project in multi-project sessions — see M4.2 in remaining work.
+
+### Cross-probe / mail scoping
+
+Two patterns coexist; pick the right one for new mail commands:
+
+- **In-band `$PROJECT:` token** for cross-probe / selection packets
+  whose target is determined by *content* (e.g., MBSCH originating a
+  scoped probe to a specific sub-project). Receivers parse the token
+  and silently skip non-matching projects.
+- **Sender-aware peer filter** at the top of `KiwayMailIn` for
+  request/response and mutating commands routed by frame type alone
+  (`MAIL_SCH_GET_NETLIST`, `MAIL_PCB_UPDATE`, etc.). Compares
+  `sender->Prj().GetProjectFullName()` against ours. KIWAY broadcasts
+  to every peer of a frame type, so this filter is required to keep
+  M4 multi-peer sessions deterministic.
+
+---
+
+## Implementation status
+
+### Shipped
+
+| Phase | Item |
+|---|---|
+| M0 | Pre-work, branch snapshot |
+| M1 | Container model unified under `PROJECT_FILE::multi_board` |
+| M2 | `.kicad_mbs` extension, `MBSCH_EDIT_FRAME` subclass, save hook |
+| M4 (MVP) | Peer player support; `SetPrjOverride`; broadcast ExpressMail; File→Open Sub-Board Schematic in New Window |
+| M5.1 | Shared sub-project board loader |
+| M5.8 | MBS-side cross-board ERC (unconnected pin, single-endpoint net, pin-type matrix) |
+| M6.A/B | 3D assembly skeleton ported to container model; assembly frame renders one sub-board at a time |
+| M6.C-phase-1 | OpenGL multi-board composition with translation-only per-instance transforms |
+| M6.D (partial) | Connector mating — see active 3D viewer work |
+| M8.4 | Cross-board net binding DRC check |
+| M8.6 | All MBS edit operations (delete, rotate, mirror, drag-corner resize, move-with-wire-pinning, single-click wire termination) |
+| M8.9.1 | Sub-project ERC suppresses no-driver false positives on cross-board pins |
+| M8.9.2 | Sub-project DRC suppresses unconnected-pad false positives on cross-board pins |
+| M8.5 (refresh) | Refresh dialog redesigned with category toggles + `WX_HTML_REPORT_PANEL` |
+| M8.3 | Per-board `Update PCB from Schematic` also pulls MBS cross-board nets in (with banner notice). MBS toolbar `Sync to PCB` retained for bulk N-board push. |
+| Cross-cutting | Auto-disambig (`_<digits>`) + `{slash}` escape normalisation everywhere a net name is compared |
+| Cross-cutting | Cross-board net extractor uses union-find (joins pins by local net name within a block AND by MBS wire) |
+| Cross-cutting | Net-highlight propagation works whether or not MBSCH is open (sender-side file-based fan-out via `MultiBoardCollectCrossBoardProbesForLocalNet`) |
+| Cross-cutting | Peer-mail project scope filter on `MAIL_SCH_GET_NETLIST` / `MAIL_PCB_UPDATE` / etc. |
+| Cross-cutting | Module pin properties dialog (notebook with General + Pin Functions tabs); Open button spawns peer SCH editor |
+
+### Code-read but not runtime-verified
+
+- **Cross-board DRC engine** (`pcbnew/drc/drc_engine_cross_board.{h,cpp}`):
+  `CheckConnectorMatching` partial; `CheckSignalIntegrity` and
+  `CheckPowerDistribution` are TODO stubs. Engine still iterates
+  legacy `BOARD_INFO` instead of `GetSubProjects()`. M8.4's binding
+  check sidesteps this engine entirely; the engine remains for the
+  pairwise N-board cross-checks it was designed for.
 
 ### Incomplete or fragile
-- **Stale `.kicad_multi` / `MULTI_BOARD_PROJECT` references in comments
-  only** — files need a comment-only sweep:
-  `include/project/cross_board_pcb_sync.h:56`,
-  `kicad/kicad_manager_frame.h:168,177`,
-  `kicad/dialogs/dialog_multi_board_setup.h:45,47,61`,
-  `kicad/tools/kicad_manager_control.cpp:338-341` (legacy-stub cleanup,
-  already code-wise correct but mentions the old extension),
-  `eeschema/multi_board_net_extractor.cpp:37`,
-  `eeschema/multi_board_mbs_refresh.cpp:39`,
-  `eeschema/tools/sch_editor_control.cpp:621`,
-  `pcbnew/netlist_reader/board_netlist_updater.{h:150,160; cpp:1176}`.
-- **Directory-walking MBS lookup** (`sch_editor_control.cpp:~621`,
-  `files-io.cpp::syncCrossBoardNetsIfMbs`) walks up 6 levels for the
-  enclosing container `.kicad_pro`; picks first found, breaks on deeper
-  nesting. Replace with an explicit parent-project reference stored in
-  the `.kicad_mbs` file.
-- **Text-level PCB sync** is regex-based; fragile on escaped chars /
-  non-standard whitespace. Replace with BOARD-level edits via
-  `PCB_IO_KICAD_SEXPR::LoadBoard()`.
-- **Shared sub-project board loader missing**: `GetBoardByUuid()` is
-  stubbed to nullptr in `DRC_ENGINE_CROSS_BOARD` and to active-only in
-  `MULTI_BOARD_NETLIST_UPDATER`. The 3D viewer will need the same
-  loader — this is the Phase M6 precursor that unblocks M5 DRC
-  validation too.
-- **M4 sweep incomplete**: ~50-100 shallow `Prj()` call sites in dialogs
-  and tools still resolve via the global. Works for single-project use,
-  cross-talks when multiple projects are loaded.
 
-### Kiway constraint (unchanged)
-`KIWAY::Prj()` still delegates to `SETTINGS_MANAGER::Prj()`, which
-returns `*m_projects_list.begin()->get()`. Per-frame resolution is
-handled by `KIWAY_HOLDER::SetPrjOverride` (M4.2). The sweep to remove
-remaining global lookups is M4.2's optional cleanup phase.
+- **Directory-walk container lookup** (M5.2). Used by:
+  `eeschema/tools/sch_editor_control.cpp::RefreshMbsFromSubProjects`,
+  `eeschema/files-io.cpp::syncCrossBoardNetsIfMbs`,
+  `pcbnew/netlist_reader/board_netlist_updater.cpp::lookupCrossBoardNet`,
+  and the new probe collectors in `multi_board_scan.cpp`. Replace
+  with explicit parent reference.
+- **Text-level PCB sync** (`common/project/cross_board_pcb_sync.cpp`)
+  is regex-based; fragile on escaped characters and non-standard
+  whitespace. M5.3 replaces with `PCB_IO_KICAD_SEXPR::LoadBoard`-based
+  edits.
+- **M4.2 sweep**: ~50–100 shallow `Prj()` call sites in dialogs
+  and tools still resolve via the global. Works for single-project
+  use; cross-talks across multiple projects.
 
 ---
 
-## Phase M0 — Pre-work ✓ done
-Branch snapshot tag + decision to discard test projects (no migration).
+## Remaining work
 
-## Phase M1 — File unification ✓ done
-Full port of the container model to `PROJECT_FILE::multi_board`. Class
-`MULTI_BOARD_PROJECT` and extension `.kicad_multi` are retired. Caller
-sweep completed (all active code uses `Prj().GetProjectFile()` +
-`IsMultiBoardContainer()`). Comment-level cleanup still pending
-(see Current state → Incomplete).
+Items in priority order. Items marked **(separate agent)** are
+parallelized — don't duplicate effort.
 
-## Phase M2 — `.kicad_mbs` format + MBS editor ✓ done (as subclass)
+### P0 (gating user workflows)
+None currently open.
 
-**Chose subclass over separate kiface.** `MBSCH_EDIT_FRAME` is a
-`SCH_EDIT_FRAME` subclass in `eeschema/` (not a dedicated
-`mbschema/` kiface DSO). `FRAME_MBSCH` dispatches through `FACE_SCH`.
+### P1 (important for parity)
 
-Rationale: `SCH_MODULE_BLOCK`, `SCH_MODULE_PIN`, painter, parser,
-connectivity, and the MBS net extractor already live in the eeschema
-kiface. A separate DSO would have forced a three-way split of that
-code without isolating any runtime state. The subclass pattern keeps
-the MBS feature surface trimmed (menubar, cross-probe, save hook) while
-sharing implementation with full eeschema.
+- **M5.5 — Port `DRC_ENGINE_CROSS_BOARD` to container model**
+  (~1 session). Replace `GetBoardInfos()` iteration with
+  `GetSubProjects()` + `GetCrossBoardNets()` so the engine can
+  actually run on multi-board projects. Unlocks M5.6.
+- **M5.6 — Flesh out cross-board DRC stubs** (~2-3 sessions).
+  `CheckSignalIntegrity` (length, impedance) and
+  `CheckPowerDistribution` (min pins for power nets, current capacity,
+  voltage drop). Depends on M5.5.
+- **M6 (3D viewer)** *(separate agent)*. M6.D mating refinements,
+  M6.E real-geometry collision, M6.F STEP assembly export, M6.G
+  persistence + polish.
+- **M7.1 — Container library architecture** *(separate agent)*. New
+  `LIBRARY_TABLE_SCOPE::CONTAINER` tier between global and project;
+  `PROJECT::GetContainerProject()` for resolving the parent;
+  save-to-library scope selector in dialogs.
+- **M7.2 — Container settings propagation** *(separate agent)*.
+  Parallel to M7.1: container `settings.json` overlay between global
+  and project. Investigation pending on which `COMMON_SETTINGS` /
+  `EESCHEMA_SETTINGS` / `PROJECT_FILE` knobs make sense to layer.
 
-**Landed:**
-- `FILEEXT::MbsFileExtension = "kicad_mbs"`.
-- `FRAME_MBSCH` in `frame_type.h`; `KifaceType(FRAME_MBSCH) → FACE_SCH`.
-- `eeschema/mbsch_edit_frame.{h,cpp}` — overrides `onSchematicSaved`,
-  `doReCreateMenuBar`, `KiwayMailIn`.
-- `eeschema/eeschema.cpp::CreateKiWindow` handles `FRAME_MBSCH`.
+### P2 (mechanical / polish)
 
-**Deferred** (may never be needed, revisit only if runtime state
-isolation becomes necessary):
-- Split into `mbschema/` kiface DSO.
-
-## Phase M3 — Launcher redesign (~2 days, low risk) — pending
-
-Unchanged from prior plan. `wxAuiManager` in `KICAD_MANAGER_FRAME`,
-project tree center pane, sidebar left pane with action buttons,
-multi-board-aware actions (Edit MBS / Manage Sub-Boards / Sync / 3D
-Assembly) shown only when `IsMultiBoardContainer()`, sub-project nodes
-rendered under the multi-board root.
-
-Tree-pane rendering of sub-projects is the one active usability bug
-blocking hands-on M1 validation; everything else is polish.
-
-## Phase M4 — Concurrent editor instances — MVP done
-
-**Landed** (M4.0 spike + M4.1–M4.5 MVP, see 2026-04-20 status block
-below for detail):
-- Peer-player registration, broadcast ExpressMail, File → Open
-  Sub-Board Schematic in New Window, duplicate protection, per-frame
-  title from overridden `Prj()`.
-
-**Still deferred** (M4.2 full cleanup, optional):
-- Sweep remaining global `Prj()` call sites to frame-local.
-- Per-frame library table caches.
-- ExpressMail routed on (project, frame-type) tuple, not just frame type.
-
-### Phase M4 status (2026-04-20) — preserved
-
-**M4.0 spike succeeded**: opened a multi-board container with two
-sub-boards, launched the "Open First Sub-Board Schematic (peer)"
-action. Result:
-- Fresh `SCH_EDIT_FRAME` alongside the project manager.
-- Title / hierarchy / library lookups resolve to the sub-project via
-  `SetPrjOverride`.
-- Two concurrent `SCH_EDIT_FRAME`s viable in one process.
-
-Root fix that unblocked the spike: C-style cast instead of
-`dynamic_cast` when casting `CreateKiWindow`'s return value. The
-eeschema kiface DSO has hidden typeinfo visibility; `dynamic_cast` from
-the manager binary fails even though the hierarchy is correct.
-Consistent with `Kiway::Player()`'s own pattern.
-
-**M4.3 — Kiway peer-player support** ✓:
-- `KIWAY::RegisterPeerPlayer`, `UnregisterPeerPlayer`,
-  `GetAllPlayerFrames`.
-- Mutex-protected `m_peerPlayerFrames`.
-- `ExpressMail` broadcasts to primary + every peer.
-- Single-instance editors see unchanged behavior.
-
-**M4.4 — Sub-project open UX** ✓:
-- Menu entry, duplicate protection, self-unregister on close.
-
-**M4.5 — frame identity**: achieved via `Prj()` basename in title.
-
-### Phase M1 status (2026-04-20) — superseded
-All M1 items (M1.1–M1.5) landed between 2026-04-20 and 2026-04-23.
-
----
-
-## Phase M5 — Non-3D cleanup + follow-ons (~2-3 days) — partially landed
-
-### M5.1 ✓ landed (2026-04-23)
-
-**Shared sub-project board loader** at
-`pcbnew/multi_board/sub_project_board_loader.{h,cpp}`. Two free
-functions: `LoadSubProjectBoard(PROJECT&, SUB_PROJECT_INFO)` and
-`LoadSubProjectBoard(PROJECT&, KIID)`. Resolves via
-`PROJECT_FILE::ResolveSubProjectPath` + `MultiBoardMainPcb`, loads via
-`PCB_IO_KICAD_SEXPR::LoadBoard`, returns `std::unique_ptr<BOARD>`.
-No shared cache (R9). Failures swallowed via `wxLogTrace MULTI_BOARD`.
-
-Wired into both legacy stubs as a fallback path:
-- `MULTI_BOARD_NETLIST_UPDATER::GetBoardByUuid` — first the cache,
-  then the frame's active board (legacy single-project multi-PCB
-  path), then the loader. Owns loaded boards in
-  `m_loadedSubBoards`.
-- `DRC_ENGINE_CROSS_BOARD::GetBoardByUuid` — first the cache, then
-  the loader. Owns loaded boards in `m_loadedSubBoards`.
-
-**Important caveat**: both engines still iterate
-`PROJECT_FILE::GetBoardInfos()` (legacy single-project multi-PCB
-model) at their call sites, so the loader fallback is currently
-unreachable from existing callers — it's there for the 3D viewer
-(M6.A onward) and for when those engines themselves are ported to
-the container topology (separate task, not yet scoped).
-
-### M5.2+ pending
-
-- **M5.2 Replace directory-walk MBS lookup** with an explicit
-  parent-project reference stored in the `.kicad_mbs` file
-  (`(parent_project "...")` s-expr or in the `(title_block)` metadata).
-  Updates `sch_editor_control.cpp:~621`,
-  `files-io.cpp::syncCrossBoardNetsIfMbs`, and the netlist-updater
-  container probe.
-- **M5.3 Replace text-level PCB sync** with BOARD-level edits via
-  `PCB_IO_KICAD_SEXPR::LoadBoard()`. Robust handling of quoted strings,
-  whitespace, escape sequences.
-- **M5.4 Comment sweep** — eliminate remaining `.kicad_multi` /
-  `MULTI_BOARD_PROJECT` mentions in the files listed in Current state.
-- **M5.5 Port DRC + netlist updater to container model** — both
-  engines currently iterate the legacy `BOARD_INFO` array. Container
-  projects leave it empty, so the engines silently no-op. Port to
-  `GetSubProjects()` + `GetCrossBoardNets()` so the M5.1 loader
-  fallback becomes useful and `CheckConnectorMatching` actually runs.
-- **M5.6 DRC stubs investment** — flesh out `CheckSignalIntegrity` and
-  `CheckPowerDistribution` once M5.5 is in place.
-- **M5.7 Evaluate CONNECTION_GRAPH integration** — register
-  `SCH_MODULE_BLOCK_T` / `SCH_MODULE_PIN_T`, retire the custom
-  union-find extractor if the graph integration is cheap. ~4 hours if
-  we go for it; skip if the graph API makes it harder.
-- **M5.8 Cross-board ERC rules** — the real "multi-board DRC". Walk
-  `multi_board.cross_board_nets` and emit ERC violations for:
-  - Unconnected boundary pin (block pin not wired to anything)
-  - Driver conflict on a cross-board net (two outputs facing each other)
-  - Pin-type mismatch at the boundary (output ↔ output, power ↔ output)
-  - Pin count mismatch on mating connector pairs
-  - Voltage rail mismatch (block A drives 3.3V into B's 5V rail)
-  - Pad-count match between paired connectors
-
-  Mechanism: new ERC check provider that consumes
-  `multi_board_net_extractor` output and emits violations through the
-  existing ERC violation framework. Reuses the same dialog/report
-  machinery as single-board ERC. Runs from the MBS editor.
-
-  **Note on terminology.** What people loosely call "multi-board DRC"
-  decomposes into three things, none of which is a new top-level DRC
-  dialog:
-  1. **MBS ERC** (this section, M5.8) — logical/electrical boundary
-     checks. Lives in MBS editor.
-  2. **Mechanical / collision** (M6.E) — geometric checks. Lives in
-     3D viewer.
-  3. **Cross-board net binding check** (M8.4) — single new check
-     provider in pcbnew's existing DRC, only fires when project is
-     multi-board. Verifies each connector pad on this board carries
-     the net the MBS declares for the corresponding block pin.
-
-  Per-board electrical/clearance DRC stays per-board, unchanged.
+- **M5.2 — Replace directory-walk lookup with explicit parent ref**
+  (~1 session). Single token in `.kicad_mbs` + a small refactor of
+  the four callers listed above. Eliminates the 6-level guess.
+- **M5.3 — Replace text-level PCB sync with BOARD-level edits**
+  (~1-2 sessions). `PCB_IO_KICAD_SEXPR::LoadBoard` round-trip; reuses
+  `ApplyCrossBoardNetsToBoard` (M8.3) but operating on a transient
+  in-memory load.
+- **M5.4 — Comment sweep** (~30 min). Remove stale `.kicad_multi` /
+  `MULTI_BOARD_PROJECT` mentions in comments only; code paths
+  already migrated.
+- **M8.0 — Shared iteration helper for module-block traversal**
+  (~half-session). New `RECURSE_INTO_MODULE_BLOCKS` flag (or a
+  `RunOnModuleBlocks` helper analogous to `RunOnChildren`) on the
+  iteration utilities used by the surfaces in M8.1/M8.2. Most surface
+  fixes become 1-line callsite swaps once this lands.
+- **M8.1 — Schematic editor surfaces with confirmed gaps** (~3-4
+  sessions, opportunistic):
+  - `widgets/net_navigator.cpp` (no `SCH_MODULE_PIN_T` handler)
+  - `tools/sch_find_replace_tool.cpp` (no descent into module blocks)
+  - `annotate.cpp` (collision check doesn't span module blocks)
+  - `widgets/hierarchy_pane.cpp` (sheet-only tree)
+  - `dialog_symbol_fields_table.cpp` (excludes module-block contents)
+  - `netlist_exporters/*` (Orcad/SPICE/etc. omit cross-board nets)
+  - `bom_plugins.cpp` (no cross-board connector mapping)
+  - `sch_plotter.cpp` (module blocks not rendered in plot)
+  - `dialogs/dialog_symbol_properties.cpp` (no cross-board indicator)
+- **M8.2 — PCB editor surfaces with confirmed gaps** (~2-3 sessions):
+  - `widgets/pcb_net_inspector_panel.cpp` (no cross-board aggregation)
+  - `drc/drc_test_provider_matched_length.cpp` + router (length calc
+    doesn't account for cross-board connector segments)
+  - Differential-pair finder (same boundary issue)
+  - Footprint editor cross-reference (no "this connector mates with X"
+    info)
+  - `exporters/place_file_exporter.cpp` (no cross-board de-dup)
+  - `dialogs/dialog_pad_properties_base*` (no cross-board indicator)
+- **M8.5 (icons) — Visual polish** (~1 session). New MBS file-format
+  icon, dedicated icons for the MBS toolbar's Refresh / Manage
+  Boards / Sync to PCB actions.
+- **Properties dialog wxFormBuilder rewrite** (~30 min). Currently
+  hand-coded; standard pattern uses a `.fbp` + matching `_base`
+  class.
+- **M9 — Agent integration** *(separate agent)*. Kipy bindings for
+  container + module-block; tool schemas in `agent/tools/`;
+  IPC handlers in `eeschema/api/` and `pcbnew/api/`.
+- **Headless schematic sync** (~1-2 sessions). Today
+  `PCB_EDIT_FRAME::TestStandalone` opens / spawns a project-matched
+  SCH frame before fetching a netlist. A frame-less path would load
+  the `.kicad_sch` headlessly via `SCH_IO_KICAD_SEXPR`, build a
+  transient `SCHEMATIC`, and run `NETLIST_EXPORTER_KICAD` directly
+  — eliminating the schematic-frame side effect of every PCB sync.
+  Requires moving the netlist exporter behind a kiface entry point
+  callable from pcbnew, or duplicating the loader path in pcbnew.
+- **M3 — Launcher redesign**. wxAuiManager center+sidebar layout,
+  multi-board-aware actions visible only when
+  `IsMultiBoardContainer()`. Most launcher work landed; remaining
+  scope unclear — verify against current launcher state before
+  scoping further.
 
 ---
 
-## Phase M6 — 3D Multi-Board Assembly Viewer
-
-**Goal:** reach feature parity with Altium's MultiBoard Assembly
-view — load every sub-board into a single 3D scene with per-board
-transforms, snap mated connectors, detect mechanical collisions,
-and export the whole assembly as a STEP compound.
-
-### M6 current state
-
-Two unwired classes exist:
-
-- `ASSEMBLY_3D_MANAGER` (`3d-viewer/3d_viewer/3d_viewer_assembly.{h,cpp}`)
-  — vector of `BOARD_3D_INSTANCE` (UUID + transform + visibility), FLAT /
-  STACKED / CUSTOM layout modes, AABB-based collision check, stubbed
-  STEP export (`ExportAssemblySTEP` returns false).
-- `PANEL_3D_ASSEMBLY` (`3d-viewer/dialogs/panel_3d_assembly.{h,cpp}`)
-  — wxPanel with board list, XYZ position / rotation controls,
-  mate / collision / transparency / export buttons.
-
-Both are in `CMakeLists.txt` but neither is referenced by
-`EDA_3D_VIEWER_FRAME` or anything else in the tree. `ASSEMBLY_3D_MANAGER`
-calls `PROJECT_FILE::GetBoardInfos()` and `GetCrossBoardConnections()`
-— the legacy single-project multi-PCB model, not the container
-topology.
-
-### M6 rendering architecture (decision)
-
-**Multiple `BOARD_ADAPTER`s, one per sub-board, composited in the
-renderer with per-instance transforms.** (Approach "a" from the 3D
-rendering audit.)
-
-Why not the alternatives:
-- **One super-adapter with an instance list**: violates the existing
-  per-adapter geometry build; forces `InitSettings` to know about
-  multiple boards.
-- **Merged super-BOARD with offset footprints**: loses board isolation,
-  breaks per-board edge outlines, and the design-settings / layer-stack
-  divergence between sub-boards can't be represented.
-
-Key facts from the audit that make approach "a" the right fit:
-- `RENDER_3D_BASE` already takes `BOARD_ADAPTER&` — the plumbing is
-  reference-based.
-- OpenGL renderer iterates footprints at render time with per-footprint
-  transforms (`render_3d_opengl.cpp:1050-1118`) — wrap the outer loop
-  over instances, left-multiply the footprint matrix by the instance
-  transform.
-- Raytracer consumes prebuilt BVHs (`create_scene.cpp:347`) — instance
-  loop composes per-board BVHs with transforms before stitching into
-  the scene.
-- 3D model cache (`S3D_CACHE`) is already shared across adapters.
-
-### M6.A — Skeleton refactor to new MBS data model (~1 session)
-
-Make `ASSEMBLY_3D_MANAGER` compile and function against the container
-topology. No rendering changes yet.
-
-1. `BOARD_3D_INSTANCE` (`3d_viewer_assembly.h:41`):
-   - rename `boardUuid` → `subProjectUuid`;
-   - add `wxString pcbFilePath` (absolute `.kicad_pcb` path, resolved
-     via `PROJECT_FILE::ResolveSubProjectPath`);
-   - `board` pointer becomes `std::unique_ptr<BOARD>` so the manager
-     owns each loaded board's lifetime.
-2. `ASSEMBLY_3D_MANAGER::LoadProjectBoards` (`.cpp:73`):
-   - guard `Prj().GetProjectFile().IsMultiBoardContainer()`;
-   - iterate `GetSubProjects()` instead of `GetBoardInfos()`;
-   - for each sub-project, resolve its `.kicad_pro`, load it into a
-     transient PROJECT_FILE probe to read the board filename, then
-     load the sibling `.kicad_pcb` via the M5.1 helper.
-3. `MateConnectors` (`.cpp:279`): switch from `CROSS_BOARD_CONNECTION`
-   to `MB_CROSS_BOARD_NET`. For each net with ≥2 endpoints, resolve
-   each `MB_CROSS_BOARD_NET_ENDPOINT` (subProjectUuid + componentRef +
-   pinNumber) to a `PAD*` on the corresponding loaded `BOARD`.
-4. `CalculateMatingOffset` (`.cpp:459`): replace pad-KIID lookup with
-   `(componentRef, pinNumber)` lookup.
-5. `PANEL_3D_ASSEMBLY`: no structural change; handle the async
-   "boards still loading" state cleanly (the manager's board-load is
-   sync for now but will become async in M6.E).
-
-Deliverable: compiles; given a container project, `LoadProjectBoards`
-loads all sub-project BOARDs and `MateConnectors` resolves endpoints
-via the new model. No rendering yet. Depends on M5.1 shared loader.
-
-### M6.B — Launch + single-board rendering on the assembly frame (~1 session)
-
-Prove the manager / panel / frame wiring end-to-end before touching
-the renderer.
-
-1. `EDA_3D_VIEWER_FRAME` gains an "assembly mode" construction path:
-   constructor variant taking a container `PROJECT*` (no parent
-   `PCB_BASE_FRAME`). In this mode the frame owns an
-   `ASSEMBLY_3D_MANAGER` and the existing `m_boardAdapter` points at
-   the currently-selected instance's BOARD.
-2. Wire `PANEL_3D_ASSEMBLY` into the frame's AUI layout (right pane
-   alongside `APPEARANCE_CONTROLS_3D`). Panel's board-list selection
-   calls `SetBoard()` on the adapter + `NewDisplay()`.
-3. Menu entry in `KICAD_MANAGER_FRAME`: "Open 3D Assembly", visible
-   only when `Prj().GetProjectFile().IsMultiBoardContainer()`. Launches
-   via `Kiway().Player(FRAME_PCB_DISPLAY3D, …)` using the M4 peer-
-   player machinery so it lives alongside any existing per-sub-board
-   3D viewers.
-4. Window identity: title includes container basename; peer-register
-   so multiple 3D viewers can coexist in one process.
-
-Deliverable: "Open 3D Assembly" from the manager opens a 3D viewer
-that renders one sub-board at a time; the assembly panel switches
-which board is active. Single-board render pipeline unchanged.
-
-### M6.C — Multi-board composition in the renderer
-
-#### M6.C-phase-1 ✓ landed (2026-04-23)
-
-OpenGL-path compositing with translation-only per-instance transforms.
-
-**What landed:**
-- `ASSEMBLY_3D_MANAGER` gained per-instance ownership:
-  `std::vector<std::unique_ptr<BOARD_ADAPTER>> m_instanceAdapters` +
-  `std::vector<std::unique_ptr<RENDER_3D_OPENGL>> m_instanceRenderers`,
-  aligned with `m_boardInstances`. New methods:
-  `InitRenderers(canvas, camera, s3dCache)` — lazy per-instance build;
-  `RedrawAll(isMoving, reporters)` — orchestrates the composite pass;
-  `RequestReload()` — invalidates every per-instance renderer's caches.
-- `RENDER_3D_OPENGL` gained two setters (default-off,
-  single-board mode untouched):
-  `SetAssemblyPose(glm::mat4)` — multiplied into the MODELVIEW after
-  the camera view is loaded; `SetSkipBufferClear(bool)` — skips glClear
-  of color/depth and the background gradient so subsequent instances
-  composite onto the framebuffer.
-- `EDA_3D_CANVAS::DoRePaint` routes through
-  `m_assemblyManager->RedrawAll(...)` when a manager is set and the
-  engine is OpenGL. Legacy single-board path unchanged when no manager.
-  New setter: `SetAssemblyManager(ASSEMBLY_3D_MANAGER*)`.
-- Assembly-mode frame constructor calls
-  `m_canvas->SetAssemblyManager(m_assemblyManager.get())` after
-  `setupFrame()`.
-- macOS `gl.h`-ordering fix: `3d_viewer_assembly.cpp` pre-includes
-  `<kicad_gl/kiglad.h>` to pre-empt system GL from being dragged in by
-  later headers.
-
-**Deliverable:** user opens a container in the manager → File → 3D
-Assembly Viewer → every sub-board renders at its flat-layout
-translation in one OpenGL scene. Visibility toggle skips a board's
-render pass. Panel position edits update instance translation and the
-next repaint shows the new position. 3D models load per-renderer
-(duplicated cache — acceptable for phase 1; deduped in phase 2).
-
-#### M6.C-phase-2 — deferred
-
-1. **Rotation / flip** — translation-only in phase 1. `BOARD_3D_INSTANCE.rotation`
-   is read but ignored by `RedrawAll`. Adding a rotation composition
-   to the pose matrix is a two-line change, but verifying it behaves
-   with the lighting/normal paths is its own small investment — land
-   together with M6.D-phase-1 connector-mating (the auto-mate solver
-   needs rotation for the same-side-flip path).
-2. **Raytracer multi-instance** — the raytracer path falls through to
-   rendering only the active instance (single-board via
-   `m_3d_render`). Full integration requires
-   `3d-viewer/3d_rendering/raytracing/create_scene.cpp` to compose
-   multiple BOARD_ADAPTERs' BVH containers with per-instance transform
-   attach. Scene-graph-level change, separate session.
-3. **3D model cache dedup** — each per-instance `RENDER_3D_OPENGL`
-   loads its own `m_3dModelMap`. For assemblies with many sub-boards
-   sharing 3D models (connectors, ICs), this duplicates the GPU
-   mesh cache. Share via a common cache keyed by model path.
-4. **Per-board reload throttling** — opening a 5-board container
-   currently blocks for ~5 × `BOARD_ADAPTER::InitSettings` (hundreds of
-   ms each). Load them in parallel or with a progress reporter.
-5. **Camera auto-frame on open** — wire `GetAssemblyBoundingBox()` into
-   the initial camera fit so the user sees the whole assembly instead
-   of whatever the default camera shows.
-6. **Visibility invalidation correctness** — when all instances are
-   hidden, the framebuffer is uncleared (no first pass runs). Add a
-   "nothing to render → still clear+background" branch.
-
-### M6.D — Connector mating
-
-The basic mating shipped in M6.A aligns centres and stacks in Z by
-board thickness + 5 mm. M6.D delivers Altium-parity mating in two
-phases: phase-1 derives mate pairs automatically from existing MBS
-cross-board nets; phase-2 layers explicit user-declared mates on top.
-
-**Constraint model (both phases): primary-mate-wins.** Each board
-edge in the mate graph has one *primary* mate that fully constrains
-the child board's 6DOF. Additional mates on the same edge become
-*alignment checks* — their residual (translation/rotation error
-against the primary) is reported but never re-solved. This matches
-how Altium MBA, SolidWorks PCB, and mechanical CAD assembly trees
-handle over-constrained graphs in practice; spanning-tree and
-least-squares variants are research-grade and not pursued.
-
-#### M6.D-phase-1 — Auto-derived mates from cross-board nets (~1-2 sessions)
-
-**Source of mates:** every `MB_CROSS_BOARD_NET` endpoint pair implies
-a connector mate. The connector is *implicitly identified* as the
-parent footprint of each endpoint pad — no tagging needed.
-
-1. **Build mate-pair candidates** from `MULTI_BOARD_SCAN`:
-   - For each `MB_CROSS_BOARD_NET` with ≥2 endpoints, group endpoints
-     into board-pair buckets keyed by
-     `(subProjectUuid_A, footprintRef_A, subProjectUuid_B, footprintRef_B)`.
-   - Each bucket is one *connector mate pair*; its weight = total
-     endpoint count (pins) across all nets that landed in it.
-   - Multi-endpoint nets (≥3 endpoints) decompose into all pairwise
-     combinations; primary-mate-wins picks the strongest per edge.
-2. **Build the board mate graph:**
-   - Nodes = `BOARD_3D_INSTANCE`s.
-   - Edges = aggregated mate-pair candidates per board pair, with
-     weight = sum of constituent connector-mate weights.
-3. **Pick anchor + place children:**
-   - Anchor = highest-degree node, ties broken by UUID order
-     (deterministic across re-opens).
-   - BFS from anchor; for each newly visited board, the edge back to
-     an already-placed neighbour is the *primary mate edge*. Within
-     that edge, the highest-weight connector mate pair is the
-     *primary mate pair*.
-   - All other connector mate pairs on the edge → `alignment-check`
-     set, surfaced as residuals (consumed by M6.F collision panel).
-4. **Compute pose for the primary mate pair:**
-   - **Center-of-mate** = mean of pad positions in the mate group
-     (per board, in board-local coords).
-   - **Mate side** for each connector = majority of its pads' copper
-     layer (`F_Cu` vs `B_Cu`); mixed/through-hole connectors fall
-     through to "F_Cu" with a logged warning (custom-mate override
-     in phase-2 closes this loophole).
-   - **Pad normal** = board's outward face normal in world coords,
-     factoring the parent board's existing rotation/flip.
-   - **Same-side handling:** if both connectors are on the same side
-     (F↔F or B↔B), flip the child board 180° about its in-plane axis
-     orthogonal to the connector's pin row so the connector faces the
-     parent. Opposite-side (F↔B): no flip.
-   - **Z gap:** prefer the larger of the two connectors' 3D-model
-     `boundingBox.max.z`; fall back to 5 mm only if no model is
-     available. Saved as a per-mate property so a user nudge sticks.
-   - **Pose composition:** `T(parent_world) · T(parent_mate_center)
-     · R(face_align) · F(flip?) · T(-child_mate_center) ·
-     S(child_scale)` — same shape as the existing assembly pose
-     pipeline, slotted into `MateConnectors` -> `ComputeMatePose`.
-5. **Output:** writes per-instance pose into `BOARD_3D_INSTANCE` and
-   stores the residual list on the manager. `RedrawAll` already
-   consumes per-instance pose; no renderer changes needed.
-6. **Toggle semantics:** "Mate connectors" off → boards return to
-   FLAT layout (or persisted user pose, once M6.G lands). On →
-   `ComputeMates()` recomputes and overwrites poses. User-set offsets
-   while mate is on are preserved as `manual_offset` deltas applied
-   *after* the auto solve (the same hook custom mates will reuse).
-
-**Files touched (phase-1):**
-
-- `3d-viewer/3d_viewer/3d_viewer_assembly.{h,cpp}` —
-  - replace single-pair `MateConnectors` with `BuildMateGraph()`
-    + `SolveMatePoses()` two-phase pipeline;
-  - add `MATE_PAIR`, `MATE_EDGE`, `MATE_RESIDUAL` POD structs in the
-    header;
-  - extend `BOARD_3D_INSTANCE` with `manual_offset` (translation +
-    rotation) applied post-solve.
-- `pcbnew/multi_board/` (read-only consumer) — no schema change;
-  pulls `MULTI_BOARD_SCAN` results that already exist.
-
-**Edge cases worth listing in the implementation:**
-
-- Connector with no 3D model → 5 mm fallback gap, log once per mate.
-- Connector pad on `Edge.Cuts` only (card-edge connector) → treat as
-  same-side as the dominant copper layer.
-- Cross-board net with one endpoint on a non-loaded sub-board (load
-  failure) → mate pair dropped, surface as residual not crash.
-- Cycles in the mate graph (A↔B, B↔C, A↔C) → BFS visits each board
-  once; the unused edge becomes an alignment-check residual.
-
-**Deliverable:** opening any container with cross-board nets shows
-auto-mated boards in the right relative pose without any user
-configuration. Toggle off → flat layout. Residuals reported in the
-log; UI surfacing comes with M6.F.
-
-#### M6.D-phase-2 — Custom mate declarations + UI (~1-2 sessions)
-
-Phase-1 covers the common case (every cross-board net carries
-mateable connectors). Phase-2 adds the escape hatches Altium-parity
-demands: non-electrical mates, manual primary override, and disable.
-
-**When custom mates are needed:**
-
-1. Mounting holes / standoffs / alignment posts — no electrical net,
-   but mechanically constrain the assembly.
-2. Two equal-pin-count connectors between the same boards — phase-1's
-   weight tiebreaker is arbitrary; user picks which is primary.
-3. Card-edge / cable harnesses where the auto pad-normal heuristic
-   gives the wrong face.
-4. Disable a redundant or wrong auto-mate without touching the
-   schematic.
-
-**Data model — container `.kicad_pro` extension:**
-
-```
-multi_board.assembly_3d.mates: [
-  {
-    uuid:     <KIID>,
-    role:     PRIMARY | SECONDARY | DISABLED,
-    end_a:    { sub_project: <KIID>, footprint_ref: "J1",
-                pin_range: [1..10] | null /* whole footprint */ },
-    end_b:    { sub_project: <KIID>, footprint_ref: "J2",
-                pin_range: [1..10] | null },
-    type:     CONNECTOR | MOUNTING_HOLE | ALIGNMENT,
-    offset:   { translation: vec3, rotation: vec3 } | null
-  }, ...
-]
-```
-
-Custom mates live in the container project file, not the MBS sheet
-— they're an assembly fact, not a schematic fact. Auto-derived mates
-remain transient (recomputed every open) so re-running phase-1 stays
-cheap.
-
-**Solver merge in `BuildMateGraph()`:**
-
-1. Build auto mate-pair set (phase-1).
-2. Apply custom mates as overrides:
-   - `DISABLED` → drop the matching auto mate (matched by
-     `(footprint_ref_a, footprint_ref_b)` tuple).
-   - `PRIMARY` → marks this mate as forced-primary on its edge,
-     overriding the pin-count heuristic.
-   - `SECONDARY` → adds to alignment-check set (no placement effect,
-     just residual tracking).
-   - Custom mates with `type ≠ CONNECTOR` and no auto match → add as
-     fresh edges.
-3. `offset` (when present) is applied *after* the auto-computed
-   pose, so a user nudge sticks across re-solves.
-
-**UI in `PANEL_3D_ASSEMBLY` — new "Mates" section** (added below the
-existing instance list / mating toggle):
-
-- **Tree view** grouped by board edge (e.g., "MAIN ↔ IO"). Each
-  edge expands to its mate pairs, annotated with:
-  - source: AUTO or CUSTOM
-  - role: PRIMARY / SECONDARY / DISABLED
-  - status: SATISFIED, RESIDUAL <Δmm, Δ°>, MISSING (footprint not
-    found), CONFLICT (two custom PRIMARY on same edge)
-- **Per-row actions:** Mark primary, Disable, Edit offset, Delete
-  (custom only).
-- **"+ Add custom mate" button** → modal flow:
-  1. Pick board A → footprint A (drop-down filtered to footprints
-     on that board).
-  2. Pick board B → footprint B.
-  3. Type (Connector / Mounting hole / Alignment) and role default.
-  4. Apply → solver recomputes.
-- **Pick-from-3D gesture** (nice-to-have, not required for v1):
-  right-click footprint in canvas → "Start custom mate" → click
-  partner footprint to complete.
-
-**Validation rules surfaced as panel warnings:**
-
-- Two `PRIMARY` custom mates on the same board edge → CONFLICT;
-  solver picks the lower UUID and warns.
-- Custom mate references a footprint that no longer exists on its
-  sub-board → MISSING; row stays in the list (so the user can fix
-  the ref) but is skipped in the solver.
-- Mate creates a graph cycle that BFS can't resolve → CYCLE warning;
-  the back-edge becomes an alignment-check (same as phase-1).
-
-**Files touched (phase-2):**
-
-- `include/project/project_file.h` — add `multi_board.assembly_3d`
-  sub-block (also used by M6.G persistence — coordinate the schema).
-- `common/project/project_file.cpp` — JSON read/write for the
-  custom-mates list.
-- `3d-viewer/3d_viewer/3d_viewer_assembly.{h,cpp}` — extend the
-  graph-merge step in `BuildMateGraph()`; load/save round-trip on
-  frame open/close.
-- `3d-viewer/3d_viewer/panel_3d_assembly.{h,cpp}` — new "Mates"
-  tree view + add/edit dialogs.
-
-**Deliverable:** users can override any auto-mated edge, declare
-mates between mounting holes (no schematic involvement), and disable
-auto-mates that picked the wrong primary. Persists across container
-re-open.
-
-### M6.E — Collision detection: real geometry (~1-2 sessions)
-
-Upgrade from axis-aligned board-outline bbox to per-component 3D
-collision. Reuses existing 3D model cache.
-
-1. For each footprint on each instance: collect its 3D model mesh
-   (from `S3D_CACHE`) transformed into world space.
-2. Broad phase: AABB overlap between instances, then AABB overlap
-   between components across overlapping board pairs.
-3. Narrow phase: OBB-vs-OBB first; if the user wants mesh-accurate
-   results, fall back to GJK/EPA on the convex hulls (libraries already
-   in thirdparty, verify).
-4. Collision results carry footprint refs so the panel can show
-   "U5 on MAIN vs J1 on IO ext" instead of just "MAIN vs IO".
-5. Highlight: render colliding components with an outline or tint in
-   the existing render passes (add a post-build highlight set).
-
-### M6.F — STEP assembly export (~1-2 sessions)
-
-Finish the stubbed `ExportAssemblySTEP`. KiCad already exports per-board
-STEP via OpenCASCADE (`pcbnew/exporters/step/`); the assembly export
-composes N of those into a single STEP compound.
-
-1. For each visible instance: drive the existing per-board STEP export
-   to an in-memory `TopoDS_Shape` (refactor the existing file-emitting
-   path to also support shape return).
-2. Build a STEP compound, add each shape with its assembly transform
-   applied as a `TopLoc_Location`.
-3. Write the compound with the existing STEP writer. Preserve
-   sub-board names in STEP product names so CAD tools show a tree.
-4. Progress reporter for multi-board exports (they're slow).
-
-### M6.G — Persistence + polish (~1 session)
-
-1. Persist assembly state (per-instance transform + visibility +
-   transparency + manual mate offsets) in the container `.kicad_pro`
-   under `multi_board.assembly_3d` — key by sub-project UUID so
-   rename-safe. Schema is shared with M6.D-phase-2's `mates[]` block;
-   land the schema once, then both stages read/write it.
-2. Restore on frame open.
-3. Default initial layout: FLAT with 20 mm gaps (matches current
-   `LoadProjectBoards` behaviour), overridden by persisted state.
-4. Explode view (animate layout from MATED to FLAT over ~0.5 s) —
-   inexpensive polish using existing camera-animation hooks.
-
-### M6 dependencies + order
-
-```
-M5.1 (sub-project board loader) ──► M6.A ──► M6.B ──► M6.C ──┬─► M6.D-phase-1 ──► M6.D-phase-2
-                                                              ├─► M6.E
-                                                              ├─► M6.F
-                                                              └─► M6.G ◄──── shared schema with M6.D-phase-2
-```
-
-M6.A is blocked on M5.1 (the shared board loader). M6.D-phase-1, M6.E,
-M6.F are independent after M6.C and can be scheduled by priority.
-M6.D-phase-1 is highest signal per unit effort — mates board-to-board
-headers automatically from existing MBS connections, which is the
-single most visible Altium-parity feature. M6.D-phase-2 (custom mates)
-shares its persistence schema with M6.G, so they want to land within
-the same week if possible to avoid schema migration churn.
-
-### M6 testable outcomes
-
-- Open a container project in the manager, click "Open 3D Assembly".
-- The 3D viewer opens showing every sub-board laid out flat, each
-  with its own 3D models / silkscreen / copper. (M6.C)
-- Toggle "Mate connectors": boards snap at connector pairs with
-  correct flip handling, primary-mate-wins per board edge, residuals
-  reported. (M6.D-phase-1)
-- Open the "Mates" tree in `PANEL_3D_ASSEMBLY`: every auto-derived
-  mate is listed; user can declare a mounting-hole mate or override
-  the auto-picked primary; choices persist across re-open.
-  (M6.D-phase-2)
-- Run collision check: components overlapping show highlighted;
-  status panel lists the overlapping refs *and* unsatisfied mate
-  residuals from M6.D. (M6.E)
-- Export STEP: the resulting file opens in FreeCAD / SolidWorks with
-  sub-board assemblies as named children. (M6.F)
-- Close and re-open the project: assembly positions, custom mates,
-  and per-instance visibility persist. (M6.G)
+## Open risks
+
+### R1 — Untested cross-board DRC engine
+The unwired `DRC_ENGINE_CROSS_BOARD` may have rotted since M1. Port
+in M5.5 will need to fix any stale signatures from the data-model
+migration.
+
+### R2 — 3D renderer divergence
+Extending `RENDER_3D_BASE` for assembly mode could regress
+single-board rendering in pcbnew. Mitigation: parallel code path
+gated by mode, not a refactor of the single-adapter API. Test the
+single-board 3D viewer against demo projects after every M6.C
+follow-up.
+
+### R3 — STEP export performance
+Multi-board STEP export composes N per-board exports. Each board
+takes seconds. Mitigation: progress reporter from the start;
+parallelise per-board export if possible.
+
+### R4 — Sub-project board loader cache invalidation
+Loaders return owner-managed `std::unique_ptr<BOARD>` with no
+shared cache; a sub-board edited in a peer PCB editor must not
+appear stale to the 3D viewer or DRC engine. Mitigation: each
+caller caches its own copy; peer save broadcasts a
+`MAIL_RELOAD_SUB_PROJECT` to invalidate.
+
+### R5 — Container project lifetime under M7.1
+Container `PROJECT*` must outlive every sub-project frame that
+points to it via library / settings adapters. Mitigation:
+refcount the container's lifetime in `LIBRARY_MANAGER` /
+settings adapter, not in any single frame.
 
 ---
 
-## Phase M7 — Project-level integration
+## Phase reference
 
-Cross-cutting work that gives the multi-board container *project-level
-substance*: today the container is a thin pass-through to its sub-
-projects. M7 makes the container an actual scope for libraries and
-settings.
+Phase IDs survive in commit messages and across this doc. Quick
+mapping:
 
-### M7.1 — Container library architecture
-
-**Goal:** symbol/footprint added in MBSCH (or designated as "container
-library") is visible to every sub-project without manual lib-table
-edits.
-
-**Lookup precedence (new):** `GLOBAL → CONTAINER → PROJECT` — project
-wins on nickname collision; container shadows global; global fills in
-the rest.
-
-**Changes:**
-- Container has its own tables on disk: `<container_dir>/sym-lib-table`,
-  `<container_dir>/fp-lib-table`. Same format as project tables.
-  Loaded lazily on container open.
-- `LIBRARY_MANAGER` gains a third tier `m_containerTables`
-  (container-project-keyed by type) alongside global + project.
-  Reference-counted across sub-project openings.
-- `PROJECT::GetContainerProject()` walks up from project dir; if a
-  sibling `.kicad_pro` with `multi_board.container = true` references
-  this project's relative path under `sub_projects[]`, that container
-  is its parent. Cached on first lookup. Returns nullptr for
-  standalone projects.
-- New `LIBRARY_TABLE_SCOPE::CONTAINER` enum value;
-  `LIBRARY_MANAGER_ADAPTER::Rows()` extended to interleave container
-  rows at the right precedence; `HasLibrary` / `GetLibraryNames` /
-  `Row` consult container tables when adapter's PROJECT has a non-null
-  container.
-- Save-to-library dialogs gain a scope selector: Project / Container /
-  Global. Default = Container when invoked from MBSCH; Project when
-  invoked from a sub-project editor; Global unchanged.
-
-**Files:**
-- `include/project.h` + `common/project.cpp` — `GetContainerProject()`,
-  resolution helper
-- `include/libraries/library_manager.h` + `.cpp` — `m_containerTables`,
-  `LoadContainerTables(PROJECT*)`, scope plumbing
-- `include/libraries/library_table.h` — `LIBRARY_TABLE_SCOPE::CONTAINER`
-- `common/libraries/symbol_library_adapter.cpp`,
-  `footprint_library_adapter.cpp` — surface container rows
-- `eeschema/dialogs/dialog_select_lib_table.*` (or wherever the save-
-  target dialog lives) — third radio option
-- `pcbnew/footprint_libraries_utils.cpp` — same scope selector
-- `eeschema/mbsch_edit_frame.cpp` — load container tables on open;
-  default save scope = CONTAINER
-
-**Edge cases settled:**
-| Question | Answer |
+| Phase | Topic |
 |---|---|
-| Sub-project opened standalone (not via container manager): still see container libs? | Yes. `GetContainerProject()` runs unconditionally; opening `boards/fc/fc.kicad_pro` directly walks up and finds the container. |
-| Two sub-projects open simultaneously, one writes a new lib row to container | Last-writer-wins on disk; in-memory adapter invalidates and reloads on next lookup. No file locking — same as global today. |
-| Container has same nickname as a sub-project (`my_caps` in both) | Project wins. Documented in dialog. |
-| User deletes container row while sub-project has cached it | Lookup misses → "library not found" warning on next reload. Same behavior as deleting a global row. |
-| Migration of existing multi-board projects | None. Container tables are created lazily on first write. Empty container = behaves like today (project + global only). |
-
-**Out of scope v1:** per-board library overrides at container level,
-import/migration tools (e.g. "promote this row from project to
-container"), demote-from-global UX.
-
-**Risks:**
-- Container PROJECT must outlive every sub-project pointing to it.
-  Refcount its lifetime into the LIBRARY_MANAGER.
-- KiCad's lib-table tests assume single-project. Add: container-only
-  row, container+project collision, container resolution from arbitrary
-  subdir.
-- `Rows(LIBRARY_TABLE_SCOPE)` is called widely; audit callers that
-  switch on the enum.
-
-### M7.2 — Application settings propagation
-
-**Goal:** color theme, grid defaults, hotkeys, eeschema/pcbnew prefs
-picked at container level apply to every sub-project that doesn't
-explicitly override.
-
-**Investigation (pre-implementation):**
-- Today, where do app-level vs project-level settings live?
-  (`COMMON_SETTINGS`, `EESCHEMA_SETTINGS`, `PROJECT_FILE`, …)
-- Which settings are "global per user" vs "per project"?
-- Which of those make sense to layer at the container level vs leave
-  global vs leave per-board?
-
-**Likely shape:** parallel to M7.1 — container `settings.json` overlay,
-settings adapter consults container tier between global and project.
-Concrete plan after the investigation lands. Reuses
-`PROJECT::GetContainerProject()` from M7.1 (build the abstraction once,
-use everywhere).
-
----
-
-## Phase M8 — Editor UI integration with MBS nets
-
-Per a 2026-04-26 audit, ~18 surfaces in the schematic and PCB editors
-walk `SCH_SHEET` hierarchies / iterate per-screen items but bypass
-`SCH_MODULE_BLOCK` and cross-board nets. Pattern in each is the same:
-extend the iterator that walks per-sheet items to also recognize
-module blocks and pins, and surface cross-board net context where the
-UI displays nets.
-
-### M8.0 — Shared iteration helper
-
-Before fixing surfaces individually: add a `RECURSE_INTO_MODULE_BLOCKS`
-flag (or a `RunOnModuleBlocks` helper analogous to `RunOnChildren`) to
-the iteration utilities used by the M8.1 / M8.2 surfaces below. Most
-of those items become 1-line callsite swaps once this lands.
-
-Note: M8.0 does **not** fix M8.6 (edit-operation gaps) — those are
-tool/handler `case` statements, not iterators. Distinct work.
-
-### M8.1 — Schematic editor surfaces
-
-| Surface | File | Gap |
-|---|---|---|
-| Net Navigator | `widgets/net_navigator.cpp` | Handles `SCH_PIN_T`, `SCH_SHEET_PIN_T`; missing `SCH_MODULE_PIN_T`. Tree doesn't distinguish module blocks. |
-| Find/Replace | `tools/sch_find_replace_tool.cpp` | `visitAll()` per-sheet; no descent into `SCH_MODULE_BLOCK` children. |
-| Annotation tool | `annotate.cpp` | Collision check doesn't span module blocks; risk of duplicate refs across boards. |
-| Hierarchy pane | `widgets/hierarchy_pane.cpp` | Sheet-only tree; module blocks invisible. |
-| Symbol Fields Table | `dialog_symbol_fields_table.cpp` | Bulk-edit excludes module-block contents. |
-| Netlist exporters | `netlist_exporters/*` | Orcad / CadStar / SPICE / KiCad netlists omit cross-board net metadata. |
-| BOM generator | `bom_plugins.cpp` | No per-board / cross-board connector mapping. |
-| Schematic plot/print | `sch_plotter.cpp` | Module blocks not rendered in plotted output. |
-| Symbol properties dialog | `dialogs/dialog_symbol_properties.cpp` | No indication that a symbol participates in a cross-board structure. |
-| Highlight net | (multi-file) | Works in MBS frame but doesn't propagate cross-board nets to sub-project highlights consistently. |
-
-### M8.2 — PCB editor surfaces
-
-| Surface | File | Gap |
-|---|---|---|
-| Net Inspector panel | `widgets/pcb_net_inspector_panel.cpp` | Per-board only; no cross-board net aggregation, no connector context. |
-| Length tuner / matched-length | `drc/drc_test_provider_matched_length.cpp` + router | Length calc doesn't account for cross-board connector segments; matched-length groups can't span the boundary. |
-| Differential pair finder | (router) | Same boundary issue as length tuner. |
-| Footprint editor cross-reference | `footprint_editor_*.cpp` | Connector footprint editing surfaces no "this connector mates with X" info. |
-| BOM/PnP export | `exporters/place_file_exporter.cpp` | Per-board export, no de-dup of components shared across boards. |
-| Pad/trace properties | `dialogs/dialog_pad_properties_base*` | No indicator that pad sits on a cross-board connector / which module block owns it. |
-
-### M8.3 — Fold MBS push-sync into SCH→PCB sync
-
-**Today:** the MBS editor has its own "Sync to PCB" toolbar button that
-pushes cross-board nets to sub-project PCBs. The regular eeschema also
-has its `Update PCB from Schematic` dialog. Two sync surfaces is
-confusing.
-
-**Change:** the standard `Update PCB from Schematic` dialog
-(`dialogs/dialog_update_pcb.cpp`) detects when the project is part of a
-multi-board container (via `GetContainerProject()` from M7.1) and
-includes MBS net updates in the same change list. Removes the standalone
-"Sync to PCB" toolbar button from the MBS editor.
-
-**Plumbing:** the multi-board variant of the netlist updater already
-exists (`pcbnew/netlist_reader/multi_board_netlist_updater.cpp`); the
-dialog needs to (a) auto-detect multi-board mode, (b) layer MBS net
-changes into the dialog's preview, (c) apply them through the existing
-updater path.
-
-### M8.4 — Cross-board net binding DRC check
-
-**Goal:** when project is part of a multi-board container, verify each
-connector pad on this board carries the net the MBS declares for the
-corresponding block pin.
-
-**Catches:** local mistakes like swapping pads on a connector that
-disagree with the MBS contract. Catches what M5.8 (MBS ERC) cannot —
-M5.8 validates the *boundary-level* contract; M8.4 validates that each
-sub-project board actually implements the contract.
-
-**Mechanism:** new DRC check provider, only fires when
-`PROJECT::GetContainerProject()` returns non-null. Standalone projects
-unaffected. **The only** new pcbnew DRC check needed for multi-board.
-
-### M8.5 — UI polish (icons + interaction smoothing)
-
-Listed for visibility; bundle of small items, not a single deliverable.
-
-- New MBS file-format icon
-- Toolbar icons for Refresh, Manage Boards (the standalone "Sync to PCB"
-  button goes away with M8.3, no icon needed)
-- Drag/move feel inside MBS editor (snap behaviour, label reflow when
-  pins added)
-- Refresh-dialog redesign — settings panel + console, modeled on the
-  existing `Update Schematic from PCB` dialog
-  (`dialogs/dialog_update_from_pcb.*`) which uses
-  `WX_HTML_REPORT_PANEL` for streaming. Replaces the current flat
-  checklist. Loses per-row granularity; gains scale + visible-error
-  surface. Settings map directly to existing `MBS_CHANGE::KIND` enum.
-
-### M8.6 — Edit operations on MBS items (high priority)
-
-A 2026-04-26 deep audit found six places where edit-tool handlers
-special-case `SCH_SHEET_T` / `SCH_SHEET_PIN_T` but have no equivalent
-for `SCH_MODULE_BLOCK_T` / `SCH_MODULE_PIN_T`. These are not iteration
-issues (M8.0 doesn't help); each is a `case` statement in a tool
-handler. **Without these, basic edit operations on module blocks are
-either broken or silently no-op.**
-
-**These are higher priority than the M8.1 / M8.2 surface work** — they
-gate user-facing functionality the user is likely to hit immediately
-(delete a block, rotate it, copy/paste).
-
-| Surface | File | Gap |
-|---|---|---|
-| Delete action collector | `sch_collectors.cpp` (`DeletableItems` list) | `SCH_SHEET_T` listed; `SCH_MODULE_BLOCK_T` missing — Delete shortcut silently doesn't fire on module blocks. Add `SCH_MODULE_BLOCK_T` (and verify pins are deleted by virtue of being parent-owned children, not as standalone collector entries). |
-| Rotate / Mirror | `tools/sch_edit_tool.cpp` | Has `case SCH_SHEET_T:` blocks for rotate/mirror that call `sheet->Rotate(rotPoint)` etc. No `SCH_MODULE_BLOCK_T` cases. Module block rotates / mirrors are no-ops despite the block class having `Rotate()` / `MirrorH/V()` overrides. |
-| Point editor (drag corners to resize) | `tools/sch_point_editor.cpp` | Constructs `SHEET_POINT_EDIT_BEHAVIOR` for `SCH_SHEET_T` — gives the sheet its draggable resize handles. No `MODULE_BLOCK_POINT_EDIT_BEHAVIOR` equivalent. Module blocks can't be resized by dragging. |
-| Move tool — wire-to-pin connection preservation | `tools/sch_move_tool.cpp` | `m_specialCaseSheetPins` tracks wires connected to sheet pins so moves don't break the connection. Same machinery missing for module pins; moving a wire connected to a module pin can break the link. |
-| Cut / Copy clipboard | `tools/sch_editor_control.cpp` `doCopy()` | Explicit `if( item->Type() == SCH_SHEET_T )` to stash sheet screen state in supplementary clipboard. No `SCH_MODULE_BLOCK_T` branch — copy may not preserve pins / cross-board net assignments correctly. Verify paste round-trip. |
-| Connectivity classification | `sch_item.cpp` `IsSheetConnectedItem()` | Returns true for `SCH_SHEET_T` / `SCH_SHEET_PIN_T`. Module types missing. Anything that branches on this (connectivity rebuild, dangling-end-point computation) misclassifies module blocks/pins. |
-
-**Mechanism for each:** mirror the sheet handler one-to-one. The
-SCH_MODULE_BLOCK already has matching virtual methods (Rotate, Mirror*,
-SetSize, etc.); these surfaces just need to know to call them.
-
-### M8.7 — Verification items (lower priority — verify, then fix if broken)
-
-| Surface | File | Gap (suspected) |
-|---|---|---|
-| Field text get/set on container items | `sch_field.cpp` `SetFieldText`/`GetFieldText` | `case SCH_SHEET_T:` exists; verify whether module blocks need a fields concept (probably not in v1 — block has its own `m_displayName` / `m_mbsReference`). |
-| Symbol properties dialog context | `dialogs/dialog_symbol_properties.cpp` | Uses `GetCurrentSheet()`. May misbehave when MBSCH frame is active and a symbol inside a module block is selected. Verify before fixing. |
-| Group operations | `tools/sch_group_tool.cpp` | Design decision: should groups be allowed to span MBS module-block boundaries? Probably no — but verify that grouping doesn't crash if user tries. |
-| Undo / redo for module-block edits | `schematic_undo_redo.cpp` | Generic mechanism should work via `SCH_ITEM::Clone()` which the block already overrides. Verify that delete + undo restores all pins; that move + undo reverts position; that pin-add via refresh + undo removes the pin. |
-| Board statistics dialog | `pcbnew/dialogs/dialog_board_statistics.cpp` | Per-board stats only; doesn't acknowledge the assembly. Low priority — could optionally show "this is one board of N in a multi-board project" line. |
-
-### M8.9 — Cross-board context awareness in regular eeschema / pcbnew
-
-User confirmed 2026-04-26 that several items in this section are already
-addressed: net classes for cross-board nets (M8.9.3), visual annotation
-on connector pins / pads (M8.9.4), net naming reconciliation (M8.9.5),
-highlight-net cross-editor propagation (M8.9.6), and save/load
-round-trip (M8.9.7) — all confirmed working. **Only M8.9.1 (sub-project
-ERC suppression) and M8.9.2 (sub-project DRC suppression) remain open.**
-
-Without these last two, regular ERC and DRC false-positive on every
-cross-board connector pin/pad: ERC sees a "no driver" / "single driver",
-DRC sees a "single-pad net". Both make sub-project verification noisy
-on multi-board projects.
-
-User confirmation 2026-04-26: copy/paste works on MBS items, but delete
-/ rotate / resize / move-keeps-other-end-connected do not — confirms
-the M8.6 audit. Wire one-click termination on module pin still appears
-broken (user reports double-click required); regression check needed
-on the earlier `SCH_LINE::CanConnect` fix.
-
-#### M8.9.1 — Sub-project ERC suppresses cross-board false positives
-
-**Problem:** sub-project schematic ERC has no concept of cross-board.
-A connector pin (J1/3) wired to a single label on board A looks like a
-"single driver" or "no driver" depending on direction. ERC flags it as
-a violation. There are real violations buried in the noise.
-
-**Mechanism:**
-- New ERC check provider (or extension to existing checks) consults
-  `Prj().GetContainerProject()->GetCrossBoardNets()`.
-- For each ERC marker, if the underlying pin is a cross-board endpoint
-  (its `(componentRef, pinNumber)` matches an `MB_CROSS_BOARD_NET_ENDPOINT`),
-  suppress: no-driver / single-driver / floating-input warnings.
-- Surface as "(cross-board net — driven from <board>/<connector>)" so
-  the user sees why the warning is gone.
-
-**Files:** `eeschema/erc/erc.cpp` + relevant test providers.
-
-#### M8.9.2 — Sub-project DRC suppresses cross-board false positives
-
-**Problem:** sub-project PCB DRC will flag a connector pad with no
-copper trace as "single-pad net" / "track has no connection".
-`CONNECTIVITY_DATA::IsCrossBoardConnectorPad` (`connectivity_data.cpp:1255`)
-is implemented but **never called** — dead code awaiting use.
-
-**Mechanism:**
-- Existing DRC test providers that check pad connectivity (single-pad
-  net, courtyard, unconnected items) consult `IsCrossBoardConnectorPad`
-  before emitting violations.
-- Suppression is informational: violation downgraded to "info" with the
-  cross-board net name shown.
-
-**Files:** `pcbnew/drc/drc_test_provider_*.cpp` (single-pad, connection,
-copper). The helper already exists; just needs callers.
-
-**Distinct from M8.4** (binding check): M8.4 *adds* a new check that
-fires *because* the project is multi-board. M8.9.2 *suppresses* existing
-checks that misfire because the project is multi-board.
-
-#### M8.9.3 – M8.9.7 — done (confirmed 2026-04-26)
-
-Net classes for cross-board nets, visual annotation on connector
-pins/pads, net naming reconciliation, highlight-net cross-editor
-propagation, and save/load round-trip — all confirmed working by user.
-Reference detail removed from this doc; consult git history for the
-implementation commits.
-
-### M8.10 — Confirmed *not* needed
-
-For closure, these surfaces were checked and don't need MBS work:
-- Library browser (symbols / footprints) — operates on library content,
-  not on MBS items.
-- Layer manager — layers are per-board.
-- Hotkey customization — MBS-specific actions register through the
-  same `TOOL_ACTION` machinery; appear automatically.
-- Title block / page setup on `.kicad_mbs` — already inherits from
-  SCH_EDIT_FRAME; verified to render.
-- About dialog, Preferences dialog tabs — no MBS-specific entries
-  needed.
-
-### M8.11 — Open regression to verify
-
-User reported 2026-04-26: wire termination on a module pin still
-appears to require a double-click despite the earlier
-`SCH_LINE::CanConnect` fix that added `SCH_MODULE_PIN_T` to the
-endpoint whitelist. Reproduce, identify whether the regression is
-in CanConnect, in the autostart wire detection, or in the click-
-disambiguation timer (`m_disambiguateTimer`). Possibly related to the
-move-tool sheet-pin special-case gap in M8.6.
-
----
-
-## Phase M9 — Agent integration
-
-**Goal:** the in-process agent can drive multi-board workflows
-end-to-end:
-- Create a `.kicad_pro` container from a prompt
-- Add / import sub-projects
-- Edit MBS (place blocks, draw cross-board wires)
-- Run all intermediary syncs (connector scan, refresh MBS, push to
-  sub-project schematics, push to sub-project PCBs)
-
-### M9.1 — Kipy bindings
-
-New Python types in `zeo-python/kipy/` for:
-- Multi-board container (open / save / list sub-projects / add /
-  remove)
-- `SCH_MODULE_BLOCK` / `SCH_MODULE_PIN` (read / create / wire to other
-  blocks)
-- Refresh-MBS orchestration (run diff, apply selected changes)
-- Push-sync to sub-project SCH / PCB
-
-### M9.2 — Agent tool schemas + Python handlers
-
-- New tool definitions in `agent/tools/tool_schemas.cpp`:
-  - `multi_board_create`, `multi_board_add_sub_project`,
-    `multi_board_list`, `multi_board_remove_sub_project`
-  - `mbs_add_block`, `mbs_remove_block`, `mbs_connect_pins`
-  - `mbs_refresh`, `mbs_sync_to_pcb`
-- Python handlers in `agent/tools/python/multi_board/` (new directory)
-- Tool registration in `tool_registry.cpp`
-
-### M9.3 — IPC handlers
-
-- Extend `eeschema/api/api_handler_sch.cpp` with MBS-aware commands
-  (recognize MBS items in selections, route refresh through the
-  IPC API)
-- Extend `pcbnew/api/api_handler_pcb.cpp` similarly for cross-board
-  net push-sync
-- Protobuf definitions in `api/proto/schematic/` and `api/proto/pcb/`
-  for the new message types
-
----
-
-## Dependencies + schedule
-
-```
-M0 ✓ ─► M1 ✓ ─┬─► M2 ✓ ──────────────┐
-              └─► M3 (pending) ───────┤
-                                      ├─► M5 (pending) ─► M6 (pending)
-M4 ✓ MVP ─────────────────────────────┘                    │
-                                                            │
-M7.1 (container libs) ──► M7.2 (settings)                   │
-       │                                                    │
-       └──► M8.3 (fold sync), M8.4 (binding DRC) ───────────┤
-                                                            │
-M8.0 (helper) ──► M8.1, M8.2 (UI surfaces) ─────────────────┤
-                                                            │
-M9 (agent) ◄────────────────────────────────────────────────┘
-```
-
-For the actionable week-by-week schedule covering the remaining ~30%,
-see the **Finish line — remaining 30%** section at the top of this
-doc. Phase-by-phase detail below is reference / spec.
-
----
-
-## Risks + open questions
-
-### R1 — Pre-existing PROJECT_FILE `multi_board` fields ✓ resolved
-Kept the existing `BOARD_INFO` / `CROSS_BOARD_CONNECTION` /
-`COMPONENT_BOARD_ASSIGNMENT` structures alongside the new container
-fields. Tested modules (netlist updater, component assignment) use the
-legacy structures; the 3D viewer will migrate off them in M6.A.
-
-### R2 — Container vs sub-project distinction ✓ resolved
-`multi_board.container: bool` flag in PROJECT_FILE. Consumed by
-`IsMultiBoardContainer()`.
-
-### R3 — M4 effort revised ✓ resolved
-MVP landed in ~3 days, not 1-2 months. The essential blocker was two
-lines.
-
-### R4 — mbschema kiface linkage ✓ resolved
-Chose subclass over separate kiface; rationale in Phase M2.
-
-### R5 — Test project migration ✓ resolved
-Test projects discarded and recreated.
-
-### R6 — Untested module validation
-**Status:** the 3D viewer is still unwired and uses the legacy data
-model — M6 is the full answer. Cross-board DRC is blocked only on the
-sub-project board loader (M5.1); once landed, `CheckConnectorMatching`
-should work and the stubbed `CheckSignalIntegrity` /
-`CheckPowerDistribution` become a scoped investment.
-
-### R7 — 3D renderer divergence risk (new)
-**Risk:** extending `RENDER_3D_BASE` / `BOARD_ADAPTER` for multi-board
-could regress single-board rendering in pcbnew.
-
-**Mitigation:** prefer a parallel code path gated by mode ("assembly
-mode" vs. "single-board mode") rather than refactoring the single-
-adapter API. Keep the existing `ReloadRequest(BOARD*)` signature
-intact; add new assembly-mode entry points alongside. Test pcbnew's
-3D viewer against every demo project after each M6.C change.
-
-### R8 — STEP export performance (new)
-**Risk:** exporting N sub-boards as STEP can take tens of seconds each.
-
-**Mitigation:** in M6.F wrap with progress reporter from the start;
-parallelise per-board export if possible (the existing STEP exporter
-is single-threaded per board).
-
-### R9 — Shared board loader cache invalidation (new)
-**Risk:** the M5.1 loader will be used from three different places
-(DRC, netlist, 3D viewer) with different lifetime assumptions. A
-sub-board edited in a peer PCB editor must not be seen as stale by the
-3D viewer.
-
-**Mitigation:** loader returns `std::unique_ptr<BOARD>`, owner-managed.
-No shared cache in the loader; callers (3D viewer, DRC engine) cache
-their own copy. Peer editors broadcast a new `MAIL_RELOAD_SUB_PROJECT`
-ExpressMail on save that triggers the 3D viewer to reload the affected
-instance.
-
----
-
-## Key decisions locked in
-
-1. **Multi-project topology.** Each sub-project is a standalone
-   `.kicad_pro` + `.kicad_sch` + `.kicad_pcb`. The multi-board parent
-   is a `.kicad_pro` with `multi_board.container = true` and an MBS
-   schematic (`.kicad_mbs`) at the same level. Matches Altium's peer
-   model.
-2. **MBS editor as subclass of eeschema**, not a separate kiface.
-   Shares everything; overrides the trimmed surface + save hook +
-   cross-probe handling.
-3. **In-process multi-project**, not separate processes.
-4. **Tested modules preserved.** Multi-board netlist updater and
-   component assignment keep their current data model.
-5. **3D viewer skeleton preserved + ported**, not rewritten from
-   scratch. `ASSEMBLY_3D_MANAGER` / `PANEL_3D_ASSEMBLY` are the
-   starting point — M6.A refactors them to the container topology
-   rather than introducing a new manager class.
-6. **Multi-board rendering: multiple `BOARD_ADAPTER`s composited**,
-   not a merged super-BOARD and not an extended single-adapter
-   instance list. Rationale in Phase M6.
-7. **Single shared sub-project board loader** (M5.1) used by the 3D
-   viewer, cross-board DRC, and the multi-board netlist updater.
-   Returns owner-managed `std::unique_ptr<BOARD>`, no shared cache.
+| M0–M2 | File unification, `.kicad_mbs`, MBSCH frame |
+| M3 | Launcher (mostly landed) |
+| M4 | Concurrent peer editors |
+| M5 | Cleanup + cross-board DRC engine port |
+| M6 | 3D assembly viewer |
+| M7 | Project-level integration (libraries, settings) |
+| M8 | Editor UI surface integration |
+| M9 | Agent integration |

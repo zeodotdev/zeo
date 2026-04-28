@@ -161,6 +161,11 @@ std::optional<TOOLBAR_CONFIGURATION> MBSCH_EDIT_TOOLBAR_SETTINGS::DefaultToolbar
               .AppendAction( SCH_ACTIONS::mbsOpenSubProjectPcb )
               .AppendAction( SCH_ACTIONS::mbsOpen3DAssembly );
 
+        // Agent — same action as the SCH toolbar; opens the AI agent panel
+        // against whichever editor is active (FRAME_MBSCH here).
+        config.AppendSeparator()
+              .AppendAction( SCH_ACTIONS::showAgent );
+
         break;
     }
 

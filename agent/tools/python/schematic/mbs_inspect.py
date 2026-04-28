@@ -1,5 +1,6 @@
 import json
 import re
+import traceback
 
 refresh_or_fail(mbs)
 
@@ -10,7 +11,7 @@ filter_arg = TOOL_ARGS.get('filter', '').strip()
 def _scale_pos(pos):
     if pos is None:
         return [0, 0]
-    return [round(pos.x / 1_000_000, 4), round(pos.y / 1_000_000, 4)]
+    return [round(pos.x_nm / 1_000_000, 4), round(pos.y_nm / 1_000_000, 4)]
 
 
 def _matches_filter(value):
@@ -108,6 +109,12 @@ else:
             result['container'] = _container_full(mbs.multi_board.get_container_info())
 
     except Exception as exc:
-        result = {'status': 'error', 'message': str(exc), 'section': section}
+        result = {
+            'status': 'error',
+            'message': str(exc) or repr(exc),
+            'exception_type': type(exc).__name__,
+            'traceback': traceback.format_exc(),
+            'section': section,
+        }
 
     print(json.dumps(result, indent=2))

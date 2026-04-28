@@ -188,6 +188,22 @@ void ASSEMBLY_3D_MANAGER::LoadProjectBoards( PROJECT* aProject )
             }
         }
 
+        // TEMP DIAGNOSTIC (multi-board virtual model resolution): log
+        // each sub-project load attempt with the .kicad_pro path it
+        // tried, whether the file existed, and whether mgr.GetProject
+        // returned a project. Remove once the multi-board virtual-model
+        // bug is closed.
+        wxLogMessage( wxT( "[ASSEMBLY-LOAD] sub uuid=%s name='%s' "
+                           "relPath='%s' resolvedPro='%s' proExists=%d "
+                           "boardLoaded=%d subProject=%p subProjectDir='%s'" ),
+                      sub.uuid.AsString(), sub.name, sub.relativePath,
+                      proFile.GetFullPath(),
+                      proFile.FileExists() ? 1 : 0,
+                      instance.board ? 1 : 0,
+                      static_cast<const void*>( instance.subProject ),
+                      instance.subProject ? instance.subProject->GetProjectDirectory()
+                                          : wxString( wxT( "<null>" ) ) );
+
         m_boardInstances.push_back( std::move( instance ) );
     }
 
@@ -1386,6 +1402,21 @@ void ASSEMBLY_3D_MANAGER::InitRenderers( EDA_3D_CANVAS* aCanvas, CAMERA& aCamera
                           useStackup ? 1 : 0,
                           maskNameF, maskNameB,
                           m_instanceAdapters[i]->BiuTo3dUnits() );
+
+            // TEMP DIAGNOSTIC (multi-board virtual model resolution): log the
+            // per-instance cache + sub-project so we can correlate with the
+            // [3DLOAD] log entries from S3D_CACHE::load. Remove once the
+            // multi-board virtual-model bug is closed.
+            wxLogMessage( wxT( "[ASSEMBLY-CACHE] inst[%zu] display='%s' "
+                               "subProject=%p subProjectDir='%s' cache=%p "
+                               "boardProject=%p" ),
+                          i, inst.displayName,
+                          static_cast<const void*>( inst.subProject ),
+                          inst.subProject ? inst.subProject->GetProjectDirectory()
+                                          : wxString( wxT( "<null>" ) ),
+                          static_cast<const void*>( cache ),
+                          inst.board ? static_cast<const void*>( inst.board->GetProject() )
+                                     : nullptr );
         }
 
         if( !m_instanceRenderers[i] )

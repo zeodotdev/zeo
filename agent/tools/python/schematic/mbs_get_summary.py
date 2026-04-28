@@ -1,13 +1,14 @@
 import json
+import traceback
 
 refresh_or_fail(mbs)
 
 
 def _scale_pos(pos):
-    """Convert a Vector2 (nm) to (x, y) mm rounded to 4 decimals."""
+    """Convert a raw proto Vector2 (x_nm, y_nm in nm) to (x, y) mm rounded to 4 decimals."""
     if pos is None:
         return [0, 0]
-    return [round(pos.x / 1_000_000, 4), round(pos.y / 1_000_000, 4)]
+    return [round(pos.x_nm / 1_000_000, 4), round(pos.y_nm / 1_000_000, 4)]
 
 
 def _block_to_dict(block):
@@ -64,6 +65,11 @@ try:
         },
     }
 except Exception as exc:
-    result = {'status': 'error', 'message': str(exc)}
+    result = {
+        'status': 'error',
+        'message': str(exc) or repr(exc),
+        'exception_type': type(exc).__name__,
+        'traceback': traceback.format_exc(),
+    }
 
 print(json.dumps(result, indent=2))

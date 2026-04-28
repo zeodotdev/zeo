@@ -176,6 +176,53 @@
     "deferred": false
   },
   {
+    "name": "mbs_get_summary",
+    "description": "Get a high-level overview of the multi-board schematic (.kicad_mbs) from the live MBSCH editor. Returns the container metadata (project name + path, sub-projects list), the module blocks on the active sheet (each with its mbs_reference like 'B1', component_ref like 'J1', position, size, and pin count), and the cross-board nets (each with name, endpoint count, and which sub-projects it spans). Use this to learn what's in an MBS before deciding to add/remove blocks or wire pins. Requires the multi-board container's .kicad_mbs file to be open in the MBSCH editor.",
+    "input_schema": {
+      "type": "object",
+      "properties": {},
+      "required": []
+    },
+    "app": "mbs",
+    "script": "schematic/mbs_get_summary.py",
+    "needs_bbox": false,
+    "read_only": true,
+    "group": "SCHEMATIC",
+    "deferred": false
+  },
+  {
+    "name": "mbs_inspect",
+    "description": "Inspect a specific section of the multi-board schematic (.kicad_mbs). Returns full JSON detail (including pin-level data and endpoint-level data) for the requested section. Optional filter is a glob (e.g. 'B*' to filter blocks by mbs_reference, 'GND*' to filter cross-board nets). Use after mbs_get_summary when you need full pin lists or endpoint detail.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "section": {
+          "type": "string",
+          "enum": [
+            "blocks",
+            "nets",
+            "container",
+            "all"
+          ],
+          "description": "Section to read: 'blocks' (module blocks with full pin detail), 'nets' (cross-board nets with full endpoint detail), 'container' (container metadata + sub-projects), or 'all'."
+        },
+        "filter": {
+          "type": "string",
+          "description": "Optional glob filter. For 'blocks' matches against mbs_reference or component_ref (e.g. 'B1', 'J*'). For 'nets' matches against the net name (e.g. 'GND', '+3V*'). Ignored for 'container'."
+        }
+      },
+      "required": [
+        "section"
+      ]
+    },
+    "app": "mbs",
+    "script": "schematic/mbs_inspect.py",
+    "needs_bbox": false,
+    "read_only": true,
+    "group": "SCHEMATIC",
+    "deferred": false
+  },
+  {
     "name": "sch_run_erc",
     "description": "Run Electrical Rules Check (ERC) on the currently open schematic. Detects wiring errors, unconnected pins, duplicate references, and other issues. Returns error/warning counts and violation details.",
     "input_schema": {

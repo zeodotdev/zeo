@@ -1102,6 +1102,56 @@ void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& mail )
 {
     std::string& payload = mail.GetPayload();
 
+    // Multi-board peer scope filter for commands that REQUIRE matching
+    // the sender's project (request/response shapes that write into the
+    // shared payload, or that mutate shared state).
+    //
+    // KIWAY::ExpressMail broadcasts to every registered FRAME_SCH peer.
+    // In M4 multi-peer sessions a sub-project's PCB requesting a
+    // netlist gets answered by every open SCH peer — last-to-respond
+    // overwrites the payload. Pre-this-filter symptoms reported by the
+    // user: PCB sync imported the wrong sub-project's footprints; the
+    // active project context got corrupted on apply.
+    //
+    // Selection / cross-probe packets carry their own `$PROJECT:`
+    // scope token (see MAIL_SELECTION below) so they don't need this
+    // filter — they self-describe their target. The commands listed
+    // here have no in-band scope and are routed by frame type alone.
+    auto senderProjectMatches = [&]() -> bool
+    {
+        wxObject* source = mail.GetEventObject();
+
+        if( !source )
+            return true;   // unknown sender → don't filter (legacy path)
+
+        EDA_BASE_FRAME* senderFrame = dynamic_cast<EDA_BASE_FRAME*>( source );
+
+        if( !senderFrame )
+            return true;
+
+        wxString senderPro = senderFrame->Prj().GetProjectFullName();
+        wxString ourPro    = Prj().GetProjectFullName();
+
+        if( senderPro.IsEmpty() || ourPro.IsEmpty() )
+            return true;   // either side unbound → don't filter
+
+        return wxFileName( senderPro ).SameAs( wxFileName( ourPro ) );
+    };
+
+    switch( mail.Command() )
+    {
+    case MAIL_SCH_GET_NETLIST:
+    case MAIL_SCH_GET_ITEM:
+    case MAIL_SCH_REFRESH:
+    case MAIL_ASSIGN_FOOTPRINTS:
+        if( !senderProjectMatches() )
+            return;
+        break;
+
+    default:
+        break;
+    }
+
     switch( mail.Command() )
     {
     case MAIL_ADD_LOCAL_LIB:

@@ -26,6 +26,7 @@
 
 #include <project/project_file.h>
 #include <project/multi_board_scan.h>
+#include <reporter.h>
 #include <view/view.h>
 
 #include <algorithm>
@@ -414,9 +415,16 @@ std::vector<MBS_CHANGE> ComputeMbsRefreshDiff( SCH_SCREEN& aMbsScreen,
 
 MBS_REFRESH_RESULT ApplyMbsRefreshChanges( SCH_SCREEN& aMbsScreen,
                                            const std::vector<MBS_CHANGE>& aChanges,
-                                           KIGFX::VIEW* aView )
+                                           KIGFX::VIEW* aView,
+                                           REPORTER* aReporter )
 {
     MBS_REFRESH_RESULT result;
+
+    auto report = [&]( const wxString& aMsg, SEVERITY aSeverity = RPT_SEVERITY_INFO )
+    {
+        if( aReporter )
+            aReporter->Report( aMsg, aSeverity );
+    };
 
     // Apply in a deterministic order so deletes happen before adds —
     // prevents e.g. a REMOVE_BLOCK from deleting a block that a
@@ -458,9 +466,17 @@ MBS_REFRESH_RESULT ApplyMbsRefreshChanges( SCH_SCREEN& aMbsScreen,
 
     for( const MBS_CHANGE* ch : ordered )
     {
-        // If the target block was just deleted upstream, skip.
+        // If the target block was just deleted upstream, skip — and
+        // surface it as a warning so the user can correlate "I asked
+        // for ADD_PIN on B7 but nothing happened" with "B7 was also
+        // REMOVE_BLOCK'd in the same pass."
         if( ch->existingBlock && deletedBlocks.count( ch->existingBlock ) )
+        {
+            report( wxString::Format( _( "Skipped (parent block was removed): %s" ),
+                                       ch->Describe() ),
+                     RPT_SEVERITY_WARNING );
             continue;
+        }
 
         switch( ch->kind )
         {
@@ -470,6 +486,7 @@ MBS_REFRESH_RESULT ApplyMbsRefreshChanges( SCH_SCREEN& aMbsScreen,
             {
                 ch->existingBlock->SetSubProjectUuid( ch->subProjectUuid );
                 result.uuidsStamped++;
+                report( ch->Describe() );
             }
 
             break;
@@ -481,6 +498,7 @@ MBS_REFRESH_RESULT ApplyMbsRefreshChanges( SCH_SCREEN& aMbsScreen,
             {
                 ch->existingBlock->SetSubProjectPath( ch->newPath );
                 result.pathsUpdated++;
+                report( ch->Describe() );
             }
 
             break;
@@ -499,6 +517,7 @@ MBS_REFRESH_RESULT ApplyMbsRefreshChanges( SCH_SCREEN& aMbsScreen,
                     aView->Update( ch->existingBlock, KIGFX::REPAINT );
 
                 result.pinsRenamed++;
+                report( ch->Describe() );
             }
 
             break;
@@ -514,6 +533,7 @@ MBS_REFRESH_RESULT ApplyMbsRefreshChanges( SCH_SCREEN& aMbsScreen,
                     aView->Update( ch->existingBlock, KIGFX::REPAINT );
 
                 result.pinsRemoved++;
+                report( ch->Describe(), RPT_SEVERITY_ACTION );
             }
 
             break;
@@ -535,6 +555,7 @@ MBS_REFRESH_RESULT ApplyMbsRefreshChanges( SCH_SCREEN& aMbsScreen,
                 deletedBlocks.insert( ch->existingBlock );
                 delete ch->existingBlock;
                 result.blocksRemoved++;
+                report( ch->Describe(), RPT_SEVERITY_ACTION );
             }
 
             break;
@@ -591,6 +612,7 @@ MBS_REFRESH_RESULT ApplyMbsRefreshChanges( SCH_SCREEN& aMbsScreen,
 
             result.blocksAdded++;
             result.newlyAddedBlocks.push_back( block );
+            report( ch->Describe() );
             break;
         }
 
@@ -644,6 +666,7 @@ MBS_REFRESH_RESULT ApplyMbsRefreshChanges( SCH_SCREEN& aMbsScreen,
                 aView->Update( ch->existingBlock, KIGFX::GEOMETRY );
 
             result.pinsAdded++;
+            report( ch->Describe() );
             break;
         }
         }
@@ -670,6 +693,10 @@ MBS_REFRESH_RESULT ApplyMbsRefreshChanges( SCH_SCREEN& aMbsScreen,
 
         for( SCH_MODULE_BLOCK* block : empties )
         {
+            wxString sweepLabel = block->GetMbsReference().IsEmpty()
+                                          ? block->GetDisplayName()
+                                          : block->GetMbsReference();
+
             if( aView )
                 aView->Remove( block );
 
@@ -677,6 +704,12 @@ MBS_REFRESH_RESULT ApplyMbsRefreshChanges( SCH_SCREEN& aMbsScreen,
             deletedBlocks.insert( block );
             delete block;
             result.blocksRemoved++;
+
+            report( wxString::Format(
+                            _( "Swept empty block %s — no pins remained after pin "
+                               "removals" ),
+                            sweepLabel ),
+                     RPT_SEVERITY_ACTION );
         }
     }
 

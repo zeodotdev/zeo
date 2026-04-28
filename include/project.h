@@ -339,6 +339,39 @@ public:
     virtual void AddCrossBoardConnection( const KIID& aBoard1, const KIID& aPad1,
                                            const KIID& aBoard2, const KIID& aPad2 );
 
+    // =========================================================================
+    // Multi-board CONTAINER project lookup (Altium-style peer MBS)
+    // =========================================================================
+
+    /**
+     * Locate the multi-board container project that owns this project, if any.
+     *
+     * Walks up from the project directory looking for a `.kicad_pro` with
+     * `multi_board.container = true` that references this project under
+     * `multi_board.sub_projects[].relativePath`. Result is cached on first
+     * lookup; the cache is per-PROJECT-instance so a fresh lookup happens
+     * after the project is reloaded.
+     *
+     * @return absolute path to the container `.kicad_pro`, or empty string
+     *         when this project is standalone or is itself a container.
+     */
+    virtual wxString GetContainerProjectPath() const;
+
+    /**
+     * Peek the loaded container PROJECT for this sub-project.
+     *
+     * Does NOT trigger a load — returns whatever the SETTINGS_MANAGER
+     * already has cached. Callers that want to load on demand
+     * (e.g. LIBRARY_MANAGER establishing the container library tier)
+     * should follow this with SETTINGS_MANAGER::LoadProject() and refcount
+     * the result so the container outlives every sub-project pointing to
+     * it.
+     *
+     * @return loaded container PROJECT*, or nullptr when there is no
+     *         container or it is not currently loaded.
+     */
+    virtual PROJECT* GetContainerProject() const;
+
     /// Retain a number of project specific wxStrings, enumerated here:
     enum RSTRING_T
     {
@@ -519,6 +552,12 @@ private:
     /// the list. Mutable because registration happens from const PROJECT
     /// references in some code paths.
     mutable std::vector<std::pair<const void*, std::function<void()>>> m_destroyHooks;
+
+    /// Container-project lookup cache. Populated by GetContainerProjectPath().
+    /// Empty path with `m_containerPathCached = true` means "we looked and
+    /// found nothing" — distinguishes from "haven't looked yet."
+    mutable bool     m_containerPathCached = false;
+    mutable wxString m_containerProjectPath;
 };
 
 

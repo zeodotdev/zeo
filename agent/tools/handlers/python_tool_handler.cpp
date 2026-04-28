@@ -491,6 +491,23 @@ PYTHON_TOOL_HANDLER::PYTHON_TOOL_HANDLER()
                   return "Placing companions for " + icRef;
               } );
 
+    // --- Multi-board schematic (MBS) tools ---
+    // Use app: "mbs" so the kipy bootstrap binds `mbs = kicad.get_mbs_schematic()`.
+
+    Register( "mbs_get_summary", "mbs", "schematic/mbs_get_summary.py",
+              []( const nlohmann::json& ) {
+                  return std::string( "Getting MBS summary" );
+              } );
+
+    Register( "mbs_inspect", "mbs", "schematic/mbs_inspect.py",
+              []( const nlohmann::json& a ) {
+                  std::string section = a.value( "section", "all" );
+                  std::string filt = a.value( "filter", "" );
+                  if( !filt.empty() )
+                      return "Inspecting MBS " + section + " matching '" + filt + "'";
+                  return "Inspecting MBS " + section;
+              } );
+
     Register( "sch_draft_circuit", "sch", "schematic/sch_draft_circuit.py",
               []( const nlohmann::json& a ) {
                   int symCount = 0;

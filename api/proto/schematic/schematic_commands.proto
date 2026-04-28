@@ -1612,3 +1612,48 @@ message SetBusAliases
   kiapi.common.types.DocumentSpecifier document = 1;
   repeated BusAliasData aliases = 2;
 }
+
+//
+// Multi-board schematic (MBS) commands
+//
+// Document type must be DOCTYPE_MBS_SCHEMATIC. Only handled by API_HANDLER_MBS_SCH
+// (registered by MBSCH_EDIT_FRAME); regular SCH frames return AS_UNHANDLED.
+//
+
+/// Lists all module blocks on the active sheet of the MBS schematic.
+message GetModuleBlocks
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+}
+
+message GetModuleBlocksResponse
+{
+  repeated kiapi.schematic.types.ModuleBlock blocks = 1;
+}
+
+/// Lists all cross-board nets declared in the enclosing multi-board container.
+message GetCrossBoardNets
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+}
+
+message GetCrossBoardNetsResponse
+{
+  repeated kiapi.schematic.types.CrossBoardNet nets = 1;
+}
+
+/// Returns metadata about the multi-board container project that owns the
+/// active MBS schematic: container .kicad_pro path, MBS file name, and
+/// the list of sub-projects.
+message GetMultiBoardContainerInfo
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+}
+
+message GetMultiBoardContainerInfoResponse
+{
+  string                                       container_pro_path = 1;
+  string                                       mbs_file_path      = 2;
+  string                                       container_name     = 3;
+  repeated kiapi.schematic.types.SubProjectInfo sub_projects      = 4;
+}

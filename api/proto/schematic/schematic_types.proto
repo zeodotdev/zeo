@@ -262,3 +262,60 @@ message Sheet
   repeated SheetPin            pins                 = 14;
   repeated Field               fields               = 15;
 }
+
+//
+// Multi-board schematic (MBS) types
+//
+
+/// One pin on a SCH_MODULE_BLOCK. Mirrors SheetPin shape; the pin label text
+/// is the cross-board net name (e.g. "GND", "+3V3").
+message ModuleBlockPin
+{
+  kiapi.common.types.KIID              id              = 1;
+  string                               component_ref   = 2;  // e.g. "J1" — source connector ref
+  string                               pin_number      = 3;  // e.g. "3"
+  string                               text            = 4;  // pin label (cross-board net name)
+  kiapi.common.types.Vector2           position        = 5;  // pin anchor on the block edge
+  SheetPinSide                         side            = 6;
+  kiapi.common.types.ElectricalPinType electrical_type = 7;
+}
+
+/// Visual placeholder for a sub-project on a multi-board schematic.
+/// One block per sub-project, anchored at top-left, with one pin per
+/// connector pin of the referenced sub-project.
+message ModuleBlock
+{
+  kiapi.common.types.KIID    id                = 1;
+  string                     mbs_reference     = 2;  // MBS-scoped annotation, e.g. "B1"
+  string                     component_ref     = 3;  // Sub-project local connector ref, e.g. "J1"
+  string                     sub_project_uuid  = 4;  // Sub-project KIID as string
+  string                     sub_project_path  = 5;  // Path relative to MBS dir
+  string                     display_name      = 6;  // "fc/J1", "Flight Controller", etc.
+  kiapi.common.types.Vector2 position          = 7;  // Top-left corner
+  kiapi.common.types.Vector2 size              = 8;  // Width x Height
+  repeated ModuleBlockPin    pins              = 9;
+}
+
+/// One endpoint of a cross-board net: a specific connector pin on a sub-project.
+message CrossBoardNetEndpoint
+{
+  string sub_project_uuid = 1;  // Owning sub-project KIID as string
+  string component_ref    = 2;  // Connector ref on that sub-project, e.g. "J1"
+  string pin_number       = 3;  // Pin number on that connector, e.g. "3"
+}
+
+/// One cross-board net declared in the container project. Spans 2+ sub-projects.
+message CrossBoardNet
+{
+  string                          name      = 1;  // Canonical net name, e.g. "+3V3"
+  repeated CrossBoardNetEndpoint  endpoints = 2;
+}
+
+/// Description of one sub-project within a multi-board container.
+message SubProjectInfo
+{
+  string uuid          = 1;  // Sub-project KIID as string
+  string relative_path = 2;  // Path to .kicad_pro relative to container dir
+  string absolute_path = 3;  // Resolved absolute path to .kicad_pro
+  string name          = 4;  // Project basename
+}

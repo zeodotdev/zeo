@@ -21,11 +21,14 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
+#include <wx/dir.h>
 #include <wx/log.h>
 #include <wx/stdpaths.h>                // required on Mac
 #include <kiplatform/environment.h>
 
 #include <algorithm>
+#include <fstream>
+#include <nlohmann/json.hpp>
 #include <pgm_base.h>
 #include <confirm.h>
 #include <core/kicad_algo.h>
@@ -116,6 +119,22 @@ bool PROJECT::TextVarResolver( wxString* aToken ) const
 {
     if( !m_projectFile )
         return false;
+
+    // Resolve ${KIPRJMOD} against this PROJECT's directory rather than letting
+    // it fall through to the global env var. The global var only ever points at
+    // the active project, so non-active PROJECTs (e.g. multi-board sub-projects
+    // loaded with aSetActive=false) would otherwise resolve project-local paths
+    // against the active project's directory and fail to find anything.
+    if( aToken->IsSameAs( PROJECT_VAR_NAME ) )
+    {
+        wxString projDir = GetProjectDirectory();
+
+        if( projDir.IsEmpty() )
+            return false;
+
+        *aToken = projDir;
+        return true;
+    }
 
     if( aToken->IsSameAs( wxT( "PROJECTNAME" ) )  )
     {
@@ -766,4 +785,163 @@ void PROJECT::AddCrossBoardConnection( const KIID& aBoard1, const KIID& aPad1,
 
     m_projectFile->AddCrossBoardConnection(
             CROSS_BOARD_CONNECTION( aBoard1, aPad1, aBoard2, aPad2 ) );
+}
+
+
+// =============================================================================
+// Multi-board CONTAINER project lookup
+// =============================================================================
+
+namespace
+{
+/**
+ * Peek a candidate `.kicad_pro` to determine whether it is a multi-board
+ * container that lists @a aSubProjectAbs under `multi_board.sub_projects[]`.
+ *
+ * Uses raw nlohmann parsing rather than instantiating a PROJECT_FILE so we
+ * do not pull peers into the SETTINGS_MANAGER cache during the walk.
+ */
+bool projectFileIsContainerOf( const wxFileName& aCandidate,
+                               const wxString& aSubProjectAbs )
+{
+    std::ifstream stream( aCandidate.GetFullPath().fn_str() );
+
+    if( !stream.is_open() )
+        return false;
+
+    nlohmann::json j;
+
+    try
+    {
+        stream >> j;
+    }
+    catch( const nlohmann::json::exception& )
+    {
+        return false;
+    }
+
+    auto mb = j.find( "multi_board" );
+
+    if( mb == j.end() || !mb->is_object() )
+        return false;
+
+    auto container = mb->find( "container" );
+
+    if( container == mb->end() || !container->is_boolean() || !container->get<bool>() )
+        return false;
+
+    auto subs = mb->find( "sub_projects" );
+
+    if( subs == mb->end() || !subs->is_array() )
+        return false;
+
+    wxFileName candidateDir( aCandidate );
+    candidateDir.SetFullName( wxEmptyString );
+    wxString containerDir = candidateDir.GetFullPath();
+
+    wxFileName target( aSubProjectAbs );
+
+    for( const auto& sub : *subs )
+    {
+        auto rel = sub.find( "relativePath" );
+
+        if( rel == sub.end() || !rel->is_string() )
+            continue;
+
+        wxString relPath = wxString::FromUTF8( rel->get<std::string>().c_str() );
+        wxFileName resolved( relPath );
+
+        if( !resolved.IsAbsolute() )
+            resolved.MakeAbsolute( containerDir );
+
+        resolved.Normalize( wxPATH_NORM_ABSOLUTE | wxPATH_NORM_DOTS );
+
+        if( resolved.SameAs( target ) )
+            return true;
+    }
+
+    return false;
+}
+} // anonymous namespace
+
+
+wxString PROJECT::GetContainerProjectPath() const
+{
+    if( m_containerPathCached )
+        return m_containerProjectPath;
+
+    m_containerPathCached = true;
+    m_containerProjectPath = wxEmptyString;
+
+    // A container is never its own parent.
+    if( m_projectFile && m_projectFile->IsMultiBoardContainer() )
+        return m_containerProjectPath;
+
+    wxFileName myFile( GetProjectFullName() );
+
+    if( !myFile.IsOk() || myFile.GetFullName().IsEmpty() )
+        return m_containerProjectPath;
+
+    myFile.Normalize( wxPATH_NORM_ABSOLUTE | wxPATH_NORM_DOTS );
+    wxString myAbs = myFile.GetFullPath();
+
+    // Walk up from the project's directory. Capped at 6 levels — matches
+    // the legacy MBS lookup depth and keeps us from accidentally pulling
+    // in unrelated containers further up the filesystem. M5.2 cleanup
+    // tracks replacing this with an explicit parent ref.
+    wxFileName cursor( myFile.GetPath(), wxEmptyString );
+    cursor.Normalize( wxPATH_NORM_ABSOLUTE | wxPATH_NORM_DOTS );
+
+    constexpr int kMaxDepth = 6;
+    wxString pattern = wxT( "*." ) + FILEEXT::ProjectFileExtension;
+
+    for( int depth = 0; depth < kMaxDepth; ++depth )
+    {
+        if( cursor.GetDirCount() == 0 )
+            break;
+
+        wxDir dir( cursor.GetFullPath() );
+
+        if( dir.IsOpened() )
+        {
+            wxString filename;
+            bool found = dir.GetFirst( &filename, pattern, wxDIR_FILES );
+
+            while( found )
+            {
+                wxFileName candidate( cursor.GetFullPath(), filename );
+                candidate.Normalize( wxPATH_NORM_ABSOLUTE | wxPATH_NORM_DOTS );
+
+                // Skip self defensively (sub-project's own .kicad_pro
+                // should be in its directory, not the parent's, but a
+                // user could place them anywhere).
+                if( !candidate.SameAs( myFile )
+                    && projectFileIsContainerOf( candidate, myAbs ) )
+                {
+                    m_containerProjectPath = candidate.GetFullPath();
+                    return m_containerProjectPath;
+                }
+
+                found = dir.GetNext( &filename );
+            }
+        }
+
+        if( cursor.GetDirCount() == 0 )
+            break;
+
+        cursor.RemoveLastDir();
+    }
+
+    return m_containerProjectPath;  // empty
+}
+
+
+PROJECT* PROJECT::GetContainerProject() const
+{
+    wxString path = GetContainerProjectPath();
+
+    if( path.IsEmpty() )
+        return nullptr;
+
+    return Pgm().GetSettingsManager().GetProject( path );
 }

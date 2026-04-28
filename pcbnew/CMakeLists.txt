@@ -500,6 +500,7 @@ set( PCBNEW_CLASS_SRCS
     widgets/vertex_editor_pane.cpp
 
     multi_board/component_assignment.cpp
+    multi_board/cross_board_apply_to_board.cpp
     multi_board/panel_board.cpp
     # sub_project_board_loader.cpp is in pcbcommon so targets that link
     # only pcbcommon (e.g. 3d-viewer, cvpcb_kiface) resolve the symbol.

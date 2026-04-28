@@ -584,6 +584,11 @@ private:
     // Mark netclasses dirty and repaint the canvas
     void refreshNetclasses();
 
+protected:
+    // Promoted to `protected` so API_HANDLER_MBS_SCH (subclass) can
+    // dispatch MBS-specific commands against the same SCH_EDIT_FRAME
+    // pointer the parent uses. The subclass needs read access to
+    // m_frame; promoting beats duplicating the field.
     SCH_EDIT_FRAME* m_frame;
 };
 

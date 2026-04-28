@@ -122,6 +122,22 @@ static std::string BuildModeInitCode( const wxString& aMode, const std::string& 
             "except Exception:\n"
             "    raise RuntimeError('Schematic editor is not open. Use launch_editor to open it first.')\n";
     }
+    else if( aMode == "mbs" )
+    {
+        // Multi-board schematic mode. The bound `mbs` variable is a kipy
+        // Schematic targeting the .kicad_mbs document, so all standard
+        // schematic operations (mbs.symbols.add, mbs.wiring.add_wire,
+        // mbs.labels.add, etc.) work because the on-disk format is shared
+        // with .kicad_sch. MBS-only operations live under mbs.multi_board.
+        initCode +=
+            "try:\n"
+            "    mbs = kicad.get_mbs_schematic()\n"
+            "    if hasattr(mbs, 'refresh_document'):\n"
+            "        mbs.refresh_document()\n"
+            "except Exception:\n"
+            "    raise RuntimeError('Multi-board (MBS) schematic editor is not open. "
+            "Open the container project\\'s .kicad_mbs file first.')\n";
+    }
     else if( aMode == "pcb" )
     {
         initCode +=

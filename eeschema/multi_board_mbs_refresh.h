@@ -32,6 +32,7 @@ class SCH_SCREEN;
 class SCH_MODULE_BLOCK;
 class SCH_MODULE_PIN;
 class PROJECT_FILE;
+class REPORTER;
 
 namespace KIGFX
 {
@@ -136,10 +137,19 @@ std::vector<MBS_CHANGE> ComputeMbsRefreshDiff( SCH_SCREEN& aMbsScreen,
  * canvas — skipping the view updates leaves stale pointers in the
  * layer cache and newly-added blocks un-drawn until the MBS is
  * reloaded from disk.
+ *
+ * When `aReporter` is non-null, each applied change is reported as
+ * RPT_SEVERITY_INFO (or RPT_SEVERITY_ACTION for destructive ops, with
+ * a leading verb in the message). Skipped changes — e.g. an ADD_PIN
+ * whose parent block was REMOVE_BLOCK'd in the same pass — are
+ * reported as RPT_SEVERITY_WARNING. Useful for the redesigned refresh
+ * dialog's streaming console; pass nullptr (default) for headless
+ * usage and tests.
  */
 MBS_REFRESH_RESULT ApplyMbsRefreshChanges( SCH_SCREEN& aMbsScreen,
                                            const std::vector<MBS_CHANGE>& aChanges,
-                                           KIGFX::VIEW* aView = nullptr );
+                                           KIGFX::VIEW* aView = nullptr,
+                                           REPORTER* aReporter = nullptr );
 
 
 /**

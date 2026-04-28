@@ -756,6 +756,47 @@ void PCB_EDIT_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& mail )
 {
     std::string& payload = mail.GetPayload();
 
+    // Multi-board peer scope filter — symmetric to the SCH-side guard
+    // in eeschema/cross-probing.cpp. KIWAY broadcasts to every
+    // FRAME_PCB_EDITOR peer; in M4 multi-peer sessions, board A's SCH
+    // requesting MAIL_PCB_GET_NETLIST or pushing MAIL_PCB_UPDATE_LINKS
+    // hits every sibling PCB. Filter out non-matching peers so
+    // request/response shapes resolve to the correct board and
+    // mutating commands only run on their target.
+    auto senderProjectMatches = [&]() -> bool
+    {
+        wxObject* source = mail.GetEventObject();
+
+        if( !source )
+            return true;
+
+        EDA_BASE_FRAME* senderFrame = dynamic_cast<EDA_BASE_FRAME*>( source );
+
+        if( !senderFrame )
+            return true;
+
+        wxString senderPro = senderFrame->Prj().GetProjectFullName();
+        wxString ourPro    = Prj().GetProjectFullName();
+
+        if( senderPro.IsEmpty() || ourPro.IsEmpty() )
+            return true;
+
+        return wxFileName( senderPro ).SameAs( wxFileName( ourPro ) );
+    };
+
+    switch( mail.Command() )
+    {
+    case MAIL_PCB_GET_NETLIST:
+    case MAIL_PCB_UPDATE_LINKS:
+    case MAIL_PCB_UPDATE:
+        if( !senderProjectMatches() )
+            return;
+        break;
+
+    default:
+        break;
+    }
+
     switch( mail.Command() )
     {
     case MAIL_PCB_GET_NETLIST:

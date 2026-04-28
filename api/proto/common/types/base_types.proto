@@ -90,6 +90,7 @@ enum DocumentType
   DOCTYPE_FOOTPRINT     = 4;
   DOCTYPE_DRAWING_SHEET = 5;
   DOCTYPE_PROJECT       = 6;
+  DOCTYPE_MBS_SCHEMATIC = 7;   // Multi-board container schematic (.kicad_mbs)
 }
 
 /**

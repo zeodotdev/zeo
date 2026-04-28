@@ -690,9 +690,9 @@ int SCH_EDITOR_CONTROL::RefreshMbsFromSubProjects( const TOOL_EVENT& aEvent )
         return 0;
     }
 
-    // Compute a diff first so we can show the user a preview with
-    // per-row checkboxes (add/remove/rename/drift) before anything on
-    // the MBS is mutated. Apply only the rows the user leaves checked.
+    // Compute a diff first; the dialog shows a category-toggleable
+    // preview, runs the apply itself (so its WX_HTML_REPORT_PANEL can
+    // stream progress), and exposes the result through GetResult().
     std::vector<MBS_CHANGE> changes = ComputeMbsRefreshDiff( *rootScreen, multi );
 
     DIALOG_MBS_REFRESH dlg( m_frame, changes );
@@ -700,11 +700,7 @@ int SCH_EDITOR_CONTROL::RefreshMbsFromSubProjects( const TOOL_EVENT& aEvent )
     if( dlg.ShowModal() != wxID_OK )
         return 0;
 
-    // Pass the canvas view so adds/removes are reflected on-screen —
-    // without it the GAL layer cache keeps stale pointers to deleted
-    // blocks and new blocks don't paint until a full reload.
-    KIGFX::VIEW* view = m_frame->GetCanvas() ? m_frame->GetCanvas()->GetView() : nullptr;
-    MBS_REFRESH_RESULT res = ApplyMbsRefreshChanges( *rootScreen, changes, view );
+    const MBS_REFRESH_RESULT& res = dlg.GetResult();
 
     if( res.blocksAdded == 0 && res.blocksRemoved == 0 && res.pinsAdded == 0
         && res.pinsRemoved == 0 && res.pinsRenamed == 0 && res.pathsUpdated == 0
@@ -712,9 +708,6 @@ int SCH_EDITOR_CONTROL::RefreshMbsFromSubProjects( const TOOL_EVENT& aEvent )
     {
         return 0;
     }
-
-    m_frame->OnModify();
-    m_frame->GetCanvas()->Refresh( true );
 
     // Hand the freshly-added blocks to the move tool so the user can
     // place them with a single click instead of having them dropped at
@@ -736,16 +729,9 @@ int SCH_EDITOR_CONTROL::RefreshMbsFromSubProjects( const TOOL_EVENT& aEvent )
             for( SCH_MODULE_BLOCK* block : res.newlyAddedBlocks )
                 selTool->AddItemToSel( block, /*aQuietMode=*/true );
 
-            // PostAction runs the move tool after the current event
-            // loop unwinds. No follow-up message box — the placement
-            // itself is the user-visible feedback.
             m_toolMgr->PostAction( SCH_ACTIONS::move );
-            return 0;
         }
     }
-
-    wxMessageBox( res.summary, _( "Refresh Module Blocks" ),
-                  wxOK | wxICON_INFORMATION, m_frame );
 
     return 0;
 }

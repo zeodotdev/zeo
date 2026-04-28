@@ -1291,6 +1291,12 @@ private:
     wxChoice* m_currentVariantCtrl;
 
 #ifdef KICAD_IPC_API
+protected:
+    // Promoted to `protected` so MBSCH_EDIT_FRAME (subclass) can swap
+    // in API_HANDLER_MBS_SCH alongside the regular SCH handler — see
+    // mbsch_edit_frame.cpp ctor. Touching the IPC-API access scope
+    // here is intentional; non-IPC builds keep these private (no
+    // section change inside the `#ifdef KICAD_IPC_API` block).
     std::unique_ptr<API_HANDLER_SCH>    m_apiHandler;
     std::unique_ptr<API_HANDLER_COMMON> m_apiHandlerCommon;
 #endif

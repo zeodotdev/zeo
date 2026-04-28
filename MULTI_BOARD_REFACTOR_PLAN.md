@@ -41,6 +41,56 @@ in the current code path. M5.2 (replace directory walk with explicit
 parent-project ref) will let both suppression paths share a single
 lookup.
 
+### Per-board sync pulls cross-board nets from MBS ✓ done (2026-04-28)
+
+PM call: keep the MBS-side bulk push button (handy for N-board projects)
+**and** also have each per-board `Update PCB from Schematic` pull MBS
+cross-board nets in. Two complementary surfaces, both functional in
+isolation.
+
+| Item | Where |
+|---|---|
+| New in-memory cross-board apply (operates on the loaded `BOARD`, mutates `NETINFO_LIST` + per-pad `SetNet`) | `pcbnew/multi_board/cross_board_apply_to_board.{h,cpp}` |
+| `dialog_update_pcb.cpp` calls it after `BOARD_NETLIST_UPDATER::UpdateNetlist` (real-run only — dry-run skipped to avoid messy backout) | `pcbnew/dialogs/dialog_update_pcb.cpp` |
+| Info banner at top of the dialog when project is multi-board: "cross-board nets from the MBS will also be applied to connector pads on this board" | same |
+| Reports each pad reassignment via the dialog's existing `WX_HTML_REPORT_PANEL` (action severity for assignment, warning for missing connectors / pads) | same |
+
+**MBS-wins-on-conflict semantics**: if the local schematic-side sync
+assigns J1.3 to "A_NET" but the MBS contract says J1.3 = "B_NET",
+the apply pass overrides with B_NET and reports `Reassigned J1/3 from
+'A_NET' to MBS cross-board net 'B_NET'.` as a warning so the user
+sees what happened. Rationale: when the user wired two module pins
+together on the MBS they explicitly declared "these are the same
+net everywhere"; that has to override per-board labels that haven't
+been resynced.
+
+The standalone MBS toolbar action (`MbsSyncCrossBoardNets`) stays as a
+bulk-push entry point for N-board projects; behavior unchanged.
+
+### Refresh dialog redesign — settings + streaming console ✓ done (2026-04-28)
+
+Replaced the old per-row `wxCheckListBox` with the
+`Update Schematic from PCB` shape: category toggles on top,
+`WX_HTML_REPORT_PANEL` in the middle, Update / Close buttons at the
+bottom. PM's explicit ask (M8.5).
+
+| Item | Where |
+|---|---|
+| `ApplyMbsRefreshChanges` gains optional `REPORTER*` arg | `eeschema/multi_board_mbs_refresh.{h,cpp}` |
+| Each kind's apply branch reports `ch.Describe()` (info / action / warning per severity) + skipped-because-parent-removed messages + summary trailer | same |
+| Empty-block sweep also reports each removal as `RPT_SEVERITY_ACTION` | same |
+| Dialog rewritten: 7 category checkboxes mapped to `MBS_CHANGE::KIND` values; preview is dry-run via `Describe()`; on Update the apply runs with the panel as the reporter, summary appended at end | `eeschema/dialogs/dialog_mbs_refresh.{h,cpp}` |
+| `RefreshMbsFromSubProjects` simplified to pass-through: build diff → show dialog → consume `dlg.GetResult()` → hand new blocks to move tool | `eeschema/tools/sch_editor_control.cpp` |
+
+Behaviour:
+- User opens dialog → preview shows every change that *would* apply
+  with all categories on; destructive ops (REMOVE_*) styled as warnings.
+- User toggles a category off → preview re-renders without those rows.
+- "Update MBS" → applies, streams progress into the panel, swaps the
+  button label to "Close". Cancel becomes "Close" too.
+- `WX_HTML_REPORT_PANEL` provides search + severity-filter + save-to-file
+  (writes `mbs_refresh_report.txt` in the project dir) for free.
+
 ### Net-highlight propagation independent of MBSCH-open state ✓ done (2026-04-28)
 
 **Symptom:** highlights propagated correctly only when MBSCH was open

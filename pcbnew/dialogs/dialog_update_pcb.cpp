@@ -28,12 +28,18 @@
 #include "widgets/wx_html_report_panel.h"
 #include <netlist_reader/pcb_netlist.h>
 #include <netlist_reader/board_netlist_updater.h>
+#include <multi_board/cross_board_apply_to_board.h>
+#include <project/multi_board_scan.h>
 #include <tool/tool_manager.h>
 #include <tools/pcb_actions.h>
 #include <tools/pcb_selection_tool.h>
 #include <view/view_controls.h>
 #include <kiface_base.h>
 #include <kiplatform/ui.h>
+
+#include <wx/filename.h>
+#include <wx/sizer.h>
+#include <wx/stattext.h>
 
 
 DIALOG_UPDATE_PCB::DIALOG_UPDATE_PCB( PCB_EDIT_FRAME* aParent, NETLIST* aNetlist ) :
@@ -46,6 +52,34 @@ DIALOG_UPDATE_PCB::DIALOG_UPDATE_PCB( PCB_EDIT_FRAME* aParent, NETLIST* aNetlist
     m_messagePanel->SetFileName( Prj().GetProjectPath() + wxT( "report.txt" ) );
     m_messagePanel->SetLazyUpdate( true );
     m_netlist->SortByReference();
+
+    // Multi-board context: when this PCB sits inside a `.kicad_pro`
+    // container, the standard schematic→PCB sync ALSO pulls in the
+    // MBS-declared cross-board net assignments. Surface that in the
+    // dialog so the user understands what's about to happen — there's
+    // no explicit toggle (the MBS contract is authoritative for the
+    // pads it covers; the user pushed those nets explicitly).
+    wxString proPath = Prj().GetProjectFullName();
+
+    if( !proPath.IsEmpty()
+        && !MultiBoardCollectCrossBoardEndpointsForSubProject(
+                   wxFileName( proPath ) ).empty() )
+    {
+        wxStaticText* note = new wxStaticText(
+                this, wxID_ANY,
+                _( "Multi-board sub-project: cross-board nets declared on the MBS "
+                   "will also be applied to connector pads on this board." ) );
+        note->Wrap( 600 );
+
+        wxSizer* mainSizer = GetSizer();
+
+        if( mainSizer )
+        {
+            mainSizer->Insert( 0, note, 0,
+                               wxALL | wxEXPAND | wxALIGN_CENTER_VERTICAL, 8 );
+            mainSizer->Layout();
+        }
+    }
 
     m_messagePanel->GetSizer()->SetSizeHints( this );
     m_messagePanel->Layout();
@@ -108,6 +142,16 @@ void DIALOG_UPDATE_PCB::PerformUpdate( bool aDryRun )
     updater.SetUpdateFields( m_cbUpdateFields->GetValue() );
     updater.SetRemoveExtraFields( m_cbRemoveExtraFields->GetValue() );
     updater.UpdateNetlist( *m_netlist );
+
+    // Pull MBS-declared cross-board net assignments into this PCB.
+    // Skipped on dry-run since the apply mutates BOARD state directly
+    // (NETINFO_LIST + per-pad net codes); a dry-run preview wouldn't
+    // be backed out cleanly. Real-run only.
+    //
+    // ApplyCrossBoardNetsToBoard self-gates on multi-board context,
+    // so it's a cheap no-op for standalone projects.
+    if( !aDryRun )
+        ApplyCrossBoardNetsToBoard( *m_frame->GetBoard(), &reporter );
 
     m_messagePanel->Flush( true );
 

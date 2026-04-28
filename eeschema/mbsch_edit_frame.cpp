@@ -21,6 +21,9 @@
 #include "mbsch_edit_frame.h"
 #include "toolbars_mbsch_editor.h"
 
+#include "api/api_handler_mbs_sch.h"
+
+#include <api/api_server.h>
 #include <connection_graph.h>
 #include <fmt/format.h>
 #include <kiway.h>
@@ -73,6 +76,21 @@ MBSCH_EDIT_FRAME::MBSCH_EDIT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
         hierarchyPane.Show( false );
         m_auimgr.Update();
     }
+
+#ifdef KICAD_IPC_API
+    // Replace the inherited API_HANDLER_SCH (which claims DOCTYPE_SCHEMATIC)
+    // with API_HANDLER_MBS_SCH (which claims DOCTYPE_MBS_SCHEMATIC). Lets
+    // the API server route MBS-specific kipy commands here deterministically
+    // even when a regular schematic editor is open in the same process.
+    if( m_apiHandler )
+    {
+        Pgm().GetApiServer().DeregisterHandler( m_apiHandler.get() );
+        m_apiHandler.reset();
+    }
+
+    m_apiHandler = std::make_unique<API_HANDLER_MBS_SCH>( this );
+    Pgm().GetApiServer().RegisterHandler( m_apiHandler.get() );
+#endif
 }
 
 

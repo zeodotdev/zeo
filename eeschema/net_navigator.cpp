@@ -33,6 +33,8 @@
 #include <sch_junction.h>
 #include <sch_no_connect.h>
 #include <sch_sheet_pin.h>
+#include <sch_module_block.h>
+#include <sch_module_pin.h>
 #include <string_utils.h>
 #include <trace_helpers.h>
 #include <connection_graph.h>
@@ -109,6 +111,28 @@ static wxString GetNetNavigatorItemText( const SCH_ITEM* aItem,
         {
             retv.Printf( _( "Sheet '%s' pin '%s'" ),
                          sheet->GetName(),
+                         UnescapeString( pin->GetText() ) );
+        }
+
+        break;
+    }
+    case SCH_MODULE_PIN_T:
+    {
+        // Module pins live on multi-board schematic blocks. Format
+        // mirrors SCH_SHEET_PIN to give a consistent "container / pin"
+        // label in the net navigator tree.
+        const SCH_MODULE_PIN* pin = static_cast<const SCH_MODULE_PIN*>( aItem );
+
+        if( SCH_MODULE_BLOCK* block = pin->GetParent() )
+        {
+            wxString blockId = block->GetMbsReference().IsEmpty()
+                                       ? block->GetDisplayName()
+                                       : block->GetMbsReference();
+
+            retv.Printf( _( "Block '%s' pin %s/%s (\"%s\")" ),
+                         blockId,
+                         pin->GetComponentRef(),
+                         pin->GetPinNumber(),
                          UnescapeString( pin->GetText() ) );
         }
 
@@ -645,10 +669,15 @@ void SCH_EDIT_FRAME::onNetNavigatorSelection( wxTreeEvent& aEvent )
         // Make sure we didn't remove the item and/or the screen it resides on before we access it.
         const SCH_ITEM* item = itemData->GetItem();
 
-        // Don't search for child items in screen r-tree.
-        item = ( item->Type() == SCH_SHEET_PIN_T || item->Type() == SCH_PIN_T )
-                                                            ? static_cast<const SCH_ITEM*>( item->GetParent() )
-                                                            : item;
+        // Don't search for child items in screen r-tree. Sheet pins,
+        // symbol pins, and module pins are all parent-owned children
+        // not directly tracked in the screen rtree, so substitute the
+        // owning sheet / symbol / block before the contains() check.
+        item = ( item->Type() == SCH_SHEET_PIN_T
+                 || item->Type() == SCH_PIN_T
+                 || item->Type() == SCH_MODULE_PIN_T )
+                       ? static_cast<const SCH_ITEM*>( item->GetParent() )
+                       : item;
 
         const SCH_SCREEN* screen = itemData->GetSheetPath().LastScreen();
 

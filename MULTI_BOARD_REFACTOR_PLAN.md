@@ -274,7 +274,7 @@ None currently open.
   fixes become 1-line callsite swaps once this lands.
 - **M8.1 — Schematic editor surfaces with confirmed gaps** (~3-4
   sessions, opportunistic):
-  - `widgets/net_navigator.cpp` (no `SCH_MODULE_PIN_T` handler)
+  - ~~`widgets/net_navigator.cpp` (no `SCH_MODULE_PIN_T` handler)~~ ✓
   - `tools/sch_find_replace_tool.cpp` (no descent into module blocks)
   - `annotate.cpp` (collision check doesn't span module blocks)
   - `widgets/hierarchy_pane.cpp` (sheet-only tree)
@@ -284,7 +284,8 @@ None currently open.
   - `sch_plotter.cpp` (module blocks not rendered in plot)
   - `dialogs/dialog_symbol_properties.cpp` (no cross-board indicator)
 - **M8.2 — PCB editor surfaces with confirmed gaps** (~2-3 sessions):
-  - `widgets/pcb_net_inspector_panel.cpp` (no cross-board aggregation)
+  - ~~`widgets/pcb_net_inspector_panel.cpp` — Cross-Board column~~ ✓
+    (showing aggregation with sibling-board names is a v2 follow-up)
   - `drc/drc_test_provider_matched_length.cpp` + router (length calc
     doesn't account for cross-board connector segments)
   - Differential-pair finder (same boundary issue)

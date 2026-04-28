@@ -27,6 +27,9 @@
 #include <connectivity/connectivity_algo.h>
 #include <dialogs/dialog_text_entry.h>
 #include <footprint.h>
+#include <project.h>
+#include <project/multi_board_scan.h>
+#include <wx/filename.h>
 #include <length_delay_calculation/length_delay_calculation.h>
 #include <length_delay_calculation/length_delay_calculation_item.h>
 #include <pad.h>
@@ -149,6 +152,8 @@ void PCB_NET_INSPECTOR_PANEL::buildColumns()
     }
 
     m_columns.emplace_back( 7u, UNDEFINED_LAYER, _( "Pad Count" ), _( "Pad Count" ), CSV_COLUMN_DESC::CSV_NONE, false );
+    m_columns.emplace_back( 8u, UNDEFINED_LAYER, _( "Cross-Board" ),
+                            _( "Cross-Board" ), CSV_COLUMN_DESC::CSV_NONE, false );
 
     const std::vector<std::function<void( void )>> add_col{
         [&]()
@@ -196,6 +201,13 @@ void PCB_NET_INSPECTOR_PANEL::buildColumns()
         [&]()
         {
             m_netsList->AppendTextColumn( m_columns[COLUMN_PAD_COUNT].display_name, m_columns[COLUMN_PAD_COUNT],
+                                          wxDATAVIEW_CELL_INERT, -1, wxALIGN_CENTER,
+                                          wxDATAVIEW_COL_RESIZABLE|wxDATAVIEW_COL_REORDERABLE|wxDATAVIEW_COL_SORTABLE );
+        },
+        [&]()
+        {
+            m_netsList->AppendTextColumn( m_columns[COLUMN_CROSS_BOARD].display_name,
+                                          m_columns[COLUMN_CROSS_BOARD],
                                           wxDATAVIEW_CELL_INERT, -1, wxALIGN_CENTER,
                                           wxDATAVIEW_COL_RESIZABLE|wxDATAVIEW_COL_REORDERABLE|wxDATAVIEW_COL_SORTABLE );
         }
@@ -530,6 +542,60 @@ void PCB_NET_INSPECTOR_PANEL::buildNetsList( const bool rebuildColumns )
                        } );
 
     std::vector<std::unique_ptr<LIST_ITEM>> lengths = calculateNets( netCodes, m_showZeroPadNets );
+
+    // MBS context: tag any LIST_ITEM whose net touches a connector pad
+    // declared in the container's `cross_board_nets`. Stamping by net
+    // CODE (not by name) sidesteps the auto-disambig / `{slash}` /
+    // sheet-prefix normalisation we'd need to do for name-based
+    // matching — pads carry NETINFO_ITEM* directly. Empty set in
+    // standalone projects (no-op).
+    std::set<int> crossBoardNetCodes;
+
+    if( PROJECT* prj = m_board->GetProject() )
+    {
+        wxString proPath = prj->GetProjectFullName();
+
+        if( !proPath.IsEmpty() )
+        {
+            std::set<std::pair<wxString, wxString>> endpoints =
+                    MultiBoardCollectCrossBoardEndpointsForSubProject(
+                            wxFileName( proPath ) );
+
+            if( !endpoints.empty() )
+            {
+                std::map<wxString, FOOTPRINT*> fpByRef;
+
+                for( FOOTPRINT* fp : m_board->Footprints() )
+                    fpByRef[fp->GetReference()] = fp;
+
+                for( const auto& [ref, padNum] : endpoints )
+                {
+                    auto it = fpByRef.find( ref );
+
+                    if( it == fpByRef.end() )
+                        continue;
+
+                    for( PAD* p : it->second->Pads() )
+                    {
+                        if( p->GetNumber() == padNum && p->GetNetCode() > 0 )
+                        {
+                            crossBoardNetCodes.insert( p->GetNetCode() );
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if( !crossBoardNetCodes.empty() )
+    {
+        for( const std::unique_ptr<LIST_ITEM>& item : lengths )
+        {
+            if( crossBoardNetCodes.count( item->GetNetCode() ) > 0 )
+                item->SetIsCrossBoard( true );
+        }
+    }
 
     m_dataModel->addItems( lengths );
 

@@ -89,6 +89,16 @@ public:
     const wxString& GetNetName() const { return m_net_name; }
     const wxString& GetNetclassName() const { return m_net_class; }
 
+    /**
+     * MBS context: true when one or more pads on this net are declared
+     * as cross-board endpoints in the enclosing multi-board container's
+     * `cross_board_nets`. Populated once in `buildNetsList` from the
+     * helper `MultiBoardCollectCrossBoardEndpointsForSubProject`.
+     * Always false in standalone (non-multi-board) projects.
+     */
+    bool IsCrossBoard() const { return m_is_cross_board; }
+    void SetIsCrossBoard( bool aValue ) { m_is_cross_board = aValue; }
+
     void ResetColumnChangedBits()
     {
         std::fill( m_column_changed.begin(), m_column_changed.end(), 0 );
@@ -485,6 +495,8 @@ private:
     wxString m_net_name;
     wxString m_net_class;
     wxString m_group_name;
+
+    bool m_is_cross_board = false;
 };
 
 
@@ -895,6 +907,13 @@ protected:
                     aOutValue = m_parent.formatDelay( i->GetTotalDelay() );
                 else
                     aOutValue = m_parent.formatLength( i->GetTotalLength() );
+            }
+            else if( aCol == COLUMN_CROSS_BOARD )
+            {
+                // Compact glyph rather than the word "Yes" — keeps the
+                // column narrow. Sortable: cross-board nets cluster
+                // together when the user sorts on this column.
+                aOutValue = i->IsCrossBoard() ? wxString( wxT( "✓" ) ) : wxString();
             }
             else if( aCol > COLUMN_LAST_STATIC_COL && aCol <= m_parent.m_columns.size() )
             {

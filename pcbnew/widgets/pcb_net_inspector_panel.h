@@ -314,7 +314,8 @@ private:
         COLUMN_BOARD_LENGTH,
         COLUMN_PAD_DIE_LENGTH,
         COLUMN_PAD_COUNT,
-        COLUMN_LAST_STATIC_COL = COLUMN_PAD_COUNT
+        COLUMN_CROSS_BOARD,            ///< "✓" when this net is part of an MBS cross-board net
+        COLUMN_LAST_STATIC_COL = COLUMN_CROSS_BOARD
     };
 
     /// Popup menu item IDs

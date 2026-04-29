@@ -29,6 +29,10 @@ namespace kiapi { namespace schematic { namespace commands {
     class GetCrossBoardNetsResponse;
     class GetMultiBoardContainerInfo;
     class GetMultiBoardContainerInfoResponse;
+    class RefreshMbsFromSubProjects;
+    class RefreshMbsFromSubProjectsResponse;
+    class SyncCrossBoardNetsToPcb;
+    class SyncCrossBoardNetsToPcbResponse;
 } } }
 
 
@@ -75,6 +79,14 @@ private:
     HANDLER_RESULT<schematic::commands::GetMultiBoardContainerInfoResponse>
     handleGetMultiBoardContainerInfo(
             const HANDLER_CONTEXT<schematic::commands::GetMultiBoardContainerInfo>& aCtx );
+
+    HANDLER_RESULT<schematic::commands::RefreshMbsFromSubProjectsResponse>
+    handleRefreshMbsFromSubProjects(
+            const HANDLER_CONTEXT<schematic::commands::RefreshMbsFromSubProjects>& aCtx );
+
+    HANDLER_RESULT<schematic::commands::SyncCrossBoardNetsToPcbResponse>
+    handleSyncCrossBoardNetsToPcb(
+            const HANDLER_CONTEXT<schematic::commands::SyncCrossBoardNetsToPcb>& aCtx );
 };
 
 #endif // KICAD_API_HANDLER_MBS_SCH_H

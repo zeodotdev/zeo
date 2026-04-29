@@ -28,13 +28,18 @@
 #include <frame_type.h>
 #include <project/project_file.h>
 #include <project.h>
+#include <project/cross_board_pcb_sync.h>
 #include <schematic.h>
 #include <sch_edit_frame.h>
 #include <sch_screen.h>
 #include <sch_sheet_path.h>
+#include <view/view.h>
+#include <sch_draw_panel.h>
+#include <reporter.h>
 
 #include "../sch_module_block.h"
 #include "../sch_module_pin.h"
+#include "../multi_board_mbs_refresh.h"
 
 #include <api/common/types/base_types.pb.h>
 #include <api/schematic/schematic_commands.pb.h>
@@ -98,6 +103,15 @@ API_HANDLER_MBS_SCH::API_HANDLER_MBS_SCH( SCH_EDIT_FRAME* aFrame ) :
             &API_HANDLER_MBS_SCH::handleGetCrossBoardNets );
     registerHandler<GetMultiBoardContainerInfo, GetMultiBoardContainerInfoResponse>(
             &API_HANDLER_MBS_SCH::handleGetMultiBoardContainerInfo );
+
+    // MBS-specific edit/workflow commands.
+    // Qualify the proto class explicitly — `RefreshMbsFromSubProjects` is
+    // also the name of the headless one-shot helper from multi_board_mbs_refresh.h.
+    registerHandler<kiapi::schematic::commands::RefreshMbsFromSubProjects,
+                    kiapi::schematic::commands::RefreshMbsFromSubProjectsResponse>(
+            &API_HANDLER_MBS_SCH::handleRefreshMbsFromSubProjects );
+    registerHandler<SyncCrossBoardNetsToPcb, SyncCrossBoardNetsToPcbResponse>(
+            &API_HANDLER_MBS_SCH::handleSyncCrossBoardNetsToPcb );
 }
 
 
@@ -350,6 +364,116 @@ API_HANDLER_MBS_SCH::handleGetMultiBoardContainerInfo(
 
         wxFileName resolved = projectFile.ResolveSubProjectPath( info );
         spMsg->set_absolute_path( resolved.GetFullPath().ToStdString() );
+    }
+
+    return response;
+}
+
+
+HANDLER_RESULT<kiapi::schematic::commands::RefreshMbsFromSubProjectsResponse>
+API_HANDLER_MBS_SCH::handleRefreshMbsFromSubProjects(
+        const HANDLER_CONTEXT<kiapi::schematic::commands::RefreshMbsFromSubProjects>& aCtx )
+{
+    if( !validateDocumentInternal( aCtx.Request.document() ) )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_UNHANDLED );
+        return tl::unexpected( e );
+    }
+
+    PROJECT_FILE& container = m_frame->Prj().GetProjectFile();
+
+    if( !container.IsMultiBoardContainer() )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "Active project is not a multi-board container; "
+                             "cannot refresh MBS from sub-projects." );
+        return tl::unexpected( e );
+    }
+
+    SCH_SCREEN* screen = m_frame->Schematic().RootScreen();
+
+    if( !screen )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "MBS schematic has no root screen; cannot refresh." );
+        return tl::unexpected( e );
+    }
+
+    // Compute the diff and apply every change unconditionally — the MBSCH
+    // dialog flow (DIALOG_MBS_REFRESH) lets the user toggle individual
+    // changes; for the agent-driven flow we mirror the headless one-shot
+    // behavior of RefreshMbsFromSubProjects.
+    std::vector<MBS_CHANGE> changes = ComputeMbsRefreshDiff( *screen, container );
+
+    KIGFX::VIEW* view = m_frame->GetCanvas() ? m_frame->GetCanvas()->GetView() : nullptr;
+    NULL_REPORTER reporter;
+
+    MBS_REFRESH_RESULT res = ApplyMbsRefreshChanges( *screen, changes, view, &reporter );
+
+    if( m_frame->GetCanvas() )
+        m_frame->GetCanvas()->Refresh( true );
+
+    kiapi::schematic::commands::RefreshMbsFromSubProjectsResponse response;
+    response.set_blocks_added( res.blocksAdded );
+    response.set_blocks_removed( res.blocksRemoved );
+    response.set_pins_added( res.pinsAdded );
+    response.set_pins_removed( res.pinsRemoved );
+    response.set_pins_renamed( res.pinsRenamed );
+    response.set_paths_updated( res.pathsUpdated );
+    response.set_uuids_stamped( res.uuidsStamped );
+    response.set_summary( res.summary.ToStdString() );
+
+    return response;
+}
+
+
+HANDLER_RESULT<kiapi::schematic::commands::SyncCrossBoardNetsToPcbResponse>
+API_HANDLER_MBS_SCH::handleSyncCrossBoardNetsToPcb(
+        const HANDLER_CONTEXT<kiapi::schematic::commands::SyncCrossBoardNetsToPcb>& aCtx )
+{
+    if( !validateDocumentInternal( aCtx.Request.document() ) )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_UNHANDLED );
+        return tl::unexpected( e );
+    }
+
+    PROJECT_FILE& container = m_frame->Prj().GetProjectFile();
+
+    if( !container.IsMultiBoardContainer() )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "Active project is not a multi-board container; "
+                             "cannot push cross-board nets." );
+        return tl::unexpected( e );
+    }
+
+    // Reload to pick up cross-board nets written by the MBSCH save hook;
+    // the in-memory PROJECT_FILE won't reflect a recent save otherwise.
+    container.LoadFromFile();
+
+    MB_CROSS_BOARD_SYNC_RESULT result = ApplyCrossBoardNetsToSubProjectPCBs( container );
+
+    container.SaveToFile();
+
+    kiapi::schematic::commands::SyncCrossBoardNetsToPcbResponse response;
+    response.set_sub_projects_touched( result.subProjectsTouched );
+    response.set_endpoints_applied( result.endpointsApplied );
+    response.set_endpoints_missing( result.endpointsMissing );
+    response.set_nets_renamed( result.netsRenamed );
+    response.set_summary( result.summary.ToStdString() );
+
+    for( const MB_NET_NAME_CONFLICT& c : result.conflicts )
+    {
+        kiapi::schematic::commands::MbsNetNameConflict* msg = response.add_conflicts();
+        msg->set_chosen( c.chosen.ToStdString() );
+
+        for( const wxString& rej : c.rejected )
+            msg->add_rejected( rej.ToStdString() );
     }
 
     return response;

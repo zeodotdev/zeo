@@ -113,13 +113,21 @@ wxString LIB_TABLE_GRID_DATA_MODEL::GetValue( int aRow, int aCol )
 
     case COL_SHARE:
         // Multi-board (M7.1): share state for the row.
-        // Only meaningful for project-tier rows; the panel hides this
-        // column entirely on the global tab and on non-multi-board
-        // projects.
+        // The panel hides this column entirely on the global tab and
+        // on non-multi-board projects, so we only need to render
+        // values that make sense in container or sub-project context.
         if( r.Conflict() )
             return _( "Conflict" );
 
         if( r.Shared() )
+            return _( "Shared" );
+
+        // Container-tier rows are stored with shared=false on disk
+        // (they're the source of truth, not replicated copies), but
+        // visually they ARE shared with every sub-project. The panel
+        // sets m_isContainerScope when this model is the container's
+        // own tier so we can render them correctly.
+        if( m_isContainerScope )
             return _( "Shared" );
 
         return _( "Local" );

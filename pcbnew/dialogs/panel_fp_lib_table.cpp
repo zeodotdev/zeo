@@ -292,19 +292,30 @@ void PANEL_FP_LIB_TABLE::AddTable( LIBRARY_TABLE* aTable, const wxString& aTitle
     autoSizeCol( COL_URI );
     autoSizeCol( COL_DESCR );
 
-    // Multi-board (M7.1): Share column only meaningful on a sub-project's
-    // project tier. Hidden elsewhere so it doesn't clutter the layout.
+    // Multi-board (M7.1): show the Share column for any project tier
+    // that participates in a multi-board (container or sub-project).
+    // Hide on global, on standalone projects, and nested tables.
     bool isProjectTab = aTable->Path().StartsWith( projectPath );
-    bool isSubProjectContext = isProjectTab
-                            && m_project
-                            && !m_project->IsNullProject()
-                            && !m_project->GetProjectFile().IsMultiBoardContainer()
-                            && !m_project->GetContainerProjectPath().IsEmpty();
+    bool isContainer  = m_project && !m_project->IsNullProject()
+                        && m_project->GetProjectFile().IsMultiBoardContainer();
+    bool hasContainer = m_project && !m_project->IsNullProject()
+                        && !m_project->GetContainerProjectPath().IsEmpty();
+    bool isMultiBoardContext = isProjectTab && ( isContainer || hasContainer );
 
-    if( isSubProjectContext )
+    if( isMultiBoardContext )
+    {
         autoSizeCol( COL_SHARE );
+
+        if( FP_LIB_TABLE_GRID_DATA_MODEL* model = get_model(
+                    (int) m_notebook->GetPageCount() - 1 ) )
+        {
+            model->SetIsContainerScope( isContainer );
+        }
+    }
     else
+    {
         grid->HideCol( COL_SHARE );
+    }
 
     if( grid->GetNumberRows() > 0 )
     {
@@ -333,11 +344,30 @@ PANEL_FP_LIB_TABLE::PANEL_FP_LIB_TABLE( DIALOG_EDIT_LIBRARY_TABLES* aParent, PRO
 
     AddTable( table.value(), _( "Global Libraries" ), false /* closable */ );
 
-    std::optional<LIBRARY_TABLE*> projectTable = Pgm().GetLibraryManager().Table( LIBRARY_TABLE_TYPE::FOOTPRINT,
-                                                                                  LIBRARY_TABLE_SCOPE::PROJECT );
+    LIBRARY_TABLE* projectTable = nullptr;
+    PROJECT&       activePrj = Pgm().GetSettingsManager().Prj();
 
-    if( projectTable.has_value() )
-        AddTable( projectTable.value(), _( "Project Specific Libraries" ), false /* closable */ );
+    if( m_project != &activePrj && !m_project->IsNullProject() )
+    {
+        // Peer-player path (see PANEL_SYM_LIB_TABLE for rationale).
+        wxFileName fn( m_project->GetProjectDirectory(),
+                       FILEEXT::FootprintLibraryTableFileName );
+        m_transientProjectTable = std::make_unique<LIBRARY_TABLE>(
+                fn, LIBRARY_TABLE_SCOPE::PROJECT );
+        m_transientProjectTable->SetType( LIBRARY_TABLE_TYPE::FOOTPRINT );
+        projectTable = m_transientProjectTable.get();
+    }
+    else
+    {
+        std::optional<LIBRARY_TABLE*> opt =
+                Pgm().GetLibraryManager().Table( LIBRARY_TABLE_TYPE::FOOTPRINT,
+                                                 LIBRARY_TABLE_SCOPE::PROJECT );
+        if( opt.has_value() )
+            projectTable = opt.value();
+    }
+
+    if( projectTable )
+        AddTable( projectTable, _( "Project Specific Libraries" ), false /* closable */ );
 
     m_notebook->SetArtProvider( new WX_AUI_TAB_ART() );
 
@@ -913,12 +943,27 @@ bool PANEL_FP_LIB_TABLE::TransferDataFromWindow()
                 } );
     }
 
-    optTable = Pgm().GetLibraryManager().Table( LIBRARY_TABLE_TYPE::FOOTPRINT, LIBRARY_TABLE_SCOPE::PROJECT );
+    // Peer-aware project-table resolution (see PANEL_SYM_LIB_TABLE).
+    LIBRARY_TABLE* projectTable = nullptr;
 
-    if( optTable.has_value() && get_model( 1 )->Table().Path() == optTable.value()->Path() )
+    if( m_transientProjectTable
+        && get_model( 1 )->Table().Path() == m_transientProjectTable->Path() )
     {
-        LIBRARY_TABLE* projectTable = *optTable;
+        projectTable = m_transientProjectTable.get();
+    }
+    else
+    {
+        optTable = Pgm().GetLibraryManager().Table( LIBRARY_TABLE_TYPE::FOOTPRINT,
+                                                     LIBRARY_TABLE_SCOPE::PROJECT );
+        if( optTable.has_value()
+            && get_model( 1 )->Table().Path() == optTable.value()->Path() )
+        {
+            projectTable = *optTable;
+        }
+    }
 
+    if( projectTable )
+    {
         if( get_model( 1 )->Table() != *projectTable )
         {
             m_parent->m_ProjectTableChanged = true;

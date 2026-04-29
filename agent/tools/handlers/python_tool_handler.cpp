@@ -146,14 +146,46 @@ static std::string resolveSubProjectAbsPath( const std::string& aSubProjectUuid,
 
 
 /**
- * When the tool args carry `target.sub_project_uuid`, build a Python preamble
- * that rebinds the `sch` / `board` variable (whichever the app uses) to the
- * sub-project's editor via the new kipy `get_*_by_project_path` helpers.
+ * Escape a string for embedding in a Python single-quoted literal —
+ * backslash + single-quote handling.
+ */
+static std::string escapePyString( const std::string& aIn )
+{
+    std::string esc;
+    esc.reserve( aIn.size() + 8 );
+
+    for( char c : aIn )
+    {
+        if( c == '\\' )
+            esc += "\\\\";
+        else if( c == '\'' )
+            esc += "\\'";
+        else
+            esc += c;
+    }
+
+    return esc;
+}
+
+
+/**
+ * When the tool args carry `target`, build a Python preamble that rebinds
+ * the `sch` / `board` variable (whichever the app uses) to the right doc.
+ *
+ * Two routing modes via `target.doc_type` (default: matches the app's
+ * native doc type — "sch" for app:sch, "pcb" for app:pcb):
+ *  - doc_type "sch" or omitted with sub_project_uuid: bind `sch` to the
+ *    sub-project's schematic editor via get_schematic_by_project_path
+ *  - doc_type "pcb" or omitted with sub_project_uuid (app:pcb): bind
+ *    `board` to the sub-project's PCB editor
+ *  - doc_type "mbs": bind `sch` (when app:sch) or `board` (when app:pcb)
+ *    to the multi-board container's MBS schematic. No sub_project_uuid
+ *    needed. Lets `sch_*` / `pcb_*` tools operate on the MBS canvas
+ *    via the same kipy methods (the MBS file IS a schematic, so all
+ *    the wiring/labels/symbols operations work)
  *
  * Empty string return = no rebind needed (no target, or unsupported app).
- * The preamble may also be a `raise RuntimeError(...)` line when the uuid
- * fails to resolve — surfaces the error cleanly to the LLM as a tool
- * failure instead of a silent retarget.
+ * May also emit `raise RuntimeError(...)` when the uuid fails to resolve.
  */
 static std::string buildTargetPreamble( const std::string& aApp, const nlohmann::json& aInput )
 {
@@ -165,50 +197,50 @@ static std::string buildTargetPreamble( const std::string& aApp, const nlohmann:
     if( !target.is_object() )
         return "";
 
+    // The mbs app has only one possible target — the container — so target
+    // is ignored there. SCH and PCB apps are the interesting cases.
+    if( aApp != "sch" && aApp != "pcb" )
+        return "";
+
+    std::string docType = target.value( "doc_type", "" );
+
+    // Cross-app routing: target.doc_type == "mbs" rebinds the app's
+    // standard variable to the MBS schematic. Lets sch_* tools edit the
+    // MBS canvas without a parallel mbs_* tool surface.
+    if( docType == "mbs" )
+    {
+        // The MBS doc is a schematic on disk. For app:sch we rebind `sch`;
+        // for app:pcb we'd be asking the LLM to do something nonsensical
+        // (there is no MBS PCB) so reject with a clear error.
+        if( aApp == "pcb" )
+        {
+            return "raise RuntimeError('target.doc_type=\"mbs\" is not valid for "
+                   "PCB tools — the multi-board schematic has no PCB. Use a "
+                   "sub-project PCB target instead.')\n";
+        }
+
+        return "sch = kicad.get_mbs_schematic()\n";
+    }
+
+    // Per-sub-project routing.
     std::string subUuid = target.value( "sub_project_uuid", "" );
 
     if( subUuid.empty() )
-        return "";
-
-    // The mbs app is unaffected: there's only one MBS per container.
-    if( aApp != "sch" && aApp != "pcb" )
         return "";
 
     std::string error;
     std::string absPath = resolveSubProjectAbsPath( subUuid, &error );
 
     if( absPath.empty() )
-    {
-        // Escape single quotes for Python string literal.
-        std::string esc;
-        esc.reserve( error.size() + 8 );
+        return "raise RuntimeError('" + escapePyString( error ) + "')\n";
 
-        for( char c : error )
-            esc += ( c == '\'' || c == '\\' ) ? std::string( 1, '\\' ) + c
-                                              : std::string( 1, c );
-
-        return "raise RuntimeError('" + esc + "')\n";
-    }
-
-    // Escape backslashes (Windows paths) and single-quotes for the literal.
-    std::string esc;
-    esc.reserve( absPath.size() + 8 );
-
-    for( char c : absPath )
-    {
-        if( c == '\\' )
-            esc += "\\\\";
-        else if( c == '\'' )
-            esc += "\\'";
-        else
-            esc += c;
-    }
+    std::string escPath = escapePyString( absPath );
 
     if( aApp == "sch" )
-        return "sch = kicad.get_schematic_by_project_path('" + esc + "')\n";
+        return "sch = kicad.get_schematic_by_project_path('" + escPath + "')\n";
 
     // aApp == "pcb"
-    return "board = kicad.get_board_by_project_path('" + esc + "')\n";
+    return "board = kicad.get_board_by_project_path('" + escPath + "')\n";
 }
 
 
@@ -597,6 +629,14 @@ PYTHON_TOOL_HANDLER::PYTHON_TOOL_HANDLER()
     Register( "sch_connect_net", "sch", "schematic/sch_connect_net.py", DescribeSchConnectNet );
     Register( "sch_label",  "sch", "schematic/sch_label.py",  DescribeSchLabel );
 
+    Register( "sch_save", "sch", "schematic/sch_save.py", []( const nlohmann::json& ) {
+        return std::string( "Saving schematic" );
+    } );
+
+    Register( "mbs_save", "mbs", "schematic/mbs_save.py", []( const nlohmann::json& ) {
+        return std::string( "Saving MBS schematic" );
+    } );
+
     Register( "sch_setup", "sch", "schematic/sch_setup.py", []( const nlohmann::json& a ) {
         std::string action = a.value( "action", "get" );
         if( action == "get" )  return std::string( "Reading schematic setup settings" );
@@ -647,6 +687,24 @@ PYTHON_TOOL_HANDLER::PYTHON_TOOL_HANDLER()
                   if( !filt.empty() )
                       return "Inspecting MBS " + section + " matching '" + filt + "'";
                   return "Inspecting MBS " + section;
+              } );
+
+    Register( "mbs_run_erc", "mbs", "schematic/mbs_run_erc.py",
+              []( const nlohmann::json& a ) {
+                  std::string format = a.value( "output_format", "summary" );
+                  if( format == "detailed" )  return std::string( "Running detailed MBS ERC" );
+                  if( format == "by_type" )   return std::string( "Running MBS ERC (grouped by type)" );
+                  return std::string( "Running MBS ERC" );
+              } );
+
+    Register( "mbs_refresh", "mbs", "schematic/mbs_refresh.py",
+              []( const nlohmann::json& ) {
+                  return std::string( "Refreshing MBS from sub-projects" );
+              } );
+
+    Register( "mbs_sync_to_pcb", "mbs", "schematic/mbs_sync_to_pcb.py",
+              []( const nlohmann::json& ) {
+                  return std::string( "Syncing cross-board nets to sub-project PCBs" );
               } );
 
     Register( "sch_draft_circuit", "sch", "schematic/sch_draft_circuit.py",
@@ -717,6 +775,10 @@ PYTHON_TOOL_HANDLER::PYTHON_TOOL_HANDLER()
 
     Register( "pcb_refill_zones", "pcb", "pcb/pcb_refill_zones.py", []( const nlohmann::json& ) {
         return std::string( "Refilling copper zones" );
+    } );
+
+    Register( "pcb_save", "pcb", "pcb/pcb_save.py", []( const nlohmann::json& ) {
+        return std::string( "Saving PCB" );
     } );
 
     Register( "pcb_setup", "pcb", "pcb/pcb_setup.py", DescribePcbSetup );

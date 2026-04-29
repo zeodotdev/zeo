@@ -94,6 +94,14 @@ private:
     std::vector<std::shared_ptr<LIBRARY_TABLE>> m_nestedTables;
 
     std::map<SCH_IO_MGR::SCH_FILE_T, IO_BASE::IO_FILE_DESC> m_supportedSymFiles;
+
+    /// Multi-board (M7.1): when the dialog's bound project differs from
+    /// the global active project (peer-player mode — e.g. opened from a
+    /// sub-board frame while MBSCH is active), the singleton
+    /// `m_projectTables` holds the wrong project's rows. Load the
+    /// dialog's project's lib-table from disk into this transient
+    /// instead, and persist back to the same file on OK.
+    std::unique_ptr<LIBRARY_TABLE> m_transientProjectTable;
 };
 
 

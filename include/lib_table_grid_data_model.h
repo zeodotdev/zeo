@@ -97,6 +97,14 @@ public:
 
     LIBRARY_MANAGER_ADAPTER* Adapter() const { return m_adapter; }
 
+    /// Multi-board (M7.1): mark this model as showing rows from the
+    /// container's own lib-table tier. Container rows are stored with
+    /// `shared=false` on disk (they're the source of truth, not
+    /// replicated copies), so the Share column needs this hint to
+    /// render them as "Shared" rather than "Local".
+    void SetIsContainerScope( bool aIs ) { m_isContainerScope = aIs; }
+    bool IsContainerScope() const { return m_isContainerScope; }
+
 protected:
     bool badCoords( int aRow, int aCol );
 
@@ -130,4 +138,7 @@ protected:
 
     /// Handle to the adapter for the type of table this grid represents (may be null)
     LIBRARY_MANAGER_ADAPTER* m_adapter;
+
+    /// Multi-board: see SetIsContainerScope().
+    bool m_isContainerScope = false;
 };

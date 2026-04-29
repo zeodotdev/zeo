@@ -1657,3 +1657,52 @@ message GetMultiBoardContainerInfoResponse
   string                                       container_name     = 3;
   repeated kiapi.schematic.types.SubProjectInfo sub_projects      = 4;
 }
+
+/// Re-scan every sub-project's connector pins and apply the resulting
+/// diff to the MBS canvas (add/remove blocks, add/remove/rename pins,
+/// update sub-project paths, stamp missing UUIDs). Equivalent to the
+/// MBSCH "Refresh from Sub-Projects" toolbar button without the
+/// confirmation dialog — applies every change.
+message RefreshMbsFromSubProjects
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+}
+
+message RefreshMbsFromSubProjectsResponse
+{
+  int32  blocks_added    = 1;
+  int32  blocks_removed  = 2;
+  int32  pins_added      = 3;
+  int32  pins_removed    = 4;
+  int32  pins_renamed    = 5;
+  int32  paths_updated   = 6;
+  int32  uuids_stamped   = 7;
+  string summary         = 8;
+}
+
+/// Push the cross-board nets declared on the MBS to each sub-project
+/// PCB. Equivalent to the MBSCH "Sync to PCB" toolbar button.
+message SyncCrossBoardNetsToPcb
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+}
+
+/// One reported net-name conflict — multiple sub-projects use the same
+/// pad with different local net names. Sync picks the alphabetically-
+/// first name as canonical and reports the rejected names so the user
+/// can fix them on the offending sub-project schematics.
+message MbsNetNameConflict
+{
+  string          chosen   = 1;
+  repeated string rejected = 2;
+}
+
+message SyncCrossBoardNetsToPcbResponse
+{
+  int32                       sub_projects_touched = 1;
+  int32                       endpoints_applied    = 2;
+  int32                       endpoints_missing    = 3;
+  int32                       nets_renamed         = 4;
+  repeated MbsNetNameConflict conflicts            = 5;
+  string                      summary              = 6;
+}

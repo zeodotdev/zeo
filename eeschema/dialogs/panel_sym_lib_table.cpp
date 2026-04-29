@@ -301,20 +301,33 @@ void PANEL_SYM_LIB_TABLE::AddTable( LIBRARY_TABLE* table, const wxString& aTitle
     autoSizeCol( COL_URI );
     autoSizeCol( COL_DESCR );
 
-    // Multi-board (M7.1): the Share column only carries useful info on a
-    // sub-project's project tier. Hide it elsewhere so the column doesn't
-    // confuse users on global / standalone / container tabs.
+    // Multi-board (M7.1): show the Share column for any project tier
+    // that participates in a multi-board (whether container or
+    // sub-project). Hide on global, on standalone projects, and on
+    // nested tables.
     bool isProjectTab = table->Path().StartsWith( projectPath );
-    bool isSubProjectContext = isProjectTab
-                            && m_project
-                            && !m_project->IsNullProject()
-                            && !m_project->GetProjectFile().IsMultiBoardContainer()
-                            && !m_project->GetContainerProjectPath().IsEmpty();
+    bool isContainer  = m_project && !m_project->IsNullProject()
+                        && m_project->GetProjectFile().IsMultiBoardContainer();
+    bool hasContainer = m_project && !m_project->IsNullProject()
+                        && !m_project->GetContainerProjectPath().IsEmpty();
+    bool isMultiBoardContext = isProjectTab && ( isContainer || hasContainer );
 
-    if( isSubProjectContext )
+    if( isMultiBoardContext )
+    {
         autoSizeCol( COL_SHARE );
+
+        // Tell the model how to render container-tier rows ("Shared"
+        // even though they're stored with shared=false on disk).
+        if( SYMBOL_LIB_TABLE_GRID_DATA_MODEL* model = get_model(
+                    (int) m_notebook->GetPageCount() - 1 ) )
+        {
+            model->SetIsContainerScope( isContainer );
+        }
+    }
     else
+    {
         grid->HideCol( COL_SHARE );
+    }
 
     if( grid->GetNumberRows() > 0 )
     {
@@ -354,11 +367,35 @@ PANEL_SYM_LIB_TABLE::PANEL_SYM_LIB_TABLE( DIALOG_EDIT_LIBRARY_TABLES* aParent, P
 
     AddTable( table.value(), _( "Global Libraries" ), false /* closable */ );
 
-    std::optional<LIBRARY_TABLE*> projectTable = Pgm().GetLibraryManager().Table( LIBRARY_TABLE_TYPE::SYMBOL,
-                                                                                  LIBRARY_TABLE_SCOPE::PROJECT );
+    LIBRARY_TABLE* projectTable = nullptr;
+    PROJECT&       activePrj = Pgm().GetSettingsManager().Prj();
 
-    if( projectTable.has_value() )
-        AddTable( projectTable.value(), _( "Project Specific Libraries" ), false /* closable */ );
+    if( m_project != &activePrj && !m_project->IsNullProject() )
+    {
+        // Peer-player path: the singleton m_projectTables in the
+        // library manager belongs to whatever project is currently
+        // active (typically the container in MBSCH peer scenarios),
+        // not the dialog's bound project. Load the dialog's project's
+        // sym-lib-table directly from disk and edit that copy. Save
+        // path on OK is the same file.
+        wxFileName fn( m_project->GetProjectDirectory(),
+                       FILEEXT::SymbolLibraryTableFileName );
+        m_transientProjectTable = std::make_unique<LIBRARY_TABLE>(
+                fn, LIBRARY_TABLE_SCOPE::PROJECT );
+        m_transientProjectTable->SetType( LIBRARY_TABLE_TYPE::SYMBOL );
+        projectTable = m_transientProjectTable.get();
+    }
+    else
+    {
+        std::optional<LIBRARY_TABLE*> opt =
+                Pgm().GetLibraryManager().Table( LIBRARY_TABLE_TYPE::SYMBOL,
+                                                 LIBRARY_TABLE_SCOPE::PROJECT );
+        if( opt.has_value() )
+            projectTable = opt.value();
+    }
+
+    if( projectTable )
+        AddTable( projectTable, _( "Project Specific Libraries" ), false /* closable */ );
 
     m_notebook->SetArtProvider( new WX_AUI_TAB_ART() );
 
@@ -920,12 +957,30 @@ bool PANEL_SYM_LIB_TABLE::TransferDataFromWindow()
                 } );
     }
 
-    optTable = manager.Table( LIBRARY_TABLE_TYPE::SYMBOL, LIBRARY_TABLE_SCOPE::PROJECT );
+    // Resolve which physical table to write back to: the dialog might
+    // be operating on the manager's singleton (active project) or on a
+    // transient loaded directly from m_project's directory (peer-player
+    // path). Match by path so we don't accidentally overwrite the wrong
+    // file.
+    LIBRARY_TABLE* projectTable = nullptr;
 
-    if( optTable.has_value() && get_model( 1 )->Table().Path() == optTable.value()->Path() )
+    if( m_transientProjectTable
+        && get_model( 1 )->Table().Path() == m_transientProjectTable->Path() )
     {
-        LIBRARY_TABLE* projectTable = *optTable;
+        projectTable = m_transientProjectTable.get();
+    }
+    else
+    {
+        optTable = manager.Table( LIBRARY_TABLE_TYPE::SYMBOL, LIBRARY_TABLE_SCOPE::PROJECT );
+        if( optTable.has_value()
+            && get_model( 1 )->Table().Path() == optTable.value()->Path() )
+        {
+            projectTable = *optTable;
+        }
+    }
 
+    if( projectTable )
+    {
         if( get_model( 1 )->Table() != *projectTable )
         {
             m_parent->m_ProjectTableChanged = true;

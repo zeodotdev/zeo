@@ -1,27 +1,90 @@
 [
   {
-    "name": "save_document",
-    "description": "Save the current schematic and/or PCB to disk. Use this to commit your changes after making edits. This writes the in-memory state to the .kicad_sch / .kicad_pcb files on disk.",
+    "name": "sch_save",
+    "description": "Save the active schematic to disk (.kicad_sch). Required after sch_* edit operations because changes are in-memory only until saved. Use this before any tool that reads from disk (e.g. mbs_refresh which scans sub-project schematics for connector pins).",
     "input_schema": {
       "type": "object",
       "properties": {
-        "doc_type": {
-          "type": "string",
-          "enum": [
-            "schematic",
-            "pcb",
-            "all"
-          ],
-          "description": "Which document to save: 'schematic', 'pcb', or 'all' (saves both if open). Default: 'all'"
+        "target": {
+          "type": "object",
+          "description": "On a multi-board container project, specify which sub-project schematic to save. Get sub_project_uuid from check_status -> sub_projects[].uuid. Omit on standalone projects.",
+          "properties": {
+            "sub_project_uuid": {
+              "type": "string",
+              "description": "The uuid of the sub-project whose schematic to save."
+            },
+            "doc_type": {
+              "type": "string",
+              "enum": [
+                "sch",
+                "mbs"
+              ],
+              "description": "Which document on the target sub-project to operate on. 'sch' (default) targets the sub-project's regular schematic. 'mbs' targets the multi-board schematic on the container \u2014 use this to draw wires, place labels, or do any sch_* operation on the MBS canvas (no sub_project_uuid required when doc_type=mbs)."
+            }
+          },
+          "required": [
+            "sub_project_uuid"
+          ]
         }
       },
       "required": []
     },
-    "app": null,
-    "script": null,
+    "app": "sch",
+    "script": "schematic/sch_save.py",
     "needs_bbox": false,
     "read_only": false,
-    "group": "GENERAL",
+    "group": "SCHEMATIC",
+    "deferred": false
+  },
+  {
+    "name": "pcb_save",
+    "description": "Save the active PCB to disk (.kicad_pcb). Required after pcb_* edit operations because changes are in-memory only until saved. Use this before any tool that reads PCB state from disk (e.g. mbs_sync_to_pcb writes net assignments based on the on-disk PCB).",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "target": {
+          "type": "object",
+          "description": "On a multi-board container project, specify which sub-project PCB to save. Get sub_project_uuid from check_status -> sub_projects[].uuid.",
+          "properties": {
+            "sub_project_uuid": {
+              "type": "string",
+              "description": "The uuid of the sub-project whose PCB to save."
+            },
+            "doc_type": {
+              "type": "string",
+              "enum": [
+                "pcb"
+              ],
+              "description": "Always 'pcb' for PCB tools. Listed for symmetry with sch tools."
+            }
+          },
+          "required": [
+            "sub_project_uuid"
+          ]
+        }
+      },
+      "required": []
+    },
+    "app": "pcb",
+    "script": "pcb/pcb_save.py",
+    "needs_bbox": false,
+    "read_only": false,
+    "group": "PCB",
+    "deferred": false
+  },
+  {
+    "name": "mbs_save",
+    "description": "Save the multi-board schematic (.kicad_mbs) to disk. Required after MBS edit operations. The save also re-extracts cross-board nets from the topology and writes them into the container .kicad_pro \u2014 call this before mbs_sync_to_pcb so the latest nets are available.",
+    "input_schema": {
+      "type": "object",
+      "properties": {},
+      "required": []
+    },
+    "app": "mbs",
+    "script": "schematic/mbs_save.py",
+    "needs_bbox": false,
+    "read_only": false,
+    "group": "SCHEMATIC",
     "deferred": false
   },
   {
@@ -141,6 +204,14 @@
             "sub_project_uuid": {
               "type": "string",
               "description": "The uuid field from one of check_status -> sub_projects[]. The tool call will be routed to that sub-project edit window."
+            },
+            "doc_type": {
+              "type": "string",
+              "enum": [
+                "sch",
+                "mbs"
+              ],
+              "description": "Which document on the target sub-project to operate on. 'sch' (default) targets the sub-project's regular schematic. 'mbs' targets the multi-board schematic on the container \u2014 use this to draw wires, place labels, or do any sch_* operation on the MBS canvas (no sub_project_uuid required when doc_type=mbs)."
             }
           },
           "required": [
@@ -187,6 +258,14 @@
             "sub_project_uuid": {
               "type": "string",
               "description": "The uuid field from one of check_status -> sub_projects[]. The tool call will be routed to that sub-project edit window."
+            },
+            "doc_type": {
+              "type": "string",
+              "enum": [
+                "sch",
+                "mbs"
+              ],
+              "description": "Which document on the target sub-project to operate on. 'sch' (default) targets the sub-project's regular schematic. 'mbs' targets the multi-board schematic on the container \u2014 use this to draw wires, place labels, or do any sch_* operation on the MBS canvas (no sub_project_uuid required when doc_type=mbs)."
             }
           },
           "required": [
@@ -253,6 +332,65 @@
     "deferred": false
   },
   {
+    "name": "mbs_run_erc",
+    "description": "Run Electrical Rules Check (ERC) on the multi-board schematic. Surfaces both standard schematic ERC violations AND the cross-board ERC checks specific to MBS (unwired module pins, single-endpoint cross-board nets, pin-type mismatches at board boundaries, GND<->5V short detection). Requires the MBSCH editor to be open (container.mbs_editor_open == true).",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "output_format": {
+          "type": "string",
+          "enum": [
+            "summary",
+            "detailed",
+            "by_type"
+          ],
+          "description": "Output format: 'summary' (counts + by-type), 'detailed' (full violation list), 'by_type' (grouped by error code). Default: summary"
+        },
+        "include_warnings": {
+          "type": "boolean",
+          "description": "Include warnings (default: true). Set false for errors only."
+        }
+      },
+      "required": []
+    },
+    "app": "mbs",
+    "script": "schematic/mbs_run_erc.py",
+    "needs_bbox": false,
+    "read_only": true,
+    "group": "SCHEMATIC",
+    "deferred": false
+  },
+  {
+    "name": "mbs_refresh",
+    "description": "Re-scan every sub-project's connector pins and apply the diff to the MBS canvas. Adds module blocks for new sub-projects, removes blocks for removed ones, adds/removes/renames pins to match the current connector pin lists, updates sub-project paths, and stamps missing UUIDs. Equivalent to the MBSCH 'Refresh from Sub-Projects' toolbar button without the confirmation dialog. Use after the user adds connectors to a sub-project schematic. Requires the MBSCH editor open.",
+    "input_schema": {
+      "type": "object",
+      "properties": {},
+      "required": []
+    },
+    "app": "mbs",
+    "script": "schematic/mbs_refresh.py",
+    "needs_bbox": false,
+    "read_only": false,
+    "group": "SCHEMATIC",
+    "deferred": false
+  },
+  {
+    "name": "mbs_sync_to_pcb",
+    "description": "Push cross-board nets declared on the MBS to each sub-project's PCB. For every cross-board net endpoint, locates the matching connector pad on the sub-project's PCB and writes the cross-board net name to that pad. Equivalent to the MBSCH 'Sync to PCB' toolbar button. Reports aggregate counts plus any net-name conflicts (when sub-projects use different local names for the same cross-board net). Requires the MBSCH editor open. Save the MBS first so the latest cross-board nets are extracted from the topology.",
+    "input_schema": {
+      "type": "object",
+      "properties": {},
+      "required": []
+    },
+    "app": "mbs",
+    "script": "schematic/mbs_sync_to_pcb.py",
+    "needs_bbox": false,
+    "read_only": false,
+    "group": "SCHEMATIC",
+    "deferred": false
+  },
+  {
     "name": "sch_run_erc",
     "description": "Run Electrical Rules Check (ERC) on the currently open schematic. Detects wiring errors, unconnected pins, duplicate references, and other issues. Returns error/warning counts and violation details.",
     "input_schema": {
@@ -278,6 +416,14 @@
             "sub_project_uuid": {
               "type": "string",
               "description": "The uuid field from one of check_status -> sub_projects[]. The tool call will be routed to that sub-project edit window."
+            },
+            "doc_type": {
+              "type": "string",
+              "enum": [
+                "sch",
+                "mbs"
+              ],
+              "description": "Which document on the target sub-project to operate on. 'sch' (default) targets the sub-project's regular schematic. 'mbs' targets the multi-board schematic on the container \u2014 use this to draw wires, place labels, or do any sch_* operation on the MBS canvas (no sub_project_uuid required when doc_type=mbs)."
             }
           },
           "required": [
@@ -322,6 +468,14 @@
             "sub_project_uuid": {
               "type": "string",
               "description": "The uuid field from one of check_status -> sub_projects[]. The tool call will be routed to that sub-project edit window."
+            },
+            "doc_type": {
+              "type": "string",
+              "enum": [
+                "sch",
+                "mbs"
+              ],
+              "description": "Which document on the target sub-project to operate on. 'sch' (default) targets the sub-project's regular schematic. 'mbs' targets the multi-board schematic on the container \u2014 use this to draw wires, place labels, or do any sch_* operation on the MBS canvas (no sub_project_uuid required when doc_type=mbs)."
             }
           },
           "required": [
@@ -374,6 +528,14 @@
             "sub_project_uuid": {
               "type": "string",
               "description": "The uuid field from one of check_status -> sub_projects[]. The tool call will be routed to that sub-project edit window."
+            },
+            "doc_type": {
+              "type": "string",
+              "enum": [
+                "sch",
+                "mbs"
+              ],
+              "description": "Which document on the target sub-project to operate on. 'sch' (default) targets the sub-project's regular schematic. 'mbs' targets the multi-board schematic on the container \u2014 use this to draw wires, place labels, or do any sch_* operation on the MBS canvas (no sub_project_uuid required when doc_type=mbs)."
             }
           },
           "required": [
@@ -413,6 +575,14 @@
             "sub_project_uuid": {
               "type": "string",
               "description": "The uuid field from one of check_status -> sub_projects[]. The tool call will be routed to that sub-project edit window."
+            },
+            "doc_type": {
+              "type": "string",
+              "enum": [
+                "sch",
+                "mbs"
+              ],
+              "description": "Which document on the target sub-project to operate on. 'sch' (default) targets the sub-project's regular schematic. 'mbs' targets the multi-board schematic on the container \u2014 use this to draw wires, place labels, or do any sch_* operation on the MBS canvas (no sub_project_uuid required when doc_type=mbs)."
             }
           },
           "required": [
@@ -471,6 +641,14 @@
             "sub_project_uuid": {
               "type": "string",
               "description": "The uuid field from one of check_status -> sub_projects[]. The tool call will be routed to that sub-project edit window."
+            },
+            "doc_type": {
+              "type": "string",
+              "enum": [
+                "sch",
+                "mbs"
+              ],
+              "description": "Which document on the target sub-project to operate on. 'sch' (default) targets the sub-project's regular schematic. 'mbs' targets the multi-board schematic on the container \u2014 use this to draw wires, place labels, or do any sch_* operation on the MBS canvas (no sub_project_uuid required when doc_type=mbs)."
             }
           },
           "required": [
@@ -512,6 +690,14 @@
             "sub_project_uuid": {
               "type": "string",
               "description": "The uuid field from one of check_status -> sub_projects[]. The tool call will be routed to that sub-project edit window."
+            },
+            "doc_type": {
+              "type": "string",
+              "enum": [
+                "sch",
+                "mbs"
+              ],
+              "description": "Which document on the target sub-project to operate on. 'sch' (default) targets the sub-project's regular schematic. 'mbs' targets the multi-board schematic on the container \u2014 use this to draw wires, place labels, or do any sch_* operation on the MBS canvas (no sub_project_uuid required when doc_type=mbs)."
             }
           },
           "required": [
@@ -558,6 +744,14 @@
             "sub_project_uuid": {
               "type": "string",
               "description": "The uuid field from one of check_status -> sub_projects[]. The tool call will be routed to that sub-project edit window."
+            },
+            "doc_type": {
+              "type": "string",
+              "enum": [
+                "sch",
+                "mbs"
+              ],
+              "description": "Which document on the target sub-project to operate on. 'sch' (default) targets the sub-project's regular schematic. 'mbs' targets the multi-board schematic on the container \u2014 use this to draw wires, place labels, or do any sch_* operation on the MBS canvas (no sub_project_uuid required when doc_type=mbs)."
             }
           },
           "required": [
@@ -613,6 +807,14 @@
             "sub_project_uuid": {
               "type": "string",
               "description": "The uuid field from one of check_status -> sub_projects[]. The tool call will be routed to that sub-project edit window."
+            },
+            "doc_type": {
+              "type": "string",
+              "enum": [
+                "sch",
+                "mbs"
+              ],
+              "description": "Which document on the target sub-project to operate on. 'sch' (default) targets the sub-project's regular schematic. 'mbs' targets the multi-board schematic on the container \u2014 use this to draw wires, place labels, or do any sch_* operation on the MBS canvas (no sub_project_uuid required when doc_type=mbs)."
             }
           },
           "required": [
@@ -1284,6 +1486,14 @@
             "sub_project_uuid": {
               "type": "string",
               "description": "The uuid field from one of check_status -> sub_projects[]. The tool call will be routed to that sub-project edit window."
+            },
+            "doc_type": {
+              "type": "string",
+              "enum": [
+                "sch",
+                "mbs"
+              ],
+              "description": "Which document on the target sub-project to operate on. 'sch' (default) targets the sub-project's regular schematic. 'mbs' targets the multi-board schematic on the container \u2014 use this to draw wires, place labels, or do any sch_* operation on the MBS canvas (no sub_project_uuid required when doc_type=mbs)."
             }
           },
           "required": [
@@ -1386,6 +1596,14 @@
             "sub_project_uuid": {
               "type": "string",
               "description": "The uuid field from one of check_status -> sub_projects[]. The tool call will be routed to that sub-project edit window."
+            },
+            "doc_type": {
+              "type": "string",
+              "enum": [
+                "sch",
+                "mbs"
+              ],
+              "description": "Which document on the target sub-project to operate on. 'sch' (default) targets the sub-project's regular schematic. 'mbs' targets the multi-board schematic on the container \u2014 use this to draw wires, place labels, or do any sch_* operation on the MBS canvas (no sub_project_uuid required when doc_type=mbs)."
             }
           },
           "required": [
@@ -1480,6 +1698,14 @@
             "sub_project_uuid": {
               "type": "string",
               "description": "The uuid field from one of check_status -> sub_projects[]. The tool call will be routed to that sub-project edit window."
+            },
+            "doc_type": {
+              "type": "string",
+              "enum": [
+                "sch",
+                "mbs"
+              ],
+              "description": "Which document on the target sub-project to operate on. 'sch' (default) targets the sub-project's regular schematic. 'mbs' targets the multi-board schematic on the container \u2014 use this to draw wires, place labels, or do any sch_* operation on the MBS canvas (no sub_project_uuid required when doc_type=mbs)."
             }
           },
           "required": [
@@ -1506,7 +1732,20 @@
       "properties": {
         "target": {
           "type": "string",
-          "description": "Sheet name (e.g., 'MCU', 'Power Supply')"
+          "description": "Sheet name (e.g., 'MCU', 'Power Supply')",
+          "properties": {
+            "doc_type": {
+              "type": "string",
+              "enum": [
+                "sch",
+                "mbs"
+              ],
+              "description": "Which document on the target sub-project to operate on. 'sch' (default) targets the sub-project's regular schematic. 'mbs' targets the multi-board schematic on the container \u2014 use this to draw wires, place labels, or do any sch_* operation on the MBS canvas (no sub_project_uuid required when doc_type=mbs)."
+            }
+          },
+          "required": [
+            "sub_project_uuid"
+          ]
         },
         "size": {
           "type": "array",
@@ -1555,6 +1794,14 @@
             "sub_project_uuid": {
               "type": "string",
               "description": "The uuid field from one of check_status -> sub_projects[]. The tool call will be routed to that sub-project edit window."
+            },
+            "doc_type": {
+              "type": "string",
+              "enum": [
+                "sch",
+                "mbs"
+              ],
+              "description": "Which document on the target sub-project to operate on. 'sch' (default) targets the sub-project's regular schematic. 'mbs' targets the multi-board schematic on the container \u2014 use this to draw wires, place labels, or do any sch_* operation on the MBS canvas (no sub_project_uuid required when doc_type=mbs)."
             }
           },
           "required": [
@@ -1590,6 +1837,14 @@
             "sub_project_uuid": {
               "type": "string",
               "description": "The uuid field from one of check_status -> sub_projects[]. The tool call will be routed to that sub-project edit window."
+            },
+            "doc_type": {
+              "type": "string",
+              "enum": [
+                "sch",
+                "mbs"
+              ],
+              "description": "Which document on the target sub-project to operate on. 'sch' (default) targets the sub-project's regular schematic. 'mbs' targets the multi-board schematic on the container \u2014 use this to draw wires, place labels, or do any sch_* operation on the MBS canvas (no sub_project_uuid required when doc_type=mbs)."
             }
           },
           "required": [
@@ -1641,6 +1896,14 @@
             "sub_project_uuid": {
               "type": "string",
               "description": "The uuid field from one of check_status -> sub_projects[]. The tool call will be routed to that sub-project edit window."
+            },
+            "doc_type": {
+              "type": "string",
+              "enum": [
+                "sch",
+                "mbs"
+              ],
+              "description": "Which document on the target sub-project to operate on. 'sch' (default) targets the sub-project's regular schematic. 'mbs' targets the multi-board schematic on the container \u2014 use this to draw wires, place labels, or do any sch_* operation on the MBS canvas (no sub_project_uuid required when doc_type=mbs)."
             }
           },
           "required": [
@@ -1743,6 +2006,14 @@
             "sub_project_uuid": {
               "type": "string",
               "description": "The uuid field from one of check_status -> sub_projects[]. The tool call will be routed to that sub-project edit window."
+            },
+            "doc_type": {
+              "type": "string",
+              "enum": [
+                "sch",
+                "mbs"
+              ],
+              "description": "Which document on the target sub-project to operate on. 'sch' (default) targets the sub-project's regular schematic. 'mbs' targets the multi-board schematic on the container \u2014 use this to draw wires, place labels, or do any sch_* operation on the MBS canvas (no sub_project_uuid required when doc_type=mbs)."
             }
           },
           "required": [
@@ -1895,6 +2166,14 @@
             "sub_project_uuid": {
               "type": "string",
               "description": "The uuid field from one of check_status -> sub_projects[]. The tool call will be routed to that sub-project edit window."
+            },
+            "doc_type": {
+              "type": "string",
+              "enum": [
+                "sch",
+                "mbs"
+              ],
+              "description": "Which document on the target sub-project to operate on. 'sch' (default) targets the sub-project's regular schematic. 'mbs' targets the multi-board schematic on the container \u2014 use this to draw wires, place labels, or do any sch_* operation on the MBS canvas (no sub_project_uuid required when doc_type=mbs)."
             }
           },
           "required": [
@@ -1949,6 +2228,14 @@
             "sub_project_uuid": {
               "type": "string",
               "description": "The uuid field from one of check_status -> sub_projects[]. The tool call will be routed to that sub-project edit window."
+            },
+            "doc_type": {
+              "type": "string",
+              "enum": [
+                "sch",
+                "mbs"
+              ],
+              "description": "Which document on the target sub-project to operate on. 'sch' (default) targets the sub-project's regular schematic. 'mbs' targets the multi-board schematic on the container \u2014 use this to draw wires, place labels, or do any sch_* operation on the MBS canvas (no sub_project_uuid required when doc_type=mbs)."
             }
           },
           "required": [
@@ -1978,6 +2265,13 @@
             "sub_project_uuid": {
               "type": "string",
               "description": "The uuid field from one of check_status -> sub_projects[]. The tool call will be routed to that sub-project edit window."
+            },
+            "doc_type": {
+              "type": "string",
+              "enum": [
+                "pcb"
+              ],
+              "description": "Always 'pcb' for PCB tools. Listed for symmetry with sch tools."
             }
           },
           "required": [
@@ -2025,6 +2319,13 @@
             "sub_project_uuid": {
               "type": "string",
               "description": "The uuid field from one of check_status -> sub_projects[]. The tool call will be routed to that sub-project edit window."
+            },
+            "doc_type": {
+              "type": "string",
+              "enum": [
+                "pcb"
+              ],
+              "description": "Always 'pcb' for PCB tools. Listed for symmetry with sch tools."
             }
           },
           "required": [
@@ -2056,6 +2357,13 @@
             "sub_project_uuid": {
               "type": "string",
               "description": "The uuid field from one of check_status -> sub_projects[]. The tool call will be routed to that sub-project edit window."
+            },
+            "doc_type": {
+              "type": "string",
+              "enum": [
+                "pcb"
+              ],
+              "description": "Always 'pcb' for PCB tools. Listed for symmetry with sch tools."
             }
           },
           "required": [
@@ -2098,6 +2406,13 @@
             "sub_project_uuid": {
               "type": "string",
               "description": "The uuid field from one of check_status -> sub_projects[]. The tool call will be routed to that sub-project edit window."
+            },
+            "doc_type": {
+              "type": "string",
+              "enum": [
+                "pcb"
+              ],
+              "description": "Always 'pcb' for PCB tools. Listed for symmetry with sch tools."
             }
           },
           "required": [
@@ -2169,6 +2484,13 @@
             "sub_project_uuid": {
               "type": "string",
               "description": "The uuid field from one of check_status -> sub_projects[]. The tool call will be routed to that sub-project edit window."
+            },
+            "doc_type": {
+              "type": "string",
+              "enum": [
+                "pcb"
+              ],
+              "description": "Always 'pcb' for PCB tools. Listed for symmetry with sch tools."
             }
           },
           "required": [
@@ -2216,6 +2538,13 @@
             "sub_project_uuid": {
               "type": "string",
               "description": "The uuid field from one of check_status -> sub_projects[]. The tool call will be routed to that sub-project edit window."
+            },
+            "doc_type": {
+              "type": "string",
+              "enum": [
+                "pcb"
+              ],
+              "description": "Always 'pcb' for PCB tools. Listed for symmetry with sch tools."
             }
           },
           "required": [
@@ -2280,6 +2609,13 @@
             "sub_project_uuid": {
               "type": "string",
               "description": "The uuid field from one of check_status -> sub_projects[]. The tool call will be routed to that sub-project edit window."
+            },
+            "doc_type": {
+              "type": "string",
+              "enum": [
+                "pcb"
+              ],
+              "description": "Always 'pcb' for PCB tools. Listed for symmetry with sch tools."
             }
           },
           "required": [
@@ -2456,6 +2792,13 @@
             "sub_project_uuid": {
               "type": "string",
               "description": "The uuid field from one of check_status -> sub_projects[]. The tool call will be routed to that sub-project edit window."
+            },
+            "doc_type": {
+              "type": "string",
+              "enum": [
+                "pcb"
+              ],
+              "description": "Always 'pcb' for PCB tools. Listed for symmetry with sch tools."
             }
           },
           "required": [
@@ -2622,6 +2965,13 @@
             "sub_project_uuid": {
               "type": "string",
               "description": "The uuid field from one of check_status -> sub_projects[]. The tool call will be routed to that sub-project edit window."
+            },
+            "doc_type": {
+              "type": "string",
+              "enum": [
+                "pcb"
+              ],
+              "description": "Always 'pcb' for PCB tools. Listed for symmetry with sch tools."
             }
           },
           "required": [
@@ -2675,6 +3025,13 @@
             "sub_project_uuid": {
               "type": "string",
               "description": "The uuid field from one of check_status -> sub_projects[]. The tool call will be routed to that sub-project edit window."
+            },
+            "doc_type": {
+              "type": "string",
+              "enum": [
+                "pcb"
+              ],
+              "description": "Always 'pcb' for PCB tools. Listed for symmetry with sch tools."
             }
           },
           "required": [
@@ -2708,6 +3065,13 @@
             "sub_project_uuid": {
               "type": "string",
               "description": "The uuid field from one of check_status -> sub_projects[]. The tool call will be routed to that sub-project edit window."
+            },
+            "doc_type": {
+              "type": "string",
+              "enum": [
+                "pcb"
+              ],
+              "description": "Always 'pcb' for PCB tools. Listed for symmetry with sch tools."
             }
           },
           "required": [
@@ -2743,6 +3107,13 @@
             "sub_project_uuid": {
               "type": "string",
               "description": "The uuid field from one of check_status -> sub_projects[]. The tool call will be routed to that sub-project edit window."
+            },
+            "doc_type": {
+              "type": "string",
+              "enum": [
+                "pcb"
+              ],
+              "description": "Always 'pcb' for PCB tools. Listed for symmetry with sch tools."
             }
           },
           "required": [
@@ -2786,6 +3157,13 @@
             "sub_project_uuid": {
               "type": "string",
               "description": "The uuid field from one of check_status -> sub_projects[]. The tool call will be routed to that sub-project edit window."
+            },
+            "doc_type": {
+              "type": "string",
+              "enum": [
+                "pcb"
+              ],
+              "description": "Always 'pcb' for PCB tools. Listed for symmetry with sch tools."
             }
           },
           "required": [
@@ -2855,6 +3233,13 @@
             "sub_project_uuid": {
               "type": "string",
               "description": "The uuid field from one of check_status -> sub_projects[]. The tool call will be routed to that sub-project edit window."
+            },
+            "doc_type": {
+              "type": "string",
+              "enum": [
+                "pcb"
+              ],
+              "description": "Always 'pcb' for PCB tools. Listed for symmetry with sch tools."
             }
           },
           "required": [
@@ -3379,6 +3764,13 @@
             "sub_project_uuid": {
               "type": "string",
               "description": "The uuid field from one of check_status -> sub_projects[]. The tool call will be routed to that sub-project edit window."
+            },
+            "doc_type": {
+              "type": "string",
+              "enum": [
+                "pcb"
+              ],
+              "description": "Always 'pcb' for PCB tools. Listed for symmetry with sch tools."
             }
           },
           "required": [
@@ -3687,6 +4079,13 @@
             "sub_project_uuid": {
               "type": "string",
               "description": "The uuid field from one of check_status -> sub_projects[]. The tool call will be routed to that sub-project edit window."
+            },
+            "doc_type": {
+              "type": "string",
+              "enum": [
+                "pcb"
+              ],
+              "description": "Always 'pcb' for PCB tools. Listed for symmetry with sch tools."
             }
           },
           "required": [
@@ -3746,6 +4145,13 @@
             "sub_project_uuid": {
               "type": "string",
               "description": "The uuid field from one of check_status -> sub_projects[]. The tool call will be routed to that sub-project edit window."
+            },
+            "doc_type": {
+              "type": "string",
+              "enum": [
+                "pcb"
+              ],
+              "description": "Always 'pcb' for PCB tools. Listed for symmetry with sch tools."
             }
           },
           "required": [
@@ -3864,6 +4270,13 @@
             "sub_project_uuid": {
               "type": "string",
               "description": "The uuid field from one of check_status -> sub_projects[]. The tool call will be routed to that sub-project edit window."
+            },
+            "doc_type": {
+              "type": "string",
+              "enum": [
+                "pcb"
+              ],
+              "description": "Always 'pcb' for PCB tools. Listed for symmetry with sch tools."
             }
           },
           "required": [

@@ -5916,6 +5916,67 @@ static std::string frameTypeLabel( int aFrameType )
 }
 
 
+/**
+ * Walk up to 6 levels from a sub-project's `.kicad_pro` looking for a
+ * sibling/ancestor `.kicad_pro` that has `multi_board.container = true`
+ * and lists this sub-project in its sub_projects[]. Returns the
+ * container's absolute path on hit, empty wxFileName otherwise.
+ *
+ * Mirrors the logic in `forEachCrossBoardEndpoint` — used here so that
+ * `check_status` can keep reporting the container even when the user
+ * focuses a sub-project editor and no MBSCH frame is open.
+ */
+static wxFileName findContainerForSubProject( const wxFileName& aSubProjectPro )
+{
+    if( !aSubProjectPro.IsOk() || !aSubProjectPro.FileExists() )
+        return wxFileName();
+
+    wxFileName subPro( aSubProjectPro );
+    subPro.Normalize( wxPATH_NORM_ABSOLUTE | wxPATH_NORM_DOTS );
+    wxString subProAbs = subPro.GetFullPath();
+
+    wxFileName searchDir( subPro );
+    searchDir.SetFullName( wxEmptyString );
+
+    for( int depth = 0; depth < 6 && searchDir.GetPath().Length() > 1; ++depth )
+    {
+        wxArrayString files;
+        wxDir::GetAllFiles( searchDir.GetPath(), &files, wxT( "*.kicad_pro" ),
+                            wxDIR_FILES );
+
+        for( const wxString& candidate : files )
+        {
+            wxFileName candFn( candidate );
+
+            if( candFn.GetFullPath() == subProAbs )
+                continue;
+
+            PROJECT_FILE probe( candidate );
+
+            if( !probe.LoadFromFile() || !probe.IsMultiBoardContainer() )
+                continue;
+
+            for( const SUB_PROJECT_INFO& info : probe.GetSubProjects() )
+            {
+                wxFileName subRel( info.relativePath );
+
+                if( !subRel.IsAbsolute() )
+                    subRel.MakeAbsolute( candFn.GetPath() );
+
+                subRel.Normalize( wxPATH_NORM_ABSOLUTE | wxPATH_NORM_DOTS );
+
+                if( subRel.GetFullPath() == subProAbs )
+                    return candFn;
+            }
+        }
+
+        searchDir.RemoveLastDir();
+    }
+
+    return wxFileName();
+}
+
+
 void AGENT_FRAME::PublishOpenEditorStatusToRegistry()
 {
     auto& reg = TOOL_REGISTRY::Instance();
@@ -5958,29 +6019,47 @@ void AGENT_FRAME::PublishOpenEditorStatusToRegistry()
     reg.SetOpenEditorsJson( editorsArr.dump() );
 
     // ---- Build multi-board container JSON when applicable ----
-    // Find the container PROJECT and the absolute container directory
-    // (derived from the MBSCH frame's editor path — see GetOpenEditors
-    // for the rationale).
-    PROJECT* container = nullptr;
-    wxString containerAbsPath;
-    wxString containerDirectory;
+    // Find the container's absolute pro path. Three fallback strategies:
+    //   1. An open MBSCH editor whose project IS the container
+    //   2. A live loaded PROJECT* with IsMultiBoardContainer()
+    //   3. Walk up from any open sub-project's pro path looking for an
+    //      ancestor .kicad_pro that's a container — covers the case where
+    //      the user closed the MBS and only sub-project editors are open
+    //
+    // Once located, prefer a live PROJECT* (so any in-memory edits to
+    // sub_projects[] / cross_board_nets[] are visible). Fall back to
+    // loading the .kicad_pro into a transient PROJECT_FILE.
+    PROJECT*     container = nullptr;
+    PROJECT_FILE* containerFile = nullptr;
+    std::unique_ptr<PROJECT_FILE> transientFile;
+    wxString     containerAbsPath;
+    wxString     containerDirectory;
 
+    auto bindContainer = [&]( PROJECT* aProject, const wxString& aAbsPath )
+    {
+        container = aProject;
+        containerFile = &aProject->GetProjectFile();
+        containerAbsPath = aAbsPath;
+        containerDirectory = wxFileName( aAbsPath ).GetPath();
+    };
+
+    // Strategy 1 — an open MBSCH editor IS the container.
     for( const AGENT_OPEN_EDITOR& ed : editors )
     {
-        if( ed.isContainer )
+        if( ed.isContainer && !ed.projectFullPath.IsEmpty() )
         {
-            containerAbsPath = ed.projectFullPath;
-            containerDirectory = wxFileName( ed.projectFullPath ).GetPath();
+            wxString basenameKey = wxFileName( ed.projectFullPath ).GetFullName();
+            PROJECT* p = Pgm().GetSettingsManager().GetProject( basenameKey );
+
+            if( p && p->GetProjectFile().IsMultiBoardContainer() )
+                bindContainer( p, ed.projectFullPath );
+
             break;
         }
     }
 
-    if( !containerAbsPath.IsEmpty() )
-    {
-        wxString basenameKey = wxFileName( containerAbsPath ).GetFullName();
-        container = Pgm().GetSettingsManager().GetProject( basenameKey );
-    }
-
+    // Strategy 2 — Kiway().Prj() may itself be the container (user opened
+    // the container .kicad_pro via the project manager).
     if( !container )
     {
         try
@@ -5988,14 +6067,70 @@ void AGENT_FRAME::PublishOpenEditorStatusToRegistry()
             PROJECT& kp = Kiway().Prj();
 
             if( kp.GetProjectFile().IsMultiBoardContainer() )
-                container = &kp;
+            {
+                wxString abs = resolveFrameProjectPath(
+                        Kiway().Player( KICAD_MAIN_FRAME_T, false ) );
+
+                // resolveFrameProjectPath needs an editor frame; for the
+                // manager, fallback to GetProjectFullName which is at least
+                // populated when the manager loaded the container.
+                if( abs.IsEmpty() )
+                    abs = kp.GetProjectFullName();
+
+                bindContainer( &kp, abs );
+            }
         }
         catch( ... )
         {
         }
     }
 
+    // Strategy 3 — walk up from any open sub-project's pro path looking
+    // for an ancestor container .kicad_pro. Covers "user closed the MBS,
+    // only a sub-project editor is open" — without this, check_status
+    // would silently lose the container topology.
     if( !container )
+    {
+        for( const AGENT_OPEN_EDITOR& ed : editors )
+        {
+            if( ed.projectFullPath.IsEmpty() )
+                continue;
+
+            wxFileName found = findContainerForSubProject(
+                    wxFileName( ed.projectFullPath ) );
+
+            if( !found.IsOk() )
+                continue;
+
+            // Try a live PROJECT* first (the user might have the container
+            // loaded but no editor open for it).
+            wxString basenameKey = found.GetFullName();
+            PROJECT* p = Pgm().GetSettingsManager().GetProject( basenameKey );
+
+            if( p && p->GetProjectFile().IsMultiBoardContainer() )
+            {
+                bindContainer( p, found.GetFullPath() );
+                break;
+            }
+
+            // No live PROJECT — load the file transiently. PROJECT_FILE owns
+            // its own data so this lives only until the next call.
+            transientFile = std::make_unique<PROJECT_FILE>( found.GetFullPath() );
+
+            if( !transientFile->LoadFromFile() || !transientFile->IsMultiBoardContainer() )
+            {
+                transientFile.reset();
+                continue;
+            }
+
+            containerFile = transientFile.get();
+            containerAbsPath = found.GetFullPath();
+            containerDirectory = found.GetPath();
+            break;
+        }
+    }
+
+    if( !containerFile )
     {
         reg.SetMultiBoardContainerJson( "" );
         return;
@@ -6015,45 +6150,78 @@ void AGENT_FRAME::PublishOpenEditorStatusToRegistry()
         reg.SetProjectPath( withSep.ToStdString() );
     }
 
-    if( !container->GetProjectName().IsEmpty() )
-        reg.SetProjectName( container->GetProjectName().ToStdString() );
+    // Derive name: prefer live PROJECT* when available, otherwise the
+    // .kicad_pro basename without extension.
+    wxString containerName;
 
-    PROJECT_FILE& cf = container->GetProjectFile();
+    if( container && !container->GetProjectName().IsEmpty() )
+        containerName = container->GetProjectName();
+    else
+        containerName = wxFileName( containerAbsPath ).GetName();
+
+    if( !containerName.IsEmpty() )
+        reg.SetProjectName( containerName.ToStdString() );
+
+    PROJECT_FILE& cf = *containerFile;
 
     nlohmann::json containerJson;
-    containerJson["pro_path"] = containerAbsPath.IsEmpty()
-            ? container->GetProjectFullName().ToStdString()
-            : containerAbsPath.ToStdString();
-    containerJson["name"] = container->GetProjectName().ToStdString();
+    containerJson["pro_path"] = containerAbsPath.ToStdString();
+    containerJson["name"] = containerName.ToStdString();
+
+    wxString mbsAbsPath;
 
     if( !cf.GetMbsFileName().IsEmpty() && !containerDirectory.IsEmpty() )
     {
         wxFileName mbsFn( containerDirectory, cf.GetMbsFileName() );
-        containerJson["mbs_file_path"] = mbsFn.GetFullPath().ToStdString();
+        mbsAbsPath = mbsFn.GetFullPath();
     }
-    else
-    {
-        // Fallback: use the MBSCH editor's own file path (it IS the MBS).
-        wxString mbsPath;
 
+    // Fallback when GetMbsFileName isn't populated: any open MBSCH frame
+    // marked as the container IS editing the MBS file.
+    if( mbsAbsPath.IsEmpty() )
+    {
         for( const AGENT_OPEN_EDITOR& ed : editors )
         {
-            if( ed.frameType == FRAME_MBSCH && ed.isContainer )
+            if( ed.frameType == FRAME_MBSCH && ed.isContainer
+                    && !ed.filePath.IsEmpty() )
             {
-                mbsPath = ed.filePath;
+                mbsAbsPath = ed.filePath;
                 break;
             }
         }
-
-        containerJson["mbs_file_path"] = mbsPath.ToStdString();
     }
 
-    // mbs_editor_open: any open MBSCH frame whose project IS the container.
+    containerJson["mbs_file_path"] = mbsAbsPath.ToStdString();
+
+    // mbs_editor_open: ANY open editor whose current file IS the MBS file.
+    // Two cases to handle:
+    //   (a) FRAME_MBSCH whose project matches the container — the standard
+    //       case when the user opens the MBS via the project manager
+    //   (b) Any frame (including FRAME_SCH) whose filePath matches the
+    //       container's mbs_file_path — covers File→Open of .kicad_mbs
+    //       inside a regular schematic editor, where the routing doesn't
+    //       upgrade to FRAME_MBSCH
     bool mbsEditorOpen = false;
+    auto pathsEqualIcase = []( const wxString& a, const wxString& b )
+    {
+        if( a.IsEmpty() || b.IsEmpty() )
+            return false;
+#if defined( __WXMSW__ ) || defined( __WXMAC__ )
+        return a.IsSameAs( b, false );
+#else
+        return a == b;
+#endif
+    };
 
     for( const AGENT_OPEN_EDITOR& ed : editors )
     {
         if( ed.frameType == FRAME_MBSCH && ed.isContainer )
+        {
+            mbsEditorOpen = true;
+            break;
+        }
+
+        if( !mbsAbsPath.IsEmpty() && pathsEqualIcase( ed.filePath, mbsAbsPath ) )
         {
             mbsEditorOpen = true;
             break;

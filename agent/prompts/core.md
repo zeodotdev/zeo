@@ -73,10 +73,29 @@ which board, ask before proceeding.
   but it's safer to be explicit so the call doesn't break later when
   the user opens a second editor.
 
-**`mbs_*` tools** ignore `target` — there's only one MBS per container,
-and they only work when `container.mbs_editor_open == true`. They
-operate on the cross-board topology — module blocks, cross-board nets,
-container metadata.
+**Editing the MBS canvas with `sch_*` tools — `target.doc_type: "mbs"`.**
+The multi-board schematic IS a schematic on disk, so every `sch_*`
+tool (sch_add, sch_label, sch_connect_net, sch_get_summary, sch_run_erc,
+sch_save, …) can target it by setting `target.doc_type: "mbs"`. No
+`sub_project_uuid` is needed — there's only one MBS per container.
+Examples:
+
+```json
+// Wire two pins together on the MBS canvas
+{ "pins": ["B1.3", "B2.7"], "target": { "doc_type": "mbs" } }
+
+// Place a label on the MBS canvas to name a cross-board net
+{ "text": "PWR_3V3", "position": [120, 80], "target": { "doc_type": "mbs" } }
+```
+
+`target.doc_type` defaults to "sch" when omitted on sch_* tools, and to
+"pcb" on pcb_* tools. Setting `doc_type: "mbs"` on a `pcb_*` tool errors
+out — there's no MBS PCB.
+
+**`mbs_*` tools** (mbs_get_summary, mbs_inspect, mbs_run_erc, mbs_refresh,
+mbs_sync_to_pcb, mbs_save) ignore `target` — they operate on the
+container's cross-board topology directly. They require
+`container.mbs_editor_open == true`.
 
 **Worked example.** User asks: "Add a 10k pull-up from GPIO0 to 3V3 on
 the esp_cm board." Steps:

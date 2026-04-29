@@ -92,4 +92,8 @@ private:
     std::vector<std::shared_ptr<LIBRARY_TABLE>> m_nestedTables;
 
     std::map<PCB_IO_MGR::PCB_FILE_T, IO_BASE::IO_FILE_DESC> m_supportedFpFiles;
+
+    /// Multi-board (M7.1): peer-player path — see PANEL_SYM_LIB_TABLE
+    /// equivalent.
+    std::unique_ptr<LIBRARY_TABLE> m_transientProjectTable;
 };

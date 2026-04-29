@@ -21,6 +21,10 @@
 #include "confirm.h"
 #include "lib_table_grid_data_model.h"
 #include <libraries/library_manager.h>
+#include <pgm_base.h>
+#include <project.h>
+#include <project/project_file.h>
+#include <settings/settings_manager.h>
 #include <wx/clipbrd.h>
 #include <wx/log.h>
 #include <wx/msgdlg.h>
@@ -164,6 +168,36 @@ void LIB_TABLE_GRID_TRICKS::showPopupMenu( wxMenu& menu, wxGridEvent& aEvent )
     if( showActivate || showDeactivate || showSetVisible || showUnsetVisible || showOptions )
         menu.AppendSeparator();
 
+    // Multi-board (M7.1): per-row Share / Unshare. Only meaningful when
+    // the active project is a sub-project of a multi-board container —
+    // a container's own rows are already the source of truth.
+    if( m_sel_row_count == 1 && firstRow.Type() != LIBRARY_TABLE_ROW::TABLE_TYPE_NAME )
+    {
+        PROJECT& project = Pgm().GetSettingsManager().Prj();
+
+        if( !project.IsNullProject()
+            && !project.GetProjectFile().IsMultiBoardContainer()
+            && !project.GetContainerProjectPath().IsEmpty() )
+        {
+            if( firstRow.Shared() )
+            {
+                menu.Append( LIB_TABLE_GRID_TRICKS_UNSHARE_LOCALLY,
+                             _( "Unshare from multi-board container" ),
+                             _( "Drop the shared flag — the row stays as a local entry "
+                                "on this board only." ) );
+            }
+            else if( !firstRow.Conflict() )
+            {
+                menu.Append( LIB_TABLE_GRID_TRICKS_SHARE_TO_CONTAINER,
+                             _( "Share with multi-board container" ),
+                             _( "Promote this row so the container project and every "
+                                "sibling board see it." ) );
+            }
+
+            menu.AppendSeparator();
+        }
+    }
+
     GRID_TRICKS::showPopupMenu( menu, aEvent );
 }
 
@@ -209,6 +243,54 @@ void LIB_TABLE_GRID_TRICKS::doPopupSelection( wxCommandEvent& event )
     else if( menu_id == LIB_TABLE_GRID_TRICKS_OPEN_TABLE )
     {
         openTable( tbl->At( m_sel_row_start ) );
+    }
+    else if( menu_id == LIB_TABLE_GRID_TRICKS_SHARE_TO_CONTAINER )
+    {
+        // Capture the row's current (possibly edited) state — the user may
+        // have changed URI / type in the dialog before clicking Share.
+        LIBRARY_TABLE_ROW& row = tbl->At( m_sel_row_start );
+        LIBRARY_TABLE_ROW  rowCopy = row;
+        PROJECT&           project = Pgm().GetSettingsManager().Prj();
+
+        // AddSharedLibrary writes to disk for the container, this
+        // sub-project, and every peer. If the matching local row in this
+        // sub-project has the same content, it gets promoted in place
+        // (see writeRowToTable in library_manager.cpp).
+        LIBRARY_RESULT<void> result = Pgm().GetLibraryManager().AddSharedLibrary(
+                tbl->Table().Type(), rowCopy, project );
+
+        if( !result.has_value() )
+        {
+            DisplayError( m_grid, result.error().message );
+        }
+        else
+        {
+            // Mirror the on-disk change in the editor's working copy so
+            // the dialog's view matches what's now persisted.
+            row.SetShared( true );
+            row.SetConflict( false );
+            m_grid->ForceRefresh();
+        }
+    }
+    else if( menu_id == LIB_TABLE_GRID_TRICKS_UNSHARE_LOCALLY )
+    {
+        LIBRARY_TABLE_ROW& row = tbl->At( m_sel_row_start );
+        wxString           nickname = row.Nickname();
+        PROJECT&           project = Pgm().GetSettingsManager().Prj();
+
+        LIBRARY_RESULT<void> result = Pgm().GetLibraryManager().UnshareLibraryRow(
+                tbl->Table().Type(), nickname, project );
+
+        if( !result.has_value() )
+        {
+            DisplayError( m_grid, result.error().message );
+        }
+        else
+        {
+            row.SetShared( false );
+            row.SetConflict( false );
+            m_grid->ForceRefresh();
+        }
     }
     else
     {

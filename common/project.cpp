@@ -843,7 +843,10 @@ bool projectFileIsContainerOf( const wxFileName& aCandidate,
 
     for( const auto& sub : *subs )
     {
-        auto rel = sub.find( "relativePath" );
+        // Field name is `path` in the JSON (see SUB_PROJECT_INFO's
+        // `to_json` in project_file.cpp), even though the C++ struct
+        // field is named `relativePath`.
+        auto rel = sub.find( "path" );
 
         if( rel == sub.end() || !rel->is_string() )
             continue;

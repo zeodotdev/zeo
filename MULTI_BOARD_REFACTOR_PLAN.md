@@ -145,6 +145,19 @@ sub-project schematic ──▶ MBS canvas ──▶ container .kicad_pro
 7. **Container lookup is a directory walk** (up to 6 levels from a
    sub-project's `.kicad_pro`). Replace with an explicit parent
    reference stored in the `.kicad_mbs` (M5.2 — see remaining work).
+8. **M7.1 container libraries are physically replicated, not a runtime
+   tier.** A library added at "container scope" is written to the
+   container's `sym-lib-table` / `fp-lib-table` AND copied (with
+   `shared=true`) into each sub-project's lib-table. Each sub-project
+   stays individually openable / shippable — its lib-table is
+   self-contained. Rationale: the alternative (a third runtime tier
+   layered into `LIBRARY_MANAGER_ADAPTER`) coupled sub-project
+   library resolution to the container's lifetime, which broke the
+   "open one board standalone" workflow and made sub-projects
+   undistributable on their own. Reconciliation runs on sub-project
+   open: parse the container's lib-table file directly (no PROJECT
+   load), add missing `shared` rows, drop orphaned `shared` rows.
+   Local (`shared=false`) rows are never touched.
 
 ### Kiway constraint
 
@@ -246,14 +259,129 @@ None currently open.
 - **M6 (3D viewer)** *(separate agent)*. M6.D mating refinements,
   M6.E real-geometry collision, M6.F STEP assembly export, M6.G
   persistence + polish.
-- **M7.1 — Container library architecture** *(separate agent)*. New
-  `LIBRARY_TABLE_SCOPE::CONTAINER` tier between global and project;
-  `PROJECT::GetContainerProject()` for resolving the parent;
-  save-to-library scope selector in dialogs.
+- **M7.1 — Container library architecture** *(separate agent)*.
+  Physical replication model (see locked-in decision #8). Pieces:
+  - **Foundation** ✓ landed. `PROJECT::GetContainerProjectPath()` walk-up
+    resolver + `PROJECT::GetContainerProject()` peek into SETTINGS_MANAGER.
+    `include/project.h`, `common/project.cpp`. No auto-load — pure lookup.
+  - **M7.1.A — Replication core**. Add `bool shared` and `bool conflict`
+    flags to `LIBRARY_TABLE_ROW` (with serialization + grammar tokens).
+    No new `LIBRARY_TABLE_SCOPE` value — that enum is a filter scope
+    over physical files; "container scope" is purely a save-target
+    choice in the UI layer (M7.1.C) that translates to
+    `LIBRARY_MANAGER::AddSharedLibrary`. New manager methods:
+    `AddSharedLibrary` / `RemoveSharedLibrary` / `UnshareLibraryRow`
+    that fan out to container + every sub-project's lib-table on
+    disk. Reconciliation hook in `LoadProjectTables`: parse
+    `<container>/sym-lib-table` raw (no PROJECT load), sync `shared`
+    rows in/out, mark `conflict=true` on nickname collisions. Files:
+    `include/libraries/library_table.h`, `library_table_grammar.h`,
+    `library_table_parser.h`, `library_manager.h`,
+    `common/libraries/library_table.cpp`, `library_table_parser.cpp`,
+    `library_manager.cpp`.
+  - **M7.1.C — Save-to-library scope selector**. Third radio
+    (Project / Container / Global) in symbol/footprint save dialogs.
+    Default = Container in MBSCH, Project in sub-project editors.
+    Hide CONTAINER option when `GetContainerProjectPath().IsEmpty()`.
+    Info banner in lib-management dialog when in a multi-board
+    context: *"Libraries added with scope 'Container' are replicated
+    to all sibling boards."*
+  - **Collision rendering**. When replication would create a row whose
+    nickname clashes with an existing local (`shared=false`) row in a
+    sub-project, write the shared row with a `conflict=true` marker
+    and surface it in the lib-table UI like an unresolvable library
+    (warning icon + clickable error explaining the rename). User
+    resolves by renaming either side. The `conflict=true` row never
+    serves lookups — the local row wins by being non-conflict.
+  - **Deletion semantics.** Removing a row at container scope cascades
+    to all sub-projects. A user editing a sub-project's lib-table
+    directly and removing a `shared` row only **unshares** for that
+    board (clears `shared=true`, leaves the row local). To actually
+    delete from all peers, the user goes through the container.
 - **M7.2 — Container settings propagation** *(separate agent)*.
-  Parallel to M7.1: container `settings.json` overlay between global
-  and project. Investigation pending on which `COMMON_SETTINGS` /
-  `EESCHEMA_SETTINGS` / `PROJECT_FILE` knobs make sense to layer.
+  Investigation landed below; concrete implementation pending user
+  pick on scope + model.
+
+  **Investigation findings (2026-04-28).** KiCad's settings are split
+  across three tiers with the following call-out:
+
+  - **USER tier** (`~/.config/kicad/`): `kicad_common.json`,
+    `eeschema.json`, `pcbnew.json`, `colors/*.json`, `hotkeys.json`,
+    `toolbars/*.json`. *Already global per user* — applies to every
+    project the user opens. The plan-goal items "color theme, grid
+    defaults, hotkeys, eeschema/pcbnew prefs" all live here, so they
+    need no container-level work.
+  - **PROJECT tier** (`.kicad_pro`): per-project. Fields vary in
+    sharing value:
+    - **Genuine candidates for container sharing:**
+      - `net_settings` (nested) — net classes, default widths, custom
+        DRC rules. **Highest value** for multi-board: today, each
+        sub-project has its own net classes, which means cross-board
+        nets can carry inconsistent rules across the boundary.
+      - `pcbnew.page_layout_descr_file` — title-block template path.
+        Useful for consistent branding/border across all sub-boards.
+      - `board.layer_presets`, `board.layer_pairs` — saved layer view
+        configurations. Optional convenience.
+    - **Not worth sharing:** `libraries.pinned_*` (per-user UI state),
+      `pcbnew.last_paths.*` (recent dirs), `text_variables` (often
+      per-board), `board.ipc2581.*` (export metadata, board-specific),
+      `schematic.bus_aliases` (per-schematic).
+  - **PROJECT_LOCAL tier** (`.kicad_prl`): per-project, per-machine —
+    file histories, last-used UI states. *Not* shared.
+
+  **Recommended scope for v1.** Just `net_settings`. It's the only
+  field where the cross-board correctness story actively needs
+  consistency (cross-board nets connect pads on different boards;
+  divergent net classes silently produce different DRC outcomes on
+  each side). Page-layout and layer presets are nice-to-haves and
+  can land later behind the same mechanism.
+
+  **Two viable models** (decision needed before implementing):
+
+  - **Model A — Physical replication** (mirrors M7.1.A). Container's
+    `net_settings` is the source of truth. On container save,
+    `net_settings` is copied into each sub-project's `.kicad_pro`,
+    flagged similarly to `shared=true` on lib-table rows. On
+    sub-project load, reconcile against the container.
+    *Pro:* sub-projects stay individually openable with full design
+    rules.
+    *Con:* `net_settings` is a large structured object — drift risk
+    is higher than for lib-table rows; merge semantics with local
+    sub-project classes are non-trivial.
+
+  - **Model B — Runtime overlay** (no replication). Sub-project's
+    `.kicad_pro` carries an opt-in flag `multi_board.inherit_net_settings:
+    true`. When set, `PROJECT_FILE::NetSettings()` returns the
+    container's `net_settings` instead of its own. Standalone open
+    (no container present) falls back to the sub-project's own
+    `net_settings`.
+    *Pro:* zero drift, simple semantics, smaller code surface.
+    *Con:* sub-project distributed without the container loses the
+    inherited rules — opens with defaults until reconnected to a
+    container with matching nicknames.
+
+  Recommendation: **Model B** (overlay). Net classes are referenced
+  by *name* on each board, so distributing a sub-project standalone
+  is unlikely to break — the symbols still carry their net-class
+  assignments by name; the user just sees default rule values until
+  they reconnect to a container or copy the rules locally. This
+  matches the plan's locked-in #8 spirit (sub-projects individually
+  openable) without paying the replication tax for a structurally
+  large field.
+
+  **Files (Model B sketch):**
+  - `include/project/project_file.h` — add
+    `bool m_inheritNetSettingsFromContainer`; `multi_board.inherit_net_settings`
+    param.
+  - `common/project/project_file.cpp` — `NetSettings()` accessor
+    consults `PROJECT::GetContainerProject()`'s net_settings when the
+    flag is set + container is loaded; falls back otherwise.
+  - UI: checkbox in net classes / DRC settings dialog when project
+    has a container, default off, label "Inherit from multi-board
+    container."
+
+  **Pending user decision before code lands:** confirm Model B (vs
+  A) and confirm scope (`net_settings` only vs broader).
 
 ### P2 (mechanical / polish)
 
@@ -344,11 +472,14 @@ appear stale to the 3D viewer or DRC engine. Mitigation: each
 caller caches its own copy; peer save broadcasts a
 `MAIL_RELOAD_SUB_PROJECT` to invalidate.
 
-### R5 — Container project lifetime under M7.1
-Container `PROJECT*` must outlive every sub-project frame that
-points to it via library / settings adapters. Mitigation:
-refcount the container's lifetime in `LIBRARY_MANAGER` /
-settings adapter, not in any single frame.
+### R5 — Container project lifetime under M7.1 ✓ resolved
+Per locked-in decision #8, M7.1 does *not* auto-load the container
+PROJECT into `SETTINGS_MANAGER`. Container lib-table files are read
+directly during sub-project reconciliation; the container `PROJECT*`
+is only loaded when the user explicitly opens the container
+manager. No refcount needed. M7.2 (settings overlay) will follow the
+same pattern — load the container's settings as a JSON overlay, not
+as a managed PROJECT.
 
 ---
 

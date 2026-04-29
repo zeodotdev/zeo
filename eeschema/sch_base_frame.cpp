@@ -738,10 +738,28 @@ wxString SCH_BASE_FRAME::SelectLibrary( const wxString& aDialogTitle, const wxSt
 
         case ID_MAKE_NEW_LIBRARY:
         {
-            SYMBOL_LIBRARY_MANAGER   mgr( *this );
-            wxFileName               fn( Prj().GetRString( PROJECT::SCH_LIB_PATH ) );
-            bool                     useGlobalTable = false;
-            FILEDLG_HOOK_NEW_LIBRARY tableChooser( useGlobalTable );
+            SYMBOL_LIBRARY_MANAGER mgr( *this );
+            wxFileName             fn( Prj().GetRString( PROJECT::SCH_LIB_PATH ) );
+
+            // Multi-board (M7.1): expose Container scope when active project
+            // is itself a container or a member of one.
+            LIBRARY_SAVE_TARGET defaultTarget = LIBRARY_SAVE_TARGET::PROJECT;
+            bool                showContainer = false;
+
+            if( !Prj().IsNullProject() )
+            {
+                if( Prj().GetProjectFile().IsMultiBoardContainer() )
+                {
+                    defaultTarget = LIBRARY_SAVE_TARGET::CONTAINER;
+                    showContainer = true;
+                }
+                else if( !Prj().GetContainerProjectPath().IsEmpty() )
+                {
+                    showContainer = true;
+                }
+            }
+
+            FILEDLG_HOOK_NEW_LIBRARY tableChooser( defaultTarget, showContainer );
 
             if( !LibraryFileBrowser( _( "Create New Library" ), false, fn, FILEEXT::KiCadSymbolLibFileWildcard(),
                                      FILEEXT::KiCadSymbolLibFileExtension, false, &tableChooser ) )
@@ -752,8 +770,6 @@ wxString SCH_BASE_FRAME::SelectLibrary( const wxString& aDialogTitle, const wxSt
             libraryName = fn.GetName();
             Prj().SetRString( PROJECT::SCH_LIB_PATH, fn.GetPath() );
 
-            LIBRARY_TABLE_SCOPE scope = tableChooser.GetUseGlobalTable() ? LIBRARY_TABLE_SCOPE::GLOBAL
-                                                                         : LIBRARY_TABLE_SCOPE::PROJECT;
             SYMBOL_LIBRARY_ADAPTER* adapter = PROJECT_SCH::SymbolLibAdapter( &Prj() );
 
             if( adapter->HasLibrary( libraryName, false ) )
@@ -762,8 +778,25 @@ wxString SCH_BASE_FRAME::SelectLibrary( const wxString& aDialogTitle, const wxSt
                 break;
             }
 
-            if( !mgr.CreateLibrary( fn.GetFullPath(), scope ) )
-                DisplayError( this, wxString::Format( _( "Could not add library '%s'." ), libraryName ) );
+            LIBRARY_SAVE_TARGET selectedTarget = tableChooser.GetSaveTarget();
+
+            if( selectedTarget == LIBRARY_SAVE_TARGET::CONTAINER )
+            {
+                if( !mgr.CreateSharedLibrary( fn.GetFullPath() ) )
+                    DisplayError( this, wxString::Format( _( "Could not add library '%s' to "
+                                                             "multi-board container." ),
+                                                          libraryName ) );
+            }
+            else
+            {
+                LIBRARY_TABLE_SCOPE scope = ( selectedTarget == LIBRARY_SAVE_TARGET::GLOBAL )
+                                                    ? LIBRARY_TABLE_SCOPE::GLOBAL
+                                                    : LIBRARY_TABLE_SCOPE::PROJECT;
+
+                if( !mgr.CreateLibrary( fn.GetFullPath(), scope ) )
+                    DisplayError( this, wxString::Format( _( "Could not add library '%s'." ),
+                                                          libraryName ) );
+            }
 
             break;
         }

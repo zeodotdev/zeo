@@ -306,6 +306,62 @@ public:
                             std::initializer_list<LIBRARY_TABLE_TYPE> aTablesToLoad = {} );
 
     /**
+     * Multi-board container library replication (M7.1).
+     *
+     * The container model is *physical replication, not a runtime tier*: a
+     * row added at "container scope" lives in the container's lib-table
+     * AND is copied (with `shared=true`) into every sub-project's
+     * lib-table on disk. Each sub-project stays individually openable —
+     * no peer load required to resolve its libraries.
+     *
+     * `aSubject` may be the container itself (the caller is the MBSCH
+     * frame editing its own libs) or any sub-project (the caller is a
+     * sub-project frame whose user picked Container scope in the save
+     * dialog). Both cases resolve the same container.
+     *
+     * @return Error if `aSubject` has no container, if a target file
+     *         can't be written, or if the requested operation is a no-op.
+     */
+    LIBRARY_RESULT<void> AddSharedLibrary( LIBRARY_TABLE_TYPE aType,
+                                           const LIBRARY_TABLE_ROW& aRow,
+                                           const PROJECT& aSubject );
+
+    /**
+     * Remove a shared library from the container and cascade-delete it
+     * from every sub-project's lib-table. Use this when the user wants
+     * the row gone everywhere. To leave the row in place locally on a
+     * single board (the default for a sub-project user pressing Delete
+     * on a shared row), call `UnshareLibraryRow` instead.
+     */
+    LIBRARY_RESULT<void> RemoveSharedLibrary( LIBRARY_TABLE_TYPE aType,
+                                              const wxString& aNickname,
+                                              const PROJECT& aSubject );
+
+    /**
+     * Clear the `shared` flag on a single sub-project's matching row,
+     * leaving it as a board-local row. Does NOT touch the container
+     * or peer sub-projects. Used when the user removes a shared row
+     * from one sub-project's lib-table directly — the unshare is the
+     * least-surprising default; cascade deletes go through the
+     * container.
+     */
+    LIBRARY_RESULT<void> UnshareLibraryRow( LIBRARY_TABLE_TYPE aType,
+                                            const wxString& aNickname,
+                                            const PROJECT& aSubject );
+
+    /**
+     * Re-sync every sub-project's on-disk lib-table against the active
+     * container project's table for @a aType (M7.1.A). No-op when the
+     * active project is not a multi-board container.
+     *
+     * Call this after the user edits the container's lib-table directly
+     * (e.g. via the Manage Symbol/Footprint Libraries dialog) so the
+     * row additions/removals propagate to peer sub-projects without
+     * waiting for each peer to be re-opened.
+     */
+    void PropagateContainerLibTable( LIBRARY_TABLE_TYPE aType );
+
+    /**
      * Return the full location specifying URI for the LIB, either in original UI form or
      * in environment variable expanded form.
      *
@@ -328,6 +384,14 @@ private:
                      std::vector<LIBRARY_TABLE_TYPE> aTablesToLoad = {} );
 
     void loadNestedTables( LIBRARY_TABLE& aTable );
+
+    /// Sync the active project's in-memory table for @a aType against
+    /// its multi-board container's on-disk lib-table file (M7.1.A).
+    /// Adds missing shared rows, refreshes stale content, drops orphans,
+    /// and persists changes back to disk so the sub-project stays
+    /// self-contained for standalone opens. No-op when the project has
+    /// no container or is itself a container.
+    void reconcileSharedRowsWithContainer( LIBRARY_TABLE_TYPE aType );
 
     static wxString tableFileName( LIBRARY_TABLE_TYPE aType );
 

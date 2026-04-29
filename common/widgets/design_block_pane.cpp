@@ -24,6 +24,7 @@
 #include <design_block.h>
 #include <design_block_library_adapter.h>
 #include <design_block_io.h>
+#include <project/project_file.h>
 #include <paths.h>
 #include <env_paths.h>
 #include <pgm_base.h>
@@ -149,9 +150,32 @@ wxString DESIGN_BLOCK_PANE::CreateNewDesignBlockLibrary( const wxString& aDialog
 
 wxString DESIGN_BLOCK_PANE::createNewDesignBlockLibrary( const wxString& aDialogTitle )
 {
-    wxFileName               fn;
-    static bool              isGlobal = true;
-    FILEDLG_HOOK_NEW_LIBRARY tableChooser( isGlobal );
+    wxFileName fn;
+
+    // Multi-board (M7.1): expose Container scope when relevant. Static
+    // remembers the last user choice for a non-MBS workflow; in MBS
+    // contexts the default is Container.
+    static LIBRARY_SAVE_TARGET stickyTarget = LIBRARY_SAVE_TARGET::GLOBAL;
+
+    LIBRARY_SAVE_TARGET defaultTarget = stickyTarget;
+    bool                showContainer = false;
+
+    PROJECT& project = m_frame->Prj();
+
+    if( !project.IsNullProject() )
+    {
+        if( project.GetProjectFile().IsMultiBoardContainer() )
+        {
+            defaultTarget = LIBRARY_SAVE_TARGET::CONTAINER;
+            showContainer = true;
+        }
+        else if( !project.GetContainerProjectPath().IsEmpty() )
+        {
+            showContainer = true;
+        }
+    }
+
+    FILEDLG_HOOK_NEW_LIBRARY tableChooser( defaultTarget, showContainer );
 
     if( !m_frame->LibraryFileBrowser( aDialogTitle, false, fn, FILEEXT::KiCadDesignBlockLibPathWildcard(),
                                       FILEEXT::KiCadDesignBlockLibPathExtension, false, &tableChooser ) )
@@ -159,11 +183,10 @@ wxString DESIGN_BLOCK_PANE::createNewDesignBlockLibrary( const wxString& aDialog
         return wxEmptyString;
     }
 
-    isGlobal = tableChooser.GetUseGlobalTable();
+    LIBRARY_SAVE_TARGET selectedTarget = tableChooser.GetSaveTarget();
+    stickyTarget = selectedTarget;
 
     wxString libPath = fn.GetFullPath();
-
-    LIBRARY_TABLE_SCOPE scope = isGlobal ? LIBRARY_TABLE_SCOPE::GLOBAL : LIBRARY_TABLE_SCOPE::PROJECT;
 
     // We can save libs only using DESIGN_BLOCK_IO_MGR::KICAD_SEXP format (.pretty libraries)
     DESIGN_BLOCK_IO_MGR::DESIGN_BLOCK_FILE_T piType = DESIGN_BLOCK_IO_MGR::KICAD_SEXP;
@@ -215,9 +238,84 @@ wxString DESIGN_BLOCK_PANE::createNewDesignBlockLibrary( const wxString& aDialog
         return wxEmptyString;
     }
 
-    AddDesignBlockLibrary( aDialogTitle, libPath, scope );
+    if( selectedTarget == LIBRARY_SAVE_TARGET::CONTAINER )
+    {
+        AddSharedDesignBlockLibrary( aDialogTitle, libPath );
+    }
+    else
+    {
+        LIBRARY_TABLE_SCOPE scope = ( selectedTarget == LIBRARY_SAVE_TARGET::GLOBAL )
+                                            ? LIBRARY_TABLE_SCOPE::GLOBAL
+                                            : LIBRARY_TABLE_SCOPE::PROJECT;
+        AddDesignBlockLibrary( aDialogTitle, libPath, scope );
+    }
 
     return libPath;
+}
+
+
+bool DESIGN_BLOCK_PANE::AddSharedDesignBlockLibrary( const wxString& aDialogTitle,
+                                                     const wxString& aFilename )
+{
+    DESIGN_BLOCK_LIBRARY_ADAPTER* adapter = m_frame->Prj().DesignBlockLibs();
+    LIBRARY_MANAGER&              manager = Pgm().GetLibraryManager();
+
+    wxFileName fn( aFilename );
+    wxString   libPath = fn.GetFullPath();
+    wxString   libName = fn.GetName();
+
+    if( libName.IsEmpty() )
+        return false;
+
+    wxString description = wxGetTextFromUser( _( "Enter a description for the library:" ),
+                                              aDialogTitle, wxEmptyString, m_frame );
+
+    DESIGN_BLOCK_IO_MGR::DESIGN_BLOCK_FILE_T lib_type =
+            DESIGN_BLOCK_IO_MGR::GuessPluginTypeFromLibPath( libPath );
+
+    if( lib_type == DESIGN_BLOCK_IO_MGR::FILE_TYPE_NONE )
+        lib_type = DESIGN_BLOCK_IO_MGR::KICAD_SEXP;
+
+    wxString type = DESIGN_BLOCK_IO_MGR::ShowType( lib_type );
+
+    if( lib_type == DESIGN_BLOCK_IO_MGR::KICAD_SEXP
+        && fn.GetExt() != FILEEXT::KiCadDesignBlockLibPathExtension )
+    {
+        libName = fn.GetFullName();
+    }
+
+    // Container scope (M7.1.A): write to container + every sub-project's
+    // lib-table on disk via fan-out. URI is written verbatim — pick
+    // absolute paths to keep peer resolution deterministic.
+    wxString normalizedPath = libPath;
+
+    LIBRARY_TABLE_ROW row;
+    row.SetNickname( libName );
+    row.SetURI( normalizedPath );
+    row.SetType( type );
+    row.SetDescription( description );
+    row.SetOk();
+
+    bool success = true;
+
+    manager.AddSharedLibrary( LIBRARY_TABLE_TYPE::DESIGN_BLOCK, row, m_frame->Prj() ).map_error(
+            [&]( const LIBRARY_ERROR& aError )
+            {
+                DisplayError( m_frame, _( "Error sharing library to multi-board "
+                                          "container:\n\n" ) + aError.message );
+                success = false;
+            } );
+
+    if( success )
+    {
+        adapter->LoadOne( libName );
+
+        LIB_ID libID( libName, wxEmptyString );
+        RefreshLibs();
+        SelectLibId( libID );
+    }
+
+    return success;
 }
 
 

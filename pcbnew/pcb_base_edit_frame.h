@@ -29,6 +29,7 @@
 
 #include <pcb_base_frame.h>
 #include <libraries/library_table.h>
+#include <widgets/filedlg_hook_new_library.h>
 
 class APPEARANCE_CONTROLS;
 class LAYER_PAIR_SETTINGS;
@@ -89,13 +90,17 @@ public:
                             const std::vector<std::pair<wxString, bool*>>& aExtraCheckboxes = {} );
 
     /**
-     * Add an existing library to either the global or project library table.
+     * Add an existing library to the global, container (multi-board), or
+     * project library table.
      *
      * @param aFileName the library to add; a file open dialog will be displayed if empty.
+     * @param aTarget when set, skips the dialog and adds to the specified scope. The
+     *                CONTAINER target fans the row out to the multi-board container's
+     *                lib-table and every sub-project's lib-table (M7.1.A).
      * @return true if successfully added.
      */
     bool AddLibrary( const wxString& aDialogTitle, const wxString& aLibName = wxEmptyString,
-                     std::optional<LIBRARY_TABLE_SCOPE> aScope = std::nullopt );
+                     std::optional<LIBRARY_SAVE_TARGET> aTarget = std::nullopt );
 
     /**
      * Install the corresponding dialog editor for the given item.

@@ -140,6 +140,19 @@ void MBSCH_EDIT_FRAME::doReCreateMenuBar()
 
     // -- View menu --
     ACTION_MENU* viewMenu = new ACTION_MENU( false, selTool );
+
+    // Panels submenu — mirrors regular SCH "View > Panels". MBSCH
+    // doesn't expose Hierarchy / Design Blocks / Remote Symbols (none
+    // make sense on a flat cross-board schematic), but Properties and
+    // Net Navigator are both useful and structured the same way as
+    // the regular SCH for muscle-memory consistency.
+    ACTION_MENU* panelsMenu = new ACTION_MENU( false, selTool );
+    panelsMenu->SetTitle( _( "Panels" ) );
+    panelsMenu->Add( ACTIONS::showProperties,       ACTION_MENU::CHECK );
+    panelsMenu->Add( SCH_ACTIONS::showNetNavigator, ACTION_MENU::CHECK );
+    viewMenu->Add( panelsMenu );
+
+    viewMenu->AppendSeparator();
     viewMenu->Add( ACTIONS::zoomInCenter );
     viewMenu->Add( ACTIONS::zoomOutCenter );
     viewMenu->Add( ACTIONS::zoomFitScreen );
@@ -148,8 +161,6 @@ void MBSCH_EDIT_FRAME::doReCreateMenuBar()
     viewMenu->AppendSeparator();
     viewMenu->Add( ACTIONS::toggleGrid,     ACTION_MENU::CHECK );
     viewMenu->Add( ACTIONS::gridProperties );
-    viewMenu->AppendSeparator();
-    viewMenu->Add( ACTIONS::showProperties, ACTION_MENU::CHECK );
 
     // -- Place menu -- (restricted to what makes sense on an MBS)
     ACTION_MENU* placeMenu = new ACTION_MENU( false, selTool );

@@ -228,6 +228,27 @@ public:
     }
 
     /**
+     * Multi-board container variant of `CreateLibrary` (M7.1.A): the new
+     * library file is created on disk and a `shared` row is fanned out
+     * to the container's lib-table and every sub-project's lib-table.
+     * @return true on success.
+     */
+    bool CreateSharedLibrary( const wxString& aFilePath )
+    {
+        return addSharedLibrary( aFilePath, true );
+    }
+
+    /**
+     * Multi-board container variant of `AddLibrary` (M7.1.A): the
+     * existing library at @a aFilePath is registered as a shared row
+     * across the container and every sub-project.
+     */
+    bool AddSharedLibrary( const wxString& aFilePath )
+    {
+        return addSharedLibrary( aFilePath, false );
+    }
+
+    /**
      * Update the symbol buffer with a new version of the symbol.
      *
      * The library buffer creates a copy of the symbol.
@@ -385,6 +406,11 @@ protected:
 
     /// Helper function to add either existing or create new library.
     bool addLibrary( const wxString& aFilePath, bool aCreate, LIBRARY_TABLE_SCOPE aScope );
+
+    /// Multi-board container fan-out variant. Adds (and optionally creates)
+    /// a library row that is replicated across the container and every
+    /// sub-project's lib-table via `LIBRARY_MANAGER::AddSharedLibrary`.
+    bool addSharedLibrary( const wxString& aFilePath, bool aCreate );
 
     /**
      * Return a set of #LIB_SYMBOL objects belonging to the original library.

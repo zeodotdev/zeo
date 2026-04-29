@@ -21,10 +21,48 @@ std::string CHECK_STATUS_HANDLER::BuildStatusJson()
     status["schematic_editor_open"] = schOpen;
     status["pcb_editor_open"] = pcbOpen;
 
-    if( !projectPath.empty() && !projectName.empty() )
+    // Multi-board container metadata. Populated by AGENT_FRAME on every
+    // check_status path. When non-empty, the project is a multi-board
+    // container — sub_projects[] enumerates the children, and the
+    // singular schematic_file/pcb_file fields below are misleading and
+    // intentionally omitted in favor of the per-sub-project fields.
+    const std::string& mbContainer = reg.GetMultiBoardContainerJson();
+    bool isMultiBoard = false;
+
+    if( !mbContainer.empty() )
     {
-        status["schematic_file"] = projectPath + projectName + ".kicad_sch";
-        status["pcb_file"] = projectPath + projectName + ".kicad_pcb";
+        auto cj = nlohmann::json::parse( mbContainer, nullptr, false );
+
+        if( !cj.is_discarded() )
+        {
+            status["is_multi_board_container"] = true;
+            status["container"] = cj;
+            isMultiBoard = true;
+        }
+    }
+
+    if( !isMultiBoard )
+    {
+        status["is_multi_board_container"] = false;
+
+        if( !projectPath.empty() && !projectName.empty() )
+        {
+            status["schematic_file"] = projectPath + projectName + ".kicad_sch";
+            status["pcb_file"] = projectPath + projectName + ".kicad_pcb";
+        }
+    }
+
+    // Rich open-editor list (frame_type, file_path, sub_project_uuid, ...)
+    // — preferred over the legacy open_editor_files string list which is
+    // kept for backwards compat with other consumers.
+    const std::string& openEditorsJson = reg.GetOpenEditorsJson();
+
+    if( !openEditorsJson.empty() )
+    {
+        auto oej = nlohmann::json::parse( openEditorsJson, nullptr, false );
+
+        if( !oej.is_discarded() )
+            status["open_editors"] = oej;
     }
 
     const auto& openFiles = reg.GetOpenEditorFiles();

@@ -128,8 +128,50 @@ bool SCH_DRAWING_TOOLS::Init()
 }
 
 
+namespace
+{
+
+/**
+ * Returns true when the dispatched action shouldn't fire on a multi-
+ * board schematic. MBSCH is a flat cross-board wiring sheet —
+ * symbols, power markers, hierarchical labels, sheets, sheet pins,
+ * and design blocks all have no semantic on it. Wires, junctions,
+ * regular labels, netclass labels, global labels, shapes, text,
+ * tables, and images do apply (those aren't in this set).
+ *
+ * Used as an early-return guard in each handler so menu invocations
+ * AND hotkeys (e.g. `A` for placeSymbol) both no-op uniformly when
+ * the active frame is MBSCH.
+ */
+bool isMbsBlockedAction( SCH_BASE_FRAME* aFrame, const TOOL_EVENT& aEvent )
+{
+    if( !aFrame || aFrame->GetFrameType() != FRAME_MBSCH )
+        return false;
+
+    return aEvent.IsAction( &SCH_ACTIONS::placeSymbol )
+           || aEvent.IsAction( &SCH_ACTIONS::placePower )
+           || aEvent.IsAction( &SCH_ACTIONS::placeNextSymbolUnit )
+           || aEvent.IsAction( &SCH_ACTIONS::placeHierLabel )
+           || aEvent.IsAction( &SCH_ACTIONS::placeSheetPin )
+           || aEvent.IsAction( &SCH_ACTIONS::drawSheet )
+           || aEvent.IsAction( &SCH_ACTIONS::drawSheetFromFile )
+           || aEvent.IsAction( &SCH_ACTIONS::drawSheetFromDesignBlock )
+           || aEvent.IsAction( &SCH_ACTIONS::placeDesignBlock )
+           || aEvent.IsAction( &SCH_ACTIONS::importSheet )
+           || aEvent.IsAction( &SCH_ACTIONS::syncSheetPins )
+           || aEvent.IsAction( &SCH_ACTIONS::syncAllSheetsPins )
+           || aEvent.IsAction( &SCH_ACTIONS::autoplaceAllSheetPins );
+}
+
+}  // anonymous namespace
+
+
 int SCH_DRAWING_TOOLS::PlaceSymbol( const TOOL_EVENT& aEvent )
 {
+    if( isMbsBlockedAction( m_frame, aEvent ) )
+        return 0;
+
+
     const SCH_ACTIONS::PLACE_SYMBOL_PARAMS& toolParams = aEvent.Parameter<SCH_ACTIONS::PLACE_SYMBOL_PARAMS>();
 
     SCH_SYMBOL* symbol = toolParams.m_Symbol;
@@ -619,6 +661,9 @@ int SCH_DRAWING_TOOLS::PlaceSymbol( const TOOL_EVENT& aEvent )
 
 int SCH_DRAWING_TOOLS::PlaceNextSymbolUnit( const TOOL_EVENT& aEvent )
 {
+    if( isMbsBlockedAction( m_frame, aEvent ) )
+        return 0;
+
     const SCH_ACTIONS::PLACE_SYMBOL_UNIT_PARAMS& params =
             aEvent.Parameter<SCH_ACTIONS::PLACE_SYMBOL_UNIT_PARAMS>();
     SCH_SYMBOL* symbol = params.m_Symbol;
@@ -694,6 +739,9 @@ int SCH_DRAWING_TOOLS::PlaceNextSymbolUnit( const TOOL_EVENT& aEvent )
 
 int SCH_DRAWING_TOOLS::ImportSheet( const TOOL_EVENT& aEvent )
 {
+    if( isMbsBlockedAction( m_frame, aEvent ) )
+        return 0;
+
     COMMON_SETTINGS*            common_settings = Pgm().GetCommonSettings();
     EESCHEMA_SETTINGS*          cfg = m_frame->eeconfig();
     SCHEMATIC_SETTINGS&         schSettings = m_frame->Schematic().Settings();
@@ -1981,6 +2029,9 @@ SCH_SHEET_PIN* SCH_DRAWING_TOOLS::createNewSheetPinFromLabel( SCH_SHEET*      aS
 
 int SCH_DRAWING_TOOLS::TwoClickPlace( const TOOL_EVENT& aEvent )
 {
+    if( isMbsBlockedAction( m_frame, aEvent ) )
+        return 0;
+
     SCH_ITEM*             item = nullptr;
     KIGFX::VIEW_CONTROLS* controls = getViewControls();
     EE_GRID_HELPER        grid( m_toolMgr );
@@ -3165,6 +3216,9 @@ int SCH_DRAWING_TOOLS::DrawTable( const TOOL_EVENT& aEvent )
 
 int SCH_DRAWING_TOOLS::DrawSheet( const TOOL_EVENT& aEvent )
 {
+    if( isMbsBlockedAction( m_frame, aEvent ) )
+        return 0;
+
     bool isDrawSheetCopy = aEvent.IsAction( &SCH_ACTIONS::drawSheetFromFile );
     bool isDrawSheetFromDesignBlock = aEvent.IsAction( &SCH_ACTIONS::drawSheetFromDesignBlock );
 
@@ -3626,6 +3680,9 @@ int SCH_DRAWING_TOOLS::doSyncSheetsPins( std::list<SCH_SHEET_PATH> sheetPaths,
 
 int SCH_DRAWING_TOOLS::SyncSheetsPins( const TOOL_EVENT& aEvent )
 {
+    if( isMbsBlockedAction( m_frame, aEvent ) )
+        return 0;
+
     SCH_SHEET* sheet = dynamic_cast<SCH_SHEET*>( m_selectionTool->GetSelection().Front() );
 
     if( !sheet )
@@ -3651,6 +3708,9 @@ int SCH_DRAWING_TOOLS::SyncSheetsPins( const TOOL_EVENT& aEvent )
 
 int SCH_DRAWING_TOOLS::AutoPlaceAllSheetPins( const TOOL_EVENT& aEvent )
 {
+    if( isMbsBlockedAction( m_frame, aEvent ) )
+        return 0;
+
     if( m_inDrawingTool )
         return 0;
 
@@ -3757,6 +3817,9 @@ int SCH_DRAWING_TOOLS::AutoPlaceAllSheetPins( const TOOL_EVENT& aEvent )
 
 int SCH_DRAWING_TOOLS::SyncAllSheetsPins( const TOOL_EVENT& aEvent )
 {
+    if( isMbsBlockedAction( m_frame, aEvent ) )
+        return 0;
+
     static const std::function<void( std::list<SCH_SHEET_PATH>&, SCH_SCREEN*, std::set<SCH_SCREEN*>&,
                                      SCH_SHEET_PATH const& )> getSheetChildren =
             []( std::list<SCH_SHEET_PATH>& aPaths, SCH_SCREEN* aScene, std::set<SCH_SCREEN*>& aVisited,

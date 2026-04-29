@@ -14,12 +14,49 @@ All schematic and PCB tools communicate with the live editor via IPC — they re
 
 ## Workflow
 
-1. **`check_status`** — always call first to verify which editors are open and which project is loaded
+1. **`check_status`** — always call first to verify which editors are open and which project is loaded. **If `is_multi_board_container == true`, see "Multi-board projects" below before doing anything else.**
 2. If no project is loaded, use **`open_project`** or **`create_project`** to load one
 3. If editors are closed, open the schematic and/or PCB editor
 4. Use tools to inspect, add, update, delete elements
 5. **`screenshot`** — take a screenshot after changes to visually verify your work
 6. Run ERC/DRC to check for errors
+
+## Multi-board projects
+
+Some KiCad projects are *multi-board containers* — a single `.kicad_pro`
+that owns several sub-projects (each its own `.kicad_pro` + `.kicad_sch` +
+`.kicad_pcb`) plus a top-level multi-board schematic (`.kicad_mbs`, MBS for
+short) that defines how the boards interconnect via cross-board nets.
+
+**`check_status` tells you which kind of project is loaded:**
+- `is_multi_board_container: false` → a regular single-board project. Use
+  `sch_*` / `pcb_*` tools as usual; they target the one open schematic /
+  PCB.
+- `is_multi_board_container: true` → multi-board. The `container` field
+  carries the container's `.kicad_pro` path, MBS file path, MBS-editor
+  open state, sub-project count, and cross-board-net count. The
+  `sub_projects[]` array enumerates every child sub-project with
+  `{uuid, name, relative_path, absolute_path, sch_file, pcb_file,
+  sch_editor_open, pcb_editor_open}`.
+
+**The `open_editors[]` array** lists every visible editor frame (primary
+plus M4 peer windows). Each entry has `frame_type` (`sch` / `pcb` /
+`mbs`), `file_path`, `project_full_path`, `sub_project_uuid` (empty for
+container or standalone editors), `sub_project_name`, and `is_container`
+(true when this frame edits the container itself, i.e. the MBS).
+
+**Rule for multi-board projects:** before any edit operation, identify
+*which* sub-project (by `uuid` or `name` from `sub_projects[]`) and
+*which* document type (`sch`, `pcb`, or `mbs`) the user wants you to
+target. Multiple sub-project schematics may be open simultaneously in
+peer windows; never assume "the schematic" or "the board" is unambiguous
+on a multi-board project. If the user's request is ambiguous about
+which board, ask before proceeding.
+
+**MBS-specific tools** (`mbs_*`) only work when the multi-board
+schematic editor is open (`container.mbs_editor_open == true`). They
+operate on the cross-board topology — module blocks, cross-board nets,
+container metadata.
 
 ### Building a Schematic (Preferred Workflow)
 

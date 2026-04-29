@@ -32,6 +32,7 @@
 #include <functional>
 
 #include <project.h>
+#include <project/project_file.h>
 #include <env_vars.h>
 #include <3d_viewer/eda_3d_viewer_frame.h>
 #include <panel_fp_lib_table.h>
@@ -319,6 +320,38 @@ PANEL_FP_LIB_TABLE::PANEL_FP_LIB_TABLE( DIALOG_EDIT_LIBRARY_TABLES* aParent, PRO
         AddTable( projectTable.value(), _( "Project Specific Libraries" ), false /* closable */ );
 
     m_notebook->SetArtProvider( new WX_AUI_TAB_ART() );
+
+    // Multi-board (M7.1): note that container scope replicates rows to
+    // every sub-project so each board stays individually openable.
+    if( m_project && !m_project->IsNullProject()
+        && ( m_project->GetProjectFile().IsMultiBoardContainer()
+             || !m_project->GetContainerProjectPath().IsEmpty() ) )
+    {
+        wxStaticText* banner = new wxStaticText( this, wxID_ANY,
+                _( "This project is part of a multi-board project. Libraries added "
+                   "with scope 'Container' are replicated to every sibling board "
+                   "so each board remains individually openable." ) );
+        wxFont bannerFont = banner->GetFont();
+        bannerFont.MakeItalic();
+        banner->SetFont( bannerFont );
+
+        if( wxSizer* mainSizer = GetSizer() )
+            mainSizer->Insert( 0, banner, 0, wxALL | wxEXPAND, 5 );
+
+        Bind( wxEVT_SIZE,
+              [banner]( wxSizeEvent& aEvent )
+              {
+                  int w = aEvent.GetSize().GetWidth() - 20;
+
+                  if( w > 100 )
+                  {
+                      banner->SetLabel( banner->GetLabelText() );
+                      banner->Wrap( w );
+                  }
+
+                  aEvent.Skip();
+              } );
+    }
 
     // add Cut, Copy, and Paste to wxGrids
     m_path_subs_grid->PushEventHandler( new GRID_TRICKS( m_path_subs_grid ) );
@@ -877,6 +910,13 @@ bool PANEL_FP_LIB_TABLE::TransferDataFromWindow()
                         wxMessageBox( _( "Error saving project library table:\n\n" ) + aError.message,
                                       _( "File Save Error" ), wxOK | wxICON_ERROR );
                     } );
+
+            // Multi-board (M7.1.A): when the user edits the container's
+            // project tier directly, fan the result out to every
+            // sub-project's lib-table on disk.
+            if( m_project && m_project->GetProjectFile().IsMultiBoardContainer() )
+                Pgm().GetLibraryManager().PropagateContainerLibTable(
+                        LIBRARY_TABLE_TYPE::FOOTPRINT );
         }
     }
 

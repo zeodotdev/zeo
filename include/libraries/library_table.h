@@ -110,6 +110,20 @@ public:
     void SetHidden( bool aHidden = true ) { m_hidden = aHidden; }
     bool Hidden() const { return m_hidden; }
 
+    /// Multi-board: true when this row was synced from the project's
+    /// container (M7.1 physical replication). Local user-added rows
+    /// are not shared. Persisted as `(shared)` in the lib-table file.
+    void SetShared( bool aShared = true ) { m_shared = aShared; }
+    bool Shared() const { return m_shared; }
+
+    /// Multi-board: true when reconciliation tried to install this
+    /// shared row but a non-shared row with the same nickname already
+    /// existed locally. Persisted as `(conflict)`. The row is kept on
+    /// disk so the lib-table UI can surface it as a warning, but it
+    /// is never used for lookups — the local row wins.
+    void SetConflict( bool aConflict = true ) { m_conflict = aConflict; }
+    bool Conflict() const { return m_conflict; }
+
     std::map<std::string, UTF8> GetOptionsMap() const;
 
     void SetOk( bool aOk = true ) { m_ok = aOk; }
@@ -126,6 +140,8 @@ private:
     wxString m_description;
     bool m_disabled = false;
     bool m_hidden = false;
+    bool m_shared = false;
+    bool m_conflict = false;
 
     bool m_ok = false;
     wxString m_errorDescription;

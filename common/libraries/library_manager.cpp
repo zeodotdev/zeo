@@ -18,17 +18,22 @@
  * with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <algorithm>
 #include <chrono>
 #include <common.h>
 #include <env_vars.h>
+#include <fstream>
 #include <list>
 #include <magic_enum.hpp>
+#include <nlohmann/json.hpp>
 #include <thread_pool.h>
 #include <ranges>
 #include <unordered_set>
 
 #include <paths.h>
 #include <pgm_base.h>
+#include <project.h>
+#include <project/project_file.h>
 #include <richio.h>
 #include <trace_helpers.h>
 #include <wildcards_and_files_ext.h>
@@ -712,17 +717,354 @@ void LIBRARY_MANAGER::ReloadLibraryEntry( LIBRARY_TABLE_TYPE aType, const wxStri
 }
 
 
+// =============================================================================
+// Multi-board container library replication (M7.1.A)
+// =============================================================================
+
+namespace
+{
+struct CONTAINER_SCOPE_TARGETS
+{
+    wxFileName              containerProPath;  ///< invalid when no container
+    std::vector<wxFileName> peerProPaths;      ///< sub-project .kicad_pro paths
+};
+
+
+/**
+ * Resolve the multi-board container scope for @a aSubject and enumerate
+ * its sub-project members. @a aSubject may be the container itself
+ * (MBSCH frame) or any sub-project.
+ *
+ * Reads the container's `.kicad_pro` directly via JSON (not through
+ * `SETTINGS_MANAGER::LoadProject`), so the container PROJECT is never
+ * pulled into memory just to support library replication. This matches
+ * the locked-in decision that sub-projects stay individually openable.
+ */
+CONTAINER_SCOPE_TARGETS resolveContainerScope( const PROJECT& aSubject )
+{
+    CONTAINER_SCOPE_TARGETS result;
+
+    wxFileName containerPro;
+
+    if( aSubject.GetProjectFile().IsMultiBoardContainer() )
+    {
+        containerPro = wxFileName( aSubject.GetProjectFullName() );
+    }
+    else
+    {
+        wxString containerPath = aSubject.GetContainerProjectPath();
+
+        if( containerPath.IsEmpty() )
+            return result;
+
+        containerPro = wxFileName( containerPath );
+    }
+
+    containerPro.Normalize( wxPATH_NORM_ABSOLUTE | wxPATH_NORM_DOTS );
+    result.containerProPath = containerPro;
+
+    std::ifstream stream( containerPro.GetFullPath().fn_str() );
+
+    if( !stream.is_open() )
+        return result;
+
+    nlohmann::json j;
+
+    try
+    {
+        stream >> j;
+    }
+    catch( const nlohmann::json::exception& )
+    {
+        return result;
+    }
+
+    auto mb = j.find( "multi_board" );
+
+    if( mb == j.end() || !mb->is_object() )
+        return result;
+
+    auto subs = mb->find( "sub_projects" );
+
+    if( subs == mb->end() || !subs->is_array() )
+        return result;
+
+    wxFileName containerDir( containerPro );
+    containerDir.SetFullName( wxEmptyString );
+
+    for( const auto& sub : *subs )
+    {
+        // Field name is `path` in the JSON (see SUB_PROJECT_INFO's
+        // `to_json` in project_file.cpp).
+        auto rel = sub.find( "path" );
+
+        if( rel == sub.end() || !rel->is_string() )
+            continue;
+
+        wxString relPath = wxString::FromUTF8( rel->get<std::string>().c_str() );
+        wxFileName resolved( relPath );
+
+        if( !resolved.IsAbsolute() )
+            resolved.MakeAbsolute( containerDir.GetFullPath() );
+
+        resolved.Normalize( wxPATH_NORM_ABSOLUTE | wxPATH_NORM_DOTS );
+        result.peerProPaths.emplace_back( resolved );
+    }
+
+    return result;
+}
+
+
+wxFileName libTableFilePath( const wxFileName& aProjectPro, LIBRARY_TABLE_TYPE aType )
+{
+    wxString fileName;
+
+    switch( aType )
+    {
+    case LIBRARY_TABLE_TYPE::SYMBOL:
+        fileName = FILEEXT::SymbolLibraryTableFileName;
+        break;
+
+    case LIBRARY_TABLE_TYPE::FOOTPRINT:
+        fileName = FILEEXT::FootprintLibraryTableFileName;
+        break;
+
+    case LIBRARY_TABLE_TYPE::DESIGN_BLOCK:
+        fileName = FILEEXT::DesignBlockLibraryTableFileName;
+        break;
+
+    default:
+        return wxFileName();
+    }
+
+    wxFileName projectDir( aProjectPro );
+    projectDir.SetFullName( wxEmptyString );
+    return wxFileName( projectDir.GetFullPath(), fileName );
+}
+
+
+/// Build a `shared=true` copy of @a aSrc suitable for a peer's lib-table.
+/// Conflict rows carry the same content but never serve lookups.
+LIBRARY_TABLE_ROW buildSharedRowCopy( const LIBRARY_TABLE_ROW& aSrc, bool aConflict )
+{
+    LIBRARY_TABLE_ROW row;
+    row.SetNickname( aSrc.Nickname() );
+    row.SetURI( aSrc.URI() );
+    row.SetType( aSrc.Type() );
+    row.SetOptions( aSrc.Options() );
+    row.SetDescription( aSrc.Description() );
+    row.SetDisabled( aSrc.Disabled() );
+    row.SetHidden( aSrc.Hidden() );
+    row.SetShared( true );
+    row.SetConflict( aConflict );
+    row.SetOk();
+    row.SetScope( LIBRARY_TABLE_SCOPE::PROJECT );
+    return row;
+}
+
+
+/// True when @a aActive points at the same `.kicad_pro` as @a aTarget.
+bool isSameProject( const wxString& aActiveFullName, const wxFileName& aTarget )
+{
+    if( aActiveFullName.IsEmpty() )
+        return false;
+
+    wxFileName active( aActiveFullName );
+    active.Normalize( wxPATH_NORM_ABSOLUTE | wxPATH_NORM_DOTS );
+    return active.SameAs( aTarget );
+}
+
+
+/// True when two rows have the same library content (URI/type/options).
+/// Nickname is excluded — it's the lookup key, not part of the content.
+/// Used to decide whether a non-shared local row in a sub-project is
+/// already in-sync with the container's row (e.g. after unshare).
+bool rowsHaveSameContent( const LIBRARY_TABLE_ROW& aLhs, const LIBRARY_TABLE_ROW& aRhs )
+{
+    return aLhs.URI() == aRhs.URI()
+        && aLhs.Type() == aRhs.Type()
+        && aLhs.Options() == aRhs.Options();
+}
+} // anonymous namespace
+
+
 void LIBRARY_MANAGER::LoadProjectTables( const wxString& aProjectPath,
                                          std::initializer_list<LIBRARY_TABLE_TYPE> aTablesToLoad )
 {
     if( wxFileName::IsDirReadable( aProjectPath ) )
     {
         loadTables( aProjectPath, LIBRARY_TABLE_SCOPE::PROJECT, aTablesToLoad );
+
+        // M7.1.A: pull in shared rows from the multi-board container, if
+        // any. No-op for standalone projects or for the container itself.
+        // Reconciles each table type that was actually loaded.
+        std::vector<LIBRARY_TABLE_TYPE> reconcileTypes( aTablesToLoad );
+
+        if( reconcileTypes.empty() )
+            reconcileTypes = { LIBRARY_TABLE_TYPE::SYMBOL,
+                               LIBRARY_TABLE_TYPE::FOOTPRINT,
+                               LIBRARY_TABLE_TYPE::DESIGN_BLOCK };
+
+        for( LIBRARY_TABLE_TYPE type : reconcileTypes )
+            reconcileSharedRowsWithContainer( type );
     }
     else
     {
         m_projectTables.clear();
         wxLogTrace( traceLibraries, "New project path %s is not readable, not loading project tables", aProjectPath );
+    }
+}
+
+
+void LIBRARY_MANAGER::reconcileSharedRowsWithContainer( LIBRARY_TABLE_TYPE aType )
+{
+    PROJECT& project = Pgm().GetSettingsManager().Prj();
+
+    if( project.IsNullProject() )
+        return;
+
+    // The container is its own source of truth — nothing to reconcile.
+    if( project.GetProjectFile().IsMultiBoardContainer() )
+        return;
+
+    wxString containerPath = project.GetContainerProjectPath();
+
+    if( containerPath.IsEmpty() )
+        return;
+
+    if( !m_projectTables.contains( aType ) )
+        return;
+
+    LIBRARY_TABLE& projectTable = *m_projectTables.at( aType );
+
+    // Read the container's lib-table directly, without loading the
+    // container PROJECT. Locked-in decision #8: each sub-project stays
+    // individually openable, so the container's lifetime is decoupled
+    // from sub-project library resolution.
+    wxFileName containerProFn( containerPath );
+    wxFileName containerTablePath = libTableFilePath( containerProFn, aType );
+
+    if( !containerTablePath.IsOk() || !containerTablePath.FileExists() )
+    {
+        // Container has no lib-table of this type. Drop any orphaned
+        // shared rows we may have inherited from a previous container
+        // state.
+        std::vector<LIBRARY_TABLE_ROW>& rows = projectTable.Rows();
+        size_t                          before = rows.size();
+
+        rows.erase( std::remove_if( rows.begin(), rows.end(),
+                            []( const LIBRARY_TABLE_ROW& row )
+                            {
+                                return row.Shared() || row.Conflict();
+                            } ),
+                    rows.end() );
+
+        if( rows.size() != before )
+        {
+            projectTable.SetType( aType );
+            (void) projectTable.Save();
+        }
+
+        return;
+    }
+
+    LIBRARY_TABLE containerTable( containerTablePath, LIBRARY_TABLE_SCOPE::PROJECT );
+
+    if( !containerTable.IsOk() )
+        return;
+
+    std::vector<LIBRARY_TABLE_ROW>& projectRows = projectTable.Rows();
+    bool                            changed = false;
+
+    // Pass 1: drop shared/conflict rows whose nickname is no longer in
+    // the container — the source disappeared, the copy follows.
+    {
+        std::unordered_set<wxString> containerNicknames;
+
+        for( const LIBRARY_TABLE_ROW& row : containerTable.Rows() )
+            containerNicknames.insert( row.Nickname() );
+
+        size_t before = projectRows.size();
+
+        projectRows.erase( std::remove_if( projectRows.begin(), projectRows.end(),
+                                  [&]( const LIBRARY_TABLE_ROW& row )
+                                  {
+                                      if( !row.Shared() && !row.Conflict() )
+                                          return false;
+
+                                      return !containerNicknames.contains( row.Nickname() );
+                                  } ),
+                           projectRows.end() );
+
+        if( projectRows.size() != before )
+            changed = true;
+    }
+
+    // Pass 2: add or refresh each container row in the project table.
+    for( const LIBRARY_TABLE_ROW& containerRow : containerTable.Rows() )
+    {
+        LIBRARY_TABLE_ROW* existing = nullptr;
+        LIBRARY_TABLE_ROW* localMatch = nullptr;
+
+        // Walk all rows — there can be both a shared/conflict row AND a
+        // local non-shared row with the same nickname (the post-unshare
+        // or post-conflict state).
+        for( LIBRARY_TABLE_ROW& row : projectRows )
+        {
+            if( row.Nickname() != containerRow.Nickname() )
+                continue;
+
+            if( row.Shared() || row.Conflict() )
+                existing = &row;
+            else
+                localMatch = &row;
+        }
+
+        bool localCollision = ( localMatch != nullptr )
+                              && !rowsHaveSameContent( *localMatch, containerRow );
+
+        if( existing )
+        {
+            // Refresh content if drifted.
+            bool needsUpdate = existing->URI() != containerRow.URI()
+                            || existing->Type() != containerRow.Type()
+                            || existing->Options() != containerRow.Options()
+                            || existing->Description() != containerRow.Description()
+                            || existing->Conflict() != localCollision
+                            || !existing->Shared();
+
+            if( needsUpdate )
+            {
+                existing->SetURI( containerRow.URI() );
+                existing->SetType( containerRow.Type() );
+                existing->SetOptions( containerRow.Options() );
+                existing->SetDescription( containerRow.Description() );
+                existing->SetShared( true );
+                existing->SetConflict( localCollision );
+                changed = true;
+            }
+        }
+        else if( localMatch && !localCollision )
+        {
+            // Local row already carries the same content as the container
+            // row (post-unshare steady state). Nothing to do — the user
+            // has effectively opted out for this board, and the lib
+            // resolves correctly via the local row.
+        }
+        else
+        {
+            // No existing shared row, and either no local row at all or
+            // a local row with different content (genuine conflict).
+            projectRows.emplace_back(
+                    buildSharedRowCopy( containerRow, /*aConflict=*/localCollision ) );
+            changed = true;
+        }
+    }
+
+    if( changed )
+    {
+        projectTable.SetType( aType );
+        (void) projectTable.Save();
     }
 }
 
@@ -1500,4 +1842,381 @@ void LIBRARY_MANAGER_ADAPTER::AsyncLoad()
 
     if( total )
         wxLogTrace( traceLibraries, "Started async load of %zu libraries", total );
+}
+
+
+LIBRARY_RESULT<void> LIBRARY_MANAGER::AddSharedLibrary( LIBRARY_TABLE_TYPE aType,
+                                                        const LIBRARY_TABLE_ROW& aRow,
+                                                        const PROJECT& aSubject )
+{
+    CONTAINER_SCOPE_TARGETS targets = resolveContainerScope( aSubject );
+
+    if( !targets.containerProPath.IsOk() )
+        return tl::unexpected( LIBRARY_ERROR(
+                _( "Cannot add shared library: project has no multi-board container" ) ) );
+
+    auto writeRowToTable = [&]( const wxFileName& aProjectPro,
+                                bool aIsContainer ) -> LIBRARY_RESULT<void>
+    {
+        wxFileName tablePath = libTableFilePath( aProjectPro, aType );
+
+        if( !tablePath.IsOk() )
+            return tl::unexpected( LIBRARY_ERROR( _( "Invalid library table type" ) ) );
+
+        // If the file doesn't exist, LIBRARY_TABLE leaves m_rows empty
+        // and we'll create it on Save() below.
+        LIBRARY_TABLE table( tablePath, LIBRARY_TABLE_SCOPE::PROJECT );
+        table.SetType( aType );
+
+        bool replaced = false;
+        bool collisionWithLocal = false;
+
+        for( LIBRARY_TABLE_ROW& existing : table.Rows() )
+        {
+            if( existing.Nickname() != aRow.Nickname() )
+                continue;
+
+            if( aIsContainer || existing.Shared() )
+            {
+                // Container row OR an already-shared peer row: refresh
+                // content. Idempotent on repeated calls.
+                existing.SetURI( aRow.URI() );
+                existing.SetType( aRow.Type() );
+                existing.SetOptions( aRow.Options() );
+                existing.SetDescription( aRow.Description() );
+                existing.SetConflict( false );
+                replaced = true;
+            }
+            else
+            {
+                // Peer has a non-shared local row with the same nickname.
+                // If its content already matches what we want to share,
+                // promote it (set shared=true) — the user's two manual
+                // adds are effectively the same row. Otherwise it's a
+                // genuine collision and we'll emplace a conflict marker
+                // alongside the local row below.
+                if( existing.URI() == aRow.URI()
+                    && existing.Type() == aRow.Type()
+                    && existing.Options() == aRow.Options() )
+                {
+                    existing.SetDescription( aRow.Description() );
+                    existing.SetShared( true );
+                    existing.SetConflict( false );
+                    replaced = true;
+                }
+                else
+                {
+                    collisionWithLocal = true;
+                }
+            }
+            break;
+        }
+
+        if( !replaced )
+        {
+            if( aIsContainer )
+            {
+                LIBRARY_TABLE_ROW row = aRow;
+                row.SetShared( false );
+                row.SetConflict( false );
+                row.SetOk();
+                row.SetScope( LIBRARY_TABLE_SCOPE::PROJECT );
+                table.Rows().emplace_back( row );
+            }
+            else
+            {
+                table.Rows().emplace_back(
+                        buildSharedRowCopy( aRow, /*aConflict=*/collisionWithLocal ) );
+            }
+        }
+
+        return table.Save();
+    };
+
+    // Container first, peers second. If the container write fails we
+    // leave peers untouched rather than half-propagating a row that
+    // never landed in the source of truth.
+    LIBRARY_RESULT<void> r = writeRowToTable( targets.containerProPath, /*aIsContainer=*/true );
+
+    if( !r.has_value() )
+        return r;
+
+    for( const wxFileName& peer : targets.peerProPaths )
+    {
+        r = writeRowToTable( peer, /*aIsContainer=*/false );
+
+        if( !r.has_value() )
+            return r;
+    }
+
+    // If the active project just had its on-disk lib-table changed,
+    // refresh in-memory state so the UI reflects the new row immediately.
+    PROJECT& activePrj = Pgm().GetSettingsManager().Prj();
+
+    if( !activePrj.IsNullProject() )
+    {
+        wxString activeFullName = activePrj.GetProjectFullName();
+        bool isTarget = isSameProject( activeFullName, targets.containerProPath );
+
+        if( !isTarget )
+        {
+            for( const wxFileName& peer : targets.peerProPaths )
+            {
+                if( isSameProject( activeFullName, peer ) )
+                {
+                    isTarget = true;
+                    break;
+                }
+            }
+        }
+
+        if( isTarget )
+            LoadProjectTables( activePrj.GetProjectDirectory(), { aType } );
+    }
+
+    return LIBRARY_RESULT<void>();
+}
+
+
+LIBRARY_RESULT<void> LIBRARY_MANAGER::RemoveSharedLibrary( LIBRARY_TABLE_TYPE aType,
+                                                           const wxString& aNickname,
+                                                           const PROJECT& aSubject )
+{
+    CONTAINER_SCOPE_TARGETS targets = resolveContainerScope( aSubject );
+
+    if( !targets.containerProPath.IsOk() )
+        return tl::unexpected( LIBRARY_ERROR(
+                _( "Cannot remove shared library: project has no multi-board container" ) ) );
+
+    auto removeFromTable = [&]( const wxFileName& aProjectPro,
+                                bool aIsContainer ) -> LIBRARY_RESULT<void>
+    {
+        wxFileName tablePath = libTableFilePath( aProjectPro, aType );
+
+        if( !tablePath.IsOk() )
+            return tl::unexpected( LIBRARY_ERROR( _( "Invalid library table type" ) ) );
+
+        LIBRARY_TABLE table( tablePath, LIBRARY_TABLE_SCOPE::PROJECT );
+
+        // Missing file is fine — there's nothing to remove.
+        if( !table.IsOk() )
+            return LIBRARY_RESULT<void>();
+
+        table.SetType( aType );
+
+        std::vector<LIBRARY_TABLE_ROW>& rows = table.Rows();
+        bool changed = false;
+
+        rows.erase( std::remove_if( rows.begin(), rows.end(),
+                            [&]( const LIBRARY_TABLE_ROW& row )
+                            {
+                                if( row.Nickname() != aNickname )
+                                    return false;
+
+                                // Container: cascade-delete any matching row.
+                                // Peer: only drop shared/conflict rows so a
+                                // user's local row with the same nickname
+                                // (collision case) is preserved.
+                                if( aIsContainer || row.Shared() || row.Conflict() )
+                                {
+                                    changed = true;
+                                    return true;
+                                }
+
+                                return false;
+                            } ),
+                    rows.end() );
+
+        if( !changed )
+            return LIBRARY_RESULT<void>();
+
+        return table.Save();
+    };
+
+    LIBRARY_RESULT<void> r = removeFromTable( targets.containerProPath, /*aIsContainer=*/true );
+
+    if( !r.has_value() )
+        return r;
+
+    for( const wxFileName& peer : targets.peerProPaths )
+    {
+        r = removeFromTable( peer, /*aIsContainer=*/false );
+
+        if( !r.has_value() )
+            return r;
+    }
+
+    PROJECT& activePrj = Pgm().GetSettingsManager().Prj();
+
+    if( !activePrj.IsNullProject() )
+        LoadProjectTables( activePrj.GetProjectDirectory(), { aType } );
+
+    return LIBRARY_RESULT<void>();
+}
+
+
+void LIBRARY_MANAGER::PropagateContainerLibTable( LIBRARY_TABLE_TYPE aType )
+{
+    PROJECT& project = Pgm().GetSettingsManager().Prj();
+
+    if( project.IsNullProject() || !project.GetProjectFile().IsMultiBoardContainer() )
+        return;
+
+    if( !m_projectTables.contains( aType ) )
+        return;
+
+    LIBRARY_TABLE& containerTable = *m_projectTables.at( aType );
+
+    CONTAINER_SCOPE_TARGETS targets = resolveContainerScope( project );
+
+    if( !targets.containerProPath.IsOk() )
+        return;
+
+    // Build the set of nicknames currently in the container's table —
+    // peer rows whose nickname has dropped out get cleaned up.
+    std::unordered_set<wxString> containerNicknames;
+
+    for( const LIBRARY_TABLE_ROW& row : containerTable.Rows() )
+        containerNicknames.insert( row.Nickname() );
+
+    for( const wxFileName& peerPro : targets.peerProPaths )
+    {
+        wxFileName peerTablePath = libTableFilePath( peerPro, aType );
+
+        if( !peerTablePath.IsOk() )
+            continue;
+
+        // Open peer's table from disk. If absent, LIBRARY_TABLE leaves
+        // m_rows empty and we'll create the file on Save() below.
+        LIBRARY_TABLE peerTable( peerTablePath, LIBRARY_TABLE_SCOPE::PROJECT );
+        peerTable.SetType( aType );
+
+        std::vector<LIBRARY_TABLE_ROW>& peerRows = peerTable.Rows();
+        bool                            changed = false;
+
+        // Drop orphaned shared/conflict rows whose nickname is no
+        // longer in the container.
+        size_t before = peerRows.size();
+
+        peerRows.erase( std::remove_if( peerRows.begin(), peerRows.end(),
+                                [&]( const LIBRARY_TABLE_ROW& row )
+                                {
+                                    if( !row.Shared() && !row.Conflict() )
+                                        return false;
+
+                                    return !containerNicknames.contains( row.Nickname() );
+                                } ),
+                        peerRows.end() );
+
+        if( peerRows.size() != before )
+            changed = true;
+
+        // Add or refresh shared rows from the container. Mirror the
+        // logic in reconcileSharedRowsWithContainer so unshared local
+        // rows with matching content are left alone (they're already
+        // in sync via the local entry).
+        for( const LIBRARY_TABLE_ROW& containerRow : containerTable.Rows() )
+        {
+            LIBRARY_TABLE_ROW* existing = nullptr;
+            LIBRARY_TABLE_ROW* localMatch = nullptr;
+
+            for( LIBRARY_TABLE_ROW& row : peerRows )
+            {
+                if( row.Nickname() != containerRow.Nickname() )
+                    continue;
+
+                if( row.Shared() || row.Conflict() )
+                    existing = &row;
+                else
+                    localMatch = &row;
+            }
+
+            bool localCollision = ( localMatch != nullptr )
+                                  && !rowsHaveSameContent( *localMatch, containerRow );
+
+            if( existing )
+            {
+                bool needsUpdate = existing->URI() != containerRow.URI()
+                                || existing->Type() != containerRow.Type()
+                                || existing->Options() != containerRow.Options()
+                                || existing->Description() != containerRow.Description()
+                                || existing->Conflict() != localCollision
+                                || !existing->Shared();
+
+                if( needsUpdate )
+                {
+                    existing->SetURI( containerRow.URI() );
+                    existing->SetType( containerRow.Type() );
+                    existing->SetOptions( containerRow.Options() );
+                    existing->SetDescription( containerRow.Description() );
+                    existing->SetShared( true );
+                    existing->SetConflict( localCollision );
+                    changed = true;
+                }
+            }
+            else if( localMatch && !localCollision )
+            {
+                // Unshared local row already carries the same content —
+                // user opted out on this board, leave it alone.
+            }
+            else
+            {
+                peerRows.emplace_back(
+                        buildSharedRowCopy( containerRow, /*aConflict=*/localCollision ) );
+                changed = true;
+            }
+        }
+
+        if( changed )
+            (void) peerTable.Save();
+    }
+}
+
+
+LIBRARY_RESULT<void> LIBRARY_MANAGER::UnshareLibraryRow( LIBRARY_TABLE_TYPE aType,
+                                                         const wxString& aNickname,
+                                                         const PROJECT& aSubject )
+{
+    wxFileName subjectPro( aSubject.GetProjectFullName() );
+
+    if( !subjectPro.IsOk() )
+        return tl::unexpected( LIBRARY_ERROR( _( "Cannot unshare: invalid project" ) ) );
+
+    wxFileName tablePath = libTableFilePath( subjectPro, aType );
+    LIBRARY_TABLE table( tablePath, LIBRARY_TABLE_SCOPE::PROJECT );
+
+    if( !table.IsOk() )
+        return tl::unexpected( LIBRARY_ERROR(
+                _( "Cannot unshare: project has no library table" ) ) );
+
+    table.SetType( aType );
+
+    bool changed = false;
+
+    for( LIBRARY_TABLE_ROW& row : table.Rows() )
+    {
+        if( row.Nickname() == aNickname && ( row.Shared() || row.Conflict() ) )
+        {
+            row.SetShared( false );
+            row.SetConflict( false );
+            changed = true;
+            break;
+        }
+    }
+
+    if( !changed )
+        return tl::unexpected( LIBRARY_ERROR(
+                _( "Cannot unshare: no shared row with that nickname" ) ) );
+
+    LIBRARY_RESULT<void> r = table.Save();
+
+    if( !r.has_value() )
+        return r;
+
+    PROJECT& activePrj = Pgm().GetSettingsManager().Prj();
+
+    if( isSameProject( activePrj.GetProjectFullName(), subjectPro ) )
+        LoadProjectTables( activePrj.GetProjectDirectory(), { aType } );
+
+    return LIBRARY_RESULT<void>();
 }

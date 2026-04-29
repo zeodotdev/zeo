@@ -323,12 +323,40 @@ wxString PCB_BASE_EDIT_FRAME::createNewLibrary( const wxString& aDialogTitle, co
 
     wxFileName                fn;
     bool                      doAdd = false;
-    bool                      isGlobal = false;
-    FILEDLG_HOOK_NEW_LIBRARY  tableChooser( isGlobal );
+
+    // Multi-board (M7.1): expose a "Container" radio when the active
+    // project is itself a container (MBSCH context) or a member of one.
+    LIBRARY_SAVE_TARGET defaultTarget = LIBRARY_SAVE_TARGET::PROJECT;
+    bool                showContainer = false;
+
+    if( !Prj().IsNullProject() )
+    {
+        if( Prj().GetProjectFile().IsMultiBoardContainer() )
+        {
+            defaultTarget = LIBRARY_SAVE_TARGET::CONTAINER;
+            showContainer = true;
+        }
+        else if( !Prj().GetContainerProjectPath().IsEmpty() )
+        {
+            showContainer = true;
+        }
+    }
+
+    FILEDLG_HOOK_NEW_LIBRARY  tableChooser( defaultTarget, showContainer );
     FILEDLG_HOOK_NEW_LIBRARY* fileDlgHook = &tableChooser;
 
+    LIBRARY_SAVE_TARGET selectedTarget = defaultTarget;
+
     if( aScope )
+    {
+        // Caller forced a scope (e.g. CreateNewProjectLibrary). Skip the
+        // dialog's scope picker. Container scope can't be forced this way
+        // because it's not a LIBRARY_TABLE_SCOPE value.
+        selectedTarget = ( *aScope == LIBRARY_TABLE_SCOPE::GLOBAL )
+                                 ? LIBRARY_SAVE_TARGET::GLOBAL
+                                 : LIBRARY_SAVE_TARGET::PROJECT;
         fileDlgHook = nullptr;
+    }
 
     if( aLibName.IsEmpty() )
     {
@@ -341,10 +369,7 @@ wxString PCB_BASE_EDIT_FRAME::createNewLibrary( const wxString& aDialogTitle, co
         }
 
         if( fileDlgHook )
-        {
-            isGlobal = fileDlgHook->GetUseGlobalTable();
-            aScope = isGlobal ? LIBRARY_TABLE_SCOPE::GLOBAL : LIBRARY_TABLE_SCOPE::PROJECT;
-        }
+            selectedTarget = fileDlgHook->GetSaveTarget();
 
         doAdd = true;
     }
@@ -411,7 +436,7 @@ wxString PCB_BASE_EDIT_FRAME::createNewLibrary( const wxString& aDialogTitle, co
     }
 
     if( doAdd )
-        AddLibrary( aDialogTitle, libPath, aScope );
+        AddLibrary( aDialogTitle, libPath, selectedTarget );
 
     return libPath;
 }
@@ -480,19 +505,35 @@ wxString PCB_BASE_EDIT_FRAME::SelectLibrary( const wxString& aDialogTitle, const
 
 
 bool PCB_BASE_EDIT_FRAME::AddLibrary( const wxString& aDialogTitle, const wxString& aFilename,
-                                      std::optional<LIBRARY_TABLE_SCOPE> aScope )
+                                      std::optional<LIBRARY_SAVE_TARGET> aTarget )
 {
     FOOTPRINT_LIBRARY_ADAPTER* adapter = PROJECT_PCB::FootprintLibAdapter( &Prj() );
     LIBRARY_MANAGER&           manager = Pgm().GetLibraryManager();
-    bool                       isGlobal = false;
-    FILEDLG_HOOK_NEW_LIBRARY   tableChooser( isGlobal );
+
+    // Multi-board (M7.1): expose Container scope when relevant.
+    LIBRARY_SAVE_TARGET defaultTarget = LIBRARY_SAVE_TARGET::PROJECT;
+    bool                showContainer = false;
+
+    if( !Prj().IsNullProject() )
+    {
+        if( Prj().GetProjectFile().IsMultiBoardContainer() )
+        {
+            defaultTarget = LIBRARY_SAVE_TARGET::CONTAINER;
+            showContainer = true;
+        }
+        else if( !Prj().GetContainerProjectPath().IsEmpty() )
+        {
+            showContainer = true;
+        }
+    }
+
+    FILEDLG_HOOK_NEW_LIBRARY   tableChooser( defaultTarget, showContainer );
     FILEDLG_HOOK_NEW_LIBRARY*  fileDlgHook = &tableChooser;
 
-    if( aScope )
-    {
-        isGlobal = ( *aScope == LIBRARY_TABLE_SCOPE::GLOBAL );
+    LIBRARY_SAVE_TARGET selectedTarget = aTarget.value_or( defaultTarget );
+
+    if( aTarget )
         fileDlgHook = nullptr;
-    }
 
     wxFileName fn( aFilename );
 
@@ -505,10 +546,8 @@ bool PCB_BASE_EDIT_FRAME::AddLibrary( const wxString& aDialogTitle, const wxStri
         }
 
         if( fileDlgHook )
-            isGlobal = fileDlgHook->GetUseGlobalTable();
+            selectedTarget = fileDlgHook->GetSaveTarget();
     }
-
-    aScope = isGlobal ? LIBRARY_TABLE_SCOPE::GLOBAL : LIBRARY_TABLE_SCOPE::PROJECT;
 
     wxString libPath = fn.GetFullPath();
     wxString libName = fn.GetName();
@@ -532,38 +571,69 @@ bool PCB_BASE_EDIT_FRAME::AddLibrary( const wxString& aDialogTitle, const wxStri
     wxString normalizedPath = NormalizePath( libPath, &Pgm().GetLocalEnvVariables(), &Prj() );
     bool     success = true;
 
-    try
+    if( selectedTarget == LIBRARY_SAVE_TARGET::CONTAINER )
     {
-        std::optional<LIBRARY_TABLE*> optTable = manager.Table( LIBRARY_TABLE_TYPE::FOOTPRINT, aScope.value() );
-
-        if( !optTable )
-            return false;
-
-        LIBRARY_TABLE* table = optTable.value();
-
-        LIBRARY_TABLE_ROW& row = table->InsertRow();
-
+        // Fan out to container + every sub-project (M7.1.A). The path is
+        // written verbatim — users adding container-scope libs should
+        // pick absolute paths or paths under shared env vars, since
+        // ${KIPRJMOD} would resolve differently in each sub-project.
+        LIBRARY_TABLE_ROW row;
         row.SetNickname( libName );
         row.SetURI( normalizedPath );
         row.SetType( type );
+        row.SetOk();
 
-        table->Save().map_error(
+        manager.AddSharedLibrary( LIBRARY_TABLE_TYPE::FOOTPRINT, row, Prj() ).map_error(
                 [&]( const LIBRARY_ERROR& aError )
                 {
-                    wxMessageBox( _( "Error saving library table:\n\n" ) + aError.message,
+                    wxMessageBox( _( "Error sharing library to multi-board container:\n\n" )
+                                          + aError.message,
                                   _( "File Save Error" ), wxOK | wxICON_ERROR );
                     success = false;
                 } );
     }
-    catch( const IO_ERROR& ioe )
+    else
     {
-        DisplayError( this, ioe.What() );
-        return false;
+        LIBRARY_TABLE_SCOPE tableScope = ( selectedTarget == LIBRARY_SAVE_TARGET::GLOBAL )
+                                                ? LIBRARY_TABLE_SCOPE::GLOBAL
+                                                : LIBRARY_TABLE_SCOPE::PROJECT;
+
+        try
+        {
+            std::optional<LIBRARY_TABLE*> optTable =
+                    manager.Table( LIBRARY_TABLE_TYPE::FOOTPRINT, tableScope );
+
+            if( !optTable )
+                return false;
+
+            LIBRARY_TABLE* table = optTable.value();
+
+            LIBRARY_TABLE_ROW& row = table->InsertRow();
+
+            row.SetNickname( libName );
+            row.SetURI( normalizedPath );
+            row.SetType( type );
+
+            table->Save().map_error(
+                    [&]( const LIBRARY_ERROR& aError )
+                    {
+                        wxMessageBox( _( "Error saving library table:\n\n" ) + aError.message,
+                                      _( "File Save Error" ), wxOK | wxICON_ERROR );
+                        success = false;
+                    } );
+        }
+        catch( const IO_ERROR& ioe )
+        {
+            DisplayError( this, ioe.What() );
+            return false;
+        }
+
+        if( success )
+            manager.ReloadTables( tableScope, { LIBRARY_TABLE_TYPE::FOOTPRINT } );
     }
 
     if( success )
     {
-        manager.ReloadTables( aScope.value(), { LIBRARY_TABLE_TYPE::FOOTPRINT } );
         adapter->LoadOne( fn.GetName() );
 
         // Don't use dynamic_cast; it will fail across compile units on MacOS

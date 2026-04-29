@@ -74,6 +74,31 @@ public:
     void SetOpenEditorFiles( std::vector<std::string> aF ) { m_openEditorFiles = std::move( aF ); }
     const std::vector<std::string>& GetOpenEditorFiles() const { return m_openEditorFiles; }
 
+    /**
+     * Rich open-editor list used by check_status to surface the multi-board
+     * topology to the LLM. Each entry carries frame_type, file_path,
+     * project_full_path, sub_project_uuid (when known), sub_project_name,
+     * and an is_container flag.
+     *
+     * Stored as raw JSON strings so this header doesn't need to depend on
+     * the AGENT_OPEN_EDITOR struct (which lives in agent_frame.h, outside
+     * the tools/ tree).
+     */
+    void SetOpenEditorsJson( std::string aJson )           { m_openEditorsJson = std::move( aJson ); }
+    const std::string& GetOpenEditorsJson() const          { return m_openEditorsJson; }
+
+    /**
+     * Multi-board container metadata, JSON string. Empty when the active
+     * project is not a multi-board container. Populated alongside
+     * SetOpenEditorsJson by AGENT_FRAME on every check_status path.
+     *
+     * Schema: { "pro_path": "...", "name": "...", "mbs_file_path": "...",
+     *           "sub_projects": [ { "uuid", "name", "relative_path",
+     *                               "absolute_path", "sch_file", "pcb_file" } ] }
+     */
+    void SetMultiBoardContainerJson( std::string aJson )   { m_multiBoardContainerJson = std::move( aJson ); }
+    const std::string& GetMultiBoardContainerJson() const  { return m_multiBoardContainerJson; }
+
     void SetSendRequestFn( SendRequestFn aFn )            { m_sendRequestFn = std::move( aFn ); }
     const SendRequestFn& GetSendRequestFn() const         { return m_sendRequestFn; }
 
@@ -137,6 +162,8 @@ private:
     std::string   m_projectPath;
     std::string   m_projectName;
     std::vector<std::string> m_openEditorFiles;
+    std::string   m_openEditorsJson;
+    std::string   m_multiBoardContainerJson;
     SendRequestFn m_sendRequestFn;
     SendFireAndForgetFn m_sendFireAndForgetFn;
 

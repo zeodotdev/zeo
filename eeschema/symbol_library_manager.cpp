@@ -712,6 +712,62 @@ wxString SYMBOL_LIBRARY_MANAGER::getLibraryName( const wxString& aFilePath )
 }
 
 
+bool SYMBOL_LIBRARY_MANAGER::addSharedLibrary( const wxString& aFilePath, bool aCreate )
+{
+    wxString libName = getLibraryName( aFilePath );
+    wxCHECK( !LibraryExists( libName ), false );
+
+    // try to use path normalized to an environmental variable or project path
+    wxString relPath = NormalizePath( aFilePath, &Pgm().GetLocalEnvVariables(), &m_frame.Prj() );
+
+    SCH_IO_MGR::SCH_FILE_T schFileType = SCH_IO_MGR::GuessPluginTypeFromLibPath( aFilePath,
+                                                                                 aCreate ? KICTL_CREATE
+                                                                                         : 0 );
+
+    if( schFileType == SCH_IO_MGR::SCH_FILE_UNKNOWN )
+        schFileType = SCH_IO_MGR::SCH_LEGACY;
+
+    // Container scope can't host a legacy-format symbol library — the row
+    // gets replicated to peers that may not have legacy support enabled.
+    if( aCreate )
+        wxCHECK( schFileType != SCH_IO_MGR::SCH_FILE_T::SCH_LEGACY, false );
+
+    SYMBOL_LIBRARY_ADAPTER* adapter = PROJECT_SCH::SymbolLibAdapter( &m_frame.Prj() );
+    LIBRARY_MANAGER&        manager = Pgm().GetLibraryManager();
+
+    LIBRARY_TABLE_ROW row;
+    row.SetNickname( libName );
+    row.SetURI( relPath );
+    row.SetType( SCH_IO_MGR::ShowType( schFileType ) );
+    row.SetOk();
+
+    bool success = true;
+
+    manager.AddSharedLibrary( LIBRARY_TABLE_TYPE::SYMBOL, row, m_frame.Prj() ).map_error(
+            [&]( const LIBRARY_ERROR& aError )
+            {
+                wxMessageBox( _( "Error sharing library to multi-board container:\n\n" )
+                                      + aError.message,
+                              _( "File Save Error" ), wxOK | wxICON_ERROR );
+                success = false;
+            } );
+
+    if( !success )
+        return false;
+
+    if( aCreate )
+    {
+        if( !adapter->CreateLibrary( libName ) )
+            return false;
+    }
+
+    adapter->LoadOne( libName );
+    OnDataChanged();
+
+    return true;
+}
+
+
 bool SYMBOL_LIBRARY_MANAGER::addLibrary( const wxString& aFilePath, bool aCreate, LIBRARY_TABLE_SCOPE aScope )
 {
     wxString libName = getLibraryName( aFilePath );

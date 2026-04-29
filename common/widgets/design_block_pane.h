@@ -81,6 +81,10 @@ public:
     bool AddDesignBlockLibrary( const wxString& aDialogTitle, const wxString& aFilename,
                                 LIBRARY_TABLE_SCOPE aScope );
 
+    /// Add an existing library and replicate it across the multi-board
+    /// container's lib-table and every sub-project's lib-table (M7.1.A).
+    bool AddSharedDesignBlockLibrary( const wxString& aDialogTitle, const wxString& aFilename );
+
     bool DeleteDesignBlockLibrary( const wxString& aLibName, bool aConfirm );
 
     bool DeleteDesignBlockFromLibrary( const LIB_ID& aLibId, bool aConfirm );

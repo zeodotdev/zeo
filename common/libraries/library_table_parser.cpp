@@ -135,6 +135,8 @@ struct LIBRARY_TABLE_PARSER_ACTION<Rule>                                        
 
 DEFINE_FLAG_ACTION( HIDDEN_MARKER, current_row_model.hidden );
 DEFINE_FLAG_ACTION( DISABLED_MARKER, current_row_model.disabled );
+DEFINE_FLAG_ACTION( SHARED_MARKER, current_row_model.shared );
+DEFINE_FLAG_ACTION( CONFLICT_MARKER, current_row_model.conflict );
 
 
 template <>

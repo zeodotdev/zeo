@@ -44,6 +44,8 @@ namespace KEYWORDS
     struct DESCR : TAO_PEGTL_STRING( "descr" ) {};
     struct HIDDEN : TAO_PEGTL_STRING( "hidden" ) {};
     struct DISABLED : TAO_PEGTL_STRING( "disabled" ) {};
+    struct SHARED : TAO_PEGTL_STRING( "shared" ) {};
+    struct CONFLICT : TAO_PEGTL_STRING( "conflict" ) {};
 
     struct SYM_LIB_TABLE : TAO_PEGTL_STRING( "sym_lib_table" ) {};
     struct FP_LIB_TABLE : TAO_PEGTL_STRING( "fp_lib_table" ) {};
@@ -104,8 +106,11 @@ struct TABLE_VERSION : seq<
 
 struct HIDDEN_MARKER : seq< LPAREN, KEYWORDS::HIDDEN, RPAREN > {};
 struct DISABLED_MARKER : seq< LPAREN, KEYWORDS::DISABLED, RPAREN > {};
+struct SHARED_MARKER : seq< LPAREN, KEYWORDS::SHARED, RPAREN > {};
+struct CONFLICT_MARKER : seq< LPAREN, KEYWORDS::CONFLICT, RPAREN > {};
 
-struct LIB_ROW_MEMBER : sor< LIB_PROPERTY, HIDDEN_MARKER, DISABLED_MARKER > {};
+struct LIB_ROW_MEMBER : sor< LIB_PROPERTY, HIDDEN_MARKER, DISABLED_MARKER,
+                             SHARED_MARKER, CONFLICT_MARKER > {};
 
 // (lib (name ...)(type ...)...)
 struct LIB_ROW : if_must<

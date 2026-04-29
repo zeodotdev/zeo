@@ -183,7 +183,7 @@ int PCB_CONTROL::DdAddLibrary( const TOOL_EVENT& aEvent )
 {
     const wxString fn = *aEvent.Parameter<wxString*>();
     static_cast<PCB_BASE_EDIT_FRAME*>( m_frame )->AddLibrary( _( "Add Footprint Library" ), fn,
-                                                              LIBRARY_TABLE_SCOPE::PROJECT );
+                                                              LIBRARY_SAVE_TARGET::PROJECT );
     return 0;
 }
 

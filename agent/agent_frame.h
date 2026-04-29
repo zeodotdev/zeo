@@ -26,6 +26,26 @@ class CHAT_CONTROLLER;
 class WEBVIEW_BRIDGE;
 struct CONFLICT_INFO;
 
+
+/**
+ * One open editor reported in `check_status`. Captures enough for the
+ * agent to address the editor by sub-project — see Phase A of the
+ * multi-board agent plan in MULTI_BOARD_REFACTOR_PLAN.md.
+ *
+ * `subProjectUuid` is empty for editors that don't sit under a
+ * multi-board container (standalone projects), and for the MBSCH
+ * editor itself (which IS the container's schematic).
+ */
+struct AGENT_OPEN_EDITOR
+{
+    int      frameType = 0;            ///< FRAME_T value (FRAME_SCH / FRAME_PCB_EDITOR / FRAME_MBSCH / ...)
+    wxString filePath;                 ///< Absolute path of the document the frame is editing
+    wxString projectFullPath;          ///< Absolute path of the .kicad_pro this frame is bound to
+    wxString subProjectUuid;           ///< Sub-project KIID as string when this frame edits a sub-project of a container
+    wxString subProjectName;           ///< Sub-project basename (e.g. "fc") when applicable
+    bool     isContainer = false;      ///< True when this frame's project IS the multi-board container
+};
+
 enum class AgentBackend { ZEO_AGENT, CLAUDE_CODE };
 
 enum
@@ -325,7 +345,16 @@ private:
 
     // Multi-project access helpers
     std::vector<wxString> GetOpenEditorFiles();
+    std::vector<AGENT_OPEN_EDITOR> GetOpenEditors();
     std::vector<wxString> GetAllowedPaths();
+
+    /**
+     * Refresh the TOOL_REGISTRY's open-editor + multi-board state. Call
+     * before invoking any handler that consumes `check_status` data so the
+     * LLM gets an accurate picture of which editors are open against
+     * which sub-projects of any active multi-board container.
+     */
+    void PublishOpenEditorStatusToRegistry();
 
     // Async LLM streaming helpers
     void StartAsyncLLMRequest();

@@ -115,6 +115,19 @@ wxString LIB_TABLE_GRID_DATA_MODEL::GetValue( int aRow, int aCol )
         if( !r.IsOk() )
             return r.ErrorDescription();
 
+        if( r.Conflict() )
+        {
+            // Multi-board (M7.1.D): row was replicated from the container
+            // but a non-shared local row holds the same nickname. Lookup
+            // resolves to the local row; this one is parked here so the
+            // user can spot the clash and rename to resolve.
+            return wxString::Format(
+                    _( "Container library '%s' conflicts with a local "
+                       "library of the same nickname. Rename either side "
+                       "to resolve — until then, this row is ignored." ),
+                    r.Nickname() );
+        }
+
         if( std::optional<LIBRARY_ERROR> error = m_adapter->LibraryError( r.Nickname() ) )
             return error->message;
 
@@ -154,7 +167,7 @@ wxGridCellAttr* LIB_TABLE_GRID_DATA_MODEL::GetAttr( int aRow, int aCol, wxGridCe
         return enhanceAttr( m_boolAttr, aRow, aCol, aKind );
 
     case COL_STATUS:
-        if( !tableRow.IsOk() )
+        if( !tableRow.IsOk() || tableRow.Conflict() )
         {
             m_warningAttr->IncRef();
             return enhanceAttr( m_warningAttr, aRow, aCol, aKind );
@@ -181,6 +194,24 @@ wxGridCellAttr* LIB_TABLE_GRID_DATA_MODEL::GetAttr( int aRow, int aCol, wxGridCe
         return enhanceAttr( m_noStatusAttr, aRow, aCol, aKind );
 
     case COL_NICKNAME:
+    {
+        // Multi-board (M7.1): show shared rows in italic so users can
+        // tell at a glance which entries are managed by the container.
+        // Conflict rows aren't italicized — they already get a warning
+        // icon in the status column and their text in the status reads
+        // as the error.
+        if( tableRow.Shared() && !tableRow.Conflict() )
+        {
+            wxGridCellAttr* attr = new wxGridCellAttr;
+            wxFont          font = attr->GetFont();
+            font.MakeItalic();
+            attr->SetFont( font );
+            return enhanceAttr( attr, aRow, aCol, aKind );
+        }
+
+        return enhanceAttr( nullptr, aRow, aCol, aKind );
+    }
+
     case COL_OPTIONS:
     case COL_DESCR:
     default:

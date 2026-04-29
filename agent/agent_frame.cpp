@@ -22,6 +22,9 @@
 #include <api/api_server.h>
 #include <settings/common_settings.h>
 #include <settings/settings_manager.h>
+#include <project.h>
+#include <project/project_file.h>
+#include <project/multi_board_scan.h>
 #include <wx/log.h>
 #include <kiway.h>
 #include <paths.h>
@@ -531,15 +534,7 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
             reg.SetProjectPath( projectPath.ToStdString() );
             reg.SetProjectName( Kiway().Prj().GetProjectName().ToStdString() );
 
-            KIWAY_PLAYER* schEditor = Kiway().Player( FRAME_SCH, false );
-            KIWAY_PLAYER* pcbEditor = Kiway().Player( FRAME_PCB_EDITOR, false );
-            reg.SetSchematicEditorOpen( schEditor && schEditor->IsShown() );
-            reg.SetPcbEditorOpen( pcbEditor && pcbEditor->IsShown() );
-
-            std::vector<std::string> openFiles;
-            for( const auto& f : GetOpenEditorFiles() )
-                openFiles.push_back( f.ToStdString() );
-            reg.SetOpenEditorFiles( std::move( openFiles ) );
+            PublishOpenEditorStatusToRegistry();
 
             return CHECK_STATUS_HANDLER::BuildStatusJson();
         } );
@@ -662,22 +657,10 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     // Sync editor + project state to TOOL_REGISTRY before each tool execution
     m_chatController->SetEditorStateSyncFn(
         [this]() {
-            KIWAY_PLAYER* schEditor = Kiway().Player( FRAME_SCH, false );
-            KIWAY_PLAYER* pcbEditor = Kiway().Player( FRAME_PCB_EDITOR, false );
-
-            bool schOpen = schEditor && schEditor->IsShown();
-            bool pcbOpen = pcbEditor && pcbEditor->IsShown();
-
             auto& reg = TOOL_REGISTRY::Instance();
-            reg.SetSchematicEditorOpen( schOpen );
-            reg.SetPcbEditorOpen( pcbOpen );
             reg.SetProjectPath( Kiway().Prj().GetProjectPath().ToStdString() );
             reg.SetProjectName( Kiway().Prj().GetProjectName().ToStdString() );
-
-            std::vector<std::string> openFiles;
-            for( const auto& f : GetOpenEditorFiles() )
-                openFiles.push_back( f.ToStdString() );
-            reg.SetOpenEditorFiles( std::move( openFiles ) );
+            PublishOpenEditorStatusToRegistry();
 
             // Provide IPC functions so handlers (pcb_autoroute, generate_net_classes)
             // can communicate with editor frames.
@@ -1436,19 +1419,10 @@ void AGENT_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& aEvent )
 
         // Sync Kiway state to TOOL_REGISTRY (same as SetEditorStateSyncFn in chat flow)
         {
-            KIWAY_PLAYER* schEditor = Kiway().Player( FRAME_SCH, false );
-            KIWAY_PLAYER* pcbEditor = Kiway().Player( FRAME_PCB_EDITOR, false );
-
             auto& reg = TOOL_REGISTRY::Instance();
-            reg.SetSchematicEditorOpen( schEditor && schEditor->IsShown() );
-            reg.SetPcbEditorOpen( pcbEditor && pcbEditor->IsShown() );
             reg.SetProjectPath( Kiway().Prj().GetProjectPath().ToStdString() );
             reg.SetProjectName( Kiway().Prj().GetProjectName().ToStdString() );
-
-            std::vector<std::string> openFiles;
-            for( const auto& f : GetOpenEditorFiles() )
-                openFiles.push_back( f.ToStdString() );
-            reg.SetOpenEditorFiles( std::move( openFiles ) );
+            PublishOpenEditorStatusToRegistry();
 
             // Provide send request function so handlers like pcb_autoroute and
             // generate_net_classes can communicate with editor frames via IPC.
@@ -5687,19 +5661,8 @@ std::vector<wxString> AGENT_FRAME::GetOpenEditorFiles()
 {
     std::vector<wxString> files;
 
-    // Editors within our KIWAY (same process)
-    for( FRAME_T ft : { FRAME_SCH, FRAME_PCB_EDITOR } )
-    {
-        KIWAY_PLAYER* player = Kiway().Player( ft, false );
-
-        if( player && player->IsShown() )
-        {
-            wxString f = player->GetCurrentFileName();
-
-            if( !f.IsEmpty() )
-                files.push_back( f );
-        }
-    }
+    for( const AGENT_OPEN_EDITOR& ed : GetOpenEditors() )
+        files.push_back( ed.filePath );
 
     // Standalone editor processes (eeschema/pcbnew launched outside this KIWAY)
 #ifdef __APPLE__
@@ -5711,6 +5674,441 @@ std::vector<wxString> AGENT_FRAME::GetOpenEditorFiles()
         wxLogInfo( "AGENT: Open editor file: %s", f );
 
     return files;
+}
+
+
+/**
+ * Walk all open editor frames, identify the multi-board container project
+ * (if any) by checking each frame's PROJECT_FILE for IsMultiBoardContainer(),
+ * then build an AGENT_OPEN_EDITOR list with sub-project resolution applied.
+ *
+ * Sub-project matching is by absolute `.kicad_pro` path: container holds a
+ * list of SUB_PROJECT_INFO with relative paths; we resolve each to absolute
+ * via PROJECT_FILE::ResolveSubProjectPath and compare against
+ * `frame->Prj().GetProjectFullName()` (case-insensitive on macOS/Windows).
+ */
+/**
+ * Compose an absolute `.kicad_pro` path for a given editor frame.
+ *
+ * `PROJECT::GetProjectFullName()` returns only the project basename
+ * because SETTINGS_MANAGER stores PROJECT_FILE with `SetFilename(name)`,
+ * not the full path. To get a stable absolute path we use the frame's
+ * own `GetCurrentFileName()` (always absolute) directory + the project
+ * basename + `.kicad_pro` — gives the same answer for top-level sheets
+ * and for nested sub-sheets within a hierarchical schematic.
+ */
+static wxString resolveFrameProjectPath( KIWAY_PLAYER* aPlayer )
+{
+    if( !aPlayer )
+        return wxEmptyString;
+
+    wxString filePath = aPlayer->GetCurrentFileName();
+    wxString projName;
+
+    try
+    {
+        projName = aPlayer->Prj().GetProjectName();
+    }
+    catch( ... )
+    {
+    }
+
+    if( filePath.IsEmpty() || projName.IsEmpty() )
+        return wxEmptyString;
+
+    wxFileName fn( filePath );
+    fn.SetFullName( projName + wxT( ".kicad_pro" ) );
+    return fn.GetFullPath();
+}
+
+
+std::vector<AGENT_OPEN_EDITOR> AGENT_FRAME::GetOpenEditors()
+{
+    std::vector<AGENT_OPEN_EDITOR> result;
+
+    constexpr FRAME_T kEditorTypes[] = { FRAME_SCH, FRAME_MBSCH, FRAME_PCB_EDITOR };
+
+    // ---- First pass: collect every visible editor frame (primary + peers) ----
+    struct FrameEntry
+    {
+        FRAME_T  frameType;
+        wxString filePath;
+        wxString projectFullPath;   ///< Absolute, derived from filePath + project name
+    };
+    std::vector<FrameEntry> frames;
+
+    for( FRAME_T ft : kEditorTypes )
+    {
+        for( KIWAY_PLAYER* player : Kiway().GetAllPlayerFrames( ft ) )
+        {
+            if( !player || !player->IsShown() )
+                continue;
+
+            wxString filePath = player->GetCurrentFileName();
+            wxString projPath = resolveFrameProjectPath( player );
+
+            frames.push_back( { ft, std::move( filePath ), std::move( projPath ) } );
+        }
+    }
+
+    if( frames.empty() )
+        return result;
+
+    // ---- Find the container project among the open frames ----
+    // Prefer to look it up via SETTINGS_MANAGER (which holds the loaded
+    // PROJECT_FILE that knows IsMultiBoardContainer()). The lookup key
+    // uses the basename — that's what SETTINGS_MANAGER indexes by.
+    PROJECT* container = nullptr;
+
+    for( const FrameEntry& f : frames )
+    {
+        wxString basenameKey = wxFileName( f.projectFullPath ).GetFullName();
+
+        if( basenameKey.IsEmpty() )
+            continue;
+
+        PROJECT* p = Pgm().GetSettingsManager().GetProject( basenameKey );
+
+        if( p && p->GetProjectFile().IsMultiBoardContainer() )
+        {
+            container = p;
+            break;
+        }
+    }
+
+    if( !container )
+    {
+        try
+        {
+            PROJECT& kp = Kiway().Prj();
+
+            if( kp.GetProjectFile().IsMultiBoardContainer() )
+                container = &kp;
+        }
+        catch( ... )
+        {
+        }
+    }
+
+    // ---- Find the absolute container directory ----
+    // Same problem as above: container->GetProjectPath() may return empty.
+    // Take the directory from any open editor frame whose project basename
+    // matches the container's (i.e. the MBSCH frame). Fallback: cwd.
+    wxString containerAbsPath;
+    wxString containerDirectory;
+    wxString containerBasename;
+
+    if( container )
+    {
+        containerBasename = container->GetProjectName() + wxT( ".kicad_pro" );
+
+        for( const FrameEntry& f : frames )
+        {
+            wxString fbase = wxFileName( f.projectFullPath ).GetFullName();
+
+            if( fbase.IsSameAs( containerBasename, false ) )
+            {
+                containerAbsPath = f.projectFullPath;
+                containerDirectory = wxFileName( f.projectFullPath ).GetPath();
+                break;
+            }
+        }
+    }
+
+    // ---- Build the sub-project (absolute path) -> uuid map ----
+    struct SubProjectKey
+    {
+        wxString name;
+        wxString uuid;
+    };
+    std::map<wxString, SubProjectKey> subByAbsPath;
+
+    auto normalize = []( const wxString& aPath ) -> wxString
+    {
+        wxString p = aPath;
+#if defined( __WXMSW__ ) || defined( __WXMAC__ )
+        p.MakeLower();
+#endif
+        return p;
+    };
+
+    if( container )
+    {
+        PROJECT_FILE& cf = container->GetProjectFile();
+
+        for( const SUB_PROJECT_INFO& info : cf.GetSubProjects() )
+        {
+            wxFileName resolved;
+
+            // Prefer composing against the known container directory rather
+            // than relying on ResolveSubProjectPath's cwd-based MakeAbsolute.
+            if( !containerDirectory.IsEmpty() )
+            {
+                resolved.Assign( info.relativePath );
+
+                if( !resolved.IsAbsolute() )
+                    resolved.MakeAbsolute( containerDirectory );
+
+                resolved.Normalize( wxPATH_NORM_ABSOLUTE | wxPATH_NORM_DOTS );
+            }
+            else
+            {
+                resolved = cf.ResolveSubProjectPath( info );
+            }
+
+            subByAbsPath[normalize( resolved.GetFullPath() )] =
+                    { info.name, info.uuid.AsStdString() };
+        }
+    }
+
+    // ---- Second pass: emit AGENT_OPEN_EDITOR entries with sub-project info ----
+    for( const FrameEntry& f : frames )
+    {
+        AGENT_OPEN_EDITOR ed;
+        ed.frameType = static_cast<int>( f.frameType );
+        ed.filePath = f.filePath;
+        ed.projectFullPath = f.projectFullPath;
+
+        if( !containerAbsPath.IsEmpty()
+                && normalize( f.projectFullPath ) == normalize( containerAbsPath ) )
+        {
+            ed.isContainer = true;
+        }
+        else if( !f.projectFullPath.IsEmpty() )
+        {
+            auto it = subByAbsPath.find( normalize( f.projectFullPath ) );
+
+            if( it != subByAbsPath.end() )
+            {
+                ed.subProjectUuid = it->second.uuid;
+                ed.subProjectName = it->second.name;
+            }
+        }
+
+        result.push_back( std::move( ed ) );
+    }
+
+    return result;
+}
+
+
+/**
+ * Map a FRAME_T to a short string the LLM can switch on.
+ * Keep in sync with the kipy-mode names in BuildModeInitCode (sch / pcb / mbs).
+ */
+static std::string frameTypeLabel( int aFrameType )
+{
+    switch( static_cast<FRAME_T>( aFrameType ) )
+    {
+    case FRAME_SCH:         return "sch";
+    case FRAME_MBSCH:       return "mbs";
+    case FRAME_PCB_EDITOR:  return "pcb";
+    default:                return "other";
+    }
+}
+
+
+void AGENT_FRAME::PublishOpenEditorStatusToRegistry()
+{
+    auto& reg = TOOL_REGISTRY::Instance();
+
+    // ---- Collect rich editor info, also derive the legacy flat lists ----
+    std::vector<AGENT_OPEN_EDITOR> editors = GetOpenEditors();
+
+    // Legacy bools — we still publish them so check_status keeps the
+    // schematic_editor_open / pcb_editor_open top-level fields working.
+    bool anySchOpen = false;
+    bool anyPcbOpen = false;
+
+    nlohmann::json editorsArr = nlohmann::json::array();
+    std::vector<std::string> openFiles;
+
+    for( const AGENT_OPEN_EDITOR& ed : editors )
+    {
+        if( ed.frameType == FRAME_SCH || ed.frameType == FRAME_MBSCH )
+            anySchOpen = true;
+
+        if( ed.frameType == FRAME_PCB_EDITOR )
+            anyPcbOpen = true;
+
+        if( !ed.filePath.IsEmpty() )
+            openFiles.push_back( ed.filePath.ToStdString() );
+
+        editorsArr.push_back( {
+            { "frame_type",        frameTypeLabel( ed.frameType ) },
+            { "file_path",         ed.filePath.ToStdString() },
+            { "project_full_path", ed.projectFullPath.ToStdString() },
+            { "sub_project_uuid",  ed.subProjectUuid.ToStdString() },
+            { "sub_project_name",  ed.subProjectName.ToStdString() },
+            { "is_container",      ed.isContainer },
+        } );
+    }
+
+    reg.SetSchematicEditorOpen( anySchOpen );
+    reg.SetPcbEditorOpen( anyPcbOpen );
+    reg.SetOpenEditorFiles( std::move( openFiles ) );
+    reg.SetOpenEditorsJson( editorsArr.dump() );
+
+    // ---- Build multi-board container JSON when applicable ----
+    // Find the container PROJECT and the absolute container directory
+    // (derived from the MBSCH frame's editor path — see GetOpenEditors
+    // for the rationale).
+    PROJECT* container = nullptr;
+    wxString containerAbsPath;
+    wxString containerDirectory;
+
+    for( const AGENT_OPEN_EDITOR& ed : editors )
+    {
+        if( ed.isContainer )
+        {
+            containerAbsPath = ed.projectFullPath;
+            containerDirectory = wxFileName( ed.projectFullPath ).GetPath();
+            break;
+        }
+    }
+
+    if( !containerAbsPath.IsEmpty() )
+    {
+        wxString basenameKey = wxFileName( containerAbsPath ).GetFullName();
+        container = Pgm().GetSettingsManager().GetProject( basenameKey );
+    }
+
+    if( !container )
+    {
+        try
+        {
+            PROJECT& kp = Kiway().Prj();
+
+            if( kp.GetProjectFile().IsMultiBoardContainer() )
+                container = &kp;
+        }
+        catch( ... )
+        {
+        }
+    }
+
+    if( !container )
+    {
+        reg.SetMultiBoardContainerJson( "" );
+        return;
+    }
+
+    // Container found — overwrite the registry's project_path/name with the
+    // absolute container info. Without this, the top-level project_path
+    // field surfaces as empty because Kiway().Prj().GetProjectPath() lacks
+    // the directory for projects loaded via the multi-board path.
+    if( !containerDirectory.IsEmpty() )
+    {
+        wxString withSep = containerDirectory;
+
+        if( !withSep.EndsWith( wxFileName::GetPathSeparator() ) )
+            withSep += wxFileName::GetPathSeparator();
+
+        reg.SetProjectPath( withSep.ToStdString() );
+    }
+
+    if( !container->GetProjectName().IsEmpty() )
+        reg.SetProjectName( container->GetProjectName().ToStdString() );
+
+    PROJECT_FILE& cf = container->GetProjectFile();
+
+    nlohmann::json containerJson;
+    containerJson["pro_path"] = containerAbsPath.IsEmpty()
+            ? container->GetProjectFullName().ToStdString()
+            : containerAbsPath.ToStdString();
+    containerJson["name"] = container->GetProjectName().ToStdString();
+
+    if( !cf.GetMbsFileName().IsEmpty() && !containerDirectory.IsEmpty() )
+    {
+        wxFileName mbsFn( containerDirectory, cf.GetMbsFileName() );
+        containerJson["mbs_file_path"] = mbsFn.GetFullPath().ToStdString();
+    }
+    else
+    {
+        // Fallback: use the MBSCH editor's own file path (it IS the MBS).
+        wxString mbsPath;
+
+        for( const AGENT_OPEN_EDITOR& ed : editors )
+        {
+            if( ed.frameType == FRAME_MBSCH && ed.isContainer )
+            {
+                mbsPath = ed.filePath;
+                break;
+            }
+        }
+
+        containerJson["mbs_file_path"] = mbsPath.ToStdString();
+    }
+
+    // mbs_editor_open: any open MBSCH frame whose project IS the container.
+    bool mbsEditorOpen = false;
+
+    for( const AGENT_OPEN_EDITOR& ed : editors )
+    {
+        if( ed.frameType == FRAME_MBSCH && ed.isContainer )
+        {
+            mbsEditorOpen = true;
+            break;
+        }
+    }
+
+    containerJson["mbs_editor_open"] = mbsEditorOpen;
+
+    nlohmann::json subsArr = nlohmann::json::array();
+
+    for( const SUB_PROJECT_INFO& info : cf.GetSubProjects() )
+    {
+        wxFileName resolved;
+
+        if( !containerDirectory.IsEmpty() )
+        {
+            resolved.Assign( info.relativePath );
+
+            if( !resolved.IsAbsolute() )
+                resolved.MakeAbsolute( containerDirectory );
+
+            resolved.Normalize( wxPATH_NORM_ABSOLUTE | wxPATH_NORM_DOTS );
+        }
+        else
+        {
+            resolved = cf.ResolveSubProjectPath( info );
+        }
+
+        wxFileName subSch = MultiBoardMainSchematic( resolved );
+        wxFileName subPcb = MultiBoardMainPcb( resolved );
+
+        std::string uuidStr = info.uuid.AsStdString();
+        bool        schOpen = false;
+        bool        pcbOpen = false;
+
+        for( const AGENT_OPEN_EDITOR& ed : editors )
+        {
+            if( ed.subProjectUuid.ToStdString() != uuidStr )
+                continue;
+
+            if( ed.frameType == FRAME_SCH )
+                schOpen = true;
+            else if( ed.frameType == FRAME_PCB_EDITOR )
+                pcbOpen = true;
+        }
+
+        subsArr.push_back( {
+            { "uuid",             uuidStr },
+            { "name",             info.name.ToStdString() },
+            { "relative_path",    info.relativePath.ToStdString() },
+            { "absolute_path",    resolved.GetFullPath().ToStdString() },
+            { "sch_file",         subSch.GetFullPath().ToStdString() },
+            { "pcb_file",         subPcb.GetFullPath().ToStdString() },
+            { "sch_editor_open",  schOpen },
+            { "pcb_editor_open",  pcbOpen },
+        } );
+    }
+
+    containerJson["sub_projects"] = subsArr;
+    containerJson["sub_project_count"] = subsArr.size();
+    containerJson["cross_board_net_count"] = cf.GetCrossBoardNets().size();
+
+    reg.SetMultiBoardContainerJson( containerJson.dump() );
 }
 
 

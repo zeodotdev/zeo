@@ -42,7 +42,9 @@ bool LIBRARY_TABLE_ROW::operator==( const LIBRARY_TABLE_ROW& aOther ) const
             && m_options == aOther.m_options
             && m_description == aOther.m_description
             && m_disabled == aOther.m_disabled
-            && m_hidden == aOther.m_hidden;
+            && m_hidden == aOther.m_hidden
+            && m_shared == aOther.m_shared
+            && m_conflict == aOther.m_conflict;
 }
 
 
@@ -151,6 +153,8 @@ bool LIBRARY_TABLE::addRowFromIR( const LIBRARY_TABLE_ROW_IR& aIR )
     row.m_description = wxString::FromUTF8( aIR.description );
     row.m_hidden = aIR.hidden;
     row.m_disabled = aIR.disabled;
+    row.m_shared = aIR.shared;
+    row.m_conflict = aIR.conflict;
     row.m_ok = true;
     row.m_scope = m_scope;
 
@@ -191,6 +195,12 @@ void LIBRARY_TABLE::Format( OUTPUTFORMATTER* aOutput ) const
 
         if( row.Hidden() )
             rowNode->AddChild( new XNODE( wxXML_ELEMENT_NODE, "hidden" ) );
+
+        if( row.Shared() )
+            rowNode->AddChild( new XNODE( wxXML_ELEMENT_NODE, "shared" ) );
+
+        if( row.Conflict() )
+            rowNode->AddChild( new XNODE( wxXML_ELEMENT_NODE, "conflict" ) );
 
         self.AddChild( rowNode );
     }

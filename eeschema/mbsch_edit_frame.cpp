@@ -190,6 +190,8 @@ void MBSCH_EDIT_FRAME::doReCreateMenuBar()
     // -- Preferences menu --
     ACTION_MENU* prefsMenu = new ACTION_MENU( false, selTool );
     prefsMenu->Add( ACTIONS::configurePaths );
+    prefsMenu->Add( ACTIONS::showSymbolLibTable );
+    prefsMenu->Add( ACTIONS::showDesignBlockLibTable );
     prefsMenu->AppendSeparator();
     prefsMenu->Add( ACTIONS::openPreferences );
 

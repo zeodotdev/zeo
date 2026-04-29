@@ -35,6 +35,7 @@ enum COL_ORDER
     COL_NICKNAME,
     COL_URI,
     COL_TYPE,
+    COL_SHARE,      // M7.1: shows multi-board share status; hidden when irrelevant
     COL_OPTIONS,
     COL_DESCR,
 

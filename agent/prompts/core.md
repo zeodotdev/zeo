@@ -53,10 +53,41 @@ peer windows; never assume "the schematic" or "the board" is unambiguous
 on a multi-board project. If the user's request is ambiguous about
 which board, ask before proceeding.
 
-**MBS-specific tools** (`mbs_*`) only work when the multi-board
-schematic editor is open (`container.mbs_editor_open == true`). They
+**Targeting a specific sub-project — `target` parameter.** Every
+`sch_*` and `pcb_*` tool accepts an optional `target` object:
+
+```json
+{ "target": { "sub_project_uuid": "<uuid from check_status>" } }
+```
+
+- On a **multi-board project** with multiple sub-project editors of the
+  matching doc type open, you **must** set `target.sub_project_uuid` to
+  the uuid of the sub-project you want to edit. The agent fails the
+  tool call with a clear error if the uuid doesn't match any
+  sub-project in the active container, so always copy the uuid verbatim
+  from `check_status`'s `sub_projects[]`.
+- On a **standalone single-board project**, omit `target` (the tool
+  routes to the only open editor).
+- On a multi-board project with **only one** sub-project editor of the
+  matching doc type open, omitting `target` works (current behavior),
+  but it's safer to be explicit so the call doesn't break later when
+  the user opens a second editor.
+
+**`mbs_*` tools** ignore `target` — there's only one MBS per container,
+and they only work when `container.mbs_editor_open == true`. They
 operate on the cross-board topology — module blocks, cross-board nets,
 container metadata.
+
+**Worked example.** User asks: "Add a 10k pull-up from GPIO0 to 3V3 on
+the esp_cm board." Steps:
+1. `check_status` → see `is_multi_board_container: true`, find the
+   sub-project entry with `name: "esp_cm"`, copy its `uuid`
+2. Confirm `sub_projects[N].sch_editor_open == true` for that sub-project
+   (open it first if not — see Phase C `open_editor`)
+3. Call `sch_add` (or any other tool) with
+   `target.sub_project_uuid: "<the uuid you copied>"` plus the usual
+   args. The same uuid stays in subsequent `sch_*` calls until you
+   switch boards.
 
 ### Building a Schematic (Preferred Workflow)
 

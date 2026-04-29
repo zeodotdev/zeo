@@ -74,6 +74,144 @@ std::string PYTHON_TOOL_HANDLER::ReadFile( const std::string& aPath )
 // IPC command builder (replaces python_utils.h)
 // ---------------------------------------------------------------------------
 
+// Settable provider for the multi-board container JSON. Set by AGENT_FRAME
+// at startup; remains null in QA tests so target rebinding becomes a no-op.
+static PYTHON_TOOL_HANDLER::ContainerJsonProvider g_containerJsonProvider;
+
+
+void PYTHON_TOOL_HANDLER::SetContainerJsonProvider( ContainerJsonProvider aFn )
+{
+    g_containerJsonProvider = std::move( aFn );
+}
+
+
+/**
+ * Resolve a sub_project_uuid to its absolute `.kicad_pro` path using the
+ * multi-board container metadata published by AGENT_FRAME on every
+ * check_status / tool execution. Returns empty when the uuid doesn't
+ * match any sub-project in the active container.
+ *
+ * Errors out (returns empty + sets *aErrorOut) when the project is NOT a
+ * multi-board container — calling tools must error explicitly in that case
+ * rather than silently fall through to the default editor binding.
+ */
+static std::string resolveSubProjectAbsPath( const std::string& aSubProjectUuid,
+                                             std::string*       aErrorOut )
+{
+    std::string containerJson = g_containerJsonProvider ? g_containerJsonProvider() : "";
+
+    if( containerJson.empty() )
+    {
+        if( aErrorOut )
+            *aErrorOut = "target.sub_project_uuid was specified but the active "
+                         "project is not a multi-board container.";
+        return "";
+    }
+
+    auto cj = nlohmann::json::parse( containerJson, nullptr, false );
+
+    if( cj.is_discarded() || !cj.contains( "sub_projects" ) )
+    {
+        if( aErrorOut )
+            *aErrorOut = "target.sub_project_uuid lookup failed: container "
+                         "metadata is malformed.";
+        return "";
+    }
+
+    for( const auto& sp : cj["sub_projects"] )
+    {
+        if( sp.value( "uuid", "" ) == aSubProjectUuid )
+            return sp.value( "absolute_path", "" );
+    }
+
+    if( aErrorOut )
+    {
+        std::string available;
+
+        for( const auto& sp : cj["sub_projects"] )
+        {
+            if( !available.empty() )
+                available += ", ";
+
+            available += sp.value( "uuid", "" ) + " (" + sp.value( "name", "?" ) + ")";
+        }
+
+        *aErrorOut = "target.sub_project_uuid '" + aSubProjectUuid
+                     + "' does not match any sub-project. Available: "
+                     + ( available.empty() ? "none" : available );
+    }
+
+    return "";
+}
+
+
+/**
+ * When the tool args carry `target.sub_project_uuid`, build a Python preamble
+ * that rebinds the `sch` / `board` variable (whichever the app uses) to the
+ * sub-project's editor via the new kipy `get_*_by_project_path` helpers.
+ *
+ * Empty string return = no rebind needed (no target, or unsupported app).
+ * The preamble may also be a `raise RuntimeError(...)` line when the uuid
+ * fails to resolve — surfaces the error cleanly to the LLM as a tool
+ * failure instead of a silent retarget.
+ */
+static std::string buildTargetPreamble( const std::string& aApp, const nlohmann::json& aInput )
+{
+    if( !aInput.is_object() || !aInput.contains( "target" ) )
+        return "";
+
+    const auto& target = aInput["target"];
+
+    if( !target.is_object() )
+        return "";
+
+    std::string subUuid = target.value( "sub_project_uuid", "" );
+
+    if( subUuid.empty() )
+        return "";
+
+    // The mbs app is unaffected: there's only one MBS per container.
+    if( aApp != "sch" && aApp != "pcb" )
+        return "";
+
+    std::string error;
+    std::string absPath = resolveSubProjectAbsPath( subUuid, &error );
+
+    if( absPath.empty() )
+    {
+        // Escape single quotes for Python string literal.
+        std::string esc;
+        esc.reserve( error.size() + 8 );
+
+        for( char c : error )
+            esc += ( c == '\'' || c == '\\' ) ? std::string( 1, '\\' ) + c
+                                              : std::string( 1, c );
+
+        return "raise RuntimeError('" + esc + "')\n";
+    }
+
+    // Escape backslashes (Windows paths) and single-quotes for the literal.
+    std::string esc;
+    esc.reserve( absPath.size() + 8 );
+
+    for( char c : absPath )
+    {
+        if( c == '\\' )
+            esc += "\\\\";
+        else if( c == '\'' )
+            esc += "\\'";
+        else
+            esc += c;
+    }
+
+    if( aApp == "sch" )
+        return "sch = kicad.get_schematic_by_project_path('" + esc + "')\n";
+
+    // aApp == "pcb"
+    return "board = kicad.get_board_by_project_path('" + esc + "')\n";
+}
+
+
 std::string PYTHON_TOOL_HANDLER::BuildIPCCommand( const std::string& aApp,
                                                     const nlohmann::json& aInput,
                                                     const std::string& aScript )
@@ -95,8 +233,11 @@ std::string PYTHON_TOOL_HANDLER::BuildIPCCommand( const std::string& aApp,
             escaped += c;
     }
 
+    std::string targetPreamble = buildTargetPreamble( aApp, aInput );
+
     return "run_shell " + aApp + " "
            + "import json\nTOOL_ARGS = json.loads('" + escaped + "')\n"
+           + targetPreamble
            + aScript;
 }
 

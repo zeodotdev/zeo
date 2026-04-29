@@ -15,6 +15,7 @@
 #include "tools/tool_registry.h"
 #include "tools/handlers/check_status_handler.h"
 #include "tools/handlers/open_editor_handler.h"
+#include "tools/handlers/python_tool_handler.h"
 #include "claudecode/cc_controller.h"
 #include <kiway_mail.h>
 #include <mail_type.h>
@@ -496,6 +497,13 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     m_llmClient = std::make_unique<AGENT_LLM_CLIENT>( this );
     LoadAndSetSystemPrompt();
     InitializeTools();
+
+    // Wire the multi-board container JSON into PYTHON_TOOL_HANDLER so its
+    // BuildIPCCommand can resolve target.sub_project_uuid → absolute path
+    // when emitting per-tool target rebind preambles.
+    PYTHON_TOOL_HANDLER::SetContainerJsonProvider( []() -> std::string {
+        return TOOL_REGISTRY::Instance().GetMultiBoardContainerJson();
+    } );
 
     // Auth will be set via MAIL_AUTH_POINTER from the launcher (shared instance).
     // If the launcher doesn't provide one (rare fallback), EnsureAuth() creates a local one.

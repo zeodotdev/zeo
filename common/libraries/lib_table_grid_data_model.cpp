@@ -111,6 +111,19 @@ wxString LIB_TABLE_GRID_DATA_MODEL::GetValue( int aRow, int aCol )
     case COL_ENABLED:  return r.Disabled() ? wxT( "0" ) : wxT( "1" );
     case COL_VISIBLE:  return r.Hidden() ? wxT( "0" ) : wxT( "1" );
 
+    case COL_SHARE:
+        // Multi-board (M7.1): share state for the row.
+        // Only meaningful for project-tier rows; the panel hides this
+        // column entirely on the global tab and on non-multi-board
+        // projects.
+        if( r.Conflict() )
+            return _( "Conflict" );
+
+        if( r.Shared() )
+            return _( "Shared" );
+
+        return _( "Local" );
+
     case COL_STATUS:
         if( !r.IsOk() )
             return r.ErrorDescription();
@@ -193,25 +206,16 @@ wxGridCellAttr* LIB_TABLE_GRID_DATA_MODEL::GetAttr( int aRow, int aCol, wxGridCe
         m_noStatusAttr->IncRef();
         return enhanceAttr( m_noStatusAttr, aRow, aCol, aKind );
 
-    case COL_NICKNAME:
+    case COL_SHARE:
     {
-        // Multi-board (M7.1): show shared rows in italic so users can
-        // tell at a glance which entries are managed by the container.
-        // Conflict rows aren't italicized — they already get a warning
-        // icon in the status column and their text in the status reads
-        // as the error.
-        if( tableRow.Shared() && !tableRow.Conflict() )
-        {
-            wxGridCellAttr* attr = new wxGridCellAttr;
-            wxFont          font = attr->GetFont();
-            font.MakeItalic();
-            attr->SetFont( font );
-            return enhanceAttr( attr, aRow, aCol, aKind );
-        }
-
-        return enhanceAttr( nullptr, aRow, aCol, aKind );
+        // Multi-board (M7.1): read-only display column.
+        wxGridCellAttr* attr = new wxGridCellAttr;
+        attr->SetReadOnly();
+        attr->SetAlignment( wxALIGN_CENTER, wxALIGN_CENTER );
+        return enhanceAttr( attr, aRow, aCol, aKind );
     }
 
+    case COL_NICKNAME:
     case COL_OPTIONS:
     case COL_DESCR:
     default:
@@ -268,6 +272,7 @@ void LIB_TABLE_GRID_DATA_MODEL::SetValue( int aRow, int aCol, const wxString& aV
     case COL_ENABLED:  lrow.SetDisabled( aValue == wxT( "0" ) );               break;
     case COL_VISIBLE:  lrow.SetHidden( aValue == wxT( "0" ) );                 break;
     case COL_STATUS:                                                           break;
+    case COL_SHARE:                                                            break;
     }
 
     if( aCol == COL_URI || aCol == COL_TYPE || aCol == COL_OPTIONS )
@@ -368,6 +373,7 @@ wxString LIB_TABLE_GRID_DATA_MODEL::GetColLabelValue( int aCol )
 
     // keep this "Library Format" text fairly long so column is sized wide enough
     case COL_TYPE:      return _( "Library Format" );
+    case COL_SHARE:     return _( "Share" );
     case COL_OPTIONS:   return _( "Options" );
     case COL_DESCR:     return _( "Description" );
     case COL_ENABLED:   return _( "Enable" );

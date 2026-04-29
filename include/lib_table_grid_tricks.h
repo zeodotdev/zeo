@@ -22,6 +22,7 @@
 
 
 class LIBRARY_TABLE_ROW;
+class PROJECT;
 
 
 class LIB_TABLE_GRID_TRICKS : public GRID_TRICKS
@@ -44,6 +45,13 @@ public:
     LIB_TABLE_GRID_TRICKS( WX_GRID* aGrid, std::function<void( wxCommandEvent& )> aAddHandler );
 
     virtual ~LIB_TABLE_GRID_TRICKS(){};
+
+    /// Multi-board (M7.1): tell the grid which PROJECT context the
+    /// menu / actions should operate against. Without this the menu
+    /// falls back to `Pgm().GetSettingsManager().Prj()` (the global
+    /// active project), which is wrong for peer-player frames whose
+    /// bound project differs from the active one.
+    void SetProject( PROJECT* aProject ) { m_project = aProject; }
 
     void showPopupMenu( wxMenu& menu, wxGridEvent& aEvent ) override;
     void doPopupSelection( wxCommandEvent& event ) override;
@@ -74,4 +82,8 @@ protected:
 
     virtual bool supportsVisibilityColumn() = 0;
     virtual wxString getTablePreamble() = 0;
+
+    /// Project to operate against — see SetProject(). nullptr falls back
+    /// to the global active project.
+    PROJECT* m_project = nullptr;
 };

@@ -265,11 +265,17 @@ void PANEL_FP_LIB_TABLE::AddTable( LIBRARY_TABLE* aTable, const wxString& aTitle
     }
 
     // add Cut, Copy, and Paste to wxGrids
-    grid->PushEventHandler( new FP_GRID_TRICKS( this, grid,
+    FP_GRID_TRICKS* gridTricks = new FP_GRID_TRICKS( this, grid,
             [this]( wxCommandEvent& event )
             {
                 appendRowHandler( event );
-            } ) );
+            } );
+
+    // Multi-board (M7.1): Share / Unshare menu logic uses the dialog's
+    // bound project rather than the global active one.
+    gridTricks->SetProject( m_project );
+
+    grid->PushEventHandler( gridTricks );
 
     auto autoSizeCol =
             [&]( int aCol )
@@ -285,6 +291,20 @@ void PANEL_FP_LIB_TABLE::AddTable( LIBRARY_TABLE* aTable, const wxString& aTitle
     autoSizeCol( COL_TYPE );
     autoSizeCol( COL_URI );
     autoSizeCol( COL_DESCR );
+
+    // Multi-board (M7.1): Share column only meaningful on a sub-project's
+    // project tier. Hidden elsewhere so it doesn't clutter the layout.
+    bool isProjectTab = aTable->Path().StartsWith( projectPath );
+    bool isSubProjectContext = isProjectTab
+                            && m_project
+                            && !m_project->IsNullProject()
+                            && !m_project->GetProjectFile().IsMultiBoardContainer()
+                            && !m_project->GetContainerProjectPath().IsEmpty();
+
+    if( isSubProjectContext )
+        autoSizeCol( COL_SHARE );
+    else
+        grid->HideCol( COL_SHARE );
 
     if( grid->GetNumberRows() > 0 )
     {
@@ -1009,7 +1029,14 @@ void InvokePcbLibTableEditor( KIWAY* aKiway, wxWindow* aCaller )
     DIALOG_EDIT_LIBRARY_TABLES dlg( aCaller, _( "Footprint Libraries" ) );
     dlg.SetKiway( &dlg, aKiway );
 
-    dlg.InstallPanel( new PANEL_FP_LIB_TABLE( &dlg, &aKiway->Prj() ) );
+    // Multi-board (M7.1): when invoked from a peer-player frame, prefer
+    // the frame's bound project over Kiway's global active project.
+    PROJECT* dlgProject = &aKiway->Prj();
+
+    if( KIWAY_HOLDER* holder = dynamic_cast<KIWAY_HOLDER*>( aCaller ) )
+        dlgProject = &holder->Prj();
+
+    dlg.InstallPanel( new PANEL_FP_LIB_TABLE( &dlg, dlgProject ) );
 
     if( dlg.ShowModal() == wxID_CANCEL )
         return;

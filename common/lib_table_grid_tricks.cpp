@@ -169,11 +169,14 @@ void LIB_TABLE_GRID_TRICKS::showPopupMenu( wxMenu& menu, wxGridEvent& aEvent )
         menu.AppendSeparator();
 
     // Multi-board (M7.1): per-row Share / Unshare. Only meaningful when
-    // the active project is a sub-project of a multi-board container —
-    // a container's own rows are already the source of truth.
+    // the project is a sub-project of a multi-board container — a
+    // container's own rows are already the source of truth.
     if( m_sel_row_count == 1 && firstRow.Type() != LIBRARY_TABLE_ROW::TABLE_TYPE_NAME )
     {
-        PROJECT& project = Pgm().GetSettingsManager().Prj();
+        // Prefer the dialog's bound project (peer-player aware) over the
+        // global active project — they can differ when a sub-board frame
+        // is open as a peer of MBSCH.
+        PROJECT& project = m_project ? *m_project : Pgm().GetSettingsManager().Prj();
 
         if( !project.IsNullProject()
             && !project.GetProjectFile().IsMultiBoardContainer()
@@ -246,16 +249,11 @@ void LIB_TABLE_GRID_TRICKS::doPopupSelection( wxCommandEvent& event )
     }
     else if( menu_id == LIB_TABLE_GRID_TRICKS_SHARE_TO_CONTAINER )
     {
-        // Capture the row's current (possibly edited) state — the user may
-        // have changed URI / type in the dialog before clicking Share.
         LIBRARY_TABLE_ROW& row = tbl->At( m_sel_row_start );
         LIBRARY_TABLE_ROW  rowCopy = row;
-        PROJECT&           project = Pgm().GetSettingsManager().Prj();
+        PROJECT&           project = m_project ? *m_project
+                                                : Pgm().GetSettingsManager().Prj();
 
-        // AddSharedLibrary writes to disk for the container, this
-        // sub-project, and every peer. If the matching local row in this
-        // sub-project has the same content, it gets promoted in place
-        // (see writeRowToTable in library_manager.cpp).
         LIBRARY_RESULT<void> result = Pgm().GetLibraryManager().AddSharedLibrary(
                 tbl->Table().Type(), rowCopy, project );
 
@@ -265,8 +263,6 @@ void LIB_TABLE_GRID_TRICKS::doPopupSelection( wxCommandEvent& event )
         }
         else
         {
-            // Mirror the on-disk change in the editor's working copy so
-            // the dialog's view matches what's now persisted.
             row.SetShared( true );
             row.SetConflict( false );
             m_grid->ForceRefresh();
@@ -276,7 +272,8 @@ void LIB_TABLE_GRID_TRICKS::doPopupSelection( wxCommandEvent& event )
     {
         LIBRARY_TABLE_ROW& row = tbl->At( m_sel_row_start );
         wxString           nickname = row.Nickname();
-        PROJECT&           project = Pgm().GetSettingsManager().Prj();
+        PROJECT&           project = m_project ? *m_project
+                                                : Pgm().GetSettingsManager().Prj();
 
         LIBRARY_RESULT<void> result = Pgm().GetLibraryManager().UnshareLibraryRow(
                 tbl->Table().Type(), nickname, project );

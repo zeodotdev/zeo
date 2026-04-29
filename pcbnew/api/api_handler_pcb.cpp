@@ -316,6 +316,38 @@ HANDLER_RESULT<RunActionResponse> API_HANDLER_PCB::handleRunAction(
 }
 
 
+/**
+ * Same project-path resolution as the SCH/MBSCH handlers — derive the
+ * absolute pro path from the frame's GetCurrentFileName() because
+ * PROJECT::GetProjectPath() returns empty for projects loaded via the
+ * multi-board path (SETTINGS_MANAGER stores PROJECT_FILE with just the
+ * basename).
+ */
+static wxString pcbFrameAbsProjectPath( PCB_EDIT_FRAME* aFrame )
+{
+    if( !aFrame )
+        return wxEmptyString;
+
+    wxString filePath = aFrame->GetCurrentFileName();
+    wxString projName;
+
+    try
+    {
+        projName = aFrame->Prj().GetProjectName();
+    }
+    catch( ... )
+    {
+    }
+
+    if( filePath.IsEmpty() || projName.IsEmpty() )
+        return wxEmptyString;
+
+    wxFileName fn( filePath );
+    fn.SetFullName( projName + wxT( ".kicad_pro" ) );
+    return fn.GetFullPath();
+}
+
+
 HANDLER_RESULT<GetOpenDocumentsResponse> API_HANDLER_PCB::handleGetOpenDocuments(
         const HANDLER_CONTEXT<GetOpenDocuments>& aCtx )
 {
@@ -328,17 +360,45 @@ HANDLER_RESULT<GetOpenDocumentsResponse> API_HANDLER_PCB::handleGetOpenDocuments
     }
 
     GetOpenDocumentsResponse response;
-    common::types::DocumentSpecifier doc;
 
-    wxFileName fn( frame()->GetCurrentFileName() );
+    // Enumerate every visible FRAME_PCB_EDITOR (primary + M4 peer windows)
+    // so kipy can see all open PCB editors, not just the one whose handler
+    // happened to win the API server's first-handler-wins iteration.
+    std::vector<KIWAY_PLAYER*> peers = m_frame->Kiway().GetAllPlayerFrames( FRAME_PCB_EDITOR );
 
-    doc.set_type( DocumentType::DOCTYPE_PCB );
-    doc.set_board_filename( fn.GetFullName() );
+    for( KIWAY_PLAYER* player : peers )
+    {
+        if( !player || !player->IsShown() )
+            continue;
 
-    doc.mutable_project()->set_name( frame()->Prj().GetProjectName().ToStdString() );
-    doc.mutable_project()->set_path( frame()->Prj().GetProjectDirectory().ToStdString() );
+        PCB_EDIT_FRAME* peerFrame = dynamic_cast<PCB_EDIT_FRAME*>( player );
 
-    response.mutable_documents()->Add( std::move( doc ) );
+        if( !peerFrame )
+            continue;
+
+        common::types::DocumentSpecifier doc;
+        doc.set_type( DocumentType::DOCTYPE_PCB );
+
+        wxFileName fn( peerFrame->GetCurrentFileName() );
+        doc.set_board_filename( fn.GetFullName() );
+
+        wxString absProjectPath = pcbFrameAbsProjectPath( peerFrame );
+        common::types::ProjectSpecifier* projSpec = doc.mutable_project();
+
+        try
+        {
+            projSpec->set_name( peerFrame->Prj().GetProjectName().ToStdString() );
+        }
+        catch( ... )
+        {
+        }
+
+        if( !absProjectPath.IsEmpty() )
+            projSpec->set_path( absProjectPath.ToStdString() );
+
+        response.mutable_documents()->Add( std::move( doc ) );
+    }
+
     return response;
 }
 
@@ -483,6 +543,29 @@ bool API_HANDLER_PCB::validateDocumentInternal( const DocumentSpecifier& aDocume
 
     if( !frame() )
         return false;
+
+    // When the request specifies a project path, filter by it so requests
+    // route deterministically when multiple PCB editors are open (M4 peer
+    // windows on a multi-board container's sub-projects).
+    const std::string& reqProjPath = aDocument.project().path();
+
+    if( !reqProjPath.empty() )
+    {
+        wxString myPath = pcbFrameAbsProjectPath( frame() );
+
+#if defined( __WXMSW__ ) || defined( __WXMAC__ )
+        if( !myPath.IsSameAs( wxString::FromUTF8( reqProjPath ), false ) )
+            return false;
+#else
+        if( myPath != wxString::FromUTF8( reqProjPath ) )
+            return false;
+#endif
+
+        // Project matched — accept regardless of board_filename so requests
+        // built from a different sheet (or before the user navigated) still
+        // hit the right frame.
+        return true;
+    }
 
     wxFileName fn( frame()->GetCurrentFileName() );
     return 0 == aDocument.board_filename().compare( fn.GetFullName() );

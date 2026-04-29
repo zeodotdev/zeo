@@ -323,16 +323,75 @@ void API_HANDLER_SCH::pushCurrentCommit( const std::string& aClientName, const w
 }
 
 
+/**
+ * Compose this frame's absolute `.kicad_pro` path. PROJECT::GetProjectFullName()
+ * returns just the basename when projects are loaded via the multi-board
+ * path (SETTINGS_MANAGER stores PROJECT_FILE with SetFilename(name)). The
+ * frame's own GetCurrentFileName() is always absolute, so we re-anchor
+ * on its directory + the project basename.
+ */
+static wxString frameAbsProjectPath( SCH_EDIT_FRAME* aFrame )
+{
+    if( !aFrame )
+        return wxEmptyString;
+
+    wxString filePath = aFrame->GetCurrentFileName();
+    wxString projName;
+
+    try
+    {
+        projName = aFrame->Prj().GetProjectName();
+    }
+    catch( ... )
+    {
+    }
+
+    if( filePath.IsEmpty() || projName.IsEmpty() )
+        return wxEmptyString;
+
+    wxFileName fn( filePath );
+    fn.SetFullName( projName + wxT( ".kicad_pro" ) );
+    return fn.GetFullPath();
+}
+
+
+/**
+ * Case-insensitive on macOS / Windows (filesystems aren't case-sensitive
+ * on stock installs); preserves case-sensitivity on Linux.
+ */
+static bool absPathsEqual( const wxString& aA, const wxString& aB )
+{
+    if( aA.IsEmpty() || aB.IsEmpty() )
+        return false;
+
+#if defined( __WXMSW__ ) || defined( __WXMAC__ )
+    return aA.IsSameAs( aB, false );
+#else
+    return aA == aB;
+#endif
+}
+
+
 bool API_HANDLER_SCH::validateDocumentInternal( const DocumentSpecifier& aDocument ) const
 {
     if( aDocument.type() != DocumentType::DOCTYPE_SCHEMATIC )
         return false;
 
-    // TODO(JE) need serdes for SCH_SHEET_PATH <> SheetPath
-    return true;
+    // When the request specifies a project path, filter by it so that with
+    // multiple SCH editors open (M4 peer windows) the request reaches the
+    // intended frame's handler. Empty project.path means "any" — preserves
+    // backwards compat for single-editor projects.
+    const std::string& reqProjPath = aDocument.project().path();
 
-    //wxString currentPath = m_frame->GetCurrentSheet().PathAsString();
-    //return 0 == aDocument.sheet_path().compare( currentPath.ToStdString() );
+    if( !reqProjPath.empty() )
+    {
+        wxString myPath = frameAbsProjectPath( m_frame );
+
+        if( !absPathsEqual( myPath, wxString::FromUTF8( reqProjPath ) ) )
+            return false;
+    }
+
+    return true;
 }
 
 
@@ -348,55 +407,80 @@ API_HANDLER_SCH::handleGetOpenDocuments( const HANDLER_CONTEXT<GetOpenDocuments>
         return tl::unexpected( e );
     }
 
-    GetOpenDocumentsResponse         response;
-    common::types::DocumentSpecifier doc;
+    GetOpenDocumentsResponse response;
 
-    wxFileName fn( m_frame->GetCurrentFileName() );
+    // Enumerate every visible FRAME_SCH (primary + M4 peer windows) so kipy
+    // can see all open schematic editors, not just the one whose handler
+    // happened to win the API server's first-handler-wins iteration.
+    std::vector<KIWAY_PLAYER*> schPeers = m_frame->Kiway().GetAllPlayerFrames( FRAME_SCH );
 
-    doc.set_type( DocumentType::DOCTYPE_SCHEMATIC );
-    // Use sheet_path for schematic documents, not board_filename
-    // Must set the path field with the FULL hierarchical path for sub-sheet operations
-    types::SheetPath* sheetPath = doc.mutable_sheet_path();
-
-    // When a target sheet is set (either via agent transaction or API navigation),
-    // return the target sheet path instead of the user's current view
-    SCH_SHEET_PATH targetPath;
-    bool useAgentTarget = false;
-
-    if( m_frame->GetAgentTargetSheetUuid() != NilUuid() )
+    for( KIWAY_PLAYER* player : schPeers )
     {
-        SCH_SHEET_LIST sheetList = m_frame->Schematic().Hierarchy();
-        KIID targetUuid = m_frame->GetAgentTargetSheetUuid();
+        if( !player || !player->IsShown() )
+            continue;
 
-        for( const SCH_SHEET_PATH& path : sheetList )
+        SCH_EDIT_FRAME* peerFrame = dynamic_cast<SCH_EDIT_FRAME*>( player );
+
+        if( !peerFrame )
+            continue;
+
+        common::types::DocumentSpecifier doc;
+        doc.set_type( DocumentType::DOCTYPE_SCHEMATIC );
+
+        types::SheetPath* sheetPath = doc.mutable_sheet_path();
+
+        // Target sheet override only applies to *our own* frame (m_frame);
+        // peer frames just report their current sheet.
+        SCH_SHEET_PATH targetPath;
+        bool useAgentTarget = false;
+
+        if( peerFrame == m_frame && m_frame->GetAgentTargetSheetUuid() != NilUuid() )
         {
-            if( path.size() > 0 && path.Last()->m_Uuid == targetUuid )
+            SCH_SHEET_LIST sheetList = m_frame->Schematic().Hierarchy();
+            KIID targetUuid = m_frame->GetAgentTargetSheetUuid();
+
+            for( const SCH_SHEET_PATH& path : sheetList )
             {
-                targetPath = path;
-                useAgentTarget = true;
-                break;
+                if( path.size() > 0 && path.Last()->m_Uuid == targetUuid )
+                {
+                    targetPath = path;
+                    useAgentTarget = true;
+                    break;
+                }
             }
         }
+
+        const SCH_SHEET_PATH& pathToUse =
+                useAgentTarget ? targetPath : peerFrame->GetCurrentSheet();
+        sheetPath->set_path_human_readable( pathToUse.PathHumanReadable().ToStdString() );
+
+        for( size_t i = 0; i < pathToUse.size(); ++i )
+            sheetPath->add_path()->set_value( pathToUse.at( i )->m_Uuid.AsStdString() );
+
+        // Stable absolute project path lets kipy filter by sub-project.
+        wxString absProjectPath = frameAbsProjectPath( peerFrame );
+        common::types::ProjectSpecifier* projSpec = doc.mutable_project();
+
+        try
+        {
+            projSpec->set_name( peerFrame->Prj().GetProjectName().ToStdString() );
+        }
+        catch( ... )
+        {
+        }
+
+        if( !absProjectPath.IsEmpty() )
+            projSpec->set_path( absProjectPath.ToStdString() );
+
+        wxLogMessage( "GetOpenDocuments[SCH]: peer=%p path=%s file=%s proj=%s",
+                      peerFrame,
+                      pathToUse.PathHumanReadable(),
+                      peerFrame->GetCurrentFileName(),
+                      absProjectPath );
+
+        *response.mutable_documents()->Add() = std::move( doc );
     }
 
-    const SCH_SHEET_PATH& pathToUse = useAgentTarget ? targetPath : m_frame->GetCurrentSheet();
-    sheetPath->set_path_human_readable( pathToUse.PathHumanReadable().ToStdString() );
-
-    // Add ALL UUIDs in the path from root to target sheet
-    // This enables proper hierarchical sheet context for IPC operations
-    wxLogMessage( "GetOpenDocuments: %s path size=%zu, path=%s, file=%s, targetUuid=%s",
-                  useAgentTarget ? "Agent target" : "Current",
-                  pathToUse.size(),
-                  pathToUse.PathHumanReadable(),
-                  m_frame->GetCurrentFileName(),
-                  m_frame->GetAgentTargetSheetUuid().AsStdString() );
-
-    for( size_t i = 0; i < pathToUse.size(); ++i )
-    {
-        sheetPath->add_path()->set_value( pathToUse.at( i )->m_Uuid.AsStdString() );
-    }
-
-    *response.mutable_documents()->Add() = doc;
     return response;
 }
 

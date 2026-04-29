@@ -82,8 +82,8 @@ int SCH_FIND_REPLACE_TOOL::UpdateFind( const TOOL_EVENT& aEvent )
                 }
                 else
                 {
-                    for( SCH_ITEM* item : m_frame->GetScreen()->Items() )
-                        visit( item, sheetPath );
+                    m_frame->GetScreen()->RunOnItemsRecursive(
+                            [&]( SCH_ITEM* item ) { visit( item, sheetPath ); } );
                 }
             };
 
@@ -141,37 +141,12 @@ SCH_ITEM* SCH_FIND_REPLACE_TOOL::nextMatch( SCH_SCREEN* aScreen, SCH_SHEET_PATH*
     std::vector<SCH_ITEM*> sorted_items;
 
     auto addItem =
-            [&](SCH_ITEM* item)
+            [&]( SCH_ITEM* item )
             {
                 sorted_items.push_back( item );
-
-                if( item->Type() == SCH_SYMBOL_T )
-                {
-                    SCH_SYMBOL* cmp = static_cast<SCH_SYMBOL*>( item );
-
-                    for( SCH_FIELD& field : cmp->GetFields() )
-                        sorted_items.push_back( &field );
-
-                    for( SCH_PIN* pin : cmp->GetPins() )
-                        sorted_items.push_back( pin );
-                }
-                else if( item->Type() == SCH_SHEET_T )
-                {
-                    SCH_SHEET* sheet = static_cast<SCH_SHEET*>( item );
-
-                    for( SCH_FIELD& field : sheet->GetFields() )
-                        sorted_items.push_back( &field );
-
-                    for( SCH_SHEET_PIN* pin : sheet->GetPins() )
-                        sorted_items.push_back( pin );
-                }
-                else if( item->IsType( { SCH_LABEL_LOCATE_ANY_T } ) )
-                {
-                    SCH_LABEL_BASE* label = static_cast<SCH_LABEL_BASE*>( item );
-
-                    for( SCH_FIELD& field : label->GetFields() )
-                        sorted_items.push_back( &field );
-                }
+                item->RunOnChildren(
+                        [&]( SCH_ITEM* child ) { sorted_items.push_back( child ); },
+                        RECURSE_MODE::NO_RECURSE );
             };
 
     if( selectedOnly )
@@ -189,8 +164,8 @@ SCH_ITEM* SCH_FIND_REPLACE_TOOL::nextMatch( SCH_SCREEN* aScreen, SCH_SHEET_PATH*
     }
     else
     {
-        for( SCH_ITEM* item : aScreen->Items() )
-            addItem( item );
+        aScreen->RunOnItemsRecursive(
+                [&]( SCH_ITEM* item ) { sorted_items.push_back( item ); } );
     }
 
     std::sort( sorted_items.begin(), sorted_items.end(),

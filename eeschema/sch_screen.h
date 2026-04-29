@@ -119,6 +119,16 @@ public:
     EE_RTREE& Items() { return m_rtree; }
     const EE_RTREE& Items() const { return m_rtree; }
 
+    /**
+     * Visit every SCH_ITEM on the screen, including children that are owned by their parent
+     * (symbol fields/pins, sheet fields/pins, label fields, module-block pins). Children are not
+     * stored in the rtree — code that walks Items() directly will miss them. Use this helper when
+     * a surface needs to operate on the full schematic content.
+     *
+     * @param aFunc Called once per item; called per child via the parent's RunOnChildren.
+     */
+    void RunOnItemsRecursive( const std::function<void( SCH_ITEM* )>& aFunc );
+
     bool IsEmpty() const
     {
         return m_rtree.empty();

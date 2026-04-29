@@ -21,6 +21,18 @@ class PYTHON_TOOL_HANDLER : public TOOL_HANDLER
 public:
     PYTHON_TOOL_HANDLER();
 
+    /**
+     * Provider for the multi-board container JSON consumed by BuildIPCCommand
+     * when a tool's args carry `target.sub_project_uuid`. The agent installs
+     * a provider at startup that returns TOOL_REGISTRY's cached JSON; QA
+     * tests leave it unset and the target preamble is a no-op.
+     *
+     * Free function (not a class member) so the QA target can compile this
+     * translation unit without linking the rest of the agent.
+     */
+    using ContainerJsonProvider = std::function<std::string()>;
+    static void SetContainerJsonProvider( ContainerJsonProvider aFn );
+
     std::vector<std::string> GetToolNames() const override;
     std::string Execute( const std::string& aToolName, const nlohmann::json& aInput ) override;
     std::string GetDescription( const std::string& aToolName,

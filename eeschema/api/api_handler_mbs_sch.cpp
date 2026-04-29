@@ -23,6 +23,9 @@
 #include <wx/log.h>
 
 #include <api/api_utils.h>
+#include <kiway.h>
+#include <kiway_player.h>
+#include <frame_type.h>
 #include <project/project_file.h>
 #include <project.h>
 #include <schematic.h>
@@ -98,10 +101,61 @@ API_HANDLER_MBS_SCH::API_HANDLER_MBS_SCH( SCH_EDIT_FRAME* aFrame ) :
 }
 
 
+/**
+ * Same project-path resolution as the SCH handler: derive absolute pro
+ * path from the frame's GetCurrentFileName() because PROJECT::GetProjectPath()
+ * returns empty for projects loaded via the multi-board path.
+ */
+static wxString mbsFrameAbsProjectPath( SCH_EDIT_FRAME* aFrame )
+{
+    if( !aFrame )
+        return wxEmptyString;
+
+    wxString filePath = aFrame->GetCurrentFileName();
+    wxString projName;
+
+    try
+    {
+        projName = aFrame->Prj().GetProjectName();
+    }
+    catch( ... )
+    {
+    }
+
+    if( filePath.IsEmpty() || projName.IsEmpty() )
+        return wxEmptyString;
+
+    wxFileName fn( filePath );
+    fn.SetFullName( projName + wxT( ".kicad_pro" ) );
+    return fn.GetFullPath();
+}
+
+
 bool API_HANDLER_MBS_SCH::validateDocumentInternal(
         const DocumentSpecifier& aDocument ) const
 {
-    return aDocument.type() == DocumentType::DOCTYPE_MBS_SCHEMATIC;
+    if( aDocument.type() != DocumentType::DOCTYPE_MBS_SCHEMATIC )
+        return false;
+
+    // Filter by project.path when set so the right MBSCH frame's handler
+    // claims the request (deterministic with multiple containers — rare
+    // but supported by the M4 peer-player infrastructure).
+    const std::string& reqProjPath = aDocument.project().path();
+
+    if( !reqProjPath.empty() )
+    {
+        wxString myPath = mbsFrameAbsProjectPath( m_frame );
+
+#if defined( __WXMSW__ ) || defined( __WXMAC__ )
+        if( !myPath.IsSameAs( wxString::FromUTF8( reqProjPath ), false ) )
+            return false;
+#else
+        if( myPath != wxString::FromUTF8( reqProjPath ) )
+            return false;
+#endif
+    }
+
+    return true;
 }
 
 
@@ -116,32 +170,51 @@ API_HANDLER_MBS_SCH::handleGetOpenDocuments(
         return tl::unexpected( e );
     }
 
-    GetOpenDocumentsResponse         response;
-    kiapi::common::types::DocumentSpecifier doc;
-    doc.set_type( DocumentType::DOCTYPE_MBS_SCHEMATIC );
+    GetOpenDocumentsResponse response;
 
-    // MBS schematics are flat — no sub-sheets — but we still emit a SheetPath
-    // with the root sheet UUID so the wire format is symmetric with regular
-    // schematic responses (kipy.Schematic doesn't care about the contents).
-    kiapi::common::types::SheetPath* sheetPath = doc.mutable_sheet_path();
-    SCH_SHEET_PATH                   currentPath = m_frame->GetCurrentSheet();
-    sheetPath->set_path_human_readable(
-            currentPath.PathHumanReadable().ToStdString() );
+    // Enumerate every visible FRAME_MBSCH (M4 peer windows could in theory
+    // host multiple containers in one process). Same shape as SCH handler.
+    std::vector<KIWAY_PLAYER*> mbsPeers = m_frame->Kiway().GetAllPlayerFrames( FRAME_MBSCH );
 
-    for( size_t i = 0; i < currentPath.size(); ++i )
-        sheetPath->add_path()->set_value( currentPath.at( i )->m_Uuid.AsStdString() );
-
-    // Project metadata so kipy can resolve relative paths.
-    PROJECT* prj = &m_frame->Prj();
-
-    if( prj )
+    for( KIWAY_PLAYER* player : mbsPeers )
     {
+        if( !player || !player->IsShown() )
+            continue;
+
+        SCH_EDIT_FRAME* peerFrame = dynamic_cast<SCH_EDIT_FRAME*>( player );
+
+        if( !peerFrame )
+            continue;
+
+        kiapi::common::types::DocumentSpecifier doc;
+        doc.set_type( DocumentType::DOCTYPE_MBS_SCHEMATIC );
+
+        kiapi::common::types::SheetPath* sheetPath = doc.mutable_sheet_path();
+        SCH_SHEET_PATH currentPath = peerFrame->GetCurrentSheet();
+        sheetPath->set_path_human_readable(
+                currentPath.PathHumanReadable().ToStdString() );
+
+        for( size_t i = 0; i < currentPath.size(); ++i )
+            sheetPath->add_path()->set_value( currentPath.at( i )->m_Uuid.AsStdString() );
+
+        // Stable absolute project path so kipy can filter on it.
+        wxString absProjectPath = mbsFrameAbsProjectPath( peerFrame );
         kiapi::common::types::ProjectSpecifier* projSpec = doc.mutable_project();
-        projSpec->set_name( prj->GetProjectName().ToStdString() );
-        projSpec->set_path( prj->GetProjectPath().ToStdString() );
+
+        try
+        {
+            projSpec->set_name( peerFrame->Prj().GetProjectName().ToStdString() );
+        }
+        catch( ... )
+        {
+        }
+
+        if( !absProjectPath.IsEmpty() )
+            projSpec->set_path( absProjectPath.ToStdString() );
+
+        *response.add_documents() = std::move( doc );
     }
 
-    *response.add_documents() = doc;
     return response;
 }
 

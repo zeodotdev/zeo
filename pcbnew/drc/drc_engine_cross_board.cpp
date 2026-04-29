@@ -115,106 +115,162 @@ void DRC_ENGINE_CROSS_BOARD::RunAllChecks()
 }
 
 
+namespace
+{
+// Locate a pad on a board by (componentRef, pinNumber). Returns the pad and,
+// via the optional out-param, the parent footprint for context-message
+// purposes. Returns nullptr if the connector or pin doesn't exist on the board
+// — caller handles that as an orphan endpoint.
+PAD* findPadByRefAndNumber( BOARD* aBoard, const wxString& aRef, const wxString& aPinNumber,
+                            FOOTPRINT** aFootprintOut = nullptr )
+{
+    if( !aBoard )
+        return nullptr;
+
+    for( FOOTPRINT* fp : aBoard->Footprints() )
+    {
+        if( fp->GetReference() != aRef )
+            continue;
+
+        for( PAD* pad : fp->Pads() )
+        {
+            if( pad->GetNumber() == aPinNumber )
+            {
+                if( aFootprintOut )
+                    *aFootprintOut = fp;
+
+                return pad;
+            }
+        }
+    }
+
+    return nullptr;
+}
+}  // namespace
+
+
 void DRC_ENGINE_CROSS_BOARD::CheckConnectorMatching()
 {
     if( !m_project )
         return;
 
     PROJECT_FILE& projectFile = m_project->GetProjectFile();
-    const auto& connections = projectFile.GetCrossBoardConnections();
-    const auto& boardInfos = projectFile.GetBoardInfos();
+    const auto& crossBoardNets = projectFile.GetCrossBoardNets();
+    const auto& subProjects = projectFile.GetSubProjects();
 
-    // Build board name map
-    std::map<KIID, wxString> boardNames;
-    for( const BOARD_INFO& info : boardInfos )
-        boardNames[info.uuid] = info.displayName;
+    // Build sub-project name map for violation messages.
+    std::map<KIID, wxString> subProjectNames;
 
-    // Check each cross-board connection
-    for( const CROSS_BOARD_CONNECTION& conn : connections )
+    for( const SUB_PROJECT_INFO& sp : subProjects )
     {
-        m_currentBoard1Uuid = conn.board1Uuid;
-        m_currentBoard1Name = boardNames.count( conn.board1Uuid ) ?
-                              boardNames[conn.board1Uuid] : _( "Unknown" );
-        m_currentBoard2Uuid = conn.board2Uuid;
-        m_currentBoard2Name = boardNames.count( conn.board2Uuid ) ?
-                              boardNames[conn.board2Uuid] : _( "Unknown" );
+        subProjectNames[sp.uuid] = sp.displayName.IsEmpty() ? sp.name : sp.displayName;
+    }
 
-        BOARD* board1 = GetBoardByUuid( conn.board1Uuid );
-        BOARD* board2 = GetBoardByUuid( conn.board2Uuid );
-
-        if( !board1 || !board2 )
+    // Each MB_CROSS_BOARD_NET has N endpoints (one per sub-project pad on this
+    // net). Resolve every endpoint to a pad on its sub-project board, then
+    // compare endpoints pairwise within the net for net-name / unassigned-pin
+    // rule violations.
+    for( const MB_CROSS_BOARD_NET& net : crossBoardNets )
+    {
+        struct ResolvedEndpoint
         {
-            AddViolation( CROSS_BOARD_DRC_TYPE::NET_INCOMPLETE,
-                          CROSS_BOARD_DRC_SEVERITY::ERROR,
-                          _( "Cross-board connection references unavailable board" ) );
-            continue;
-        }
+            const MB_CROSS_BOARD_NET_ENDPOINT* endpoint;
+            BOARD*                             board;
+            PAD*                               pad;
+            wxString                           subProjectName;
+        };
 
-        // Find pads by UUID
-        PAD* pad1 = nullptr;
-        PAD* pad2 = nullptr;
+        std::vector<ResolvedEndpoint> resolved;
+        resolved.reserve( net.endpoints.size() );
 
-        for( FOOTPRINT* fp : board1->Footprints() )
+        for( const MB_CROSS_BOARD_NET_ENDPOINT& ep : net.endpoints )
         {
-            for( PAD* pad : fp->Pads() )
+            BOARD* board = GetBoardByUuid( ep.subProjectUuid );
+
+            if( !board )
             {
-                if( pad->m_Uuid == conn.pad1Uuid )
-                {
-                    pad1 = pad;
-                    m_currentConnectorRef = fp->GetReference();
-                    break;
-                }
+                m_currentBoard1Uuid = ep.subProjectUuid;
+                m_currentBoard1Name = subProjectNames.count( ep.subProjectUuid )
+                                              ? subProjectNames[ep.subProjectUuid]
+                                              : _( "Unknown" );
+                m_currentBoard2Uuid = KIID( 0 );
+                m_currentBoard2Name = wxEmptyString;
+                m_currentConnectorRef = ep.componentRef;
+
+                AddViolation( CROSS_BOARD_DRC_TYPE::NET_INCOMPLETE,
+                              CROSS_BOARD_DRC_SEVERITY::ERROR,
+                              wxString::Format( _( "Cross-board net '%s' references "
+                                                   "unavailable sub-project board" ),
+                                                net.name ) );
+                continue;
             }
-            if( pad1 )
-                break;
-        }
 
-        for( FOOTPRINT* fp : board2->Footprints() )
-        {
-            for( PAD* pad : fp->Pads() )
+            FOOTPRINT* fp = nullptr;
+            PAD* pad = findPadByRefAndNumber( board, ep.componentRef, ep.pinNumber, &fp );
+
+            if( !pad )
             {
-                if( pad->m_Uuid == conn.pad2Uuid )
-                {
-                    pad2 = pad;
-                    break;
-                }
-            }
-            if( pad2 )
-                break;
-        }
+                m_currentBoard1Uuid = ep.subProjectUuid;
+                m_currentBoard1Name = subProjectNames.count( ep.subProjectUuid )
+                                              ? subProjectNames[ep.subProjectUuid]
+                                              : _( "Unknown" );
+                m_currentBoard2Uuid = KIID( 0 );
+                m_currentBoard2Name = wxEmptyString;
+                m_currentConnectorRef = ep.componentRef;
 
-        if( !pad1 || !pad2 )
-        {
-            AddViolation( CROSS_BOARD_DRC_TYPE::NET_ORPHAN_CONNECTOR,
-                          CROSS_BOARD_DRC_SEVERITY::WARNING,
-                          _( "Cross-board connection references missing pad" ) );
-            continue;
-        }
-
-        // Check net name matching
-        if( m_connectorRules.checkNetNameMatch )
-        {
-            wxString net1 = pad1->GetNetname();
-            wxString net2 = pad2->GetNetname();
-
-            if( !NetNamesMatch( net1, net2 ) )
-            {
-                wxString details = wxString::Format(
-                        _( "'%s' (board 1) vs '%s' (board 2)" ), net1, net2 );
-
-                AddViolation( CROSS_BOARD_DRC_TYPE::CONNECTOR_NET_NAME_MISMATCH,
+                AddViolation( CROSS_BOARD_DRC_TYPE::NET_ORPHAN_CONNECTOR,
                               CROSS_BOARD_DRC_SEVERITY::WARNING,
-                              _( "Net name mismatch on connector pin" ),
-                              details );
+                              wxString::Format( _( "Cross-board net '%s' endpoint %s:%s "
+                                                   "missing on sub-project '%s'" ),
+                                                net.name, ep.componentRef, ep.pinNumber,
+                                                m_currentBoard1Name ) );
+                continue;
             }
+
+            resolved.push_back( { &ep, board, pad,
+                                  subProjectNames.count( ep.subProjectUuid )
+                                          ? subProjectNames[ep.subProjectUuid]
+                                          : ep.componentRef } );
         }
 
-        // Check for unassigned pins (no net)
-        if( pad1->GetNetCode() <= 0 || pad2->GetNetCode() <= 0 )
+        // Pairwise checks within the net: net-name match and unassigned-pin.
+        for( size_t i = 0; i < resolved.size(); ++i )
         {
-            AddViolation( CROSS_BOARD_DRC_TYPE::UNASSIGNED_CONNECTOR_PIN,
-                          CROSS_BOARD_DRC_SEVERITY::WARNING,
-                          _( "Connector pin has no net assignment" ) );
+            for( size_t j = i + 1; j < resolved.size(); ++j )
+            {
+                const ResolvedEndpoint& a = resolved[i];
+                const ResolvedEndpoint& b = resolved[j];
+
+                m_currentBoard1Uuid = a.endpoint->subProjectUuid;
+                m_currentBoard1Name = a.subProjectName;
+                m_currentBoard2Uuid = b.endpoint->subProjectUuid;
+                m_currentBoard2Name = b.subProjectName;
+                m_currentConnectorRef = a.endpoint->componentRef;
+
+                if( m_connectorRules.checkNetNameMatch )
+                {
+                    const wxString& net1 = a.pad->GetNetname();
+                    const wxString& net2 = b.pad->GetNetname();
+
+                    if( !NetNamesMatch( net1, net2 ) )
+                    {
+                        wxString details = wxString::Format(
+                                _( "'%s' (%s) vs '%s' (%s) on cross-board net '%s'" ),
+                                net1, a.subProjectName, net2, b.subProjectName, net.name );
+
+                        AddViolation( CROSS_BOARD_DRC_TYPE::CONNECTOR_NET_NAME_MISMATCH,
+                                      CROSS_BOARD_DRC_SEVERITY::WARNING,
+                                      _( "Net name mismatch on connector pin" ), details );
+                    }
+                }
+
+                if( a.pad->GetNetCode() <= 0 || b.pad->GetNetCode() <= 0 )
+                {
+                    AddViolation( CROSS_BOARD_DRC_TYPE::UNASSIGNED_CONNECTOR_PIN,
+                                  CROSS_BOARD_DRC_SEVERITY::WARNING,
+                                  _( "Connector pin has no net assignment" ) );
+                }
+            }
         }
     }
 }
@@ -236,19 +292,64 @@ void DRC_ENGINE_CROSS_BOARD::CheckPowerDistribution()
     if( !m_project )
         return;
 
-    // Check minimum power pins
+    PROJECT_FILE& projectFile = m_project->GetProjectFile();
+    const auto& crossBoardNets = projectFile.GetCrossBoardNets();
+    const auto& subProjects = projectFile.GetSubProjects();
+
+    std::map<KIID, wxString> subProjectNames;
+
+    for( const SUB_PROJECT_INFO& sp : subProjects )
+        subProjectNames[sp.uuid] = sp.displayName.IsEmpty() ? sp.name : sp.displayName;
+
+    // Per-sub-project pin count per declared power net. A "power net" here is
+    // any cross-board net whose canonical name matches a key in the rules'
+    // minPowerPins map. Each endpoint counts as one pin on that sub-project.
+    std::map<std::pair<KIID, wxString>, int> pinCounts;
+
+    for( const MB_CROSS_BOARD_NET& net : crossBoardNets )
+    {
+        auto it = m_powerRules.minPowerPins.find( net.name );
+
+        if( it == m_powerRules.minPowerPins.end() )
+            continue;
+
+        for( const MB_CROSS_BOARD_NET_ENDPOINT& ep : net.endpoints )
+            pinCounts[{ ep.subProjectUuid, net.name }]++;
+    }
+
+    // Flag any sub-project whose pin count for a declared power net is below
+    // the minimum. A net never reached on this sub-project (count = 0) is
+    // skipped — that's an "unrelated board" case, not a violation.
     for( const auto& [netName, minPins] : m_powerRules.minPowerPins )
     {
-        // TODO: Count connector pins for each power net across boards
-        // and verify minimum pin count requirements
-
-        if( m_reporter )
+        for( const SUB_PROJECT_INFO& sp : subProjects )
         {
-            m_reporter->Report( wxString::Format(
-                    _( "Power net '%s' requires minimum %d pins" ), netName, minPins ),
-                    RPT_SEVERITY_INFO );
+            auto countIt = pinCounts.find( { sp.uuid, netName } );
+
+            if( countIt == pinCounts.end() )
+                continue;
+
+            int count = countIt->second;
+
+            if( count < minPins )
+            {
+                m_currentBoard1Uuid = sp.uuid;
+                m_currentBoard1Name = subProjectNames[sp.uuid];
+                m_currentBoard2Uuid = KIID( 0 );
+                m_currentBoard2Name = wxEmptyString;
+                m_currentConnectorRef = wxEmptyString;
+
+                AddViolation( CROSS_BOARD_DRC_TYPE::POWER_INSUFFICIENT_PINS,
+                              CROSS_BOARD_DRC_SEVERITY::WARNING,
+                              wxString::Format( _( "Power net '%s' has %d pin(s) on sub-project "
+                                                   "'%s' (rule requires %d)" ),
+                                                netName, count, m_currentBoard1Name, minPins ) );
+            }
         }
     }
+
+    // Current capacity and voltage drop checks need analog modeling
+    // (per-net trace resistance, source impedance) and are not implemented.
 }
 
 
@@ -258,21 +359,25 @@ void DRC_ENGINE_CROSS_BOARD::CheckNetCompleteness()
         return;
 
     PROJECT_FILE& projectFile = m_project->GetProjectFile();
-    const auto& boardInfos = projectFile.GetBoardInfos();
+    const auto& subProjects = projectFile.GetSubProjects();
+    const auto& crossBoardNets = projectFile.GetCrossBoardNets();
 
-    // For each board, check if connector pads have valid cross-board connections
-    for( const BOARD_INFO& boardInfo : boardInfos )
+    // For each sub-project, check that every connector pad on the loaded
+    // board is referenced by at least one cross-board net endpoint.
+    for( const SUB_PROJECT_INFO& sp : subProjects )
     {
-        BOARD* board = GetBoardByUuid( boardInfo.uuid );
+        BOARD* board = GetBoardByUuid( sp.uuid );
+
         if( !board )
             continue;
 
-        const auto& connectorPads = board->GetConnectorPads();
+        wxString subProjectName = sp.displayName.IsEmpty() ? sp.name : sp.displayName;
 
-        for( const KIID& padUuid : connectorPads )
+        for( const KIID& padUuid : board->GetConnectorPads() )
         {
-            // Find the pad
             PAD* pad = nullptr;
+            FOOTPRINT* parentFp = nullptr;
+
             for( FOOTPRINT* fp : board->Footprints() )
             {
                 for( PAD* p : fp->Pads() )
@@ -280,9 +385,11 @@ void DRC_ENGINE_CROSS_BOARD::CheckNetCompleteness()
                     if( p->m_Uuid == padUuid )
                     {
                         pad = p;
+                        parentFp = fp;
                         break;
                     }
                 }
+
                 if( pad )
                     break;
             }
@@ -290,31 +397,39 @@ void DRC_ENGINE_CROSS_BOARD::CheckNetCompleteness()
             if( !pad )
                 continue;
 
-            // Check if this connector pad has a cross-board connection defined
-            bool hasConnection = false;
-            const auto& connections = projectFile.GetCrossBoardConnections();
+            const wxString ref = parentFp ? parentFp->GetReference() : wxT( "?" );
+            const wxString pinNumber = pad->GetNumber();
 
-            for( const CROSS_BOARD_CONNECTION& conn : connections )
+            bool hasEndpoint = false;
+
+            for( const MB_CROSS_BOARD_NET& net : crossBoardNets )
             {
-                if( ( conn.board1Uuid == boardInfo.uuid && conn.pad1Uuid == padUuid ) ||
-                    ( conn.board2Uuid == boardInfo.uuid && conn.pad2Uuid == padUuid ) )
+                for( const MB_CROSS_BOARD_NET_ENDPOINT& ep : net.endpoints )
                 {
-                    hasConnection = true;
-                    break;
+                    if( ep.subProjectUuid == sp.uuid && ep.componentRef == ref
+                        && ep.pinNumber == pinNumber )
+                    {
+                        hasEndpoint = true;
+                        break;
+                    }
                 }
+
+                if( hasEndpoint )
+                    break;
             }
 
-            if( !hasConnection )
+            if( !hasEndpoint )
             {
-                m_currentBoard1Uuid = boardInfo.uuid;
-                m_currentBoard1Name = boardInfo.displayName;
-                m_currentConnectorRef = pad->GetParentFootprint() ?
-                                        pad->GetParentFootprint()->GetReference() : wxT( "?" );
+                m_currentBoard1Uuid = sp.uuid;
+                m_currentBoard1Name = subProjectName;
+                m_currentBoard2Uuid = KIID( 0 );
+                m_currentBoard2Name = wxEmptyString;
+                m_currentConnectorRef = ref;
 
                 AddViolation( CROSS_BOARD_DRC_TYPE::NET_ORPHAN_CONNECTOR,
                               CROSS_BOARD_DRC_SEVERITY::INFO,
                               wxString::Format( _( "Connector pad %s:%s has no cross-board link" ),
-                                                 m_currentConnectorRef, pad->GetNumber() ) );
+                                                ref, pinNumber ) );
             }
         }
     }
@@ -328,16 +443,9 @@ BOARD* DRC_ENGINE_CROSS_BOARD::GetBoardByUuid( const KIID& aBoardUuid )
     if( it != m_boardCache.end() )
         return it->second;
 
-    // Container-model fallback: if aBoardUuid identifies a sub-project of
-    // the multi-board container project, load it from disk via the shared
-    // sub-project board loader. The loaded BOARD is owner-managed by this
-    // engine (R9 in MULTI_BOARD_REFACTOR_PLAN.md).
-    //
-    // Note: the legacy single-project multi-PCB callers above pass a
-    // `BOARD_INFO::uuid`, which won't match any SUB_PROJECT_INFO::uuid —
-    // the loader returns nullptr in that case. Those callers need to be
-    // ported to the container topology (separate task in M5) before
-    // they can resolve cross-board boards through this path.
+    // Load the sub-project's BOARD on demand. The KIID is a SUB_PROJECT_INFO::uuid
+    // (the container model's stable sub-project identifier). The loader returns an
+    // owner-managed BOARD per R9 in MULTI_BOARD_REFACTOR_PLAN.md.
     if( m_project )
     {
         if( std::unique_ptr<BOARD> loaded = LoadSubProjectBoard( *m_project, aBoardUuid ) )

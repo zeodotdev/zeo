@@ -57,11 +57,12 @@ void SCH_SEARCH_HANDLER::FindAll( const std::function<bool( SCH_ITEM*, SCH_SHEET
 
     for( SCH_SHEET_PATH* sheet : paths )
     {
-        for( SCH_ITEM* item : sheet->LastScreen()->Items() )
-        {
-            if( aCollector( item, sheet ) )
-                m_hitlist.push_back( { item, sheet } );
-        }
+        sheet->LastScreen()->RunOnItemsRecursive(
+                [&]( SCH_ITEM* item )
+                {
+                    if( aCollector( item, sheet ) )
+                        m_hitlist.push_back( { item, sheet } );
+                } );
     }
 }
 

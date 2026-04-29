@@ -120,22 +120,6 @@ bool PROJECT::TextVarResolver( wxString* aToken ) const
     if( !m_projectFile )
         return false;
 
-    // Resolve ${KIPRJMOD} against this PROJECT's directory rather than letting
-    // it fall through to the global env var. The global var only ever points at
-    // the active project, so non-active PROJECTs (e.g. multi-board sub-projects
-    // loaded with aSetActive=false) would otherwise resolve project-local paths
-    // against the active project's directory and fail to find anything.
-    if( aToken->IsSameAs( PROJECT_VAR_NAME ) )
-    {
-        wxString projDir = GetProjectDirectory();
-
-        if( projDir.IsEmpty() )
-            return false;
-
-        *aToken = projDir;
-        return true;
-    }
-
     if( aToken->IsSameAs( wxT( "PROJECTNAME" ) )  )
     {
         *aToken = GetProjectName();

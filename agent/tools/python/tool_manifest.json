@@ -7,7 +7,11 @@
       "properties": {
         "doc_type": {
           "type": "string",
-          "enum": ["schematic", "pcb", "all"],
+          "enum": [
+            "schematic",
+            "pcb",
+            "all"
+          ],
           "description": "Which document to save: 'schematic', 'pcb', or 'all' (saves both if open). Default: 'all'"
         }
       },
@@ -129,6 +133,19 @@
         "all_sheets": {
           "type": "boolean",
           "description": "When true, returns summary for every sheet in the hierarchy (navigates automatically). Skips audit for speed. Default: false."
+        },
+        "target": {
+          "type": "object",
+          "description": "On a multi-board container project (check_status -> is_multi_board_container == true), use this to specify which sub-project this tool call targets. Get sub_project_uuid from check_status -> sub_projects[].uuid. Omit on standalone single-board projects. Required when multiple sub-project editors of the matching doc type are open.",
+          "properties": {
+            "sub_project_uuid": {
+              "type": "string",
+              "description": "The uuid field from one of check_status -> sub_projects[]. The tool call will be routed to that sub-project edit window."
+            }
+          },
+          "required": [
+            "sub_project_uuid"
+          ]
         }
       },
       "required": []
@@ -162,6 +179,19 @@
         "filter": {
           "type": "string",
           "description": "Optional filter by reference (e.g., 'R*' for all resistors) or UUID"
+        },
+        "target": {
+          "type": "object",
+          "description": "On a multi-board container project (check_status -> is_multi_board_container == true), use this to specify which sub-project this tool call targets. Get sub_project_uuid from check_status -> sub_projects[].uuid. Omit on standalone single-board projects. Required when multiple sub-project editors of the matching doc type are open.",
+          "properties": {
+            "sub_project_uuid": {
+              "type": "string",
+              "description": "The uuid field from one of check_status -> sub_projects[]. The tool call will be routed to that sub-project edit window."
+            }
+          },
+          "required": [
+            "sub_project_uuid"
+          ]
         }
       },
       "required": [
@@ -240,6 +270,19 @@
         "include_warnings": {
           "type": "boolean",
           "description": "Include warnings (default: true). Set false for errors only."
+        },
+        "target": {
+          "type": "object",
+          "description": "On a multi-board container project (check_status -> is_multi_board_container == true), use this to specify which sub-project this tool call targets. Get sub_project_uuid from check_status -> sub_projects[].uuid. Omit on standalone single-board projects. Required when multiple sub-project editors of the matching doc type are open.",
+          "properties": {
+            "sub_project_uuid": {
+              "type": "string",
+              "description": "The uuid field from one of check_status -> sub_projects[]. The tool call will be routed to that sub-project edit window."
+            }
+          },
+          "required": [
+            "sub_project_uuid"
+          ]
         }
       },
       "required": []
@@ -271,6 +314,19 @@
             "type": "string"
           },
           "description": "Signal names to plot (e.g. [\"/in\", \"/out\", \"/outb\"]). If omitted, auto-selects user-facing signals (net labels, named nodes) and filters out internal subcircuit nodes, branch currents, and constant rails."
+        },
+        "target": {
+          "type": "object",
+          "description": "On a multi-board container project (check_status -> is_multi_board_container == true), use this to specify which sub-project this tool call targets. Get sub_project_uuid from check_status -> sub_projects[].uuid. Omit on standalone single-board projects. Required when multiple sub-project editors of the matching doc type are open.",
+          "properties": {
+            "sub_project_uuid": {
+              "type": "string",
+              "description": "The uuid field from one of check_status -> sub_projects[]. The tool call will be routed to that sub-project edit window."
+            }
+          },
+          "required": [
+            "sub_project_uuid"
+          ]
         }
       },
       "required": [
@@ -310,6 +366,19 @@
             "regex"
           ],
           "description": "Pattern type: 'exact', 'wildcard', or 'regex'. Auto-detected if not specified."
+        },
+        "target": {
+          "type": "object",
+          "description": "On a multi-board container project (check_status -> is_multi_board_container == true), use this to specify which sub-project this tool call targets. Get sub_project_uuid from check_status -> sub_projects[].uuid. Omit on standalone single-board projects. Required when multiple sub-project editors of the matching doc type are open.",
+          "properties": {
+            "sub_project_uuid": {
+              "type": "string",
+              "description": "The uuid field from one of check_status -> sub_projects[]. The tool call will be routed to that sub-project edit window."
+            }
+          },
+          "required": [
+            "sub_project_uuid"
+          ]
         }
       },
       "required": [
@@ -336,6 +405,19 @@
         "unit": {
           "type": "integer",
           "description": "Filter pins to specific unit number (1-based). Omit to get all pins. Unit 0 pins (shared/power) are always included."
+        },
+        "target": {
+          "type": "object",
+          "description": "On a multi-board container project (check_status -> is_multi_board_container == true), use this to specify which sub-project this tool call targets. Get sub_project_uuid from check_status -> sub_projects[].uuid. Omit on standalone single-board projects. Required when multiple sub-project editors of the matching doc type are open.",
+          "properties": {
+            "sub_project_uuid": {
+              "type": "string",
+              "description": "The uuid field from one of check_status -> sub_projects[]. The tool call will be routed to that sub-project edit window."
+            }
+          },
+          "required": [
+            "sub_project_uuid"
+          ]
         }
       },
       "required": [
@@ -381,6 +463,19 @@
         "unit": {
           "type": "integer",
           "description": "Filter pins to specific unit number (1-based). Useful for large multi-unit symbols to reduce output. Unit 0 pins (shared/power) are always included."
+        },
+        "target": {
+          "type": "object",
+          "description": "On a multi-board container project (check_status -> is_multi_board_container == true), use this to specify which sub-project this tool call targets. Get sub_project_uuid from check_status -> sub_projects[].uuid. Omit on standalone single-board projects. Required when multiple sub-project editors of the matching doc type are open.",
+          "properties": {
+            "sub_project_uuid": {
+              "type": "string",
+              "description": "The uuid field from one of check_status -> sub_projects[]. The tool call will be routed to that sub-project edit window."
+            }
+          },
+          "required": [
+            "sub_project_uuid"
+          ]
         }
       },
       "required": []
@@ -409,6 +504,19 @@
         "unit": {
           "type": "integer",
           "description": "Filter pins to specific unit number (1-based). Useful for multi-unit symbols like quad op-amps. Unit 0 pins (shared/power) are always included."
+        },
+        "target": {
+          "type": "object",
+          "description": "On a multi-board container project (check_status -> is_multi_board_container == true), use this to specify which sub-project this tool call targets. Get sub_project_uuid from check_status -> sub_projects[].uuid. Omit on standalone single-board projects. Required when multiple sub-project editors of the matching doc type are open.",
+          "properties": {
+            "sub_project_uuid": {
+              "type": "string",
+              "description": "The uuid field from one of check_status -> sub_projects[]. The tool call will be routed to that sub-project edit window."
+            }
+          },
+          "required": [
+            "sub_project_uuid"
+          ]
         }
       },
       "required": []
@@ -442,6 +550,19 @@
             "star"
           ],
           "description": "Routing topology. 'chain' (default): wire pins sequentially in order. 'star': trunk-and-branch for shared nodes like power fan-outs."
+        },
+        "target": {
+          "type": "object",
+          "description": "On a multi-board container project (check_status -> is_multi_board_container == true), use this to specify which sub-project this tool call targets. Get sub_project_uuid from check_status -> sub_projects[].uuid. Omit on standalone single-board projects. Required when multiple sub-project editors of the matching doc type are open.",
+          "properties": {
+            "sub_project_uuid": {
+              "type": "string",
+              "description": "The uuid field from one of check_status -> sub_projects[]. The tool call will be routed to that sub-project edit window."
+            }
+          },
+          "required": [
+            "sub_project_uuid"
+          ]
         }
       },
       "required": [
@@ -484,6 +605,19 @@
         "unit": {
           "type": "integer",
           "description": "Filter to only label pins belonging to this unit (1-based). Pins from other units are skipped. Unit 0 pins (shared/power) are always included."
+        },
+        "target": {
+          "type": "object",
+          "description": "On a multi-board container project (check_status -> is_multi_board_container == true), use this to specify which sub-project this tool call targets. Get sub_project_uuid from check_status -> sub_projects[].uuid. Omit on standalone single-board projects. Required when multiple sub-project editors of the matching doc type are open.",
+          "properties": {
+            "sub_project_uuid": {
+              "type": "string",
+              "description": "The uuid field from one of check_status -> sub_projects[]. The tool call will be routed to that sub-project edit window."
+            }
+          },
+          "required": [
+            "sub_project_uuid"
+          ]
         }
       },
       "required": [
@@ -1142,6 +1276,19 @@
               }
             }
           }
+        },
+        "target": {
+          "type": "object",
+          "description": "On a multi-board container project (check_status -> is_multi_board_container == true), use this to specify which sub-project this tool call targets. Get sub_project_uuid from check_status -> sub_projects[].uuid. Omit on standalone single-board projects. Required when multiple sub-project editors of the matching doc type are open.",
+          "properties": {
+            "sub_project_uuid": {
+              "type": "string",
+              "description": "The uuid field from one of check_status -> sub_projects[]. The tool call will be routed to that sub-project edit window."
+            }
+          },
+          "required": [
+            "sub_project_uuid"
+          ]
         }
       },
       "required": [
@@ -1190,7 +1337,7 @@
               },
               "angle": {
                 "type": "number",
-                "description": "CCW rotation degrees (0, 90, 180, 270). Passives (R, C, L): 0°=vertical (pin1 top, pin2 bottom), 90°=horizontal (pin1 left, pin2 right), 180°=vertical (pin1 bottom, pin2 top), 270°=horizontal (pin1 right, pin2 left). Power symbols: see system prompt for wire-exit direction table."
+                "description": "CCW rotation degrees (0, 90, 180, 270). Passives (R, C, L): 0\u00b0=vertical (pin1 top, pin2 bottom), 90\u00b0=horizontal (pin1 left, pin2 right), 180\u00b0=vertical (pin1 bottom, pin2 top), 270\u00b0=horizontal (pin1 right, pin2 left). Power symbols: see system prompt for wire-exit direction table."
               },
               "mirror": {
                 "type": "string",
@@ -1231,6 +1378,19 @@
             ]
           },
           "description": "Array of elements to add to the schematic."
+        },
+        "target": {
+          "type": "object",
+          "description": "On a multi-board container project (check_status -> is_multi_board_container == true), use this to specify which sub-project this tool call targets. Get sub_project_uuid from check_status -> sub_projects[].uuid. Omit on standalone single-board projects. Required when multiple sub-project editors of the matching doc type are open.",
+          "properties": {
+            "sub_project_uuid": {
+              "type": "string",
+              "description": "The uuid field from one of check_status -> sub_projects[]. The tool call will be routed to that sub-project edit window."
+            }
+          },
+          "required": [
+            "sub_project_uuid"
+          ]
         }
       },
       "required": [
@@ -1312,6 +1472,19 @@
             ]
           },
           "description": "Array of updates. Each must have 'target' plus properties to change."
+        },
+        "target": {
+          "type": "object",
+          "description": "On a multi-board container project (check_status -> is_multi_board_container == true), use this to specify which sub-project this tool call targets. Get sub_project_uuid from check_status -> sub_projects[].uuid. Omit on standalone single-board projects. Required when multiple sub-project editors of the matching doc type are open.",
+          "properties": {
+            "sub_project_uuid": {
+              "type": "string",
+              "description": "The uuid field from one of check_status -> sub_projects[]. The tool call will be routed to that sub-project edit window."
+            }
+          },
+          "required": [
+            "sub_project_uuid"
+          ]
         }
       },
       "required": [
@@ -1337,16 +1510,22 @@
         },
         "size": {
           "type": "array",
-          "items": { "type": "number" },
+          "items": {
+            "type": "number"
+          },
           "description": "New size [width, height] in mm"
         },
         "position": {
           "type": "array",
-          "items": { "type": "number" },
+          "items": {
+            "type": "number"
+          },
           "description": "New position [x, y] in mm"
         }
       },
-      "required": ["target"]
+      "required": [
+        "target"
+      ]
     },
     "app": "sch",
     "script": "schematic/sch_update_sheet.py",
@@ -1363,11 +1542,24 @@
       "properties": {
         "targets": {
           "type": "array",
-          "description": "Array of targets to delete. Each item is a string (reference like 'R1' or UUID) or a query object. Query format: {type, text?, position?, ref?, start?, end?}. Types: wire, label, global_label, hierarchical_label, junction, no_connect, bus_entry. For labels, 'ref' is a symbol reference — matches labels located on that symbol's pins. Use 'position' only to disambiguate when multiple labels share the same text."
+          "description": "Array of targets to delete. Each item is a string (reference like 'R1' or UUID) or a query object. Query format: {type, text?, position?, ref?, start?, end?}. Types: wire, label, global_label, hierarchical_label, junction, no_connect, bus_entry. For labels, 'ref' is a symbol reference \u2014 matches labels located on that symbol's pins. Use 'position' only to disambiguate when multiple labels share the same text."
         },
         "delete_net": {
           "type": "boolean",
           "description": "When true, expand each wire/junction/label target to delete the entire connected net segment (all wires, junctions, and labels). Stops at symbol pins. Does not delete symbols. Default: false."
+        },
+        "target": {
+          "type": "object",
+          "description": "On a multi-board container project (check_status -> is_multi_board_container == true), use this to specify which sub-project this tool call targets. Get sub_project_uuid from check_status -> sub_projects[].uuid. Omit on standalone single-board projects. Required when multiple sub-project editors of the matching doc type are open.",
+          "properties": {
+            "sub_project_uuid": {
+              "type": "string",
+              "description": "The uuid field from one of check_status -> sub_projects[]. The tool call will be routed to that sub-project edit window."
+            }
+          },
+          "required": [
+            "sub_project_uuid"
+          ]
         }
       },
       "required": [
@@ -1390,6 +1582,19 @@
         "sheet_path": {
           "type": "string",
           "description": "Sheet to navigate to. Use sheet name (e.g., 'Power Supply'), path (e.g., '/Power Supply/'), or '/' for root sheet."
+        },
+        "target": {
+          "type": "object",
+          "description": "On a multi-board container project (check_status -> is_multi_board_container == true), use this to specify which sub-project this tool call targets. Get sub_project_uuid from check_status -> sub_projects[].uuid. Omit on standalone single-board projects. Required when multiple sub-project editors of the matching doc type are open.",
+          "properties": {
+            "sub_project_uuid": {
+              "type": "string",
+              "description": "The uuid field from one of check_status -> sub_projects[]. The tool call will be routed to that sub-project edit window."
+            }
+          },
+          "required": [
+            "sub_project_uuid"
+          ]
         }
       },
       "required": []
@@ -1428,6 +1633,19 @@
             "type": "number"
           },
           "description": "Sheet size [width, height] in mm. Default: [50, 50]."
+        },
+        "target": {
+          "type": "object",
+          "description": "On a multi-board container project (check_status -> is_multi_board_container == true), use this to specify which sub-project this tool call targets. Get sub_project_uuid from check_status -> sub_projects[].uuid. Omit on standalone single-board projects. Required when multiple sub-project editors of the matching doc type are open.",
+          "properties": {
+            "sub_project_uuid": {
+              "type": "string",
+              "description": "The uuid field from one of check_status -> sub_projects[]. The tool call will be routed to that sub-project edit window."
+            }
+          },
+          "required": [
+            "sub_project_uuid"
+          ]
         }
       },
       "required": [
@@ -1488,7 +1706,11 @@
               },
               "label_type": {
                 "type": "string",
-                "enum": ["local", "global", "hierarchical"],
+                "enum": [
+                  "local",
+                  "global",
+                  "hierarchical"
+                ],
                 "description": "Label type for terminal_labels. 'local' (default) for intra-sheet, 'hierarchical' for inter-sheet signals, 'global' for power rails."
               },
               "terminal_power": {
@@ -1513,6 +1735,19 @@
             ]
           },
           "description": "Array of companion components to place"
+        },
+        "target": {
+          "type": "object",
+          "description": "On a multi-board container project (check_status -> is_multi_board_container == true), use this to specify which sub-project this tool call targets. Get sub_project_uuid from check_status -> sub_projects[].uuid. Omit on standalone single-board projects. Required when multiple sub-project editors of the matching doc type are open.",
+          "properties": {
+            "sub_project_uuid": {
+              "type": "string",
+              "description": "The uuid field from one of check_status -> sub_projects[]. The tool call will be routed to that sub-project edit window."
+            }
+          },
+          "required": [
+            "sub_project_uuid"
+          ]
         }
       },
       "required": [
@@ -1544,7 +1779,9 @@
               },
               "position": {
                 "type": "array",
-                "items": {"type": "number"},
+                "items": {
+                  "type": "number"
+                },
                 "description": "Position in mm [x, y]. Auto-snapped to 1.27mm grid."
               },
               "id": {
@@ -1557,7 +1794,11 @@
               },
               "mirror": {
                 "type": "string",
-                "enum": ["none", "x", "y"]
+                "enum": [
+                  "none",
+                  "x",
+                  "y"
+                ]
               },
               "unit": {
                 "type": "integer",
@@ -1568,7 +1809,11 @@
                 "description": "Symbol properties: {\"Value\": \"10k\", \"Footprint\": \"...\"}"
               }
             },
-            "required": ["lib_id", "position", "id"]
+            "required": [
+              "lib_id",
+              "position",
+              "id"
+            ]
           },
           "description": "Array of symbols to place"
         },
@@ -1583,7 +1828,9 @@
               },
               "position": {
                 "type": "array",
-                "items": {"type": "number"},
+                "items": {
+                  "type": "number"
+                },
                 "description": "Position in mm [x, y]"
               },
               "id": {
@@ -1595,7 +1842,11 @@
                 "description": "CCW rotation degrees (0, 90, 180, 270)"
               }
             },
-            "required": ["name", "position", "id"]
+            "required": [
+              "name",
+              "position",
+              "id"
+            ]
           },
           "description": "Array of power symbols to place"
         },
@@ -1603,7 +1854,9 @@
           "type": "array",
           "items": {
             "type": "array",
-            "items": {"type": "string"},
+            "items": {
+              "type": "string"
+            },
             "minItems": 2,
             "maxItems": 2
           },
@@ -1614,15 +1867,45 @@
           "items": {
             "type": "object",
             "properties": {
-              "text": {"type": "string"},
-              "position": {"type": "array", "items": {"type": "number"}},
-              "type": {"type": "string", "enum": ["local", "global", "hierarchical"]}
+              "text": {
+                "type": "string"
+              },
+              "position": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                }
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "local",
+                  "global",
+                  "hierarchical"
+                ]
+              }
             }
           },
           "description": "Optional labels to place"
+        },
+        "target": {
+          "type": "object",
+          "description": "On a multi-board container project (check_status -> is_multi_board_container == true), use this to specify which sub-project this tool call targets. Get sub_project_uuid from check_status -> sub_projects[].uuid. Omit on standalone single-board projects. Required when multiple sub-project editors of the matching doc type are open.",
+          "properties": {
+            "sub_project_uuid": {
+              "type": "string",
+              "description": "The uuid field from one of check_status -> sub_projects[]. The tool call will be routed to that sub-project edit window."
+            }
+          },
+          "required": [
+            "sub_project_uuid"
+          ]
         }
       },
-      "required": ["symbols", "connections"]
+      "required": [
+        "symbols",
+        "connections"
+      ]
     },
     "app": "sch",
     "script": "schematic/sch_draft_circuit.py",
@@ -1658,6 +1941,19 @@
         "reset_existing": {
           "type": "boolean",
           "description": "If true, clear existing annotations before re-annotating. Default: false"
+        },
+        "target": {
+          "type": "object",
+          "description": "On a multi-board container project (check_status -> is_multi_board_container == true), use this to specify which sub-project this tool call targets. Get sub_project_uuid from check_status -> sub_projects[].uuid. Omit on standalone single-board projects. Required when multiple sub-project editors of the matching doc type are open.",
+          "properties": {
+            "sub_project_uuid": {
+              "type": "string",
+              "description": "The uuid field from one of check_status -> sub_projects[]. The tool call will be routed to that sub-project edit window."
+            }
+          },
+          "required": [
+            "sub_project_uuid"
+          ]
         }
       },
       "required": []
@@ -1674,7 +1970,21 @@
     "description": "Get a high-level overview of the open PCB. Returns footprints (ref, lib_id, position, layer), track/via/zone counts, net names, and enabled layers.",
     "input_schema": {
       "type": "object",
-      "properties": {},
+      "properties": {
+        "target": {
+          "type": "object",
+          "description": "On a multi-board container project (check_status -> is_multi_board_container == true), use this to specify which sub-project this tool call targets. Get sub_project_uuid from check_status -> sub_projects[].uuid. Omit on standalone single-board projects. Required when multiple sub-project editors of the matching doc type are open.",
+          "properties": {
+            "sub_project_uuid": {
+              "type": "string",
+              "description": "The uuid field from one of check_status -> sub_projects[]. The tool call will be routed to that sub-project edit window."
+            }
+          },
+          "required": [
+            "sub_project_uuid"
+          ]
+        }
+      },
       "required": []
     },
     "app": "pcb",
@@ -1707,6 +2017,19 @@
         "filter": {
           "type": "string",
           "description": "Optional filter by reference (e.g., 'U*'), net name, or layer"
+        },
+        "target": {
+          "type": "object",
+          "description": "On a multi-board container project (check_status -> is_multi_board_container == true), use this to specify which sub-project this tool call targets. Get sub_project_uuid from check_status -> sub_projects[].uuid. Omit on standalone single-board projects. Required when multiple sub-project editors of the matching doc type are open.",
+          "properties": {
+            "sub_project_uuid": {
+              "type": "string",
+              "description": "The uuid field from one of check_status -> sub_projects[]. The tool call will be routed to that sub-project edit window."
+            }
+          },
+          "required": [
+            "sub_project_uuid"
+          ]
         }
       },
       "required": [
@@ -1725,7 +2048,21 @@
     "description": "Refill all copper zones on the open PCB. Equivalent to pressing 'B' in KiCad. Run this after adding vias, moving components, or modifying traces to update the copper pour. Blocks until refill is complete.",
     "input_schema": {
       "type": "object",
-      "properties": {},
+      "properties": {
+        "target": {
+          "type": "object",
+          "description": "On a multi-board container project (check_status -> is_multi_board_container == true), use this to specify which sub-project this tool call targets. Get sub_project_uuid from check_status -> sub_projects[].uuid. Omit on standalone single-board projects. Required when multiple sub-project editors of the matching doc type are open.",
+          "properties": {
+            "sub_project_uuid": {
+              "type": "string",
+              "description": "The uuid field from one of check_status -> sub_projects[]. The tool call will be routed to that sub-project edit window."
+            }
+          },
+          "required": [
+            "sub_project_uuid"
+          ]
+        }
+      },
       "required": []
     },
     "app": "pcb",
@@ -1753,6 +2090,19 @@
             "by_type"
           ],
           "description": "Output format: 'summary', 'detailed', or 'by_type' (default: summary)"
+        },
+        "target": {
+          "type": "object",
+          "description": "On a multi-board container project (check_status -> is_multi_board_container == true), use this to specify which sub-project this tool call targets. Get sub_project_uuid from check_status -> sub_projects[].uuid. Omit on standalone single-board projects. Required when multiple sub-project editors of the matching doc type are open.",
+          "properties": {
+            "sub_project_uuid": {
+              "type": "string",
+              "description": "The uuid field from one of check_status -> sub_projects[]. The tool call will be routed to that sub-project edit window."
+            }
+          },
+          "required": [
+            "sub_project_uuid"
+          ]
         }
       },
       "required": []
@@ -1811,6 +2161,19 @@
         "clear_existing": {
           "type": "boolean",
           "description": "Remove existing board outline first (default: true)"
+        },
+        "target": {
+          "type": "object",
+          "description": "On a multi-board container project (check_status -> is_multi_board_container == true), use this to specify which sub-project this tool call targets. Get sub_project_uuid from check_status -> sub_projects[].uuid. Omit on standalone single-board projects. Required when multiple sub-project editors of the matching doc type are open.",
+          "properties": {
+            "sub_project_uuid": {
+              "type": "string",
+              "description": "The uuid field from one of check_status -> sub_projects[]. The tool call will be routed to that sub-project edit window."
+            }
+          },
+          "required": [
+            "sub_project_uuid"
+          ]
         }
       },
       "required": [
@@ -1845,6 +2208,19 @@
         "dry_run": {
           "type": "boolean",
           "description": "Preview changes without applying (default: false)"
+        },
+        "target": {
+          "type": "object",
+          "description": "On a multi-board container project (check_status -> is_multi_board_container == true), use this to specify which sub-project this tool call targets. Get sub_project_uuid from check_status -> sub_projects[].uuid. Omit on standalone single-board projects. Required when multiple sub-project editors of the matching doc type are open.",
+          "properties": {
+            "sub_project_uuid": {
+              "type": "string",
+              "description": "The uuid field from one of check_status -> sub_projects[]. The tool call will be routed to that sub-project edit window."
+            }
+          },
+          "required": [
+            "sub_project_uuid"
+          ]
         }
       },
       "required": []
@@ -1896,6 +2272,19 @@
             ]
           },
           "description": "Array of placement operations"
+        },
+        "target": {
+          "type": "object",
+          "description": "On a multi-board container project (check_status -> is_multi_board_container == true), use this to specify which sub-project this tool call targets. Get sub_project_uuid from check_status -> sub_projects[].uuid. Omit on standalone single-board projects. Required when multiple sub-project editors of the matching doc type are open.",
+          "properties": {
+            "sub_project_uuid": {
+              "type": "string",
+              "description": "The uuid field from one of check_status -> sub_projects[]. The tool call will be routed to that sub-project edit window."
+            }
+          },
+          "required": [
+            "sub_project_uuid"
+          ]
         }
       },
       "required": [
@@ -2059,6 +2448,19 @@
             ]
           },
           "description": "Array of elements to add. Processed in order."
+        },
+        "target": {
+          "type": "object",
+          "description": "On a multi-board container project (check_status -> is_multi_board_container == true), use this to specify which sub-project this tool call targets. Get sub_project_uuid from check_status -> sub_projects[].uuid. Omit on standalone single-board projects. Required when multiple sub-project editors of the matching doc type are open.",
+          "properties": {
+            "sub_project_uuid": {
+              "type": "string",
+              "description": "The uuid field from one of check_status -> sub_projects[]. The tool call will be routed to that sub-project edit window."
+            }
+          },
+          "required": [
+            "sub_project_uuid"
+          ]
         }
       },
       "required": [
@@ -2212,6 +2614,19 @@
             ]
           },
           "description": "Array of updates. Each must have 'target' plus properties to change."
+        },
+        "target": {
+          "type": "object",
+          "description": "On a multi-board container project (check_status -> is_multi_board_container == true), use this to specify which sub-project this tool call targets. Get sub_project_uuid from check_status -> sub_projects[].uuid. Omit on standalone single-board projects. Required when multiple sub-project editors of the matching doc type are open.",
+          "properties": {
+            "sub_project_uuid": {
+              "type": "string",
+              "description": "The uuid field from one of check_status -> sub_projects[]. The tool call will be routed to that sub-project edit window."
+            }
+          },
+          "required": [
+            "sub_project_uuid"
+          ]
         }
       },
       "required": [
@@ -2252,6 +2667,19 @@
             }
           },
           "description": "Alternative: query to select elements (e.g., {\"layer\": \"F.SilkS\", \"type\": \"text\"})"
+        },
+        "target": {
+          "type": "object",
+          "description": "On a multi-board container project (check_status -> is_multi_board_container == true), use this to specify which sub-project this tool call targets. Get sub_project_uuid from check_status -> sub_projects[].uuid. Omit on standalone single-board projects. Required when multiple sub-project editors of the matching doc type are open.",
+          "properties": {
+            "sub_project_uuid": {
+              "type": "string",
+              "description": "The uuid field from one of check_status -> sub_projects[]. The tool call will be routed to that sub-project edit window."
+            }
+          },
+          "required": [
+            "sub_project_uuid"
+          ]
         }
       },
       "required": []
@@ -2272,6 +2700,19 @@
         "ref": {
           "type": "string",
           "description": "Reference designator of the footprint (e.g., 'U1', 'R3', 'C5')"
+        },
+        "target": {
+          "type": "object",
+          "description": "On a multi-board container project (check_status -> is_multi_board_container == true), use this to specify which sub-project this tool call targets. Get sub_project_uuid from check_status -> sub_projects[].uuid. Omit on standalone single-board projects. Required when multiple sub-project editors of the matching doc type are open.",
+          "properties": {
+            "sub_project_uuid": {
+              "type": "string",
+              "description": "The uuid field from one of check_status -> sub_projects[]. The tool call will be routed to that sub-project edit window."
+            }
+          },
+          "required": [
+            "sub_project_uuid"
+          ]
         }
       },
       "required": [
@@ -2294,6 +2735,19 @@
         "ref": {
           "type": "string",
           "description": "Reference designator of the footprint (e.g., 'U1', 'R3')"
+        },
+        "target": {
+          "type": "object",
+          "description": "On a multi-board container project (check_status -> is_multi_board_container == true), use this to specify which sub-project this tool call targets. Get sub_project_uuid from check_status -> sub_projects[].uuid. Omit on standalone single-board projects. Required when multiple sub-project editors of the matching doc type are open.",
+          "properties": {
+            "sub_project_uuid": {
+              "type": "string",
+              "description": "The uuid field from one of check_status -> sub_projects[]. The tool call will be routed to that sub-project edit window."
+            }
+          },
+          "required": [
+            "sub_project_uuid"
+          ]
         }
       },
       "required": [
@@ -2324,6 +2778,19 @@
         "unrouted_only": {
           "type": "boolean",
           "description": "Only return nets with unconnected pads (default: false)"
+        },
+        "target": {
+          "type": "object",
+          "description": "On a multi-board container project (check_status -> is_multi_board_container == true), use this to specify which sub-project this tool call targets. Get sub_project_uuid from check_status -> sub_projects[].uuid. Omit on standalone single-board projects. Required when multiple sub-project editors of the matching doc type are open.",
+          "properties": {
+            "sub_project_uuid": {
+              "type": "string",
+              "description": "The uuid field from one of check_status -> sub_projects[]. The tool call will be routed to that sub-project edit window."
+            }
+          },
+          "required": [
+            "sub_project_uuid"
+          ]
         }
       },
       "required": []
@@ -2380,6 +2847,19 @@
         "separate_npth": {
           "type": "boolean",
           "description": "Separate NPTH (non-plated) drill file (default: true)"
+        },
+        "target": {
+          "type": "object",
+          "description": "On a multi-board container project (check_status -> is_multi_board_container == true), use this to specify which sub-project this tool call targets. Get sub_project_uuid from check_status -> sub_projects[].uuid. Omit on standalone single-board projects. Required when multiple sub-project editors of the matching doc type are open.",
+          "properties": {
+            "sub_project_uuid": {
+              "type": "string",
+              "description": "The uuid field from one of check_status -> sub_projects[]. The tool call will be routed to that sub-project edit window."
+            }
+          },
+          "required": [
+            "sub_project_uuid"
+          ]
         }
       },
       "required": [
@@ -2891,6 +3371,19 @@
               "description": "Drill/place origin as [x, y] in mm"
             }
           }
+        },
+        "target": {
+          "type": "object",
+          "description": "On a multi-board container project (check_status -> is_multi_board_container == true), use this to specify which sub-project this tool call targets. Get sub_project_uuid from check_status -> sub_projects[].uuid. Omit on standalone single-board projects. Required when multiple sub-project editors of the matching doc type are open.",
+          "properties": {
+            "sub_project_uuid": {
+              "type": "string",
+              "description": "The uuid field from one of check_status -> sub_projects[]. The tool call will be routed to that sub-project edit window."
+            }
+          },
+          "required": [
+            "sub_project_uuid"
+          ]
         }
       },
       "required": [
@@ -3162,7 +3655,13 @@
       "properties": {
         "action": {
           "type": "string",
-          "enum": ["list", "create", "set_active", "get_active", "assign_component"],
+          "enum": [
+            "list",
+            "create",
+            "set_active",
+            "get_active",
+            "assign_component"
+          ],
           "description": "Action to perform (default: list)"
         },
         "name": {
@@ -3180,6 +3679,19 @@
         "board_uuid": {
           "type": "string",
           "description": "Target board UUID (for assign_component action)"
+        },
+        "target": {
+          "type": "object",
+          "description": "On a multi-board container project (check_status -> is_multi_board_container == true), use this to specify which sub-project this tool call targets. Get sub_project_uuid from check_status -> sub_projects[].uuid. Omit on standalone single-board projects. Required when multiple sub-project editors of the matching doc type are open.",
+          "properties": {
+            "sub_project_uuid": {
+              "type": "string",
+              "description": "The uuid field from one of check_status -> sub_projects[]. The tool call will be routed to that sub-project edit window."
+            }
+          },
+          "required": [
+            "sub_project_uuid"
+          ]
         }
       },
       "required": []
@@ -3199,7 +3711,12 @@
       "properties": {
         "action": {
           "type": "string",
-          "enum": ["list", "link", "unlink", "validate"],
+          "enum": [
+            "list",
+            "link",
+            "unlink",
+            "validate"
+          ],
           "description": "Action to perform (default: list)"
         },
         "board1_uuid": {
@@ -3221,6 +3738,19 @@
         "connection_id": {
           "type": "string",
           "description": "Connection ID (for unlink action)"
+        },
+        "target": {
+          "type": "object",
+          "description": "On a multi-board container project (check_status -> is_multi_board_container == true), use this to specify which sub-project this tool call targets. Get sub_project_uuid from check_status -> sub_projects[].uuid. Omit on standalone single-board projects. Required when multiple sub-project editors of the matching doc type are open.",
+          "properties": {
+            "sub_project_uuid": {
+              "type": "string",
+              "description": "The uuid field from one of check_status -> sub_projects[]. The tool call will be routed to that sub-project edit window."
+            }
+          },
+          "required": [
+            "sub_project_uuid"
+          ]
         }
       },
       "required": []
@@ -3240,7 +3770,15 @@
       "properties": {
         "action": {
           "type": "string",
-          "enum": ["create", "list", "add_instance", "generate_tabs", "add_rails", "add_tooling", "export"],
+          "enum": [
+            "create",
+            "list",
+            "add_instance",
+            "generate_tabs",
+            "add_rails",
+            "add_tooling",
+            "export"
+          ],
           "description": "Action to perform (default: create)"
         },
         "name": {
@@ -3252,16 +3790,25 @@
           "items": {
             "type": "object",
             "properties": {
-              "board_id": { "type": "string" },
-              "copies": { "type": "integer" },
-              "rotation": { "type": "number" }
+              "board_id": {
+                "type": "string"
+              },
+              "copies": {
+                "type": "integer"
+              },
+              "rotation": {
+                "type": "number"
+              }
             }
           },
           "description": "Boards to include in panel (for create action)"
         },
         "layout": {
           "type": "string",
-          "enum": ["grid", "auto"],
+          "enum": [
+            "grid",
+            "auto"
+          ],
           "description": "Layout strategy (default: grid)"
         },
         "spacing_mm": {
@@ -3270,7 +3817,12 @@
         },
         "tab_type": {
           "type": "string",
-          "enum": ["none", "mousebite", "v_groove", "solid"],
+          "enum": [
+            "none",
+            "mousebite",
+            "v_groove",
+            "solid"
+          ],
           "description": "Tab type (default: mousebite)"
         },
         "tab_width_mm": {
@@ -3304,6 +3856,19 @@
         "output_dir": {
           "type": "string",
           "description": "Output directory (for export action)"
+        },
+        "target": {
+          "type": "object",
+          "description": "On a multi-board container project (check_status -> is_multi_board_container == true), use this to specify which sub-project this tool call targets. Get sub_project_uuid from check_status -> sub_projects[].uuid. Omit on standalone single-board projects. Required when multiple sub-project editors of the matching doc type are open.",
+          "properties": {
+            "sub_project_uuid": {
+              "type": "string",
+              "description": "The uuid field from one of check_status -> sub_projects[]. The tool call will be routed to that sub-project edit window."
+            }
+          },
+          "required": [
+            "sub_project_uuid"
+          ]
         }
       },
       "required": []

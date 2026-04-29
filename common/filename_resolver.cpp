@@ -276,36 +276,22 @@ wxString FILENAME_RESOLVER::ResolvePath( const wxString& aFileName, const wxStri
     tname.Replace( "\\", "/" );
 #endif
 
-    // ${KIPRJMOD} must substitute against THIS resolver's project dir, not
-    // whatever the global KIPRJMOD env var happens to point at. Multi-board
-    // sub-projects are loaded with aSetActive=false so the global env var
-    // stays at the container's path; without this pre-substitution the env
-    // var would win and project-local model paths would resolve to nothing.
-    // We do this before ExpandEnvVarSubstitutions so the env-var fallback
-    // for KIPRJMOD never runs.
-    wxString tnameBeforeKiprjmod = tname;
-    if( !m_curProjDir.empty() )
-    {
-        tname.Replace( wxT( "${KIPRJMOD}" ), m_curProjDir );
-        tname.Replace( wxT( "$(KIPRJMOD)" ), m_curProjDir );
-    }
-
     // Note: variable expansion must preferably be performed via a threadsafe wrapper for the
     // getenv() system call. If we allow the wxFileName::Normalize() routine to perform expansion
     // then we will have a race condition since wxWidgets does not assure a threadsafe wrapper
     // for getenv().
+    wxString tnameRaw = tname;
     tname = ExpandEnvVarSubstitutions( tname, m_project );
 
     // TEMP DIAGNOSTIC (multi-board virtual model resolution): log when
-    // KIPRJMOD substitution kicked in, and whether the substituted path
-    // actually exists. Remove once the multi-board virtual-model bug is
-    // closed.
-    if( tnameBeforeKiprjmod.Contains( wxT( "KIPRJMOD" ) ) )
+    // KIPRJMOD shows up in an input. Remove once the multi-board
+    // virtual-model bug is closed.
+    if( tnameRaw.Contains( wxT( "KIPRJMOD" ) ) )
     {
         wxString existsCheck = wxFileName::FileExists( tname ) ? wxT( "EXISTS" )
                                                                 : wxT( "MISSING" );
         wxLogMessage( wxT( "[RESOLVE] in='%s' projDir='%s' substituted='%s' file=%s" ),
-                      tnameBeforeKiprjmod, m_curProjDir, tname, existsCheck );
+                      tnameRaw, m_curProjDir, tname, existsCheck );
     }
 
     // Check to see if the file is a URI for an embedded file.

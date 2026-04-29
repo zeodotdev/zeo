@@ -25,6 +25,7 @@
 #include <build_version.h>
 #include <common.h>     // For ExpandEnvVarSubstitutions
 #include <dialogs/dialog_plugin_options.h>
+#include <mail_type.h>
 #include <project.h>
 #include <project/project_file.h>
 #include <panel_sym_lib_table.h>
@@ -273,11 +274,17 @@ void PANEL_SYM_LIB_TABLE::AddTable( LIBRARY_TABLE* table, const wxString& aTitle
     }
 
     // add Cut, Copy, and Paste to wxGrids
-    grid->PushEventHandler( new SYMBOL_GRID_TRICKS( this, grid,
+    SYMBOL_GRID_TRICKS* gridTricks = new SYMBOL_GRID_TRICKS( this, grid,
             [this]( wxCommandEvent& event )
             {
                 appendRowHandler( event );
-            } ) );
+            } );
+
+    // Multi-board (M7.1): the menu's Share / Unshare logic needs the
+    // dialog's bound project, not the global active one.
+    gridTricks->SetProject( m_project );
+
+    grid->PushEventHandler( gridTricks );
 
     auto autoSizeCol =
             [&]( int aCol )
@@ -293,6 +300,21 @@ void PANEL_SYM_LIB_TABLE::AddTable( LIBRARY_TABLE* table, const wxString& aTitle
     autoSizeCol( COL_TYPE );
     autoSizeCol( COL_URI );
     autoSizeCol( COL_DESCR );
+
+    // Multi-board (M7.1): the Share column only carries useful info on a
+    // sub-project's project tier. Hide it elsewhere so the column doesn't
+    // confuse users on global / standalone / container tabs.
+    bool isProjectTab = table->Path().StartsWith( projectPath );
+    bool isSubProjectContext = isProjectTab
+                            && m_project
+                            && !m_project->IsNullProject()
+                            && !m_project->GetProjectFile().IsMultiBoardContainer()
+                            && !m_project->GetContainerProjectPath().IsEmpty();
+
+    if( isSubProjectContext )
+        autoSizeCol( COL_SHARE );
+    else
+        grid->HideCol( COL_SHARE );
 
     if( grid->GetNumberRows() > 0 )
     {
@@ -1049,7 +1071,16 @@ void InvokeSchEditSymbolLibTable( KIWAY* aKiway, wxWindow *aParent )
     DIALOG_EDIT_LIBRARY_TABLES dlg( aParent, _( "Symbol Libraries" ) );
     dlg.SetKiway( &dlg, aKiway );
 
-    dlg.InstallPanel( new PANEL_SYM_LIB_TABLE( &dlg, &aKiway->Prj() ) );
+    // Multi-board (M7.1): when invoked from a peer-player frame (e.g.
+    // a sub-board's SCH editor), prefer the frame's bound project over
+    // Kiway's global active project. Otherwise the dialog would operate
+    // on the container's tier even when the user is editing a sub-board.
+    PROJECT* dlgProject = &aKiway->Prj();
+
+    if( KIWAY_HOLDER* holder = dynamic_cast<KIWAY_HOLDER*>( aParent ) )
+        dlgProject = &holder->Prj();
+
+    dlg.InstallPanel( new PANEL_SYM_LIB_TABLE( &dlg, dlgProject ) );
 
     if( dlg.ShowModal() == wxID_CANCEL )
     {
@@ -1071,6 +1102,19 @@ void InvokeSchEditSymbolLibTable( KIWAY* aKiway, wxWindow *aParent )
     // Trigger a reload in case any libraries have been added or removed
     if( KIFACE *schface = aKiway->KiFACE( KIWAY::FACE_SCH ) )
         schface->PreloadLibraries( aKiway );
+
+    // Multi-board (M7.1.A): tell peer schematic / symbol-editor frames to
+    // refresh their library trees too. Otherwise a sub-board frame that
+    // was already open while the user edited libraries from MBSCH (or
+    // any other frame) would keep showing stale state until restart.
+    if( dlg.m_GlobalTableChanged || dlg.m_ProjectTableChanged )
+    {
+        std::string payload;
+        aKiway->ExpressMail( FRAME_SCH, MAIL_RELOAD_LIB, payload );
+        aKiway->ExpressMail( FRAME_SCH_SYMBOL_EDITOR, MAIL_RELOAD_LIB, payload );
+        aKiway->ExpressMail( FRAME_SCH_VIEWER, MAIL_RELOAD_LIB, payload );
+        aKiway->ExpressMail( FRAME_CVPCB, MAIL_RELOAD_LIB, payload );
+    }
 
     if( symbolEditor )
         symbolEditor->ThawLibraryTree();

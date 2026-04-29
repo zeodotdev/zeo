@@ -334,6 +334,16 @@ void SCH_SCREEN::FreeDrawList()
 }
 
 
+void SCH_SCREEN::RunOnItemsRecursive( const std::function<void( SCH_ITEM* )>& aFunc )
+{
+    for( SCH_ITEM* item : m_rtree )
+    {
+        aFunc( item );
+        item->RunOnChildren( aFunc, RECURSE_MODE::RECURSE );
+    }
+}
+
+
 void SCH_SCREEN::Update( SCH_ITEM* aItem, bool aUpdateLibSymbol )
 {
     if( Remove( aItem, aUpdateLibSymbol ) )

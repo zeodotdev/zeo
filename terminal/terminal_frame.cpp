@@ -129,14 +129,26 @@ static std::string BuildModeInitCode( const wxString& aMode, const std::string& 
         // schematic operations (mbs.symbols.add, mbs.wiring.add_wire,
         // mbs.labels.add, etc.) work because the on-disk format is shared
         // with .kicad_sch. MBS-only operations live under mbs.multi_board.
+        //
+        // When the MBSCH frame isn't open, the kipy lookup fails. The
+        // recovery path the LLM should take is documented in core.md:
+        //   1. call check_status -> container.mbs_file_path
+        //   2. call open_editor with editor_type:"sch" + that file_path
+        //      (Phase A peer-window logic opens it alongside any
+        //       sub-project editor without closing them)
+        //   3. retry the mbs_* tool
         initCode +=
             "try:\n"
             "    mbs = kicad.get_mbs_schematic()\n"
             "    if hasattr(mbs, 'refresh_document'):\n"
             "        mbs.refresh_document()\n"
             "except Exception:\n"
-            "    raise RuntimeError('Multi-board (MBS) schematic editor is not open. "
-            "Open the container project\\'s .kicad_mbs file first.')\n";
+            "    raise RuntimeError("
+            "'No MBS schematic editor is open. Recovery: "
+            "(1) call check_status to get container.mbs_file_path; "
+            "(2) call open_editor with editor_type=\"sch\" and that file_path "
+            "(opens as a peer window — does not close any sub-project editor); "
+            "(3) retry this tool.')\n";
     }
     else if( aMode == "pcb" )
     {

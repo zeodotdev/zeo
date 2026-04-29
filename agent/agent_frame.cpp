@@ -4397,6 +4397,61 @@ void AGENT_FRAME::OnOpenSimulator()
 }
 
 
+/// Case-insensitive on macOS / Windows. Path comparison helper used by
+/// the open_editor multi-window logic.
+static bool agentFilesEqual( const wxString& aA, const wxString& aB )
+{
+    if( aA.IsEmpty() || aB.IsEmpty() )
+        return false;
+
+#if defined( __WXMSW__ ) || defined( __WXMAC__ )
+    return aA.IsSameAs( aB, false );
+#else
+    return aA == aB;
+#endif
+}
+
+
+/**
+ * For SCH frames the file path may be a `.kicad_sch` (regular sub-project),
+ * a `.kicad_mbs` (multi-board container schematic), or a sub-sheet within
+ * a hierarchy. The owning project is the `.kicad_pro` in the same directory
+ * named after the directory's basename. Returns the absolute path or an
+ * empty string when the file's directory has no obvious .kicad_pro.
+ */
+static wxString resolveProjectFileForDocument( const wxString& aFilePath )
+{
+    if( aFilePath.IsEmpty() )
+        return wxEmptyString;
+
+    wxFileName fn( aFilePath );
+    wxString   dir = fn.GetPath();
+
+    if( dir.IsEmpty() )
+        return wxEmptyString;
+
+    // Try the .kicad_pro that shares the file's basename (typical case).
+    wxFileName candidate( dir, fn.GetName(), wxT( "kicad_pro" ) );
+
+    if( candidate.FileExists() )
+        return candidate.GetFullPath();
+
+    // Otherwise scan the directory for any .kicad_pro and take the first.
+    wxDir       dirObj( dir );
+    wxString    found;
+
+    if( dirObj.IsOpened()
+            && dirObj.GetFirst( &found, wxT( "*.kicad_pro" ),
+                                wxDIR_FILES ) )
+    {
+        wxFileName fnFound( dir, found );
+        return fnFound.GetFullPath();
+    }
+
+    return wxEmptyString;
+}
+
+
 bool AGENT_FRAME::DoOpenEditor( FRAME_T aFrameType )
 {
     wxString editorName = ( aFrameType == FRAME_SCH ) ? "Schematic" : "PCB";
@@ -4404,51 +4459,202 @@ bool AGENT_FRAME::DoOpenEditor( FRAME_T aFrameType )
     wxLogInfo( "DoOpenEditor: Opening %s editor, pendingFilePath='%s'",
                editorName, m_pendingOpenFilePath );
 
-    KIWAY_PLAYER* player = Kiway().Player( aFrameType, true );
-    if( !player )
+    wxString filePath = m_pendingOpenFilePath;
+    m_pendingOpenFilePath.Clear();
+
+    // ---- Strategy 1: file already open in some frame → raise that frame ----
+    if( !filePath.IsEmpty() )
     {
-        wxLogError( "DoOpenEditor: Failed to create %s player", editorName );
-        return false;
+        for( KIWAY_PLAYER* peer : Kiway().GetAllPlayerFrames( aFrameType ) )
+        {
+            if( !peer || !peer->IsShown() )
+                continue;
+
+            if( agentFilesEqual( peer->GetCurrentFileName(), filePath ) )
+            {
+                wxLogInfo( "DoOpenEditor: file already open in frame %p — raising",
+                           peer );
+
+                if( peer->IsIconized() )
+                    peer->Iconize( false );
+
+                peer->Raise();
+                peer->SetFocus();
+
+                if( aFrameType == FRAME_SCH )
+                    TOOL_REGISTRY::Instance().SetSchematicEditorOpen( true );
+                else if( aFrameType == FRAME_PCB_EDITOR )
+                    TOOL_REGISTRY::Instance().SetPcbEditorOpen( true );
+
+                return true;
+            }
+        }
     }
 
-    // Open specific file if path was provided
-    if( !m_pendingOpenFilePath.IsEmpty() )
+    // ---- Strategy 2: no editor of this type open AT ALL → create primary ----
+    // Distinguishes a primary that's never been instantiated vs. one already
+    // showing a different file. When there's no existing frame, fall through
+    // to the legacy single-frame path so the M4 KIWAY initialization runs
+    // normally and the primary frame is the one we open the file in.
+    bool anyExistingFrame = false;
+
+    for( KIWAY_PLAYER* peer : Kiway().GetAllPlayerFrames( aFrameType ) )
     {
-        wxLogInfo( "DoOpenEditor: Loading file '%s'", m_pendingOpenFilePath );
-
-        std::vector<wxString> files;
-        files.push_back( m_pendingOpenFilePath );
-        bool loadResult = player->OpenProjectFiles( files );
-
-        if( !loadResult )
+        if( peer && peer->IsShown() )
         {
-            wxLogWarning( "DoOpenEditor: OpenProjectFiles returned false for '%s'",
-                          m_pendingOpenFilePath );
+            anyExistingFrame = true;
+            break;
+        }
+    }
+
+    if( !anyExistingFrame )
+    {
+        KIWAY_PLAYER* player = Kiway().Player( aFrameType, true );
+
+        if( !player )
+        {
+            wxLogError( "DoOpenEditor: Failed to create %s player", editorName );
+            return false;
+        }
+
+        if( !filePath.IsEmpty() )
+        {
+            std::vector<wxString> files{ filePath };
+
+            if( !player->OpenProjectFiles( files ) )
+            {
+                wxLogWarning( "DoOpenEditor: OpenProjectFiles returned false for '%s'",
+                              filePath );
+            }
         }
         else
         {
-            wxLogInfo( "DoOpenEditor: Successfully loaded '%s'", m_pendingOpenFilePath );
+            wxLogWarning( "DoOpenEditor: No file path specified — primary editor "
+                          "will open with default document" );
         }
 
-        m_pendingOpenFilePath.Clear();
+        player->Show( true );
+
+        if( player->IsIconized() )
+            player->Iconize( false );
+
+        player->Raise();
+
+        if( aFrameType == FRAME_SCH )
+            TOOL_REGISTRY::Instance().SetSchematicEditorOpen( true );
+        else if( aFrameType == FRAME_PCB_EDITOR )
+            TOOL_REGISTRY::Instance().SetPcbEditorOpen( true );
+
+        return true;
     }
-    else
+
+    // ---- Strategy 3: editor of this type already open with a DIFFERENT file
+    // ---- → spawn a peer window (M4 plumbing) so both stay open simultaneously
+    if( filePath.IsEmpty() )
     {
-        wxLogWarning( "DoOpenEditor: No file path specified - editor will open with blank/default document" );
+        wxLogWarning( "DoOpenEditor: editor already open and no file specified — "
+                      "nothing to do (use Strategy 2 only when no editor exists)" );
+        return false;
     }
 
-    player->Show( true );
-    if( player->IsIconized() )
-        player->Iconize( false );
-    player->Raise();
+    wxString proPath = resolveProjectFileForDocument( filePath );
 
-    // Notify tool registry that editor is now open
-    // This blocks direct file modifications to prevent IPC/file conflicts
+    if( proPath.IsEmpty() )
+    {
+        wxLogError( "DoOpenEditor: cannot find .kicad_pro for '%s' — peer window "
+                    "needs an owning project", filePath );
+        return false;
+    }
+
+    SETTINGS_MANAGER& sm = Pgm().GetSettingsManager();
+
+    // Load the new project as a non-active peer so the existing project
+    // (typically the multi-board container) stays the dominant Prj().
+    if( !sm.LoadProject( proPath, /*aSetActive=*/false ) )
+    {
+        wxLogError( "DoOpenEditor: SETTINGS_MANAGER::LoadProject('%s') failed",
+                    proPath );
+        return false;
+    }
+
+    PROJECT* peerProject = sm.GetProject( proPath );
+
+    if( !peerProject )
+    {
+        wxLogError( "DoOpenEditor: GetProject returned null for '%s'", proPath );
+        return false;
+    }
+
+    KIWAY::FACE_T face = ( aFrameType == FRAME_PCB_EDITOR )
+                                ? KIWAY::FACE_PCB
+                                : KIWAY::FACE_SCH;
+
+    KIFACE* kiface = Kiway().KiFACE( face );
+
+    if( !kiface )
+    {
+        wxLogError( "DoOpenEditor: kiface for %s not loaded", editorName );
+        return false;
+    }
+
+    // C-style cast — typeinfo has hidden visibility in the kiface DSOs, so
+    // dynamic_cast from the main binary is unreliable. Mirrors the pattern
+    // used by Kiway::Player and KICAD_MANAGER_FRAME::SpawnPeerSchematicEditor.
+    KIWAY_PLAYER* peer = (KIWAY_PLAYER*) kiface->CreateKiWindow( this, aFrameType,
+                                                                 &Kiway(), 0 );
+
+    if( !peer )
+    {
+        wxLogError( "DoOpenEditor: CreateKiWindow returned null for %s peer",
+                    editorName );
+        return false;
+    }
+
+    // Pin the peer to the requested project so its Prj() resolves to that
+    // project even though SETTINGS_MANAGER's active project is unchanged.
+    peer->SetPrjOverride( peerProject );
+
+    // Register as a peer so Kiway ExpressMail reaches this frame too —
+    // critical for cross-probe broadcasts.
+    wxWindowID peerId = peer->GetId();
+    Kiway().RegisterPeerPlayer( aFrameType, peerId );
+
+    // Unregister on close so stale IDs don't accumulate in Kiway's peer
+    // list and future mails don't fire at dead targets.
+    FRAME_T capturedFrameType = aFrameType;
+    peer->Bind( wxEVT_CLOSE_WINDOW,
+                [this, peerId, capturedFrameType]( wxCloseEvent& aEvt )
+                {
+                    Kiway().UnregisterPeerPlayer( capturedFrameType, peerId );
+                    aEvt.Skip();
+                } );
+
+    std::vector<wxString> files{ filePath };
+
+    if( !peer->OpenProjectFiles( files ) )
+    {
+        wxLogError( "DoOpenEditor: peer OpenProjectFiles failed for '%s'",
+                    filePath );
+        Kiway().UnregisterPeerPlayer( aFrameType, peerId );
+        peer->Destroy();
+        return false;
+    }
+
+    peer->Show( true );
+
+    if( peer->IsIconized() )
+        peer->Iconize( false );
+
+    peer->Raise();
+    peer->SetFocus();
+
     if( aFrameType == FRAME_SCH )
         TOOL_REGISTRY::Instance().SetSchematicEditorOpen( true );
     else if( aFrameType == FRAME_PCB_EDITOR )
         TOOL_REGISTRY::Instance().SetPcbEditorOpen( true );
 
+    wxLogInfo( "DoOpenEditor: spawned %s peer window for '%s'",
+               editorName, filePath );
     return true;
 }
 

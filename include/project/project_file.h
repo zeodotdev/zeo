@@ -539,6 +539,18 @@ public:
 
     void SetMbsFileName( const wxString& aName ) { m_mbsFileName = aName; }
 
+    /// M7.2: when set on a sub-project, `NetSettings()` returns the
+    /// container's net classes / DRC rules at runtime if the container
+    /// is loaded. Falls back to this project's own `m_NetSettings` when
+    /// the container isn't reachable (e.g. standalone open). Persisted
+    /// as `multi_board.inherit_net_settings`.
+    bool InheritNetSettingsFromContainer() const { return m_inheritNetSettingsFromContainer; }
+
+    void SetInheritNetSettingsFromContainer( bool aInherit )
+    {
+        m_inheritNetSettingsFromContainer = aInherit;
+    }
+
     /// Resolve a sub-project's relativePath to an absolute `.kicad_pro`
     /// path, relative to this container project's directory.
     wxFileName ResolveSubProjectPath( const SUB_PROJECT_INFO& aInfo ) const;
@@ -557,10 +569,15 @@ public:
         return m_topLevelSheets;
     }
 
-    std::shared_ptr<NET_SETTINGS>& NetSettings()
-    {
-        return m_NetSettings;
-    }
+    /// M7.2 overlay: when this sub-project has
+    /// `multi_board.inherit_net_settings = true` AND its container
+    /// project is loaded in the SETTINGS_MANAGER (e.g. user is in MBSCH
+    /// peer-player mode), this returns the container's NET_SETTINGS so
+    /// every sub-board sees the same net classes / DRC rules. In all
+    /// other cases (container not loaded, standalone open, flag off,
+    /// container project itself) it returns this project's own
+    /// `m_NetSettings`. Implementation in project_file.cpp.
+    std::shared_ptr<NET_SETTINGS>& NetSettings();
 
     std::shared_ptr<COMPONENT_CLASS_SETTINGS>& ComponentClassSettings()
     {
@@ -744,6 +761,11 @@ private:
 
     /// For container projects: filename of the multi-board schematic.
     wxString m_mbsFileName;
+
+    /// M7.2: sub-project flag — when true and container is reachable,
+    /// NetSettings() returns the container's overlay instead of this
+    /// project's own. Persisted as `multi_board.inherit_net_settings`.
+    bool m_inheritNetSettingsFromContainer = false;
 
     /// A link to the owning PROJECT
     PROJECT* m_project;

@@ -89,6 +89,11 @@ PROJECT_FILE::PROJECT_FILE( const wxString& aFullPath ) :
     m_params.emplace_back( new PARAM_LIST<CUSTOM_MATE>( "multi_board.assembly_3d.mates",
             &m_customMates, {} ) );
 
+    // M7.2: sub-project opt-in to inherit container's net classes / DRC
+    // rules at runtime. Default false for back-compat.
+    m_params.emplace_back( new PARAM<bool>( "multi_board.inherit_net_settings",
+            &m_inheritNetSettingsFromContainer, false ) );
+
     m_params.emplace_back( new PARAM_WXSTRING_MAP( "text_variables",
             &m_TextVars, {}, false, true /* array behavior, even though stored as a map */ ) );
 
@@ -1196,6 +1201,31 @@ wxFileName PROJECT_FILE::ResolveSubProjectPath( const SUB_PROJECT_INFO& aInfo ) 
     rel.MakeAbsolute( containerDir.GetFullPath() );
     rel.Normalize( wxPATH_NORM_ABSOLUTE | wxPATH_NORM_DOTS );
     return rel;
+}
+
+
+// =============================================================================
+// M7.2: NET_SETTINGS overlay from multi-board container
+// =============================================================================
+
+std::shared_ptr<NET_SETTINGS>& PROJECT_FILE::NetSettings()
+{
+    // Inheritance only applies on a sub-project; a container is its own
+    // source of truth.
+    if( !m_inheritNetSettingsFromContainer || m_isMultiBoardContainer || !m_project )
+        return m_NetSettings;
+
+    // Peek the container PROJECT — pure lookup, never auto-loads
+    // (locked-in decision #8). When the container isn't loaded
+    // (e.g. standalone open of a sub-project), fall back to the
+    // sub-project's own net_settings so the editor still has rules to
+    // work with.
+    PROJECT* container = m_project->GetContainerProject();
+
+    if( !container )
+        return m_NetSettings;
+
+    return container->GetProjectFile().m_NetSettings;
 }
 
 

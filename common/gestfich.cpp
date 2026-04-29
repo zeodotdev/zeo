@@ -137,6 +137,40 @@ wxString FindKicadFile( const wxString& shortname )
             return fullFileName;
     }
 
+#if defined( __WXMAC__ )
+    // Dev build fallback: in an in-tree (un-installed) macOS build, the
+    // standalone tools live as sibling .app bundles in the build tree
+    // rather than inside Zeo.app/Contents/Applications/. Try those
+    // locations so things like Image Converter / PCB Calculator / Page
+    // Layout Editor work without a full `make install`.
+    wxFileName launcher( Pgm().GetExecutablePath() );
+
+    if( launcher.GetDirCount() >= 2 )
+    {
+        // GetExecutablePath() ends with `kicad-build/kicad/Zeo.app/`.
+        // Strip the trailing `Zeo.app` and `kicad` to land at
+        // `kicad-build/`, then descend into the tool's build dir.
+        launcher.RemoveLastDir();
+        launcher.RemoveLastDir();
+
+        wxString buildSubdir = shortname;
+
+        // The pl_editor binary lives under `pagelayout_editor/` in the
+        // build tree, not `pl_editor/`.
+        if( shortname == wxT( "pl_editor" ) )
+            buildSubdir = wxT( "pagelayout_editor" );
+
+        launcher.AppendDir( buildSubdir );
+        launcher.AppendDir( shortname + wxT( ".app" ) );
+        launcher.AppendDir( wxT( "Contents" ) );
+        launcher.AppendDir( wxT( "MacOS" ) );
+        launcher.SetFullName( shortname );
+
+        if( wxFileExists( launcher.GetFullPath() ) )
+            return launcher.GetFullPath();
+    }
+#endif
+
     return shortname;
 
 #endif

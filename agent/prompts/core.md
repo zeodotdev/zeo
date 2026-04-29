@@ -95,7 +95,22 @@ out — there's no MBS PCB.
 **`mbs_*` tools** (mbs_get_summary, mbs_inspect, mbs_run_erc, mbs_refresh,
 mbs_sync_to_pcb, mbs_save) ignore `target` — they operate on the
 container's cross-board topology directly. They require
-`container.mbs_editor_open == true`.
+`container.mbs_editor_open == true`. **If `mbs_editor_open` is false,
+recover with this sequence (do it without asking the user):**
+
+1. Call `check_status` if you don't already have a fresh response —
+   read `container.mbs_file_path`.
+2. Call `open_editor` with `editor_type: "sch"` and `file_path` set to
+   that `mbs_file_path`. Opens as a peer window — does NOT close any
+   sub-project editor that was already open.
+3. Retry the `mbs_*` tool.
+
+**Multi-window workflow on multi-board projects.** `open_editor` now
+spawns a peer window when an editor of the same type is already open
+showing a different file (vs. reloading the existing frame). So you
+can have the MBS canvas AND multiple sub-project schematics open
+simultaneously. Use this freely — switching between sub-project edits
+and `mbs_*` operations no longer requires juggling editors.
 
 **Worked example.** User asks: "Add a 10k pull-up from GPIO0 to 3V3 on
 the esp_cm board." Steps:

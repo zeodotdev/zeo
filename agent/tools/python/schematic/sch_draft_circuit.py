@@ -174,9 +174,19 @@ try:
 except Exception:
     pass
 
+# MBS canvas extends well past standard paper bounds (see sch_add.py).
+_IS_MBS = False
+try:
+    from kipy.proto.common.types import DocumentType as _DocumentType
+    _IS_MBS = sch._doc.type == _DocumentType.DOCTYPE_MBS_SCHEMATIC
+except Exception:
+    pass
+
 class _OOB(Exception): pass
 
 def _check_bounds(x, y, idx):
+    if _IS_MBS:
+        return
     if not (0 <= x <= _sheet_w and 0 <= y <= _sheet_h):
         results.append({'index': idx, 'error': f'Position ({x}, {y}) is outside sheet ({_sheet_w}x{_sheet_h}mm)'})
         raise _OOB()

@@ -100,8 +100,21 @@ try:
 except Exception as _e:
     tool_log(f'[sch_add] page settings fetch failed: {_e}')
 
+# The multi-board (MBS) canvas legitimately extends well past the
+# standard paper bounds — module blocks stack vertically per sub-project
+# and each block is hundreds of mm tall. Skip bounds + slide-off bounds
+# checks when targeting an MBS doc.
+_IS_MBS = False
+try:
+    from kipy.proto.common.types import DocumentType as _DocumentType
+    _IS_MBS = sch._doc.type == _DocumentType.DOCTYPE_MBS_SCHEMATIC
+except Exception:
+    pass
+
 class _OOB(Exception): pass
 def _check_bounds(x, y, idx):
+    if _IS_MBS:
+        return
     if not (0 <= x <= _sheet_w and 0 <= y <= _sheet_h):
         results.append({'index': idx, 'error': f'Position ({x}, {y}) is outside sheet ({_sheet_w}x{_sheet_h}mm)'})
         raise _OOB()
@@ -174,8 +187,9 @@ def _slide_off(item, raw_bb, margined_bb):
             return (False, total_dx, total_dy)
         r_bb = {'min_x': r_bb['min_x']+dx, 'max_x': r_bb['max_x']+dx, 'min_y': r_bb['min_y']+dy, 'max_y': r_bb['max_y']+dy}
         m_bb = {'min_x': m_bb['min_x']+dx, 'max_x': m_bb['max_x']+dx, 'min_y': m_bb['min_y']+dy, 'max_y': m_bb['max_y']+dy}
-        if r_bb['min_x'] < 0 or r_bb['max_x'] > _sheet_w or r_bb['min_y'] < 0 or r_bb['max_y'] > _sheet_h:
-            return (False, total_dx, total_dy)
+        if not _IS_MBS:
+            if r_bb['min_x'] < 0 or r_bb['max_x'] > _sheet_w or r_bb['min_y'] < 0 or r_bb['max_y'] > _sheet_h:
+                return (False, total_dx, total_dy)
     return (False, total_dx, total_dy)
 
 elements = TOOL_ARGS.get("elements", [])

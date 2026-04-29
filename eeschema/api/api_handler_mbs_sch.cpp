@@ -370,6 +370,42 @@ API_HANDLER_MBS_SCH::handleGetMultiBoardContainerInfo(
 }
 
 
+/// Map an MBS_CHANGE::KIND to a stable string surfaced in the proto.
+/// Kept in sync with the proto comment listing the valid `kind` values.
+static const char* mbsChangeKindString( MBS_CHANGE::KIND aKind )
+{
+    switch( aKind )
+    {
+    case MBS_CHANGE::KIND::ADD_BLOCK:    return "ADD_BLOCK";
+    case MBS_CHANGE::KIND::REMOVE_BLOCK: return "REMOVE_BLOCK";
+    case MBS_CHANGE::KIND::ADD_PIN:      return "ADD_PIN";
+    case MBS_CHANGE::KIND::REMOVE_PIN:   return "REMOVE_PIN";
+    case MBS_CHANGE::KIND::RENAME_PIN:   return "RENAME_PIN";
+    case MBS_CHANGE::KIND::PATH_DRIFT:   return "PATH_DRIFT";
+    case MBS_CHANGE::KIND::UPGRADE_UUID: return "UPGRADE_UUID";
+    }
+
+    return "UNKNOWN";
+}
+
+
+/// Populate one proto MbsProposedChange from a C++ MBS_CHANGE entry.
+static void packProposedChange( kiapi::schematic::commands::MbsProposedChange* aMsg,
+                                int aIndex, const MBS_CHANGE& aCh )
+{
+    aMsg->set_index( aIndex );
+    aMsg->set_kind( mbsChangeKindString( aCh.kind ) );
+    aMsg->set_description( aCh.Describe().ToStdString() );
+    aMsg->set_sub_project_uuid( aCh.subProjectUuid.AsStdString() );
+    aMsg->set_sub_project_path( aCh.subProjectPath.ToStdString() );
+    aMsg->set_sub_project_name( aCh.subProjectDisplayName.ToStdString() );
+    aMsg->set_component_ref( aCh.componentRef.ToStdString() );
+    aMsg->set_pin_number( aCh.pinNumber.ToStdString() );
+    aMsg->set_old_label( aCh.oldLabel.ToStdString() );
+    aMsg->set_new_label( aCh.newLabel.ToStdString() );
+}
+
+
 HANDLER_RESULT<kiapi::schematic::commands::RefreshMbsFromSubProjectsResponse>
 API_HANDLER_MBS_SCH::handleRefreshMbsFromSubProjects(
         const HANDLER_CONTEXT<kiapi::schematic::commands::RefreshMbsFromSubProjects>& aCtx )
@@ -402,13 +438,42 @@ API_HANDLER_MBS_SCH::handleRefreshMbsFromSubProjects(
         return tl::unexpected( e );
     }
 
-    // Compute the diff and apply every change unconditionally — the MBSCH
-    // dialog flow (DIALOG_MBS_REFRESH) lets the user toggle individual
-    // changes; for the agent-driven flow we mirror the headless one-shot
-    // behavior of RefreshMbsFromSubProjects.
     std::vector<MBS_CHANGE> changes = ComputeMbsRefreshDiff( *screen, container );
 
-    KIGFX::VIEW* view = m_frame->GetCanvas() ? m_frame->GetCanvas()->GetView() : nullptr;
+    kiapi::schematic::commands::RefreshMbsFromSubProjectsResponse response;
+    response.set_dry_run( aCtx.Request.dry_run() );
+
+    // Always emit the diff so the caller can show a preview / report
+    // exactly what was applied.
+    for( int i = 0; i < static_cast<int>( changes.size() ); ++i )
+        packProposedChange( response.add_proposed_changes(), i, changes[i] );
+
+    if( aCtx.Request.dry_run() )
+    {
+        // Nothing else to do — apply totals are zero in dry-run mode.
+        response.set_summary( wxString::Format(
+                                      _( "Preview only: %zu change(s) proposed." ),
+                                      changes.size() )
+                                      .ToStdString() );
+        return response;
+    }
+
+    // Apply mode. When apply_indices is non-empty, mark only those
+    // entries as `checked = true`; ApplyMbsRefreshChanges skips
+    // unchecked entries. Empty list = apply all (the historical
+    // behavior — `MBS_CHANGE::checked` defaults to true).
+    if( aCtx.Request.apply_indices_size() > 0 )
+    {
+        std::set<int> selected;
+
+        for( int idx : aCtx.Request.apply_indices() )
+            selected.insert( idx );
+
+        for( int i = 0; i < static_cast<int>( changes.size() ); ++i )
+            changes[i].checked = ( selected.count( i ) > 0 );
+    }
+
+    KIGFX::VIEW*  view = m_frame->GetCanvas() ? m_frame->GetCanvas()->GetView() : nullptr;
     NULL_REPORTER reporter;
 
     MBS_REFRESH_RESULT res = ApplyMbsRefreshChanges( *screen, changes, view, &reporter );
@@ -416,7 +481,6 @@ API_HANDLER_MBS_SCH::handleRefreshMbsFromSubProjects(
     if( m_frame->GetCanvas() )
         m_frame->GetCanvas()->Refresh( true );
 
-    kiapi::schematic::commands::RefreshMbsFromSubProjectsResponse response;
     response.set_blocks_added( res.blocksAdded );
     response.set_blocks_removed( res.blocksRemoved );
     response.set_pins_added( res.pinsAdded );

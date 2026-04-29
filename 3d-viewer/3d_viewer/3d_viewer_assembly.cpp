@@ -52,6 +52,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <map>
 #include <queue>
 #include <set>
@@ -188,27 +189,43 @@ void ASSEMBLY_3D_MANAGER::LoadProjectBoards( PROJECT* aProject )
             }
         }
 
-        // TEMP DIAGNOSTIC (multi-board virtual model resolution): log
-        // each sub-project load attempt with the .kicad_pro path it
-        // tried, whether the file existed, and whether mgr.GetProject
-        // returned a project. Remove once the multi-board virtual-model
-        // bug is closed.
-        wxLogMessage( wxT( "[ASSEMBLY-LOAD] sub uuid=%s name='%s' "
-                           "relPath='%s' resolvedPro='%s' proExists=%d "
-                           "boardLoaded=%d subProject=%p subProjectDir='%s'" ),
-                      sub.uuid.AsString(), sub.name, sub.relativePath,
-                      proFile.GetFullPath(),
-                      proFile.FileExists() ? 1 : 0,
-                      instance.board ? 1 : 0,
-                      static_cast<const void*>( instance.subProject ),
-                      instance.subProject ? instance.subProject->GetProjectDirectory()
-                                          : wxString( wxT( "<null>" ) ) );
-
         m_boardInstances.push_back( std::move( instance ) );
     }
 
     // Default flat layout; user can switch via PANEL_3D_ASSEMBLY.
     ArrangeBoards( BOARD_LAYOUT_MODE::FLAT, 20.0f );
+
+    // Pre-warm each sub-project's S3D_CACHE by loading every footprint's
+    // 3D model. The per-instance renderer's load3dModels would do this
+    // lazily on its first reload, but in practice the first-open path
+    // sometimes leaves m_3dModelMap missing entries (timing-related), and
+    // Load3dModelsIfNeeded's `size > 0` short-circuit prevents retry. By
+    // forcing the cache hot here, the renderer's first load is identical
+    // to a re-open after a sub-project's pcbnew/3D viewer warmed it.
+    for( BOARD_3D_INSTANCE& inst : m_boardInstances )
+    {
+        if( !inst.board || !inst.subProject )
+            continue;
+
+        S3D_CACHE* cache = PROJECT_PCB::Get3DCacheManager( inst.subProject );
+
+        if( !cache )
+            continue;
+
+        for( const FOOTPRINT* fp : inst.board->Footprints() )
+        {
+            for( const FP_3DMODEL& fp_model : fp->Models() )
+            {
+                if( !fp_model.m_Show || fp_model.m_Filename.empty() )
+                    continue;
+
+                std::vector<const EMBEDDED_FILES*> stack;
+                stack.push_back( fp->GetEmbeddedFiles() );
+                stack.push_back( inst.board->GetEmbeddedFiles() );
+                cache->GetModel( fp_model.m_Filename, wxEmptyString, std::move( stack ) );
+            }
+        }
+    }
 }
 
 
@@ -1044,14 +1061,153 @@ float ASSEMBLY_3D_MANAGER::ComputeMateZGap( const BOARD_3D_INSTANCE& aA,
                                               const BOARD_3D_INSTANCE& aB,
                                               const wxString&          aFootprintRefB ) const
 {
-    // Phase-1: fixed 5 mm fallback. Phase-2 / future work reads
-    // the larger of the two connectors' 3D-model boundingBox.max.z
-    // via S3D_CACHE.
-    (void) aA;
-    (void) aFootprintRefA;
-    (void) aB;
-    (void) aFootprintRefB;
-    return 5.0f;
+    // Mate Z-gap = larger of the two connectors' 3D-model max-Z extent
+    // above the board surface. Falls back to 5 mm only if neither model
+    // is loadable (which is what M6.D-phase-1 originally shipped before
+    // virtual-model resolution worked end-to-end).
+    auto getConnectorMaxZ = []( const BOARD_3D_INSTANCE& aInst,
+                                const wxString&          aRef ) -> float
+    {
+        if( !aInst.board )
+            return 0.0f;
+
+        FOOTPRINT* fp = findFootprintByRef( aInst.board.get(), aRef );
+
+        if( !fp || fp->Models().empty() )
+            return 0.0f;
+
+        // Prefer the sub-project's S3D cache so KIPRJMOD-relative paths
+        // resolve against the right directory; fall back to whatever
+        // project the BOARD is bound to (set in LoadProjectBoards).
+        PROJECT* prj = aInst.subProject;
+
+        if( !prj )
+            prj = aInst.board->GetProject();
+
+        if( !prj )
+            return 0.0f;
+
+        S3D_CACHE* cache = PROJECT_PCB::Get3DCacheManager( prj );
+
+        if( !cache )
+            return 0.0f;
+
+        float maxZ = 0.0f;
+        bool  foundAny = false;
+
+        for( const FP_3DMODEL& fp_model : fp->Models() )
+        {
+            if( !fp_model.m_Show || fp_model.m_Filename.empty() )
+                continue;
+
+            std::vector<const EMBEDDED_FILES*> embeddedFilesStack;
+            embeddedFilesStack.push_back( fp->GetEmbeddedFiles() );
+            embeddedFilesStack.push_back( aInst.board->GetEmbeddedFiles() );
+
+            const S3DMODEL* model = cache->GetModel( fp_model.m_Filename,
+                                                     wxEmptyString,
+                                                     std::move( embeddedFilesStack ) );
+
+            if( !model )
+                continue;
+
+            // Compute the local-space bbox of the mesh in mm.
+            SFVEC3F localMin( 0, 0, 0 );
+            SFVEC3F localMax( 0, 0, 0 );
+            bool    haveLocal = false;
+
+            for( unsigned int m = 0; m < model->m_MeshesSize; m++ )
+            {
+                const SMESH& mesh = model->m_Meshes[m];
+
+                for( unsigned int v = 0; v < mesh.m_VertexSize; v++ )
+                {
+                    const SFVEC3F& p = mesh.m_Positions[v];
+
+                    if( !haveLocal )
+                    {
+                        localMin = localMax = p;
+                        haveLocal = true;
+                    }
+                    else
+                    {
+                        localMin.x = std::min( localMin.x, p.x );
+                        localMin.y = std::min( localMin.y, p.y );
+                        localMin.z = std::min( localMin.z, p.z );
+                        localMax.x = std::max( localMax.x, p.x );
+                        localMax.y = std::max( localMax.y, p.y );
+                        localMax.z = std::max( localMax.z, p.z );
+                    }
+                }
+            }
+
+            if( !haveLocal )
+                continue;
+
+            // Build the transform the renderer applies (render_3d_opengl.cpp:1196-1203):
+            //   T(offset) · R_z(-rz) · R_y(-ry) · R_x(-rx) · S(scale)
+            // EasyEDA models in particular ship with rotations like
+            // (-90, 0, -90) to swap their up-axis into world Z; reading
+            // raw vertex.z without applying this rotation reads the wrong
+            // axis (a connector's length, not height).
+            glm::mat4 mtx( 1.0f );
+            mtx = glm::translate( mtx, glm::vec3( fp_model.m_Offset.x,
+                                                  fp_model.m_Offset.y,
+                                                  fp_model.m_Offset.z ) );
+            mtx = glm::rotate( mtx,
+                               glm::radians( -static_cast<float>( fp_model.m_Rotation.z ) ),
+                               glm::vec3( 0.0f, 0.0f, 1.0f ) );
+            mtx = glm::rotate( mtx,
+                               glm::radians( -static_cast<float>( fp_model.m_Rotation.y ) ),
+                               glm::vec3( 0.0f, 1.0f, 0.0f ) );
+            mtx = glm::rotate( mtx,
+                               glm::radians( -static_cast<float>( fp_model.m_Rotation.x ) ),
+                               glm::vec3( 1.0f, 0.0f, 0.0f ) );
+            mtx = glm::scale( mtx, glm::vec3( fp_model.m_Scale.x,
+                                              fp_model.m_Scale.y,
+                                              fp_model.m_Scale.z ) );
+
+            // Transform the 8 bbox corners; world max-Z is the largest Z
+            // any of them lands on.
+            const glm::vec3 corners[8] = {
+                { localMin.x, localMin.y, localMin.z },
+                { localMax.x, localMin.y, localMin.z },
+                { localMin.x, localMax.y, localMin.z },
+                { localMax.x, localMax.y, localMin.z },
+                { localMin.x, localMin.y, localMax.z },
+                { localMax.x, localMin.y, localMax.z },
+                { localMin.x, localMax.y, localMax.z },
+                { localMax.x, localMax.y, localMax.z },
+            };
+
+            float modelMaxZ = -std::numeric_limits<float>::max();
+
+            for( const glm::vec3& c : corners )
+            {
+                glm::vec4 t = mtx * glm::vec4( c, 1.0f );
+
+                if( t.z > modelMaxZ )
+                    modelMaxZ = t.z;
+            }
+
+            if( !foundAny || modelMaxZ > maxZ )
+            {
+                maxZ = modelMaxZ;
+                foundAny = true;
+            }
+        }
+
+        return foundAny ? maxZ : 0.0f;
+    };
+
+    float zA = getConnectorMaxZ( aA, aFootprintRefA );
+    float zB = getConnectorMaxZ( aB, aFootprintRefB );
+    float bbZ = std::max( zA, zB );
+
+    if( bbZ <= 0.0f )
+        return 5.0f;  // last-resort fallback when neither model loaded
+
+    return bbZ;
 }
 
 
@@ -1167,64 +1323,218 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
 {
     m_lastCollisions.clear();
 
-    // AABB-only check on board outlines + thickness. Mesh-accurate
-    // collision is M6.E.
+    // Build a set of "expected contact" pairs from the mate graph so the
+    // mated connector overlaps don't drown out real collisions. Only
+    // PRIMARY/SECONDARY mate pairs count — alignment-only pairs aren't
+    // supposed to be in contact and any overlap there IS a problem.
+    std::vector<MATE_EDGE> mateEdges = BuildMateGraph();
+
+    auto isMated = [&]( const KIID& aInstA, const wxString& aFpA,
+                        const KIID& aInstB, const wxString& aFpB ) -> bool
+    {
+        for( const MATE_EDGE& edge : mateEdges )
+        {
+            for( const MATE_PAIR& p : edge.pairs )
+            {
+                if( p.alignmentOnly )
+                    continue;
+
+                bool dirA = p.instanceA == aInstA && p.footprintRefA == aFpA
+                            && p.instanceB == aInstB && p.footprintRefB == aFpB;
+                bool dirB = p.instanceA == aInstB && p.footprintRefA == aFpB
+                            && p.instanceB == aInstA && p.footprintRefB == aFpA;
+
+                if( dirA || dirB )
+                    return true;
+            }
+        }
+        return false;
+    };
+
+    // Compute a footprint's world-space AABB in mm. XY comes from the
+    // footprint's pad/silk bounding box; Z from the largest 3D model
+    // attached to it (or a 0.5mm default when no model is loadable).
+    // Phase-1 ignores per-instance and per-footprint rotation; the
+    // resulting AABB is conservative for unrotated assemblies.
+    auto getFootprintWorldAABB = [this]( const BOARD_3D_INSTANCE& aInst,
+                                     const FOOTPRINT*         aFp,
+                                     SFVEC3F&                 aMin,
+                                     SFVEC3F&                 aMax ) -> bool
+    {
+        if( !aInst.board || !aFp )
+            return false;
+
+        BOX2I bbox = aFp->GetBoundingBox( /*aIncludeText=*/false );
+        const float xMin = bbox.GetLeft() / 1e6f;
+        const float xMax = bbox.GetRight() / 1e6f;
+        const float yMin = bbox.GetTop() / 1e6f;
+        const float yMax = bbox.GetBottom() / 1e6f;
+
+        // Default Z extent so trivial XY overlaps still get flagged when
+        // the 3D model fails to load. 0.5 mm is roughly the height of
+        // most SMD passives; not a precise number, just non-zero.
+        float modelHeight = 0.5f;
+
+        PROJECT* prj = aInst.subProject ? aInst.subProject : aInst.board->GetProject();
+
+        if( prj )
+        {
+            if( S3D_CACHE* cache = PROJECT_PCB::Get3DCacheManager( prj ) )
+            {
+                for( const FP_3DMODEL& fp_model : aFp->Models() )
+                {
+                    if( !fp_model.m_Show || fp_model.m_Filename.empty() )
+                        continue;
+
+                    std::vector<const EMBEDDED_FILES*> embeddedFilesStack;
+                    embeddedFilesStack.push_back( aFp->GetEmbeddedFiles() );
+                    embeddedFilesStack.push_back( aInst.board->GetEmbeddedFiles() );
+
+                    const S3DMODEL* model = cache->GetModel( fp_model.m_Filename,
+                                                             wxEmptyString,
+                                                             std::move( embeddedFilesStack ) );
+
+                    if( !model )
+                        continue;
+
+                    float maxZ = 0.0f;
+                    bool  hasVerts = false;
+
+                    for( unsigned int m = 0; m < model->m_MeshesSize; m++ )
+                    {
+                        const SMESH& mesh = model->m_Meshes[m];
+
+                        for( unsigned int v = 0; v < mesh.m_VertexSize; v++ )
+                        {
+                            float z = mesh.m_Positions[v].z;
+                            if( !hasVerts || z > maxZ )
+                            {
+                                maxZ = z;
+                                hasVerts = true;
+                            }
+                        }
+                    }
+
+                    if( !hasVerts )
+                        continue;
+
+                    maxZ *= static_cast<float>( fp_model.m_Scale.z );
+                    maxZ += static_cast<float>( fp_model.m_Offset.z );
+
+                    if( maxZ > modelHeight )
+                        modelHeight = maxZ;
+                }
+            }
+        }
+
+        // F.Cu = top side; model extends Z+ from the board top surface.
+        // B.Cu (flipped) = bottom side; model extends Z- from the bottom.
+        const float boardThicknessMm = GetBoardThickness( aInst.board.get() );
+        const bool  isFlipped        = aFp->IsFlipped();
+
+        float zLocalMin, zLocalMax;
+
+        if( isFlipped )
+        {
+            zLocalMax = 0.0f;
+            zLocalMin = -modelHeight;
+        }
+        else
+        {
+            zLocalMin = boardThicknessMm;
+            zLocalMax = boardThicknessMm + modelHeight;
+        }
+
+        // Apply the per-instance translation. Per-instance rotation is
+        // out of scope for phase-1.
+        aMin = SFVEC3F( xMin + aInst.position.x, yMin + aInst.position.y,
+                        zLocalMin + aInst.position.z );
+        aMax = SFVEC3F( xMax + aInst.position.x, yMax + aInst.position.y,
+                        zLocalMax + aInst.position.z );
+        return true;
+    };
+
+    // Cache per-instance footprint AABBs once so the cross-board loop is
+    // O(N×M) on already-computed boxes rather than recomputing.
+    struct FPAABB
+    {
+        const FOOTPRINT* fp;
+        wxString         ref;
+        SFVEC3F          min;
+        SFVEC3F          max;
+    };
+
+    std::vector<std::vector<FPAABB>> perInstance( m_boardInstances.size() );
+
     for( size_t i = 0; i < m_boardInstances.size(); i++ )
     {
-        const BOARD_3D_INSTANCE& inst1 = m_boardInstances[i];
-        if( !inst1.visible || !inst1.board )
+        const BOARD_3D_INSTANCE& inst = m_boardInstances[i];
+
+        if( !inst.visible || !inst.board )
+            continue;
+
+        for( const FOOTPRINT* fp : inst.board->Footprints() )
+        {
+            FPAABB e;
+            e.fp  = fp;
+            e.ref = fp->GetReference();
+
+            if( getFootprintWorldAABB( inst, fp, e.min, e.max ) )
+                perInstance[i].push_back( std::move( e ) );
+        }
+    }
+
+    // Pair-wise per-footprint AABB overlap, skipping mated pairs.
+    for( size_t i = 0; i < m_boardInstances.size(); i++ )
+    {
+        if( perInstance[i].empty() )
             continue;
 
         for( size_t j = i + 1; j < m_boardInstances.size(); j++ )
         {
+            if( perInstance[j].empty() )
+                continue;
+
+            const BOARD_3D_INSTANCE& inst1 = m_boardInstances[i];
             const BOARD_3D_INSTANCE& inst2 = m_boardInstances[j];
-            if( !inst2.visible || !inst2.board )
-                continue;
 
-            BOX2I bbox1 = inst1.board->GetBoardEdgesBoundingBox();
-            BOX2I bbox2 = inst2.board->GetBoardEdgesBoundingBox();
-
-            float z1Min = inst1.position.z;
-            float z1Max = inst1.position.z + GetBoardThickness( inst1.board.get() );
-            float z2Min = inst2.position.z;
-            float z2Max = inst2.position.z + GetBoardThickness( inst2.board.get() );
-
-            if( z1Max <= z2Min || z2Max <= z1Min )
-                continue;
-
-            // XY overlap (rotation not yet handled — M6.E)
-            float x1Min = inst1.position.x + bbox1.GetLeft() / 1000000.0f;
-            float x1Max = inst1.position.x + bbox1.GetRight() / 1000000.0f;
-            float x2Min = inst2.position.x + bbox2.GetLeft() / 1000000.0f;
-            float x2Max = inst2.position.x + bbox2.GetRight() / 1000000.0f;
-
-            float y1Min = inst1.position.y + bbox1.GetTop() / 1000000.0f;
-            float y1Max = inst1.position.y + bbox1.GetBottom() / 1000000.0f;
-            float y2Min = inst2.position.y + bbox2.GetTop() / 1000000.0f;
-            float y2Max = inst2.position.y + bbox2.GetBottom() / 1000000.0f;
-
-            bool xOverlap = x1Max > x2Min && x2Max > x1Min;
-            bool yOverlap = y1Max > y2Min && y2Max > y1Min;
-
-            if( xOverlap && yOverlap )
+            for( const FPAABB& a : perInstance[i] )
             {
-                COLLISION_RESULT result;
-                result.board1Uuid = inst1.uuid;
-                result.board2Uuid = inst2.uuid;
-                result.item1Desc = inst1.displayName;
-                result.item2Desc = inst2.displayName;
+                for( const FPAABB& b : perInstance[j] )
+                {
+                    if( a.max.x <= b.min.x || b.max.x <= a.min.x )
+                        continue;
+                    if( a.max.y <= b.min.y || b.max.y <= a.min.y )
+                        continue;
+                    if( a.max.z <= b.min.z || b.max.z <= a.min.z )
+                        continue;
 
-                float cx = ( std::max( x1Min, x2Min ) + std::min( x1Max, x2Max ) ) / 2.0f;
-                float cy = ( std::max( y1Min, y2Min ) + std::min( y1Max, y2Max ) ) / 2.0f;
-                float cz = ( std::max( z1Min, z2Min ) + std::min( z1Max, z2Max ) ) / 2.0f;
-                result.collisionPoint = SFVEC3F( cx, cy, cz );
+                    if( isMated( inst1.uuid, a.ref, inst2.uuid, b.ref ) )
+                        continue;
 
-                float xPen = std::min( x1Max - x2Min, x2Max - x1Min );
-                float yPen = std::min( y1Max - y2Min, y2Max - y1Min );
-                float zPen = std::min( z1Max - z2Min, z2Max - z1Min );
-                result.penetrationMm = std::min( { xPen, yPen, zPen } );
+                    COLLISION_RESULT result;
+                    result.board1Uuid = inst1.uuid;
+                    result.board2Uuid = inst2.uuid;
+                    result.item1Desc = wxString::Format( wxT( "%s:%s" ),
+                                                          inst1.displayName, a.ref );
+                    result.item2Desc = wxString::Format( wxT( "%s:%s" ),
+                                                          inst2.displayName, b.ref );
 
-                m_lastCollisions.push_back( result );
+                    float cx = ( std::max( a.min.x, b.min.x )
+                                 + std::min( a.max.x, b.max.x ) ) * 0.5f;
+                    float cy = ( std::max( a.min.y, b.min.y )
+                                 + std::min( a.max.y, b.max.y ) ) * 0.5f;
+                    float cz = ( std::max( a.min.z, b.min.z )
+                                 + std::min( a.max.z, b.max.z ) ) * 0.5f;
+                    result.collisionPoint = SFVEC3F( cx, cy, cz );
+
+                    float xPen = std::min( a.max.x - b.min.x, b.max.x - a.min.x );
+                    float yPen = std::min( a.max.y - b.min.y, b.max.y - a.min.y );
+                    float zPen = std::min( a.max.z - b.min.z, b.max.z - a.min.z );
+                    result.penetrationMm = std::min( { xPen, yPen, zPen } );
+
+                    m_lastCollisions.push_back( result );
+                }
             }
         }
     }
@@ -1402,21 +1712,6 @@ void ASSEMBLY_3D_MANAGER::InitRenderers( EDA_3D_CANVAS* aCanvas, CAMERA& aCamera
                           useStackup ? 1 : 0,
                           maskNameF, maskNameB,
                           m_instanceAdapters[i]->BiuTo3dUnits() );
-
-            // TEMP DIAGNOSTIC (multi-board virtual model resolution): log the
-            // per-instance cache + sub-project so we can correlate with the
-            // [3DLOAD] log entries from S3D_CACHE::load. Remove once the
-            // multi-board virtual-model bug is closed.
-            wxLogMessage( wxT( "[ASSEMBLY-CACHE] inst[%zu] display='%s' "
-                               "subProject=%p subProjectDir='%s' cache=%p "
-                               "boardProject=%p" ),
-                          i, inst.displayName,
-                          static_cast<const void*>( inst.subProject ),
-                          inst.subProject ? inst.subProject->GetProjectDirectory()
-                                          : wxString( wxT( "<null>" ) ),
-                          static_cast<const void*>( cache ),
-                          inst.board ? static_cast<const void*>( inst.board->GetProject() )
-                                     : nullptr );
         }
 
         if( !m_instanceRenderers[i] )

@@ -731,6 +731,133 @@ wxString MultiBoardFormatCrossBoardProbe( const MULTI_BOARD_CROSS_BOARD_PROBE& a
 }
 
 
+MULTI_BOARD_CONTAINER_VIEW MultiBoardBuildContainerView( const wxFileName& aSubProjectPro )
+{
+    MULTI_BOARD_CONTAINER_VIEW view;
+
+    if( !aSubProjectPro.IsOk() || !aSubProjectPro.FileExists() )
+        return view;
+
+    wxFileName subPro( aSubProjectPro );
+    subPro.Normalize( wxPATH_NORM_ABSOLUTE | wxPATH_NORM_DOTS );
+    wxString subProAbs = subPro.GetFullPath();
+
+    wxFileName searchDir( subPro );
+    searchDir.SetFullName( wxEmptyString );
+
+    for( int depth = 0; depth < 6 && searchDir.GetPath().Length() > 1; ++depth )
+    {
+        wxArrayString files;
+        wxDir::GetAllFiles( searchDir.GetPath(), &files, wxT( "*.kicad_pro" ),
+                            wxDIR_FILES );
+
+        for( const wxString& candidate : files )
+        {
+            wxFileName candFn( candidate );
+
+            if( candFn.GetFullPath() == subProAbs )
+                continue;
+
+            PROJECT_FILE container( candidate );
+
+            if( !container.LoadFromFile() )
+                continue;
+
+            if( !container.IsMultiBoardContainer() )
+                continue;
+
+            // Resolve every sub-project's absolute path once. We need this
+            // both to find ourselves in the container and to label each
+            // sibling endpoint with its on-disk path so the caller can
+            // load sibling boards by path (no PROJECT object required).
+            std::map<KIID, wxString>           subProjectAbsByUuid;
+            std::map<KIID, wxString>           subProjectNameByUuid;
+
+            for( const SUB_PROJECT_INFO& info : container.GetSubProjects() )
+            {
+                wxFileName subRel( info.relativePath );
+
+                if( !subRel.IsAbsolute() )
+                    subRel.MakeAbsolute( candFn.GetPath() );
+
+                subRel.Normalize( wxPATH_NORM_ABSOLUTE | wxPATH_NORM_DOTS );
+                subProjectAbsByUuid[info.uuid]  = subRel.GetFullPath();
+                subProjectNameByUuid[info.uuid] = info.displayName.IsEmpty() ? info.name
+                                                                             : info.displayName;
+            }
+
+            KIID matchedUuid;
+            bool matched = false;
+
+            for( const auto& [uuid, absPath] : subProjectAbsByUuid )
+            {
+                if( absPath == subProAbs )
+                {
+                    matchedUuid = uuid;
+                    matched     = true;
+                    break;
+                }
+            }
+
+            if( !matched )
+                continue;
+
+            view.containerProAbsPath = candFn.GetFullPath();
+            view.mySubProjectUuid    = matchedUuid;
+
+            for( const MB_CROSS_BOARD_NET& net : container.GetCrossBoardNets() )
+            {
+                MULTI_BOARD_CROSS_BOARD_NET_VIEW netView;
+                bool touchesUs = false;
+
+                for( const MB_CROSS_BOARD_NET_ENDPOINT& ep : net.endpoints )
+                {
+                    MULTI_BOARD_NET_ENDPOINT_VIEW epView;
+                    epView.subProjectUuid = ep.subProjectUuid;
+                    epView.componentRef   = ep.componentRef;
+                    epView.pinNumber      = ep.pinNumber;
+                    epView.pinName        = ep.pinName;
+
+                    auto nameIt = subProjectNameByUuid.find( ep.subProjectUuid );
+
+                    if( nameIt != subProjectNameByUuid.end() )
+                        epView.subProjectName = nameIt->second;
+
+                    auto pathIt = subProjectAbsByUuid.find( ep.subProjectUuid );
+
+                    if( pathIt != subProjectAbsByUuid.end() )
+                        epView.subProjectAbsPath = pathIt->second;
+
+                    if( ep.subProjectUuid == matchedUuid )
+                    {
+                        netView.myEndpoints.push_back( std::move( epView ) );
+                        touchesUs = true;
+                    }
+                    else
+                    {
+                        netView.siblingEndpoints.push_back( std::move( epView ) );
+                    }
+                }
+
+                if( !touchesUs )
+                    continue;
+
+                netView.netName = net.name;
+                netView.netUuid = net.uuid;
+
+                view.crossBoardNets.push_back( std::move( netView ) );
+            }
+
+            return view;   // first matching container wins
+        }
+
+        searchDir.RemoveLastDir();
+    }
+
+    return view;
+}
+
+
 /**
  * Heuristic matching the one in cross_board_pcb_sync.cpp — returns true
  * for empty / KiCad auto-generated / unconnected- / our "Net-<hex>" names.

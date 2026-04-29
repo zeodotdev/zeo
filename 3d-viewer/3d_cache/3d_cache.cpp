@@ -152,20 +152,6 @@ SCENEGRAPH* S3D_CACHE::load( const wxString& aModelFile, const wxString& aBasePa
 
     wxString full3Dpath = m_FNResolver->ResolvePath( aModelFile, aBasePath, std::move( aEmbeddedFilesStack ) );
 
-    // TEMP DIAGNOSTIC (multi-board virtual model resolution): log every
-    // load attempt. Remove once the multi-board virtual-model bug is closed.
-    {
-        wxString envKiprjmod;
-        wxGetEnv( wxT( "KIPRJMOD" ), &envKiprjmod );
-        wxString resolverDir = m_FNResolver->GetProjectDir();
-        wxLogMessage( wxT( "[3DLOAD] cache=%p prjDir='%s' envKIPRJMOD='%s' "
-                           "in='%s' base='%s' -> '%s' %s" ),
-                      static_cast<const void*>( this ),
-                      resolverDir, envKiprjmod, aModelFile, aBasePath,
-                      full3Dpath,
-                      full3Dpath.IsEmpty() ? wxT( "FAIL" ) : wxT( "OK" ) );
-    }
-
     if( full3Dpath.empty() )
     {
         // the model cannot be found; we cannot proceed

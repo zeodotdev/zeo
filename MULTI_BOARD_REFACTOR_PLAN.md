@@ -210,15 +210,22 @@ Two patterns coexist; pick the right one for new mail commands:
 | Cross-cutting | Net-highlight propagation works whether or not MBSCH is open (sender-side file-based fan-out via `MultiBoardCollectCrossBoardProbesForLocalNet`) |
 | Cross-cutting | Peer-mail project scope filter on `MAIL_SCH_GET_NETLIST` / `MAIL_PCB_UPDATE` / etc. |
 | Cross-cutting | Module pin properties dialog (notebook with General + Pin Functions tabs); Open button spawns peer SCH editor |
+| M5.5 | `DRC_ENGINE_CROSS_BOARD` ported to container model — `CheckConnectorMatching` and `CheckNetCompleteness` consume `GetSubProjects()` + `GetCrossBoardNets()`. Engine ready for project-wide invocation. |
+| M5.6 (partial) | `CheckPowerDistribution` min-pin count landed; voltage drop and current capacity remain TODO (need analog modeling). |
+| M8.4 (sibling) | Cross-board net consistency DRC check (`drc_test_provider_cross_board_consistency.cpp`) — auto-fires in pcbnew DRC alongside the binding check. Lazy-loads each sibling sub-project's BOARD by path (no PROJECT object) and verifies sibling pads carry the same net as this board's pads on each cross-board net. Catches sibling-board drift the user wouldn't see without running DRC on every sub-project independently. |
+| M8.0 | `SCH_SCREEN::RunOnItemsRecursive` helper — emits top-level rtree items + `RunOnChildren` descendants. Eliminates the per-surface hand-rolled "iterate children of containers" pattern. |
+| M8.1 (partial) | Find/Replace and `SCH_SEARCH_HANDLER::FindAll` retrofitted to use `RunOnItemsRecursive` — text search now reaches `SCH_MODULE_PIN`s. |
 
 ### Code-read but not runtime-verified
 
-- **Cross-board DRC engine** (`pcbnew/drc/drc_engine_cross_board.{h,cpp}`):
-  `CheckConnectorMatching` partial; `CheckSignalIntegrity` and
-  `CheckPowerDistribution` are TODO stubs. Engine still iterates
-  legacy `BOARD_INFO` instead of `GetSubProjects()`. M8.4's binding
-  check sidesteps this engine entirely; the engine remains for the
-  pairwise N-board cross-checks it was designed for.
+- **Cross-board DRC engine** (`pcbnew/drc/drc_engine_cross_board.{h,cpp}`)
+  is ported to the container model and compiles, but has no UI call
+  site — it's not wired to a button. The per-board cross-board
+  consistency check (M8.4 sibling) covers the highest-value
+  per-board case via the standard pcbnew DRC button. The engine
+  remains useful for project-wide invocation (e.g. headless or a
+  future "Validate Multi-Board" command) — wire it up before
+  running M5.6 analog checks at project scope.
 
 ### Incomplete or fragile
 
@@ -248,14 +255,13 @@ None currently open.
 
 ### P1 (important for parity)
 
-- **M5.5 — Port `DRC_ENGINE_CROSS_BOARD` to container model**
-  (~1 session). Replace `GetBoardInfos()` iteration with
-  `GetSubProjects()` + `GetCrossBoardNets()` so the engine can
-  actually run on multi-board projects. Unlocks M5.6.
-- **M5.6 — Flesh out cross-board DRC stubs** (~2-3 sessions).
-  `CheckSignalIntegrity` (length, impedance) and
-  `CheckPowerDistribution` (min pins for power nets, current capacity,
-  voltage drop). Depends on M5.5.
+- **M5.6 remainder — Cross-board DRC analog checks**
+  (~2-3 sessions). `CheckSignalIntegrity` (length, impedance) and
+  `CheckPowerDistribution` voltage drop + current capacity. Min-pin
+  count is landed. Power rule persistence (`min_power_pins`) needs
+  to land on the container `.kicad_pro` before per-board pin-count
+  DRC can fire automatically — currently exposed only via the
+  runtime engine API.
 - **M6 (3D viewer)** *(separate agent)*. M6.D mating refinements,
   M6.E real-geometry collision, M6.F STEP assembly export, M6.G
   persistence + polish.

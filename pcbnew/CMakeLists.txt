@@ -299,6 +299,7 @@ set( PCBNEW_DRC_SRCS
     drc/drc_test_provider_creepage.cpp
     drc/drc_test_provider_connectivity.cpp
     drc/drc_test_provider_cross_board_binding.cpp
+    drc/drc_test_provider_cross_board_consistency.cpp
     drc/drc_test_provider_connection_width.cpp
     drc/drc_test_provider_copper_clearance.cpp
     drc/drc_test_provider_physical_clearance.cpp

@@ -208,4 +208,61 @@ MultiBoardCollectCrossBoardProbesForLocalNet( const wxFileName& aSubProjectPro,
 KICOMMON_API wxString MultiBoardFormatCrossBoardProbe(
         const MULTI_BOARD_CROSS_BOARD_PROBE& aProbe );
 
+
+/**
+ * One endpoint of a cross-board net, expressed in this-board-or-sibling
+ * terms. Carries the resolved sub-project display name so callers can
+ * print user-friendly violation messages without re-loading the
+ * container project.
+ */
+struct KICOMMON_API MULTI_BOARD_NET_ENDPOINT_VIEW
+{
+    KIID     subProjectUuid;
+    wxString subProjectName;        ///< displayName falling back to name
+    wxString subProjectAbsPath;     ///< absolute .kicad_pro path of the sibling
+    wxString componentRef;
+    wxString pinNumber;
+    wxString pinName;
+};
+
+
+/**
+ * One cross-board net that touches the queried sub-project. The local
+ * (this-board) endpoints are split from sibling endpoints so a per-board
+ * DRC test provider can iterate sibling boards without re-filtering.
+ */
+struct KICOMMON_API MULTI_BOARD_CROSS_BOARD_NET_VIEW
+{
+    wxString netName;
+    KIID     netUuid;
+    std::vector<MULTI_BOARD_NET_ENDPOINT_VIEW> myEndpoints;
+    std::vector<MULTI_BOARD_NET_ENDPOINT_VIEW> siblingEndpoints;
+};
+
+
+/**
+ * Composite view of the multi-board container as seen from one sub-
+ * project. Aggregates everything a per-board cross-board check needs
+ * in a single resolution pass:
+ *  - the container's absolute .kicad_pro path (for path-based sibling
+ *    board loading),
+ *  - this sub-project's UUID inside the container,
+ *  - the cross-board nets that touch this sub-project, with each net's
+ *    endpoints split into local vs sibling sets.
+ *
+ * Empty `containerProAbsPath` means resolution failed: no container
+ * within 6 directory levels, container failed to load, or this sub-
+ * project isn't a member of any container.
+ */
+struct KICOMMON_API MULTI_BOARD_CONTAINER_VIEW
+{
+    wxString containerProAbsPath;
+    KIID     mySubProjectUuid;
+    std::vector<MULTI_BOARD_CROSS_BOARD_NET_VIEW> crossBoardNets;
+};
+
+
+KICOMMON_API MULTI_BOARD_CONTAINER_VIEW
+MultiBoardBuildContainerView( const wxFileName& aSubProjectPro );
+
 #endif // KICAD_MULTI_BOARD_SCAN_H

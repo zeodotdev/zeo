@@ -74,18 +74,50 @@ which board, ask before proceeding.
   the user opens a second editor.
 
 **Editing the MBS canvas with `sch_*` tools — `target.doc_type: "mbs"`.**
-The multi-board schematic IS a schematic on disk, so every `sch_*`
-tool (sch_add, sch_label, sch_connect_net, sch_get_summary, sch_run_erc,
-sch_save, …) can target it by setting `target.doc_type: "mbs"`. No
-`sub_project_uuid` is needed — there's only one MBS per container.
+The multi-board schematic IS a schematic on disk, so most `sch_*` tools
+(sch_add, sch_label, sch_connect_net, sch_get_summary, sch_run_erc,
+sch_save, sch_delete, sch_update, sch_inspect) can target it by setting
+`target.doc_type: "mbs"`. No `sub_project_uuid` is needed — there's
+only one MBS per container.
+
+A handful of `sch_*` tools don't apply to MBS and reject `doc_type:"mbs"`
+with a clear error: `sch_annotate` (module blocks have their own
+annotation), `sch_run_simulation` (no SPICE on MBS), `sch_place_companions`
+/ `sch_draft_circuit` (no IC support circuitry on MBS),
+`sch_find_symbol` / `sch_symbols` (MBS doesn't add library symbols),
+`sch_add_sheet` / `sch_update_sheet` / `sch_switch_sheet` (MBS is flat).
+
 Examples:
 
 ```json
-// Wire two pins together on the MBS canvas
-{ "pins": ["B1.3", "B2.7"], "target": { "doc_type": "mbs" } }
+// Add a wire on the MBS canvas connecting two block-pin coordinates
+// (look up coordinates first via mbs_inspect section="blocks")
+{
+  "elements": [{
+    "element_type": "wire",
+    "points": [[50.8, 118.11], [50.8, 869.95]]
+  }],
+  "target": { "doc_type": "mbs" }
+}
 
-// Place a label on the MBS canvas to name a cross-board net
-{ "text": "PWR_3V3", "position": [120, 80], "target": { "doc_type": "mbs" } }
+// Label MBS module-block pins to name cross-board nets.
+// `ref` is the block's mbs_reference (B1..) or component_ref (CN1, J1).
+// `labels` is { pin_number: label_text }.
+{
+  "ref": "B1",
+  "labels": { "10": "GPIO0", "11": "GPIO1" },
+  "target": { "doc_type": "mbs" }
+}
+
+// Standalone label at coordinates (no pin lookup) — same as schematics
+{
+  "elements": [{
+    "element_type": "label",
+    "position": [120, 80],
+    "text": "PWR_3V3"
+  }],
+  "target": { "doc_type": "mbs" }
+}
 ```
 
 `target.doc_type` defaults to "sch" when omitted on sch_* tools, and to
@@ -95,7 +127,15 @@ out — there's no MBS PCB.
 **`mbs_*` tools** (mbs_get_summary, mbs_inspect, mbs_run_erc, mbs_refresh,
 mbs_sync_to_pcb, mbs_save) ignore `target` — they operate on the
 container's cross-board topology directly. They require
-`container.mbs_editor_open == true`. **If `mbs_editor_open` is false,
+`container.mbs_editor_open == true`.
+
+**`mbs_refresh` is preview-then-apply.** A bare `mbs_refresh` call returns
+the proposed changes WITHOUT applying. Always run a preview first, show
+the user the diff (additions, removals, renames, etc.), get explicit
+approval, and only then call `mbs_refresh` with `apply: true` to commit.
+To apply only a subset, pass `apply_indices: [<int>, ...]` listing the
+indices from the previewed `proposed_changes`. Refresh is destructive
+(removes orphaned blocks) — never skip the preview step. **If `mbs_editor_open` is false,
 recover with this sequence (do it without asking the user):**
 
 1. Call `check_status` if you don't already have a fresh response —

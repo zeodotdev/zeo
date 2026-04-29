@@ -362,10 +362,20 @@
   },
   {
     "name": "mbs_refresh",
-    "description": "Re-scan every sub-project's connector pins and apply the diff to the MBS canvas. Adds module blocks for new sub-projects, removes blocks for removed ones, adds/removes/renames pins to match the current connector pin lists, updates sub-project paths, and stamps missing UUIDs. Equivalent to the MBSCH 'Refresh from Sub-Projects' toolbar button without the confirmation dialog. Use after the user adds connectors to a sub-project schematic. Requires the MBSCH editor open.",
+    "description": "Re-scan every sub-project's connector pins and either preview or apply the resulting diff to the MBS canvas. ALWAYS call this in PREVIEW mode first (default — no apply argument needed) to see what would change, then show the diff to the user, get their approval, and only then call again with apply=true to commit. Mirrors the desktop 'Refresh from Sub-Projects' dialog's preview-then-checkbox-approve UX. To apply only some of the proposed changes, pass apply=true plus apply_indices=[<list of int indices from proposed_changes>]. Requires the MBSCH editor open.",
     "input_schema": {
       "type": "object",
-      "properties": {},
+      "properties": {
+        "apply": {
+          "type": "boolean",
+          "description": "If false (default), returns the proposed changes WITHOUT applying anything. If true, commits the changes (filtered by apply_indices when set, otherwise all)."
+        },
+        "apply_indices": {
+          "type": "array",
+          "items": { "type": "integer" },
+          "description": "Optional list of indices (0-based, from proposed_changes returned by a preview call) to apply. Only used when apply=true. Empty/omitted with apply=true means apply ALL proposed changes."
+        }
+      },
       "required": []
     },
     "app": "mbs",
@@ -772,7 +782,7 @@
   },
   {
     "name": "sch_label",
-    "description": "Place labels on symbol or sheet pins. Auto-justifies text and orientation based on pin direction. For sheets, pass the sheet name as ref and use sheet pin names as label keys. Supports multi-unit symbols with optional unit filter.",
+    "description": "Place labels on the pins of a symbol, sheet, or MBS module block. Auto-justifies text and orientation based on pin direction. For sheets, pass the sheet name as ref and use sheet pin names as label keys. Supports multi-unit symbols with optional unit filter. ON THE MULTI-BOARD CANVAS (target.doc_type=\"mbs\"): pass the module block's mbs_reference (e.g. \"B1\") or component_ref (e.g. \"CN1\") as ref, and the pin_number (e.g. \"10\") as the key in `labels`. Use mbs_inspect (section=\"blocks\") to discover valid block refs and pin numbers. Pin labels on MBS pins name the cross-board net at that pin.",
     "input_schema": {
       "type": "object",
       "properties": {

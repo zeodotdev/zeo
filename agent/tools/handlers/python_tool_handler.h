@@ -70,8 +70,11 @@ private:
 
     /**
      * Build the full IPC command string: "run_shell <app> <TOOL_ARGS preamble><script>"
+     * `aToolName` is needed so the target preamble can reject tools that
+     * don't make sense on the MBS canvas (e.g. sch_annotate).
      */
-    static std::string BuildIPCCommand( const std::string& aApp,
+    static std::string BuildIPCCommand( const std::string& aToolName,
+                                         const std::string& aApp,
                                          const nlohmann::json& aInput,
                                          const std::string& aScript );
 

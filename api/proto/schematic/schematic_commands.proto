@@ -1658,18 +1658,52 @@ message GetMultiBoardContainerInfoResponse
   repeated kiapi.schematic.types.SubProjectInfo sub_projects      = 4;
 }
 
-/// Re-scan every sub-project's connector pins and apply the resulting
-/// diff to the MBS canvas (add/remove blocks, add/remove/rename pins,
-/// update sub-project paths, stamp missing UUIDs). Equivalent to the
-/// MBSCH "Refresh from Sub-Projects" toolbar button without the
-/// confirmation dialog — applies every change.
+/// Re-scan every sub-project's connector pins and either preview or apply
+/// the resulting diff to the MBS canvas (add/remove blocks, add/remove/
+/// rename pins, update sub-project paths, stamp missing UUIDs).
+///
+/// Two modes via `dry_run`:
+///   - `dry_run = true` (default): compute the diff and return it in
+///     `proposed_changes`. Nothing is mutated. The agent shows the
+///     diff to the user.
+///   - `dry_run = false`: applies the changes. When `apply_indices`
+///     is non-empty, only those indices from the diff are applied
+///     (mirrors the desktop dialog's checkbox UX). When empty, every
+///     change is applied.
+///
+/// To accept a preview wholesale, call again with the SAME doc and
+/// `dry_run = false` (no need to pass apply_indices). To apply a
+/// subset, pass apply_indices = the indices the user approved.
 message RefreshMbsFromSubProjects
 {
   kiapi.common.types.DocumentSpecifier document = 1;
+  bool                                 dry_run  = 2;
+  repeated int32                       apply_indices = 3;
+}
+
+/// One entry in the proposed-changes list. `index` is the position in
+/// the diff (use this in `apply_indices` to opt in/out per change).
+/// `kind` is one of: ADD_BLOCK, REMOVE_BLOCK, ADD_PIN, REMOVE_PIN,
+/// RENAME_PIN, PATH_DRIFT, UPGRADE_UUID. `description` is the same
+/// human-readable string the desktop dialog shows ("Add block J7
+/// (esp_cm_breakout, 3 pins)").
+message MbsProposedChange
+{
+  int32  index            = 1;
+  string kind             = 2;
+  string description      = 3;
+  string sub_project_uuid = 4;
+  string sub_project_path = 5;
+  string sub_project_name = 6;
+  string component_ref    = 7;
+  string pin_number       = 8;
+  string old_label        = 9;
+  string new_label        = 10;
 }
 
 message RefreshMbsFromSubProjectsResponse
 {
+  // Apply-mode totals. All zero in dry-run mode.
   int32  blocks_added    = 1;
   int32  blocks_removed  = 2;
   int32  pins_added      = 3;
@@ -1678,6 +1712,14 @@ message RefreshMbsFromSubProjectsResponse
   int32  paths_updated   = 6;
   int32  uuids_stamped   = 7;
   string summary         = 8;
+
+  // Whether this was a dry-run (preview) call. When true, only
+  // `proposed_changes` is meaningful; the apply totals above are zero.
+  bool   dry_run           = 9;
+
+  // Always populated — the diff list, indexed for use with apply_indices.
+  // In apply mode this lets the caller report exactly what was applied.
+  repeated MbsProposedChange proposed_changes = 10;
 }
 
 /// Push the cross-board nets declared on the MBS to each sub-project

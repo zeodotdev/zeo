@@ -10,6 +10,17 @@ label_type = TOOL_ARGS.get("label_type", "local")
 pin_labels = TOOL_ARGS.get("labels", {})
 unit_filter = TOOL_ARGS.get("unit", None)  # Filter pins to specific unit (None = all pins)
 
+# MBS detection: when target.doc_type:"mbs" routed through this tool, the
+# bootstrap aliased sch=mbs. Module blocks are SCH_MODULE_BLOCK_T items
+# (not regular schematic symbols) so the symbol-ref lookup below would
+# miss them. Detect via DocumentType and resolve via mbs.multi_board.
+_IS_MBS = False
+try:
+    from kipy.proto.common.types import DocumentType as _DocumentType
+    _IS_MBS = sch._doc.type == _DocumentType.DOCTYPE_MBS_SCHEMATIC
+except Exception:
+    pass
+
 def build_label(text, position, h_align, v_align, rotation=0):
     """Build a label proto in memory (no IPC call)."""
     if label_type == 'global':
@@ -24,44 +35,120 @@ def build_label(text, position, h_align, v_align, rotation=0):
         lbl._proto.text.attributes.angle.value_degrees = rotation
     return lbl
 
-# Resolve ref as symbol or sheet
+# Resolve ref as MBS module block (if MBS doc), then symbol, then sheet.
 results = []
 labels_to_create = []  # Collect all label protos for batch creation
 _is_sheet = False
+_is_mbs_block = False
 sym = None
 sheet = None
+mbs_block = None  # SCH_MODULE_BLOCK proto when matched on MBS canvas
 
+if _IS_MBS:
+    try:
+        # On MBS, ref typically matches the MBS-scoped annotation ('B1'..'B12')
+        # set by mbs_refresh. Also accept matching component_ref ('CN1', 'J1')
+        # as a fallback so the model can use whichever it has handy.
+        for _b in sch.multi_board.get_blocks():
+            if getattr(_b, 'mbs_reference', '') == ref \
+                    or getattr(_b, 'component_ref', '') == ref:
+                mbs_block = _b
+                _is_mbs_block = True
+                break
+    except Exception as _e:
+        tool_log(f'[sch_label] MBS block lookup failed: {_e}')
+
+# Symbol / sheet lookups don't apply when a module block already matched.
 # When unit is specified, we need to find the specific symbol instance with that unit
 # because multiple units of the same ref can be on the same sheet (e.g., U1 units 10-14)
-if unit_filter is not None:
-    # Find all symbols with this ref and select the one with matching unit
-    all_symbols = sch.symbols.get_all()
-    matching_symbols = [s for s in all_symbols if getattr(s, 'reference', '') == ref]
-    for s in matching_symbols:
-        if getattr(s, 'unit', 1) == unit_filter:
-            sym = s
-            break
-    if not sym and matching_symbols:
-        # Unit not found - report available units
-        available_units = sorted(set(getattr(s, 'unit', 1) for s in matching_symbols))
-        results = [{'error': f'Unit {unit_filter} of {ref} not found on this sheet. Available units: {available_units}'}]
-else:
-    try:
-        sym = sch.symbols.get_by_ref(ref)
-        if not sym:
-            raise ValueError('not found')
-    except Exception:
-        sym = None
+if not _is_mbs_block:
+    if unit_filter is not None:
+        # Find all symbols with this ref and select the one with matching unit
+        all_symbols = sch.symbols.get_all()
+        matching_symbols = [s for s in all_symbols if getattr(s, 'reference', '') == ref]
+        for s in matching_symbols:
+            if getattr(s, 'unit', 1) == unit_filter:
+                sym = s
+                break
+        if not sym and matching_symbols:
+            # Unit not found - report available units
+            available_units = sorted(set(getattr(s, 'unit', 1) for s in matching_symbols))
+            results = [{'error': f'Unit {unit_filter} of {ref} not found on this sheet. Available units: {available_units}'}]
+    else:
+        try:
+            sym = sch.symbols.get_by_ref(ref)
+            if not sym:
+                raise ValueError('not found')
+        except Exception:
+            sym = None
 
-if not sym and not results:
-    for _s in sch.crud.get_sheets():
-        if _s.name == ref:
-            sheet = _s
-            _is_sheet = True
-            break
+    if not sym and not results:
+        for _s in sch.crud.get_sheets():
+            if _s.name == ref:
+                sheet = _s
+                _is_sheet = True
+                break
 
-if not sym and not sheet and not results:
-    results = [{'error': f'No symbol or sheet found matching: {ref}'}]
+    if not sym and not sheet and not results:
+        if _IS_MBS:
+            # On MBS the only valid refs are module-block annotations (B1..)
+            # or component_refs (CN1, J1). Surface a clearer error so the
+            # model can correct.
+            results = [{'error': f'No module block found on MBS matching ref \'{ref}\'. '
+                                 f'Use mbs_inspect (section=\"blocks\") to see valid '
+                                 f'mbs_reference / component_ref values.'}]
+        else:
+            results = [{'error': f'No symbol or sheet found matching: {ref}'}]
+
+# --- Dispatch phase (independent of lookup) ---
+# Each branch handles one resolution kind. `results` may already contain
+# errors from the lookup phase; in that case all branches fall through.
+if _is_mbs_block:
+    # MBS module block branch — pins are addressed by pin_number, not name.
+    # Mirrors the sheet-pin alignment logic since MBS pins use the same
+    # SHEET_SIDE enum (1=LEFT, 2=RIGHT, 3=TOP, 4=BOTTOM).
+    _pin_by_number = {p.pin_number: p for p in mbs_block.pins}
+
+    for pin_id, label_text in pin_labels.items():
+        try:
+            _pin = _pin_by_number.get(str(pin_id))
+            if not _pin:
+                results.append({'pin': pin_id, 'label': label_text,
+                                'error': f'MBS block pin not found: {pin_id}'})
+                continue
+
+            px = _pin.position.x_nm / 1_000_000
+            py = _pin.position.y_nm / 1_000_000
+            _side = _pin.side
+
+            rotation = 0
+            if _side == 1:    # LEFT side — label flows leftward
+                h_align, v_align = HA_RIGHT, VA_BOTTOM
+                direction = 'left'
+            elif _side == 2:  # RIGHT side — label flows rightward
+                h_align, v_align = HA_LEFT, VA_BOTTOM
+                direction = 'right'
+            elif _side == 3:  # TOP side
+                h_align, v_align = HA_LEFT, VA_BOTTOM
+                direction = 'up'
+                rotation = 90
+            elif _side == 4:  # BOTTOM side
+                h_align, v_align = HA_LEFT, VA_TOP
+                direction = 'down'
+                rotation = 270
+            else:
+                h_align, v_align = HA_LEFT, VA_BOTTOM
+                direction = 'right'
+
+            label_pos = Vector2.from_xy_mm(px, py)
+            lbl = build_label(label_text, label_pos, h_align, v_align, rotation)
+            labels_to_create.append(lbl)
+            results.append({'pin': pin_id, 'label': label_text,
+                            'position': [round(px, 2), round(py, 2)],
+                            'direction': direction})
+
+        except Exception as e:
+            results.append({'pin': pin_id, 'label': label_text, 'error': str(e)})
 
 elif _is_sheet:
     _pin_by_name = {p.name: p for p in sheet.pins}
@@ -106,7 +193,7 @@ elif _is_sheet:
         except Exception as e:
             results.append({'pin': pin_id, 'label': label_text, 'error': str(e)})
 
-else:
+elif sym:
     # Get library info for pin unit assignments if unit filter is specified
     lib_pin_units = {}
     if unit_filter is not None:

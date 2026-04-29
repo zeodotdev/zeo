@@ -202,6 +202,49 @@ wxString MBS_CHANGE::Describe() const
 }
 
 
+/**
+ * Normalize a `.kicad_pro` relative path for diff matching: strip a
+ * leading `./`, fold backslashes to forward slashes, drop a trailing
+ * separator if any. Lets blocks saved with subtle path-format
+ * differences still match on the path-fallback lookup.
+ */
+static wxString normalizeMbsRelPath( wxString aPath )
+{
+    aPath.Replace( wxT( "\\" ), wxT( "/" ) );
+
+    if( aPath.StartsWith( wxT( "./" ) ) )
+        aPath.Remove( 0, 2 );
+
+    while( aPath.EndsWith( wxT( "/" ) ) )
+        aPath.RemoveLast( 1 );
+
+    return aPath;
+}
+
+
+/**
+ * Extract the directory basename (last path component) from a
+ * sub-project's `.kicad_pro` path. Used as a final-fallback match key
+ * because the sub-project's own directory name is what the user
+ * typically thinks of as its identity (and what SUB_PROJECT_INFO::name
+ * stores).
+ */
+static wxString subProjectNameFromPath( const wxString& aPath )
+{
+    wxString p = normalizeMbsRelPath( aPath );
+
+    // Path looks like "boards/esp_cm/esp_cm.kicad_pro"; the directory
+    // basename is the second-to-last component ("esp_cm"). When the
+    // path has no directory parts, fall back to the file basename.
+    wxFileName fn( p );
+
+    if( fn.GetDirCount() > 0 )
+        return fn.GetDirs().Last();
+
+    return fn.GetName();
+}
+
+
 std::vector<MBS_CHANGE> ComputeMbsRefreshDiff( SCH_SCREEN& aMbsScreen,
                                                const PROJECT_FILE& aMultiBoard )
 {
@@ -212,12 +255,22 @@ std::vector<MBS_CHANGE> ComputeMbsRefreshDiff( SCH_SCREEN& aMbsScreen,
     // Primary: (sub_project_uuid, componentRef). Stable across path
     // renames.
     //
-    // Fallback: (sub_project_path, componentRef). Used for legacy
-    // blocks saved before sub_project_uuid was persisted. Matching a
-    // fallback also queues an UPGRADE_UUID change so subsequent
-    // refreshes take the UUID path.
+    // Fallback A: (normalized sub_project_path, componentRef). Used for
+    // legacy blocks saved before sub_project_uuid was persisted, AND
+    // for blocks whose stored path differs in trivial formatting from
+    // the container's relativePath (leading ./, separator style).
+    // Matching here queues an UPGRADE_UUID change.
+    //
+    // Fallback B: (sub_project name, componentRef). Final defensive
+    // match — the sub-project directory basename is stable across path
+    // moves and case-insensitive on macOS/Windows. Without this an
+    // incidental UUID drift between the .kicad_pro and the .kicad_mbs
+    // (e.g. user manually edited one of the files) causes a destructive
+    // teardown of all existing blocks. Matching here also stamps the
+    // current uuid + path onto the existing block.
     std::map<std::pair<KIID, wxString>, SCH_MODULE_BLOCK*>     byUuid;
     std::map<std::pair<wxString, wxString>, SCH_MODULE_BLOCK*> byPath;
+    std::map<std::pair<wxString, wxString>, SCH_MODULE_BLOCK*> byName;
 
     for( SCH_ITEM* item : aMbsScreen.Items().OfType( SCH_MODULE_BLOCK_T ) )
     {
@@ -226,7 +279,22 @@ std::vector<MBS_CHANGE> ComputeMbsRefreshDiff( SCH_SCREEN& aMbsScreen,
         if( b->GetSubProjectUuid() != niluuid )
             byUuid[{ b->GetSubProjectUuid(), b->GetComponentRef() }] = b;
         else
-            byPath[{ b->GetSubProjectPath(), b->GetComponentRef() }] = b;
+            byPath[{ normalizeMbsRelPath( b->GetSubProjectPath() ),
+                      b->GetComponentRef() }] = b;
+
+        // Always populate byName regardless of uuid presence — it's the
+        // final-fallback for any matching attempt that fails the first
+        // two paths.
+        wxString existingName = subProjectNameFromPath( b->GetSubProjectPath() );
+
+        if( !existingName.IsEmpty() )
+            byName[{ existingName, b->GetComponentRef() }] = b;
+
+        wxLogInfo( wxT( "MBS diff: existing block uuid=%s path=%s ref=%s name=%s" ),
+                   b->GetSubProjectUuid().AsString(),
+                   b->GetSubProjectPath(),
+                   b->GetComponentRef(),
+                   existingName );
     }
 
     // Track which existing blocks got matched to something in the scan.
@@ -241,6 +309,12 @@ std::vector<MBS_CHANGE> ComputeMbsRefreshDiff( SCH_SCREEN& aMbsScreen,
         wxFileName pcbFile = MultiBoardMainPcb( proFile );
 
         std::vector<wxString> connectors = MultiBoardScanConnectorReferences( schFile );
+
+        wxLogInfo( wxT( "MBS diff: container sub-project name=%s uuid=%s path=%s "
+                        "resolved=%s connectors=%zu" ),
+                   info.name, info.uuid.AsString(),
+                   info.relativePath, proFile.GetFullPath(),
+                   connectors.size() );
         std::map<wxString, std::vector<MULTI_BOARD_PAD_INFO>> padsByRef =
                 MultiBoardScanConnectorPads( pcbFile );
 
@@ -256,20 +330,48 @@ std::vector<MBS_CHANGE> ComputeMbsRefreshDiff( SCH_SCREEN& aMbsScreen,
                 expectedPads.push_back( MULTI_BOARD_PAD_INFO{} );   // placeholder
 
             // Locate an existing block for this (subProject, ref) via
-            // UUID first, path second.
+            // UUID first, normalized path second, sub-project name third.
             SCH_MODULE_BLOCK* existing = nullptr;
             bool              upgradeUuid = false;
             bool              pathDrifted = false;
 
+            wxString normalizedInfoPath = normalizeMbsRelPath( info.relativePath );
+
             if( auto it = byUuid.find( { info.uuid, ref } ); it != byUuid.end() )
             {
                 existing = it->second;
-                pathDrifted = existing->GetSubProjectPath() != info.relativePath;
+                pathDrifted = normalizeMbsRelPath( existing->GetSubProjectPath() )
+                              != normalizedInfoPath;
             }
-            else if( auto it2 = byPath.find( { info.relativePath, ref } ); it2 != byPath.end() )
+            else if( auto it2 = byPath.find( { normalizedInfoPath, ref } );
+                     it2 != byPath.end() )
             {
                 existing    = it2->second;
                 upgradeUuid = true;
+            }
+            else if( !info.name.IsEmpty() )
+            {
+                // Final fallback: match by sub-project directory name.
+                // Catches the case where both UUID AND path lookups fail
+                // due to drift between the .kicad_pro and the .kicad_mbs
+                // (e.g. user manually edited one file, or a legacy save
+                // path stored a slightly different format).
+                if( auto it3 = byName.find( { info.name, ref } ); it3 != byName.end() )
+                {
+                    existing    = it3->second;
+                    upgradeUuid = ( existing->GetSubProjectUuid() != info.uuid );
+                    pathDrifted = normalizeMbsRelPath( existing->GetSubProjectPath() )
+                                  != normalizedInfoPath;
+
+                    wxLogInfo( wxT( "MBS diff: matched via NAME fallback: name=%s ref=%s "
+                                    "(stored uuid=%s, container uuid=%s, "
+                                    "stored path=%s, container path=%s)" ),
+                               info.name, ref,
+                               existing->GetSubProjectUuid().AsString(),
+                               info.uuid.AsString(),
+                               existing->GetSubProjectPath(),
+                               info.relativePath );
+                }
             }
 
             if( !existing )

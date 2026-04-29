@@ -280,19 +280,7 @@ wxString FILENAME_RESOLVER::ResolvePath( const wxString& aFileName, const wxStri
     // getenv() system call. If we allow the wxFileName::Normalize() routine to perform expansion
     // then we will have a race condition since wxWidgets does not assure a threadsafe wrapper
     // for getenv().
-    wxString tnameRaw = tname;
     tname = ExpandEnvVarSubstitutions( tname, m_project );
-
-    // TEMP DIAGNOSTIC (multi-board virtual model resolution): log when
-    // KIPRJMOD shows up in an input. Remove once the multi-board
-    // virtual-model bug is closed.
-    if( tnameRaw.Contains( wxT( "KIPRJMOD" ) ) )
-    {
-        wxString existsCheck = wxFileName::FileExists( tname ) ? wxT( "EXISTS" )
-                                                                : wxT( "MISSING" );
-        wxLogMessage( wxT( "[RESOLVE] in='%s' projDir='%s' substituted='%s' file=%s" ),
-                      tnameRaw, m_curProjDir, tname, existsCheck );
-    }
 
     // Check to see if the file is a URI for an embedded file.
     if( tname.StartsWith( FILEEXT::KiCadUriPrefix + "://" ) )

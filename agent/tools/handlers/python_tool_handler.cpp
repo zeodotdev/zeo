@@ -1,6 +1,7 @@
 #include "python_tool_handler.h"
 
 #include <fstream>
+#include <set>
 #include <sstream>
 
 #include <wx/filename.h>
@@ -147,7 +148,8 @@ static std::string resolveSubProjectAbsPath( const std::string& aSubProjectUuid,
 
 /**
  * Escape a string for embedding in a Python single-quoted literal —
- * backslash + single-quote handling.
+ * backslash + single-quote handling. (Used only for short-known-clean
+ * payloads; for free-form messages prefer pyRawTripleQuoted below.)
  */
 static std::string escapePyString( const std::string& aIn )
 {
@@ -169,25 +171,123 @@ static std::string escapePyString( const std::string& aIn )
 
 
 /**
- * When the tool args carry `target`, build a Python preamble that rebinds
- * the `sch` / `board` variable (whichever the app uses) to the right doc.
+ * Wrap a free-form message in a Python `r"""..."""` literal — raw
+ * triple-double-quoted string. Robust against any embedded single
+ * quotes, double quotes, newlines, or backslashes; the only sequence
+ * that would break it is a literal `"""` in the message, which we
+ * defensively neutralise.
  *
- * Two routing modes via `target.doc_type` (default: matches the app's
- * native doc type — "sch" for app:sch, "pcb" for app:pcb):
- *  - doc_type "sch" or omitted with sub_project_uuid: bind `sch` to the
- *    sub-project's schematic editor via get_schematic_by_project_path
- *  - doc_type "pcb" or omitted with sub_project_uuid (app:pcb): bind
- *    `board` to the sub-project's PCB editor
- *  - doc_type "mbs": bind `sch` (when app:sch) or `board` (when app:pcb)
- *    to the multi-board container's MBS schematic. No sub_project_uuid
- *    needed. Lets `sch_*` / `pcb_*` tools operate on the MBS canvas
- *    via the same kipy methods (the MBS file IS a schematic, so all
- *    the wiring/labels/symbols operations work)
- *
- * Empty string return = no rebind needed (no target, or unsupported app).
- * May also emit `raise RuntimeError(...)` when the uuid fails to resolve.
+ * Used for emitting `raise RuntimeError(...)` preambles where the
+ * message contains arbitrary content (tool names, paths, JSON-ish
+ * fragments) that's hard to escape character-by-character correctly.
  */
-static std::string buildTargetPreamble( const std::string& aApp, const nlohmann::json& aInput )
+static std::string pyRawTripleQuoted( const std::string& aIn )
+{
+    std::string body = aIn;
+    size_t      pos = 0;
+
+    // Defensively split any literal """ sequence. " " " is an equivalent
+    // sequence for human readers but Python parses it as three separate
+    // empty strings, breaking out of our triple-quote envelope. Inserting
+    // a zero-width-ish split (a backslash escape) keeps the message
+    // readable and the literal valid.
+    while( ( pos = body.find( "\"\"\"", pos ) ) != std::string::npos )
+    {
+        body.replace( pos, 3, "\"\\\"\"\"" );
+        pos += 5;
+    }
+
+    return "r\"\"\"" + body + "\"\"\"";
+}
+
+
+/**
+ * Tools that don't make sense on the multi-board canvas. When called
+ * with `target.doc_type:"mbs"`, the build preamble emits an explicit
+ * RuntimeError so the LLM gets a clear "this op isn't valid on MBS"
+ * signal instead of a silently-wrong result. Listed reasons:
+ *   - sch_annotate: module blocks have MBS-scoped annotation (B1, B2)
+ *     applied by mbs_refresh, not the schematic annotator
+ *   - sch_run_simulation: SPICE doesn't apply to a cross-board topology
+ *   - sch_place_companions: no IC support circuitry on the MBS canvas
+ *   - sch_draft_circuit: circuit drafting doesn't apply
+ *   - sch_find_symbol: MBS doesn't add library symbols
+ *   - sch_symbols: schematic symbol enumeration; MBS uses module blocks
+ *   - sch_add_sheet / sch_update_sheet / sch_switch_sheet: MBS is flat
+ *
+ * Tools that DO work on MBS (sch_add wires/labels/text/graphics,
+ * sch_label, sch_connect_net, sch_get_summary, sch_inspect, sch_save,
+ * sch_run_erc, sch_delete, sch_update) are not in this set.
+ */
+static bool toolUnsupportedOnMbs( const std::string& aToolName )
+{
+    static const std::set<std::string> unsupported = {
+        "sch_annotate",
+        "sch_run_simulation",
+        "sch_place_companions",
+        "sch_draft_circuit",
+        "sch_find_symbol",
+        "sch_symbols",
+        "sch_add_sheet",
+        "sch_update_sheet",
+        "sch_switch_sheet",
+    };
+
+    return unsupported.count( aToolName ) > 0;
+}
+
+
+/**
+ * When `target.doc_type:"mbs"` is set on a sch_* tool, the run_shell mode
+ * (which drives both BuildModeInitCode + ModeToFrameType in terminal_frame.cpp)
+ * gets switched from "sch" to "mbs". This makes:
+ *   - The bootstrap bind `mbs = kicad.get_mbs_schematic()` directly
+ *   - The agent diff-view transactions route to FRAME_MBSCH (so changes
+ *     pop up in the MBS editor's diff overlay, not the SCH one)
+ * The target preamble for this case just aliases `sch = mbs` so unmodified
+ * sch_* scripts keep working without rewriting to use `mbs`.
+ *
+ * Returns the run_shell mode the rest of the pipeline should treat the
+ * tool as. Returns the original app when no MBS routing applies.
+ */
+static std::string effectiveRunShellMode( const std::string& aApp,
+                                          const nlohmann::json& aInput )
+{
+    if( aApp != "sch" )
+        return aApp;
+
+    if( !aInput.is_object() || !aInput.contains( "target" ) )
+        return aApp;
+
+    const auto& target = aInput["target"];
+
+    if( !target.is_object() )
+        return aApp;
+
+    if( target.value( "doc_type", "" ) == "mbs" )
+        return "mbs";
+
+    return aApp;
+}
+
+
+/**
+ * Build the Python lines that rebind `sch` / `board` to the right document.
+ *
+ * Routing modes:
+ *  - target.doc_type == "mbs" with app:sch — `mbs` is already bound by
+ *    the bootstrap (effective mode is "mbs"); we just alias `sch = mbs`.
+ *    Tools listed in `toolUnsupportedOnMbs` reject before reaching here.
+ *  - target.doc_type == "mbs" with app:pcb — rejected, no MBS PCB exists.
+ *  - sub_project_uuid set with app:sch/pcb — rebind to the sub-project's
+ *    schematic / board via the new kipy by-project-path helpers.
+ *
+ * Empty string return = no rebind needed. May also emit `raise
+ * RuntimeError(...)` when the uuid or unsupported-tool checks fail.
+ */
+static std::string buildTargetPreamble( const std::string& aToolName,
+                                        const std::string& aApp,
+                                        const nlohmann::json& aInput )
 {
     if( !aInput.is_object() || !aInput.contains( "target" ) )
         return "";
@@ -204,22 +304,37 @@ static std::string buildTargetPreamble( const std::string& aApp, const nlohmann:
 
     std::string docType = target.value( "doc_type", "" );
 
-    // Cross-app routing: target.doc_type == "mbs" rebinds the app's
-    // standard variable to the MBS schematic. Lets sch_* tools edit the
-    // MBS canvas without a parallel mbs_* tool surface.
     if( docType == "mbs" )
     {
-        // The MBS doc is a schematic on disk. For app:sch we rebind `sch`;
-        // for app:pcb we'd be asking the LLM to do something nonsensical
-        // (there is no MBS PCB) so reject with a clear error.
+        // PCB tools have no MBS counterpart — reject explicitly.
         if( aApp == "pcb" )
         {
-            return "raise RuntimeError('target.doc_type=\"mbs\" is not valid for "
-                   "PCB tools — the multi-board schematic has no PCB. Use a "
-                   "sub-project PCB target instead.')\n";
+            std::string msg = "target.doc_type=\"mbs\" is not valid for PCB tools "
+                              "— the multi-board schematic has no PCB. Use a "
+                              "sub-project PCB target instead.";
+            return "raise RuntimeError(" + pyRawTripleQuoted( msg ) + ")\n";
         }
 
-        return "sch = kicad.get_mbs_schematic()\n";
+        // Tools that don't make sense on the MBS canvas (annotation,
+        // simulation, IC support placement, etc.) reject before doing
+        // anything destructive — see toolUnsupportedOnMbs above.
+        if( toolUnsupportedOnMbs( aToolName ) )
+        {
+            std::string msg = "Tool '" + aToolName + "' is not supported on the "
+                              "multi-board (MBS) canvas. It targets schematic-only "
+                              "constructs (e.g. symbol annotation, SPICE simulation, "
+                              "IC support circuitry, or hierarchical sub-sheets) "
+                              "that the MBS does not have. Use mbs_refresh / "
+                              "mbs_run_erc / sch_add (with target.doc_type=\"mbs\" "
+                              "for wires/labels/text) instead.";
+
+            return "raise RuntimeError(" + pyRawTripleQuoted( msg ) + ")\n";
+        }
+
+        // Bootstrap (in BuildModeInitCode for "mbs" mode) already bound
+        // `mbs`. Alias `sch = mbs` so unmodified sch_* scripts keep
+        // working without rewriting their `sch.symbols.add(...)` calls.
+        return "sch = mbs\n";
     }
 
     // Per-sub-project routing.
@@ -232,19 +347,20 @@ static std::string buildTargetPreamble( const std::string& aApp, const nlohmann:
     std::string absPath = resolveSubProjectAbsPath( subUuid, &error );
 
     if( absPath.empty() )
-        return "raise RuntimeError('" + escapePyString( error ) + "')\n";
+        return "raise RuntimeError(" + pyRawTripleQuoted( error ) + ")\n";
 
-    std::string escPath = escapePyString( absPath );
+    std::string pyPath = pyRawTripleQuoted( absPath );
 
     if( aApp == "sch" )
-        return "sch = kicad.get_schematic_by_project_path('" + escPath + "')\n";
+        return "sch = kicad.get_schematic_by_project_path(" + pyPath + ")\n";
 
     // aApp == "pcb"
-    return "board = kicad.get_board_by_project_path('" + escPath + "')\n";
+    return "board = kicad.get_board_by_project_path(" + pyPath + ")\n";
 }
 
 
-std::string PYTHON_TOOL_HANDLER::BuildIPCCommand( const std::string& aApp,
+std::string PYTHON_TOOL_HANDLER::BuildIPCCommand( const std::string& aToolName,
+                                                    const std::string& aApp,
                                                     const nlohmann::json& aInput,
                                                     const std::string& aScript )
 {
@@ -265,9 +381,18 @@ std::string PYTHON_TOOL_HANDLER::BuildIPCCommand( const std::string& aApp,
             escaped += c;
     }
 
-    std::string targetPreamble = buildTargetPreamble( aApp, aInput );
+    std::string targetPreamble = buildTargetPreamble( aToolName, aApp, aInput );
 
-    return "run_shell " + aApp + " "
+    // Effective mode controls which bootstrap runs (BuildModeInitCode in
+    // terminal_frame.cpp) AND which FRAME_T receives transaction mails
+    // (ModeToFrameType, same file). For target.doc_type:"mbs" on a sch_*
+    // tool, both flip from "sch" to "mbs" so the diff view + undo system
+    // talk to the right editor frame. The script itself is untouched —
+    // the target preamble aliases sch=mbs so existing sch.symbols.add
+    // calls continue to work.
+    std::string effectiveMode = effectiveRunShellMode( aApp, aInput );
+
+    return "run_shell " + effectiveMode + " "
            + "import json\nTOOL_ARGS = json.loads('" + escaped + "')\n"
            + targetPreamble
            + aScript;
@@ -848,5 +973,5 @@ std::string PYTHON_TOOL_HANDLER::GetIPCCommand( const std::string& aToolName,
 
     script += it->second.script;
 
-    return BuildIPCCommand( it->second.app, aInput, script );
+    return BuildIPCCommand( aToolName, it->second.app, aInput, script );
 }

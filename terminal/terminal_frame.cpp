@@ -192,12 +192,17 @@ static std::string WaitForPythonResult( HEADLESS_PYTHON_EXECUTOR* aExecutor,
 
 
 // Map an editor mode string to a FRAME_T.  Returns FRAME_T(-1) for unknown modes.
+// Used to route MAIL_AGENT_BEGIN/END_TRANSACTION + take_snapshot / detect_changes
+// mails to the editor that's actually being modified, so the agent diff view
+// renders for the right canvas.
 static FRAME_T ModeToFrameType( const std::string& aMode )
 {
     if( aMode == "sch" )
         return FRAME_SCH;
     if( aMode == "pcb" )
         return FRAME_PCB_EDITOR;
+    if( aMode == "mbs" )
+        return FRAME_MBSCH;
     return static_cast<FRAME_T>( -1 );
 }
 

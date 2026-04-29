@@ -222,6 +222,37 @@ static wxString getOSXBundleRoot()
             fn.RemoveLastDir(); // Contents
         }
 
+        // Dev-build fallback: standalone wrapper apps (pcb_calculator,
+        // pl_editor, etc.) live in sibling build directories rather than
+        // inside the launcher bundle's Contents/Applications/. Their own
+        // bundles have no SharedSupport, so resource lookups (bitmaps,
+        // templates, kifaces) miss. If we can find the launcher bundle
+        // as a sibling of the current wrapper, redirect there so the
+        // wrapper shares the launcher's installed-position resource set.
+#ifndef OSX_LAUNCHER_BUNDLE_NAME
+#define OSX_LAUNCHER_BUNDLE_NAME "Zeo.app"
+#endif
+        if( !wxFileName::DirExists( fn.GetPath() + wxT( "/Contents/SharedSupport" ) ) )
+        {
+            wxFileName launcher = fn;
+
+            // Strip <wrapper>.app, then strip the wrapper's build subdir.
+            if( !launcher.GetDirs().IsEmpty() )
+                launcher.RemoveLastDir();
+
+            if( !launcher.GetDirs().IsEmpty() )
+                launcher.RemoveLastDir();
+
+            launcher.AppendDir( wxT( "kicad" ) );
+            launcher.AppendDir( wxT( OSX_LAUNCHER_BUNDLE_NAME ) );
+
+            if( wxFileName::DirExists(
+                        launcher.GetPath() + wxT( "/Contents/SharedSupport" ) ) )
+            {
+                fn = launcher;
+            }
+        }
+
         bundleRoot = fn.GetPath();
     }
 

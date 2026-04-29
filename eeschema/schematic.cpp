@@ -1386,6 +1386,14 @@ void SCHEMATIC::RemoveAllListeners()
 
 void SCHEMATIC::RecordERCExclusions()
 {
+    // Multi-board: when a .kicad_mbs is opened standalone (e.g. via
+    // open_editor on the file path) the SCHEMATIC's m_project may not
+    // have been wired up. ERC exclusions are project-level settings; if
+    // there's no project to write them to, skip recording rather than
+    // crashing in ErcSettings().
+    if( !m_project )
+        return;
+
     // Use a sorted sheetList to reduce file churn
     SCH_SHEET_LIST sheetList = Hierarchy();
     ERC_SETTINGS&  ercSettings = ErcSettings();
@@ -1790,8 +1798,14 @@ void SCHEMATIC::RecalculateConnections( SCH_COMMIT* aCommit, SCH_CLEANUP_FLAGS a
     if( !ADVANCED_CFG::GetCfg().m_IncrementalConnectivity || aCleanupFlags == GLOBAL_CLEANUP
         || aLastChangeList == nullptr || ConnectionGraph()->IsMinor() )
     {
-        // Clear all resolved netclass caches in case labels have changed
-        m_project->GetProjectFile().NetSettings()->ClearAllCaches();
+        // Clear all resolved netclass caches in case labels have changed.
+        // Multi-board: a .kicad_mbs opened via the agent's open_editor path
+        // (FRAME_SCH, not FRAME_MBSCH) may not have m_project set; the
+        // netclass cache lives on the project file, so simply skip the
+        // clear when no project is wired up. The connectivity recalc
+        // below still runs.
+        if( m_project )
+            m_project->GetProjectFile().NetSettings()->ClearAllCaches();
 
         // Update all rule areas so we can cascade implied connectivity changes
         std::unordered_set<SCH_SCREEN*> all_screens;

@@ -114,13 +114,21 @@ static std::string BuildModeInitCode( const wxString& aMode, const std::string& 
 
     if( aMode == "sch" )
     {
+        // Forgiving bootstrap: if no regular schematic editor responds,
+        // bind sch=None and stash the error. The BuildIPCCommand target
+        // preamble may rebind sch to a sub-project's editor or to the
+        // MBS document (target.doc_type:"mbs"). The script's
+        // refresh_or_fail(sch) raises a clear error if sch is still None
+        // when the script first uses it.
         initCode +=
             "try:\n"
             "    sch = kicad.get_schematic()\n"
             "    if hasattr(sch, 'refresh_document'):\n"
             "        sch.refresh_document()\n"
-            "except Exception:\n"
-            "    raise RuntimeError('Schematic editor is not open. Use launch_editor to open it first.')\n";
+            "    _sch_bootstrap_err = None\n"
+            "except Exception as _e:\n"
+            "    sch = None\n"
+            "    _sch_bootstrap_err = _e\n";
     }
     else if( aMode == "mbs" )
     {

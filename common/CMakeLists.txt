@@ -420,6 +420,14 @@ endif()
 
 target_compile_definitions( kicommon PRIVATE KICOMMON_DLL=1 )
 
+if( APPLE )
+    # M7-related fix: the kiface loader and FindKicadFile need to know the
+    # launcher's bundle name to locate plug-ins in dev-build trees.
+    # Upstream KiCad hard-coded "kicad.app"; this fork uses ${OSX_BUNDLE_MAIN}.
+    target_compile_definitions( kicommon
+        PRIVATE OSX_LAUNCHER_BUNDLE_NAME="${OSX_BUNDLE_MAIN}" )
+endif()
+
 target_include_directories( kicommon
     PUBLIC
         .

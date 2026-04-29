@@ -15,7 +15,29 @@ def tool_log(msg):
     print(msg, file=sys.__stderr__)
 
 def refresh_or_fail(api):
-    """Refresh document specifier; raise if editor is not open."""
+    """Refresh document specifier; raise if editor is not open.
+
+    `api` may be None when the BuildModeInitCode bootstrap couldn't bind
+    (e.g. tool app:"sch" with no regular schematic editor open and no
+    target preamble overriding `sch`). In that case raise the original
+    bootstrap error if available, otherwise a generic message that
+    points the LLM at the recovery path.
+    """
+    if api is None:
+        try:
+            err = globals().get('_sch_bootstrap_err', None)
+        except Exception:
+            err = None
+
+        if err is not None:
+            raise RuntimeError(
+                f"No editor responded to the default get_schematic() bootstrap: {err}. "
+                "If the active project is a multi-board container and you intended to "
+                "edit the MBS canvas, set target.doc_type=\"mbs\" on this tool call. "
+                "Otherwise call open_editor with a .kicad_sch file_path first."
+            )
+        raise RuntimeError('Editor not open or document not available')
+
     if hasattr(api, 'refresh_document'):
         if not api.refresh_document():
             raise RuntimeError('Editor not open or document not available')

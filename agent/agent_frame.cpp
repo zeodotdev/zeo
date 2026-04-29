@@ -4454,57 +4454,96 @@ static wxString resolveProjectFileForDocument( const wxString& aFilePath )
 
 bool AGENT_FRAME::DoOpenEditor( FRAME_T aFrameType )
 {
-    wxString editorName = ( aFrameType == FRAME_SCH ) ? "Schematic" : "PCB";
-
-    wxLogInfo( "DoOpenEditor: Opening %s editor, pendingFilePath='%s'",
-               editorName, m_pendingOpenFilePath );
-
     wxString filePath = m_pendingOpenFilePath;
     m_pendingOpenFilePath.Clear();
+
+    // Auto-route by file extension: `.kicad_mbs` files belong in FRAME_MBSCH
+    // so the proper MBSCH initialization runs (registers API_HANDLER_MBS_SCH,
+    // pins SCHEMATIC::m_project to the container, sets the trimmed toolbar /
+    // menubar). Without this routing the file lands in a generic FRAME_SCH,
+    // which crashes downstream code paths (RecordERCExclusions,
+    // RecalculateConnections) that assume m_project is non-null and the
+    // mbs_* tools fail because no DOCTYPE_MBS_SCHEMATIC handler is registered.
+    if( aFrameType == FRAME_SCH && !filePath.IsEmpty() )
+    {
+        wxFileName fn( filePath );
+
+        if( fn.GetExt().IsSameAs( wxT( "kicad_mbs" ), false ) )
+        {
+            wxLogInfo( "DoOpenEditor: auto-routing .kicad_mbs to FRAME_MBSCH" );
+            aFrameType = FRAME_MBSCH;
+        }
+    }
+
+    wxString editorName = ( aFrameType == FRAME_PCB_EDITOR )       ? "PCB"
+                          : ( aFrameType == FRAME_MBSCH )          ? "Multi-Board Schematic"
+                                                                   : "Schematic";
+
+    wxLogInfo( "DoOpenEditor: Opening %s editor (frameType=%d), filePath='%s'",
+               editorName, static_cast<int>( aFrameType ), filePath );
+
+    // For peer-spawn purposes FRAME_SCH and FRAME_MBSCH share the eeschema
+    // kiface and a single user-facing "schematic editor surface". Spawning a
+    // FRAME_SCH primary while a FRAME_MBSCH is the only schematic-class
+    // frame open closes the MBSCH (KIWAY treats them as alternatives at
+    // some level), so for "any existing schematic editor?" purposes we
+    // count both. Same in reverse.
+    auto schematicClassFrames = []() { return std::vector<FRAME_T>{ FRAME_SCH, FRAME_MBSCH }; };
+    std::vector<FRAME_T> relatedTypes;
+
+    if( aFrameType == FRAME_SCH || aFrameType == FRAME_MBSCH )
+        relatedTypes = schematicClassFrames();
+    else
+        relatedTypes = { aFrameType };
 
     // ---- Strategy 1: file already open in some frame → raise that frame ----
     if( !filePath.IsEmpty() )
     {
-        for( KIWAY_PLAYER* peer : Kiway().GetAllPlayerFrames( aFrameType ) )
+        for( FRAME_T ft : relatedTypes )
         {
-            if( !peer || !peer->IsShown() )
-                continue;
-
-            if( agentFilesEqual( peer->GetCurrentFileName(), filePath ) )
+            for( KIWAY_PLAYER* peer : Kiway().GetAllPlayerFrames( ft ) )
             {
-                wxLogInfo( "DoOpenEditor: file already open in frame %p — raising",
-                           peer );
+                if( !peer || !peer->IsShown() )
+                    continue;
 
-                if( peer->IsIconized() )
-                    peer->Iconize( false );
+                if( agentFilesEqual( peer->GetCurrentFileName(), filePath ) )
+                {
+                    wxLogInfo( "DoOpenEditor: file already open in frame %p — raising",
+                               peer );
 
-                peer->Raise();
-                peer->SetFocus();
+                    if( peer->IsIconized() )
+                        peer->Iconize( false );
 
-                if( aFrameType == FRAME_SCH )
-                    TOOL_REGISTRY::Instance().SetSchematicEditorOpen( true );
-                else if( aFrameType == FRAME_PCB_EDITOR )
-                    TOOL_REGISTRY::Instance().SetPcbEditorOpen( true );
+                    peer->Raise();
+                    peer->SetFocus();
 
-                return true;
+                    if( ft == FRAME_SCH || ft == FRAME_MBSCH )
+                        TOOL_REGISTRY::Instance().SetSchematicEditorOpen( true );
+                    else if( ft == FRAME_PCB_EDITOR )
+                        TOOL_REGISTRY::Instance().SetPcbEditorOpen( true );
+
+                    return true;
+                }
             }
         }
     }
 
-    // ---- Strategy 2: no editor of this type open AT ALL → create primary ----
-    // Distinguishes a primary that's never been instantiated vs. one already
-    // showing a different file. When there's no existing frame, fall through
-    // to the legacy single-frame path so the M4 KIWAY initialization runs
-    // normally and the primary frame is the one we open the file in.
+    // ---- Strategy 2: no editor of this type (or related) open → primary ----
     bool anyExistingFrame = false;
 
-    for( KIWAY_PLAYER* peer : Kiway().GetAllPlayerFrames( aFrameType ) )
+    for( FRAME_T ft : relatedTypes )
     {
-        if( peer && peer->IsShown() )
+        for( KIWAY_PLAYER* peer : Kiway().GetAllPlayerFrames( ft ) )
         {
-            anyExistingFrame = true;
-            break;
+            if( peer && peer->IsShown() )
+            {
+                anyExistingFrame = true;
+                break;
+            }
         }
+
+        if( anyExistingFrame )
+            break;
     }
 
     if( !anyExistingFrame )
@@ -4940,31 +4979,25 @@ void AGENT_FRAME::OnChatToolStart( wxThreadEvent& aEvent )
             return;
 
         case OpenEditorResult::RELOAD_WITH_FILE:
-            existingPlayer->Close( true );
+            // Route through the unified DoOpenEditor — its three-strategy
+            // detector either raises an existing frame for the same file
+            // or spawns a peer window for a different file, instead of
+            // closing the current frame (which lost any unsaved state and
+            // forced the user into a single-editor thrash on multi-board
+            // workflows). m_pendingOpenFilePath was set above to result.filePath.
             {
-                KIWAY_PLAYER* newPlayer = Kiway().Player( frameType, true );
-                if( newPlayer )
+                bool ok = DoOpenEditor( frameType );
+
+                if( m_chatController )
                 {
-                    std::vector<wxString> files;
-                    files.push_back( result.filePath );
-                    newPlayer->OpenProjectFiles( files );
-                    newPlayer->Show( true );
-                    newPlayer->Raise();
+                    std::string msg = ok
+                            ? result.editorLabel.ToStdString()
+                                  + " editor: opened '" + result.filePath.ToStdString()
+                                  + "' (in new peer window if another editor was already open)"
+                            : std::string( "Error: Failed to open " )
+                                  + result.editorLabel.ToStdString() + " editor";
 
-                    m_pendingOpenFilePath.Clear();
-
-                    if( m_chatController )
-                        m_chatController->HandleToolResult( data->toolId,
-                                                            result.resultMessage, true );
-                }
-                else
-                {
-                    m_pendingOpenFilePath.Clear();
-
-                    if( m_chatController )
-                        m_chatController->HandleToolResult( data->toolId,
-                            "Error: Failed to reopen " + result.editorLabel.ToStdString()
-                                + " editor", false );
+                    m_chatController->HandleToolResult( data->toolId, msg, ok );
                 }
             }
             delete data;

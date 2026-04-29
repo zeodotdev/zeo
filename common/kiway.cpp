@@ -165,25 +165,47 @@ const wxString KIWAY::dso_search_path( FACE_T aFaceId )
     // To speed up development, it's sometimes nice to run kicad from inside
     // the build path.  In that case, each program will be in a subdirectory.
     // To find the DSOs, we need to go up one directory and then enter a subdirectory.
+#ifdef __WXMAC__
+    // On macOS, the standalone wrappers (pcb_calculator, pl_editor, etc.) live
+    // in their own .app bundles in the build tree but their kifaces are inside
+    // the launcher bundle (e.g. Zeo.app/Contents/PlugIns). The default path
+    // computed above points at the wrapper's own bundle — which has no PlugIns
+    // dir — so we must redirect to the launcher bundle. We try this path
+    // unconditionally (not gated on KICAD_RUN_FROM_BUILD_DIR) because fast
+    // dev-build runs don't set the env var, and falling through to the default
+    // would silently fail.
+    {
+#ifndef OSX_LAUNCHER_BUNDLE_NAME
+#define OSX_LAUNCHER_BUNDLE_NAME "Zeo.app"
+#endif
+        fn.SetExt( &KIFACE_SUFFIX[1] );
+
+        if( !wxFileExists( fn.GetFullPath() ) )
+        {
+            wxFileName devFn = wxStandardPaths::Get().GetExecutablePath();
+
+            // From: <build>/<tool>/<tool>.app/Contents/MacOS/<tool>
+            // To:   <build>/kicad/<launcher>.app/Contents/PlugIns/_<name>.kiface
+            devFn.RemoveLastDir(); // MacOS
+            devFn.RemoveLastDir(); // Contents
+            devFn.RemoveLastDir(); // <tool>.app
+            devFn.RemoveLastDir(); // <tool>
+            devFn.AppendDir( wxT( "kicad" ) );
+            devFn.AppendDir( wxT( OSX_LAUNCHER_BUNDLE_NAME ) );
+            devFn.AppendDir( wxT( "Contents" ) );
+            devFn.AppendDir( wxT( "PlugIns" ) );
+            devFn.SetName( name );
+            devFn.SetExt( &KIFACE_SUFFIX[1] );
+
+            if( wxFileExists( devFn.GetFullPath() ) )
+                return devFn.GetFullPath();
+        }
+
+        return fn.GetFullPath();
+    }
+#else
     if( wxGetEnv( wxT( "KICAD_RUN_FROM_BUILD_DIR" ), nullptr ) )
     {
-#ifdef __WXMAC__
-        // On Mac, all of the kifaces are placed in the kicad.app bundle, even though the individual
-        // standalone binaries are placed in separate bundles before the make install step runs.
-        // So, we have to jump up to the kicad directory, then the PlugIns section of the kicad
-        // bundle.
-        fn = wxStandardPaths::Get().GetExecutablePath();
-
-        fn.RemoveLastDir();
-        fn.RemoveLastDir();
-        fn.RemoveLastDir();
-        fn.RemoveLastDir();
-        fn.AppendDir( wxT( "kicad" ) );
-        fn.AppendDir( wxT( "kicad.app" ) );
-        fn.AppendDir( wxT( "Contents" ) );
-        fn.AppendDir( wxT( "PlugIns" ) );
-        fn.SetName( name );
-#else
         const char* dirName;
 
         // The subdirectories usually have the same name as the kiface
@@ -199,7 +221,6 @@ const wxString KIWAY::dso_search_path( FACE_T aFaceId )
 
         fn.RemoveLastDir();
         fn.AppendDir( dirName );
-#endif
     }
 
     // Here a "suffix" == an extension with a preceding '.',
@@ -207,6 +228,7 @@ const wxString KIWAY::dso_search_path( FACE_T aFaceId )
     fn.SetExt( &KIFACE_SUFFIX[1] );
 
     return fn.GetFullPath();
+#endif
 }
 
 

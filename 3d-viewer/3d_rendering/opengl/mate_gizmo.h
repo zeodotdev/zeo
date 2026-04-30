@@ -91,11 +91,36 @@ public:
         bool        anySelected;      ///< If any entry is selected, non-selected entries fade
     };
 
+    /// On-model overlap visualization for M6.E phase-2: highlights
+    /// the volume where two parts collide (red) or are within a
+    /// configurable proximity margin of touching (yellow). Both render
+    /// as translucent axis-aligned boxes on top of the depth stack so
+    /// the user can spot the offending region without rotating around.
+    enum class OVERLAP_KIND
+    {
+        COLLISION,    ///< parts physically penetrate (penetration > threshold)
+        CONTACT       ///< parts are within proximity margin but not penetrating
+    };
+
+    struct OVERLAP_BOX
+    {
+        /// Box corners in shared 3D-viewer world units (the same space
+        /// ENTRY.posA/B live in). Caller is responsible for converting
+        /// from board-local mm to this space.
+        glm::vec3    minWorld;
+        glm::vec3    maxWorld;
+        OVERLAP_KIND kind;
+    };
+
     MATE_GIZMO();
     ~MATE_GIZMO();
 
     /// Replace the gizmo's entry list. Cheap — entries are POD-ish.
     void SetEntries( std::vector<ENTRY> aEntries );
+
+    /// Replace the overlap-box list. Rendered alongside entries in
+    /// the next Render call.
+    void SetOverlapBoxes( std::vector<OVERLAP_BOX> aBoxes );
 
     /// Render every entry. Caller must have a live GL context.
     /// The gizmo manages its own modelview matrix (sets it from the
@@ -107,6 +132,10 @@ private:
     /// Draw one entry — sphere A, sphere B, line A↔B, optional residual.
     void renderEntry( const ENTRY& aEntry );
 
+    /// Draw one overlap box — translucent fill + brighter wireframe so
+    /// the silhouette reads even on small boxes.
+    void renderOverlapBox( const OVERLAP_BOX& aBox );
+
     /// Helper for thicker-than-1px lines that work even where
     /// glLineWidth caps at 1.0 — draws a short cylinder approximation.
     void renderLineSegment( const glm::vec3& aFrom, const glm::vec3& aTo,
@@ -114,7 +143,8 @@ private:
 
     GLUquadric* m_quadric = nullptr;
 
-    std::vector<ENTRY> m_entries;
+    std::vector<ENTRY>       m_entries;
+    std::vector<OVERLAP_BOX> m_overlapBoxes;
 };
 
 #endif // MATE_GIZMO_H

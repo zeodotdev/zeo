@@ -614,7 +614,18 @@ int KICAD_MANAGER_CONTROL::EditMultiBoardSchematic( const TOOL_EVENT& aEvent )
         return 0;
     }
 
-    wxString containerBasename = wxFileName( multi->GetFullFilename() ).GetName();
+    // The container's absolute on-disk path. Pull it from the back-pointer
+    // PROJECT — not from GetFullFilename(), which for a SETTINGS_MANAGER-
+    // owned PROJECT_FILE is just the basename ("name.kicad_pro" with no
+    // directory) and turns every downstream path lookup into a miss.
+    wxString containerFullPath;
+
+    if( multi->GetProject() )
+        containerFullPath = multi->GetProject()->GetProjectFullName();
+
+    wxFileName containerFn( containerFullPath );
+    wxString   containerBasename = containerFn.GetName();
+    wxString   containerDir      = containerFn.GetPath();
 
     wxFileName mbs = ::EnsureMbsFile( *multi, containerBasename );
 
@@ -625,8 +636,9 @@ int KICAD_MANAGER_CONTROL::EditMultiBoardSchematic( const TOOL_EVENT& aEvent )
         return 0;
     }
 
-    // Persist any mbs_file update.
-    multi->SaveToFile();
+    // Persist any mbs_file update. Pass the directory explicitly because
+    // m_filename on the live PROJECT_FILE is just the basename.
+    multi->SaveToFile( containerDir );
 
     // Launch the schematic editor via Kiway (in-process; Zeo does not ship a
     // stand-alone eeschema executable) and open the MBS file in it.
@@ -658,14 +670,14 @@ int KICAD_MANAGER_CONTROL::EditMultiBoardSchematic( const TOOL_EVENT& aEvent )
     // opening the MBS while a peer PCB editor is active on a sub-project
     // would make SCH_EDIT_FRAME::OpenProjectFiles think the container is
     // a "different project" and unload the sub-project out from under
-    // the PCB editor, dangling its BOARD::m_project.
-    SETTINGS_MANAGER& sm = Pgm().GetSettingsManager();
-
-    if( PROJECT* containerProject =
-                sm.GetProject( wxFileName( multi->GetFullFilename() ).GetFullPath() ) )
-    {
-        player->SetPrjOverride( containerProject );
-    }
+    // the PCB editor, dangling its BOARD::m_project. It also makes
+    // m_frame->Prj() in the new MBSCH frame return the container even
+    // when a peer is first in SETTINGS_MANAGER's project list — without
+    // the override, downstream code (Manage Sub-Boards, Refresh, etc.)
+    // would resolve Prj() to whichever project happens to be first and
+    // mutate / save the wrong one.
+    if( multi->GetProject() )
+        player->SetPrjOverride( multi->GetProject() );
 
     std::vector<wxString> file_list{ mbs.GetFullPath() };
 
@@ -907,7 +919,17 @@ int KICAD_MANAGER_CONTROL::ManageSubBoards( const TOOL_EVENT& aEvent )
     // returns "name.kicad_pro" with no directory. The dialog needs the
     // absolute path to compute the boards/ directory and to target
     // SaveToFile correctly.
-    wxFileName multiFile( m_frame->Prj().GetProjectFullName() );
+    //
+    // Resolve via the PROJECT_FILE back-pointer rather than
+    // m_frame->Prj() — the back-pointer is unambiguous, while Prj()
+    // can return whichever PROJECT happens to be first in
+    // SETTINGS_MANAGER's list when no per-frame override is set.
+    wxString multiFullPath;
+
+    if( multi->GetProject() )
+        multiFullPath = multi->GetProject()->GetProjectFullName();
+
+    wxFileName multiFile( multiFullPath );
 
     DIALOG_MULTI_BOARD_SETUP dlg( m_frame, multi, multiFile );
     dlg.ShowModal();

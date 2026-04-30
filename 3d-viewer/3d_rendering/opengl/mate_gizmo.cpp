@@ -120,9 +120,15 @@ void MATE_GIZMO::SetEntries( std::vector<ENTRY> aEntries )
 }
 
 
+void MATE_GIZMO::SetOverlapBoxes( std::vector<OVERLAP_BOX> aBoxes )
+{
+    m_overlapBoxes = std::move( aBoxes );
+}
+
+
 void MATE_GIZMO::Render( const glm::mat4& aCameraView, const glm::mat4& aCameraProjection )
 {
-    if( m_entries.empty() )
+    if( m_entries.empty() && m_overlapBoxes.empty() )
         return;
 
     static int s_renderLog = 0;
@@ -170,6 +176,11 @@ void MATE_GIZMO::Render( const glm::mat4& aCameraView, const glm::mat4& aCameraP
     glDepthMask( GL_FALSE );
 
     glDisable( GL_CULL_FACE );
+
+    // Boxes first so the line gizmo entries draw on top — handy when
+    // a mate-pair line cuts through an overlap zone.
+    for( const OVERLAP_BOX& b : m_overlapBoxes )
+        renderOverlapBox( b );
 
     for( const ENTRY& e : m_entries )
         renderEntry( e );
@@ -224,6 +235,91 @@ void MATE_GIZMO::renderEntry( const ENTRY& aEntry )
         bar( mid + glm::vec3( -halfX, -halfX, 0 ), mid + glm::vec3( halfX, halfX, 0 ) );
         bar( mid + glm::vec3( -halfX,  halfX, 0 ), mid + glm::vec3( halfX, -halfX, 0 ) );
     }
+}
+
+
+void MATE_GIZMO::renderOverlapBox( const OVERLAP_BOX& aBox )
+{
+    // Inflate degenerate axes a tiny bit so the box is always visible.
+    // OBB intersections collapse to a 0-thickness slab when the parts
+    // exactly touch on one axis; without this the user sees nothing.
+    glm::vec3 mn = aBox.minWorld;
+    glm::vec3 mx = aBox.maxWorld;
+
+    constexpr float kMinExtent = 0.02f;   // shared 3D-viewer units
+
+    for( int i = 0; i < 3; i++ )
+    {
+        if( ( mx[i] - mn[i] ) < kMinExtent )
+        {
+            float midI = 0.5f * ( mx[i] + mn[i] );
+            mn[i]      = midI - 0.5f * kMinExtent;
+            mx[i]      = midI + 0.5f * kMinExtent;
+        }
+    }
+
+    glm::vec3 fillColor;
+    glm::vec3 lineColor;
+    float     fillAlpha;
+    float     lineAlpha;
+
+    if( aBox.kind == OVERLAP_KIND::COLLISION )
+    {
+        // Saturated red, ~35% fill so the underlying model still reads
+        // through; brighter red wireframe so the silhouette pops.
+        fillColor = glm::vec3( 1.0f, 0.18f, 0.18f );
+        lineColor = glm::vec3( 1.0f, 0.55f, 0.55f );
+        fillAlpha = 0.35f;
+        lineAlpha = 0.95f;
+    }
+    else
+    {
+        // Yellow proximity highlight — clearly distinct from the red
+        // collision box and from the green/cyan mate-pair gizmos.
+        fillColor = glm::vec3( 1.0f, 0.85f, 0.20f );
+        lineColor = glm::vec3( 1.0f, 1.00f, 0.55f );
+        fillAlpha = 0.22f;
+        lineAlpha = 0.85f;
+    }
+
+    // 8 corners of the AABB.
+    const glm::vec3 c[8] = {
+        { mn.x, mn.y, mn.z }, { mx.x, mn.y, mn.z },
+        { mx.x, mx.y, mn.z }, { mn.x, mx.y, mn.z },
+        { mn.x, mn.y, mx.z }, { mx.x, mn.y, mx.z },
+        { mx.x, mx.y, mx.z }, { mn.x, mx.y, mx.z }
+    };
+
+    // Filled translucent faces — 6 quads.
+    glColor4f( fillColor.r, fillColor.g, fillColor.b, fillAlpha );
+    glBegin( GL_QUADS );
+    // -Z (bottom)
+    glVertex3fv( &c[0].x ); glVertex3fv( &c[3].x ); glVertex3fv( &c[2].x ); glVertex3fv( &c[1].x );
+    // +Z (top)
+    glVertex3fv( &c[4].x ); glVertex3fv( &c[5].x ); glVertex3fv( &c[6].x ); glVertex3fv( &c[7].x );
+    // -Y
+    glVertex3fv( &c[0].x ); glVertex3fv( &c[1].x ); glVertex3fv( &c[5].x ); glVertex3fv( &c[4].x );
+    // +Y
+    glVertex3fv( &c[3].x ); glVertex3fv( &c[7].x ); glVertex3fv( &c[6].x ); glVertex3fv( &c[2].x );
+    // -X
+    glVertex3fv( &c[0].x ); glVertex3fv( &c[4].x ); glVertex3fv( &c[7].x ); glVertex3fv( &c[3].x );
+    // +X
+    glVertex3fv( &c[1].x ); glVertex3fv( &c[2].x ); glVertex3fv( &c[6].x ); glVertex3fv( &c[5].x );
+    glEnd();
+
+    // Wireframe — 12 edges, drawn as thin cylinders so it's visible
+    // even where glLineWidth caps at 1px.
+    auto edge = [&]( int a, int b )
+    {
+        renderLineSegment( c[a], c[b], 0.012f, lineColor, lineAlpha );
+    };
+
+    // bottom rectangle
+    edge( 0, 1 ); edge( 1, 2 ); edge( 2, 3 ); edge( 3, 0 );
+    // top rectangle
+    edge( 4, 5 ); edge( 5, 6 ); edge( 6, 7 ); edge( 7, 4 );
+    // verticals
+    edge( 0, 4 ); edge( 1, 5 ); edge( 2, 6 ); edge( 3, 7 );
 }
 
 

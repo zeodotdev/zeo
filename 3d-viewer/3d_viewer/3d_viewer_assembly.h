@@ -434,6 +434,18 @@ public:
 
     bool GetShowMateGizmos() const { return m_showMateGizmos; }
 
+    /// Show red collision markers for unintended component overlaps
+    /// (auto-populated by every position change). Default: on.
+    void SetShowCollisionHighlights( bool aShow ) { m_showCollisionHighlights = aShow; }
+    bool GetShowCollisionHighlights() const { return m_showCollisionHighlights; }
+
+    /// Show "expected contact" highlights (currently aliases the mate
+    /// gizmo's AUTO/CUSTOM entries — same visual, separate toggle so
+    /// the user can hide mate-pair lines independently of any future
+    /// component-level contact tinting). Default: on.
+    void SetShowContactHighlights( bool aShow ) { m_showContactHighlights = aShow; }
+    bool GetShowContactHighlights() const { return m_showContactHighlights; }
+
     /**
      * Highlight one mate pair in the gizmo render. The matching pair
      * draws bright + larger; all other pairs fade. Pass an empty
@@ -459,6 +471,20 @@ public:
                                     const wxString& aFootprintRefA,
                                     const KIID&     aInstanceB,
                                     const wxString& aFootprintRefB );
+
+    /**
+     * Shift a pair up one position within its board edge — primary
+     * selection follows the head of `edge.pairs`, so this raises the
+     * pair's priority. Auto-derived pairs work the same as custom
+     * ones; bumps are stored in `m_pairPriorityBumps` keyed by pair
+     * id (session-only, not persisted yet).
+     */
+    void ShiftPairUp( const wxString& aPairId );
+
+    /**
+     * Shift a pair down one position within its board edge.
+     */
+    void ShiftPairDown( const wxString& aPairId );
 
     // ========== Collision Detection ==========
 
@@ -686,21 +712,34 @@ private:
                                           glm::vec3&               aOutWorld ) const;
 
     /// One unintended collision pair from M6.E phase-2. Stored
-    /// alongside `m_lastCollisions` (one entry per index) so the
-    /// collision gizmo can project both endpoints to world space
-    /// using `projectFootprintCentroidToWorld` — matches the mate
-    /// gizmo's pose math.
-    struct CollisionPair
+    /// On-model overlap highlight — one entry per colliding or near-
+    /// touching footprint pair. The AABB is in board-local mm (XY +
+    /// Z extent of each footprint's OBB intersection); the renderer
+    /// converts to shared-world units before drawing. KIND drives
+    /// colour: red for actual penetration, yellow for proximity.
+    /// Mirror enum (rather than nested MATE_GIZMO::OVERLAP_KIND) so
+    /// this header stays decoupled from the GL gizmo headers — only
+    /// the .cpp converts at the render boundary.
+    enum class OVERLAP_KIND
     {
-        KIID     instanceA;
-        wxString refA;
-        KIID     instanceB;
-        wxString refB;
+        COLLISION,
+        CONTACT
+    };
+
+    struct OverlapBox
+    {
+        SFVEC3F      minMm;
+        SFVEC3F      maxMm;
+        OVERLAP_KIND kind;
+        KIID         instanceA;
+        KIID         instanceB;
+        wxString     refA;
+        wxString     refB;
     };
 
     std::vector<BOARD_3D_INSTANCE>  m_boardInstances;
     std::vector<COLLISION_RESULT>   m_lastCollisions;
-    std::vector<CollisionPair>      m_lastCollisionPairs;
+    std::vector<OverlapBox>         m_lastOverlapBoxes;
     std::vector<MATE_RESIDUAL>      m_lastMateResiduals;
     ASSEMBLY_STATE                  m_state;
     PROJECT*                        m_project;
@@ -742,12 +781,20 @@ private:
 
     /// User-controllable toggle for the mate-gizmo render pass.
     /// Default on so the visualization is discoverable.
-    bool                            m_showMateGizmos = true;
+    bool                            m_showMateGizmos          = true;
+    bool                            m_showCollisionHighlights = true;
+    bool                            m_showContactHighlights   = true;
 
     /// Currently-selected mate pair identifier (canonical encoded
     /// string from `MakeMatePairId`). Empty string = no selection
     /// → all gizmos render at full intensity.
     wxString                        m_selectedMatePairId;
+
+    /// Per-pair priority offset applied during BuildMateGraph sort.
+    /// Negative = higher priority (appears earlier in edge.pairs;
+    /// head of list is the primary). Adjusted by ShiftPairUp/Down.
+    /// Session-only — not persisted across project re-opens yet.
+    std::map<wxString, int>         m_pairPriorityBumps;
 };
 
 #endif // VIEWER_3D_ASSEMBLY_H

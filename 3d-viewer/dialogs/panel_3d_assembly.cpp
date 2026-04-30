@@ -38,6 +38,7 @@
 #include <wx/dialog.h>
 #include <wx/filedlg.h>
 #include <wx/msgdlg.h>
+#include <wx/scrolwin.h>
 #include <wx/sizer.h>
 #include <wx/utils.h>
 #include <wx/statbox.h>
@@ -59,6 +60,11 @@ PANEL_3D_ASSEMBLY::PANEL_3D_ASSEMBLY( EDA_3D_VIEWER_FRAME* aParent,
     RefreshBoardList();
     RefreshMatesTree();
     updateMateButtons();
+
+    // Run collision check once on open so the gizmo has data for its
+    // first paint. Without this, collision/contact highlights stay
+    // blank until the user nudges a position field.
+    autoRunCollisionCheck();
 }
 
 
@@ -69,31 +75,59 @@ PANEL_3D_ASSEMBLY::~PANEL_3D_ASSEMBLY()
 
 void PANEL_3D_ASSEMBLY::createControls()
 {
+    // Outer panel just holds a vertical scrolled window — without this
+    // the whole stack of static-box sections gets clipped when the AUI
+    // pane is shorter than ~600px.
+    wxBoxSizer* outerSizer = new wxBoxSizer( wxVERTICAL );
+
+    // Vertical scroll only — narrowing the AUI pane should compress
+    // the section column (text fields shrink, labels wrap) rather than
+    // clipping horizontally. HSCROLL was producing a horizontal bar
+    // and cutting the right-hand side off when the pane went under
+    // ~220 px wide.
+    m_scrolled = new wxScrolledWindow( this, wxID_ANY, wxDefaultPosition, wxDefaultSize,
+                                       wxVSCROLL );
+    m_scrolled->SetScrollRate( 0, 12 );
+
+    outerSizer->Add( m_scrolled, 1, wxEXPAND );
+    SetSizer( outerSizer );
+
     wxBoxSizer* mainSizer = new wxBoxSizer( wxVERTICAL );
 
-    // Board list section
-    wxStaticBoxSizer* boardBox = new wxStaticBoxSizer( wxVERTICAL, this, _( "Boards" ) );
+    // ====================  Boards (visibility) ====================
+    wxStaticBoxSizer* boardBox =
+            new wxStaticBoxSizer( wxVERTICAL, m_scrolled, _( "Boards" ) );
 
-    m_boardListBox = new wxCheckListBox( this, wxID_ANY, wxDefaultPosition,
+    m_boardListBox = new wxCheckListBox( m_scrolled, wxID_ANY, wxDefaultPosition,
                                           wxSize( -1, 120 ) );
+    m_boardListBox->SetMinSize( wxSize( FromDIP( 80 ), FromDIP( 80 ) ) );
+    m_boardListBox->SetToolTip( _( "Visibility checkboxes per sub-board." ) );
     boardBox->Add( m_boardListBox, 1, wxEXPAND | wxBOTTOM, 5 );
 
+    // wxBU_EXACTFIT trims the platform-default padding so the buttons
+    // hit a smaller min width — without it the macOS theme reserves
+    // ~80 px even for short labels, forcing the panel to a wider min.
     wxBoxSizer* visButtonSizer = new wxBoxSizer( wxHORIZONTAL );
-    m_showAllButton = new wxButton( this, wxID_ANY, _( "Show All" ) );
-    m_hideAllButton = new wxButton( this, wxID_ANY, _( "Hide All" ) );
+    m_showAllButton = new wxButton( m_scrolled, wxID_ANY, _( "Show" ),
+                                     wxDefaultPosition, wxDefaultSize, wxBU_EXACTFIT );
+    m_hideAllButton = new wxButton( m_scrolled, wxID_ANY, _( "Hide" ),
+                                     wxDefaultPosition, wxDefaultSize, wxBU_EXACTFIT );
+    m_showAllButton->SetToolTip( _( "Show all sub-boards" ) );
+    m_hideAllButton->SetToolTip( _( "Hide all sub-boards" ) );
     visButtonSizer->Add( m_showAllButton, 1, wxRIGHT, 3 );
     visButtonSizer->Add( m_hideAllButton, 1 );
     boardBox->Add( visButtonSizer, 0, wxEXPAND );
 
     mainSizer->Add( boardBox, 0, wxEXPAND | wxALL, 5 );
 
-    // Layout section
-    wxStaticBoxSizer* layoutBox = new wxStaticBoxSizer( wxVERTICAL, this, _( "Layout" ) );
+    // ====================  Layout ====================
+    wxStaticBoxSizer* layoutBox =
+            new wxStaticBoxSizer( wxVERTICAL, m_scrolled, _( "Layout" ) );
 
     wxBoxSizer* layoutModeSizer = new wxBoxSizer( wxHORIZONTAL );
-    layoutModeSizer->Add( new wxStaticText( this, wxID_ANY, _( "Mode:" ) ), 0,
+    layoutModeSizer->Add( new wxStaticText( m_scrolled, wxID_ANY, _( "Mode:" ) ), 0,
                           wxALIGN_CENTER_VERTICAL | wxRIGHT, 5 );
-    m_layoutModeChoice = new wxChoice( this, wxID_ANY );
+    m_layoutModeChoice = new wxChoice( m_scrolled, wxID_ANY );
     m_layoutModeChoice->Append( _( "Flat (side by side)" ) );
     m_layoutModeChoice->Append( _( "Stacked" ) );
     m_layoutModeChoice->Append( _( "Custom" ) );
@@ -103,152 +137,236 @@ void PANEL_3D_ASSEMBLY::createControls()
 
     mainSizer->Add( layoutBox, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 5 );
 
-    // Position section (for selected board)
-    wxStaticBoxSizer* posBox = new wxStaticBoxSizer( wxVERTICAL, this, _( "Position" ) );
+    // ====================  Position ====================
+    // Has its own board picker — independent of the Boards visibility
+    // list above. Switching boards in the picker just repaints the X/Y/Z
+    // and rotation fields with that board's current state.
+    wxStaticBoxSizer* posBox =
+            new wxStaticBoxSizer( wxVERTICAL, m_scrolled, _( "Position" ) );
 
-    m_selectedBoardLabel = new wxStaticText( this, wxID_ANY, _( "Select a board" ) );
-    wxFont boldFont = m_selectedBoardLabel->GetFont();
-    boldFont.SetWeight( wxFONTWEIGHT_BOLD );
-    m_selectedBoardLabel->SetFont( boldFont );
-    posBox->Add( m_selectedBoardLabel, 0, wxBOTTOM, 5 );
+    wxBoxSizer* posBoardSizer = new wxBoxSizer( wxHORIZONTAL );
+    posBoardSizer->Add( new wxStaticText( m_scrolled, wxID_ANY, _( "Board:" ) ), 0,
+                        wxALIGN_CENTER_VERTICAL | wxRIGHT, 5 );
+    m_positionBoardChoice = new wxChoice( m_scrolled, wxID_ANY );
+    m_positionBoardChoice->SetToolTip(
+            _( "Pick the sub-board the X/Y/Z and rotation fields below act on." ) );
+    posBoardSizer->Add( m_positionBoardChoice, 1 );
+    posBox->Add( posBoardSizer, 0, wxEXPAND | wxBOTTOM, 5 );
 
-    // Position XYZ
+    // Position XYZ. Text controls get a small explicit min size so the
+    // FlexGridSizer can shrink the column when the AUI pane is narrow
+    // — without this, wxTextCtrl's platform default (~80 px on macOS)
+    // sets a floor the panel can't go below.
+    auto makeNumCtrl = [&]( wxTextCtrl** aOut, const wxString& aInit )
+    {
+        *aOut = new wxTextCtrl( m_scrolled, wxID_ANY, aInit, wxDefaultPosition,
+                                 wxDefaultSize, wxTE_PROCESS_ENTER );
+        ( *aOut )->SetMinSize( wxSize( FromDIP( 40 ), -1 ) );
+    };
+
     wxFlexGridSizer* posSizer = new wxFlexGridSizer( 3, 3, 3, 5 );
     posSizer->AddGrowableCol( 1, 1 );
 
-    posSizer->Add( new wxStaticText( this, wxID_ANY, _( "X:" ) ), 0, wxALIGN_CENTER_VERTICAL );
-    m_posXCtrl = new wxTextCtrl( this, wxID_ANY, "0", wxDefaultPosition, wxSize( 60, -1 ),
-                                  wxTE_PROCESS_ENTER );
-    posSizer->Add( m_posXCtrl, 0 );
-    posSizer->Add( new wxStaticText( this, wxID_ANY, _( "mm" ) ), 0, wxALIGN_CENTER_VERTICAL );
+    posSizer->Add( new wxStaticText( m_scrolled, wxID_ANY, _( "X:" ) ), 0,
+                    wxALIGN_CENTER_VERTICAL );
+    makeNumCtrl( &m_posXCtrl, "0" );
+    posSizer->Add( m_posXCtrl, 0, wxEXPAND );
+    posSizer->Add( new wxStaticText( m_scrolled, wxID_ANY, _( "mm" ) ), 0,
+                    wxALIGN_CENTER_VERTICAL );
 
-    posSizer->Add( new wxStaticText( this, wxID_ANY, _( "Y:" ) ), 0, wxALIGN_CENTER_VERTICAL );
-    m_posYCtrl = new wxTextCtrl( this, wxID_ANY, "0", wxDefaultPosition, wxSize( 60, -1 ),
-                                  wxTE_PROCESS_ENTER );
-    posSizer->Add( m_posYCtrl, 0 );
-    posSizer->Add( new wxStaticText( this, wxID_ANY, _( "mm" ) ), 0, wxALIGN_CENTER_VERTICAL );
+    posSizer->Add( new wxStaticText( m_scrolled, wxID_ANY, _( "Y:" ) ), 0,
+                    wxALIGN_CENTER_VERTICAL );
+    makeNumCtrl( &m_posYCtrl, "0" );
+    posSizer->Add( m_posYCtrl, 0, wxEXPAND );
+    posSizer->Add( new wxStaticText( m_scrolled, wxID_ANY, _( "mm" ) ), 0,
+                    wxALIGN_CENTER_VERTICAL );
 
-    posSizer->Add( new wxStaticText( this, wxID_ANY, _( "Z:" ) ), 0, wxALIGN_CENTER_VERTICAL );
-    m_posZCtrl = new wxTextCtrl( this, wxID_ANY, "0", wxDefaultPosition, wxSize( 60, -1 ),
-                                  wxTE_PROCESS_ENTER );
-    posSizer->Add( m_posZCtrl, 0 );
-    posSizer->Add( new wxStaticText( this, wxID_ANY, _( "mm" ) ), 0, wxALIGN_CENTER_VERTICAL );
+    posSizer->Add( new wxStaticText( m_scrolled, wxID_ANY, _( "Z:" ) ), 0,
+                    wxALIGN_CENTER_VERTICAL );
+    makeNumCtrl( &m_posZCtrl, "0" );
+    posSizer->Add( m_posZCtrl, 0, wxEXPAND );
+    posSizer->Add( new wxStaticText( m_scrolled, wxID_ANY, _( "mm" ) ), 0,
+                    wxALIGN_CENTER_VERTICAL );
 
     posBox->Add( posSizer, 0, wxEXPAND | wxBOTTOM, 5 );
 
     // Rotation XYZ
-    posBox->Add( new wxStaticText( this, wxID_ANY, _( "Rotation:" ) ), 0, wxTOP | wxBOTTOM, 3 );
+    posBox->Add( new wxStaticText( m_scrolled, wxID_ANY, _( "Rotation:" ) ), 0,
+                  wxTOP | wxBOTTOM, 3 );
 
     wxFlexGridSizer* rotSizer = new wxFlexGridSizer( 3, 3, 3, 5 );
     rotSizer->AddGrowableCol( 1, 1 );
 
-    rotSizer->Add( new wxStaticText( this, wxID_ANY, _( "X:" ) ), 0, wxALIGN_CENTER_VERTICAL );
-    m_rotXCtrl = new wxTextCtrl( this, wxID_ANY, "0", wxDefaultPosition, wxSize( 60, -1 ),
-                                  wxTE_PROCESS_ENTER );
-    rotSizer->Add( m_rotXCtrl, 0 );
-    rotSizer->Add( new wxStaticText( this, wxID_ANY, _( "°" ) ), 0, wxALIGN_CENTER_VERTICAL );
+    rotSizer->Add( new wxStaticText( m_scrolled, wxID_ANY, _( "X:" ) ), 0,
+                    wxALIGN_CENTER_VERTICAL );
+    makeNumCtrl( &m_rotXCtrl, "0" );
+    rotSizer->Add( m_rotXCtrl, 0, wxEXPAND );
+    rotSizer->Add( new wxStaticText( m_scrolled, wxID_ANY, _( "°" ) ), 0,
+                    wxALIGN_CENTER_VERTICAL );
 
-    rotSizer->Add( new wxStaticText( this, wxID_ANY, _( "Y:" ) ), 0, wxALIGN_CENTER_VERTICAL );
-    m_rotYCtrl = new wxTextCtrl( this, wxID_ANY, "0", wxDefaultPosition, wxSize( 60, -1 ),
-                                  wxTE_PROCESS_ENTER );
-    rotSizer->Add( m_rotYCtrl, 0 );
-    rotSizer->Add( new wxStaticText( this, wxID_ANY, _( "°" ) ), 0, wxALIGN_CENTER_VERTICAL );
+    rotSizer->Add( new wxStaticText( m_scrolled, wxID_ANY, _( "Y:" ) ), 0,
+                    wxALIGN_CENTER_VERTICAL );
+    makeNumCtrl( &m_rotYCtrl, "0" );
+    rotSizer->Add( m_rotYCtrl, 0, wxEXPAND );
+    rotSizer->Add( new wxStaticText( m_scrolled, wxID_ANY, _( "°" ) ), 0,
+                    wxALIGN_CENTER_VERTICAL );
 
-    rotSizer->Add( new wxStaticText( this, wxID_ANY, _( "Z:" ) ), 0, wxALIGN_CENTER_VERTICAL );
-    m_rotZCtrl = new wxTextCtrl( this, wxID_ANY, "0", wxDefaultPosition, wxSize( 60, -1 ),
-                                  wxTE_PROCESS_ENTER );
-    rotSizer->Add( m_rotZCtrl, 0 );
-    rotSizer->Add( new wxStaticText( this, wxID_ANY, _( "°" ) ), 0, wxALIGN_CENTER_VERTICAL );
+    rotSizer->Add( new wxStaticText( m_scrolled, wxID_ANY, _( "Z:" ) ), 0,
+                    wxALIGN_CENTER_VERTICAL );
+    makeNumCtrl( &m_rotZCtrl, "0" );
+    rotSizer->Add( m_rotZCtrl, 0, wxEXPAND );
+    rotSizer->Add( new wxStaticText( m_scrolled, wxID_ANY, _( "°" ) ), 0,
+                    wxALIGN_CENTER_VERTICAL );
 
     posBox->Add( rotSizer, 0, wxEXPAND | wxBOTTOM, 5 );
 
-    m_resetPositionsButton = new wxButton( this, wxID_ANY, _( "Reset Positions" ) );
+    m_transparentCheck = new wxCheckBox( m_scrolled, wxID_ANY, _( "Transparent mode" ) );
+    m_transparentCheck->SetToolTip(
+            _( "Render the selected board semi-transparent (so adjacent boards show through)." ) );
+    posBox->Add( m_transparentCheck, 0, wxBOTTOM, 5 );
+
+    m_resetPositionsButton = new wxButton( m_scrolled, wxID_ANY, _( "Reset" ),
+                                            wxDefaultPosition, wxDefaultSize,
+                                            wxBU_EXACTFIT );
+    m_resetPositionsButton->SetToolTip( _( "Reset all sub-board positions and rotations" ) );
     posBox->Add( m_resetPositionsButton, 0, wxEXPAND );
 
     mainSizer->Add( posBox, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 5 );
 
-    // Assembly options
-    wxStaticBoxSizer* optionsBox = new wxStaticBoxSizer( wxVERTICAL, this, _( "Assembly" ) );
+    // ====================  Mates ====================
+    // "Mate connectors" toggle now lives here so all the mate state +
+    // per-pair actions are grouped. The view toggles below control
+    // gizmo visibility separately.
+    wxStaticBoxSizer* matesBox =
+            new wxStaticBoxSizer( wxVERTICAL, m_scrolled, _( "Mates" ) );
 
-    m_mateConnectorsCheck = new wxCheckBox( this, wxID_ANY, _( "Mate connectors" ) );
+    m_mateConnectorsCheck = new wxCheckBox( m_scrolled, wxID_ANY, _( "Mate connectors" ) );
     m_mateConnectorsCheck->SetToolTip( _( "Auto-align boards at connector pairs" ) );
-    optionsBox->Add( m_mateConnectorsCheck, 0, wxBOTTOM, 3 );
+    matesBox->Add( m_mateConnectorsCheck, 0, wxBOTTOM, 4 );
 
-    m_transparentCheck = new wxCheckBox( this, wxID_ANY, _( "Transparent mode" ) );
-    m_transparentCheck->SetToolTip( _( "Make selected board semi-transparent" ) );
-    optionsBox->Add( m_transparentCheck, 0 );
-
-    mainSizer->Add( optionsBox, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 5 );
-
-    // M6.D-phase-2 Mates section: tree of mate edges + per-pair
-    // actions. Auto-derived rows are read-only; only CUSTOM rows
-    // accept Mark primary / Disable / Delete.
-    wxStaticBoxSizer* matesBox = new wxStaticBoxSizer( wxVERTICAL, this, _( "Mates" ) );
-
-    m_showMatesCheck = new wxCheckBox( this, wxID_ANY, _( "Show mate gizmos in 3D" ) );
-    m_showMatesCheck->SetValue( true );
-    m_showMatesCheck->SetToolTip(
-            _( "Overlay coloured rods and spheres on each connector mate pair." ) );
-    matesBox->Add( m_showMatesCheck, 0, wxBOTTOM, 4 );
-
-    m_matesTree = new wxTreeCtrl( this, wxID_ANY, wxDefaultPosition, wxSize( -1, 180 ),
+    m_matesTree = new wxTreeCtrl( m_scrolled, wxID_ANY, wxDefaultPosition,
+                                   wxSize( -1, 180 ),
                                    wxTR_DEFAULT_STYLE | wxTR_HIDE_ROOT | wxTR_SINGLE );
-    // Min size guarantees the tree stays visible even when the panel
-    // is short; without this the sizer can collapse it to 0px and the
-    // tree rows (and the buttons that depend on selecting them) become
-    // unreachable.
-    m_matesTree->SetMinSize( wxSize( -1, FromDIP( 160 ) ) );
+    m_matesTree->SetMinSize( wxSize( FromDIP( 80 ), FromDIP( 160 ) ) );
     matesBox->Add( m_matesTree, 1, wxEXPAND | wxBOTTOM, 5 );
 
-    wxBoxSizer* matesButtonSizer = new wxBoxSizer( wxHORIZONTAL );
-    m_addMateButton     = new wxButton( this, wxID_ANY, _( "+ Add" ) );
-    m_editMateButton    = new wxButton( this, wxID_ANY, _( "Edit…" ) );
-    m_markPrimaryButton = new wxButton( this, wxID_ANY, _( "Primary" ) );
-    m_disableMateButton = new wxButton( this, wxID_ANY, _( "Disable" ) );
-    m_deleteMateButton  = new wxButton( this, wxID_ANY, _( "Delete" ) );
+    // Two-row button layout — single-row would need ~340 px to display
+    // all six labels, which collides with narrow AUI panes. Splitting
+    // explicitly (rather than relying on wxWrapSizer's runtime wrap)
+    // is more predictable across platforms / DPI settings.
+    // wxBU_EXACTFIT on every button so the row's natural min-width
+    // tracks label width + a few px of padding instead of the macOS
+    // default ~80 px floor.
+    m_addMateButton      = new wxButton( m_scrolled, wxID_ANY, _( "+ Add" ),
+                                          wxDefaultPosition, wxDefaultSize,
+                                          wxBU_EXACTFIT );
+    m_editMateButton     = new wxButton( m_scrolled, wxID_ANY, _( "Edit…" ),
+                                          wxDefaultPosition, wxDefaultSize,
+                                          wxBU_EXACTFIT );
+    // ↑ / ↓ replace the Primary button: top-of-edge pair is treated as
+    // primary by the solver, so reorder = priority shift. Reordering an
+    // AUTO row promotes it to a CUSTOM override transparently.
+    m_moveMateUpButton   = new wxButton( m_scrolled, wxID_ANY, wxT( "↑" ),
+                                          wxDefaultPosition, wxDefaultSize,
+                                          wxBU_EXACTFIT );
+    m_moveMateDownButton = new wxButton( m_scrolled, wxID_ANY, wxT( "↓" ),
+                                          wxDefaultPosition, wxDefaultSize,
+                                          wxBU_EXACTFIT );
+    m_disableMateButton  = new wxButton( m_scrolled, wxID_ANY, _( "Disable" ),
+                                          wxDefaultPosition, wxDefaultSize,
+                                          wxBU_EXACTFIT );
+    m_deleteMateButton   = new wxButton( m_scrolled, wxID_ANY, _( "Delete" ),
+                                          wxDefaultPosition, wxDefaultSize,
+                                          wxBU_EXACTFIT );
 
     m_addMateButton->SetToolTip( _( "Add a custom mate (mounting hole, override, etc.)" ) );
     m_editMateButton->SetToolTip( _( "Edit the selected custom mate (or double-click)" ) );
-    m_markPrimaryButton->SetToolTip( _( "Force this pair as primary on its board edge" ) );
+    m_moveMateUpButton->SetToolTip(
+            _( "Raise this pair's priority on its board edge "
+               "(top-most pair becomes primary)." ) );
+    m_moveMateDownButton->SetToolTip(
+            _( "Lower this pair's priority on its board edge." ) );
     m_disableMateButton->SetToolTip( _( "Disable an auto-derived mate" ) );
     m_deleteMateButton->SetToolTip( _( "Delete the selected custom mate" ) );
 
-    matesButtonSizer->Add( m_addMateButton,     1, wxRIGHT, 3 );
-    matesButtonSizer->Add( m_editMateButton,    1, wxRIGHT, 3 );
-    matesButtonSizer->Add( m_markPrimaryButton, 1, wxRIGHT, 3 );
-    matesButtonSizer->Add( m_disableMateButton, 1, wxRIGHT, 3 );
-    matesButtonSizer->Add( m_deleteMateButton,  1 );
+    wxBoxSizer* matesRow1 = new wxBoxSizer( wxHORIZONTAL );
+    matesRow1->Add( m_addMateButton,      1, wxRIGHT, 3 );
+    matesRow1->Add( m_editMateButton,     1, wxRIGHT, 3 );
+    matesRow1->Add( m_moveMateUpButton,   0, wxRIGHT, 1 );
+    matesRow1->Add( m_moveMateDownButton, 0 );
+
+    wxBoxSizer* matesRow2 = new wxBoxSizer( wxHORIZONTAL );
+    matesRow2->Add( m_disableMateButton,  1, wxRIGHT, 3 );
+    matesRow2->Add( m_deleteMateButton,   1 );
+
+    wxBoxSizer* matesButtonSizer = new wxBoxSizer( wxVERTICAL );
+    matesButtonSizer->Add( matesRow1, 0, wxEXPAND | wxBOTTOM, 3 );
+    matesButtonSizer->Add( matesRow2, 0, wxEXPAND );
 
     matesBox->Add( matesButtonSizer, 0, wxEXPAND );
 
     mainSizer->Add( matesBox, 1, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 5 );
 
-    // Validation section
-    wxStaticBoxSizer* validationBox = new wxStaticBoxSizer( wxVERTICAL, this, _( "Validation" ) );
+    // ====================  View ====================
+    // Three independent toggles for the gizmo overlay pass.
+    wxStaticBoxSizer* viewBox =
+            new wxStaticBoxSizer( wxVERTICAL, m_scrolled, _( "View" ) );
 
-    m_collisionCheckButton = new wxButton( this, wxID_ANY, _( "Run Collision Check" ) );
-    validationBox->Add( m_collisionCheckButton, 0, wxEXPAND | wxBOTTOM, 3 );
+    m_showMatesCheck = new wxCheckBox( m_scrolled, wxID_ANY, _( "Show mate gizmos" ) );
+    m_showMatesCheck->SetValue( true );
+    m_showMatesCheck->SetToolTip(
+            _( "Overlay coloured rods linking each connector mate pair." ) );
+    viewBox->Add( m_showMatesCheck, 0, wxBOTTOM, 3 );
 
-    m_collisionStatusLabel = new wxStaticText( this, wxID_ANY, _( "Status: --" ) );
+    m_showCollisionsCheck = new wxCheckBox( m_scrolled, wxID_ANY, _( "Show collision highlights" ) );
+    m_showCollisionsCheck->SetValue( true );
+    m_showCollisionsCheck->SetToolTip(
+            _( "Overlay red markers on components that physically overlap. "
+                "Auto-runs on every position change." ) );
+    viewBox->Add( m_showCollisionsCheck, 0, wxBOTTOM, 3 );
+
+    m_showContactsCheck = new wxCheckBox( m_scrolled, wxID_ANY, _( "Show contact highlights" ) );
+    m_showContactsCheck->SetValue( true );
+    m_showContactsCheck->SetToolTip(
+            _( "Overlay markers on components that are in expected contact (mated). "
+                "Currently aliases the mate-pair gizmo." ) );
+    viewBox->Add( m_showContactsCheck, 0 );
+
+    mainSizer->Add( viewBox, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 5 );
+
+    // ====================  Validation ====================
+    // Status only — collision check auto-runs on every position change
+    // (previous "Run Collision Check" button retired).
+    wxStaticBoxSizer* validationBox =
+            new wxStaticBoxSizer( wxVERTICAL, m_scrolled, _( "Validation" ) );
+
+    m_collisionStatusLabel = new wxStaticText( m_scrolled, wxID_ANY, _( "Status: --" ) );
     validationBox->Add( m_collisionStatusLabel, 0 );
 
     mainSizer->Add( validationBox, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 5 );
 
-    // Export section
-    wxStaticBoxSizer* exportBox = new wxStaticBoxSizer( wxVERTICAL, this, _( "Export" ) );
+    // ====================  Export ====================
+    wxStaticBoxSizer* exportBox =
+            new wxStaticBoxSizer( wxVERTICAL, m_scrolled, _( "Export" ) );
 
-    m_exportSTEPButton = new wxButton( this, wxID_ANY, _( "Export Assembly STEP..." ) );
+    m_exportSTEPButton = new wxButton( m_scrolled, wxID_ANY, _( "Export STEP…" ),
+                                        wxDefaultPosition, wxDefaultSize,
+                                        wxBU_EXACTFIT );
+    m_exportSTEPButton->SetToolTip( _( "Export the assembly to a STEP file" ) );
     exportBox->Add( m_exportSTEPButton, 0, wxEXPAND );
 
     mainSizer->Add( exportBox, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 5 );
 
-    SetSizer( mainSizer );
+    m_scrolled->SetSizer( mainSizer );
+    m_scrolled->FitInside();
 }
 
 
 void PANEL_3D_ASSEMBLY::bindEvents()
 {
-    m_boardListBox->Bind( wxEVT_LISTBOX, &PANEL_3D_ASSEMBLY::onBoardSelected, this );
+    // The Boards list is visibility-only now; click-to-select moved to
+    // the Position section's wxChoice. wxEVT_LISTBOX is no longer
+    // bound, only wxEVT_CHECKLISTBOX (which fires on checkbox toggle).
     m_boardListBox->Bind( wxEVT_CHECKLISTBOX, &PANEL_3D_ASSEMBLY::onBoardVisibilityChanged, this );
 
     m_showAllButton->Bind( wxEVT_BUTTON, &PANEL_3D_ASSEMBLY::onShowAllBoards, this );
@@ -281,10 +399,12 @@ void PANEL_3D_ASSEMBLY::bindEvents()
 
     m_resetPositionsButton->Bind( wxEVT_BUTTON, &PANEL_3D_ASSEMBLY::onResetPositions, this );
 
+    m_positionBoardChoice->Bind( wxEVT_CHOICE,
+                                 &PANEL_3D_ASSEMBLY::onPositionBoardChoice, this );
+
     m_mateConnectorsCheck->Bind( wxEVT_CHECKBOX, &PANEL_3D_ASSEMBLY::onMateConnectors, this );
     m_transparentCheck->Bind( wxEVT_CHECKBOX, &PANEL_3D_ASSEMBLY::onTransparencyChanged, this );
 
-    m_collisionCheckButton->Bind( wxEVT_BUTTON, &PANEL_3D_ASSEMBLY::onRunCollisionCheck, this );
     m_exportSTEPButton->Bind( wxEVT_BUTTON, &PANEL_3D_ASSEMBLY::onExportSTEP, this );
 
     // M6.D-phase-2 mates UI bindings
@@ -292,23 +412,34 @@ void PANEL_3D_ASSEMBLY::bindEvents()
                        &PANEL_3D_ASSEMBLY::onMateTreeSelectionChanged, this );
     m_matesTree->Bind( wxEVT_TREE_ITEM_ACTIVATED,
                        &PANEL_3D_ASSEMBLY::onMateTreeActivated, this );
-    m_showMatesCheck->Bind(    wxEVT_CHECKBOX, &PANEL_3D_ASSEMBLY::onShowMatesToggled, this );
-    m_addMateButton->Bind(     wxEVT_BUTTON, &PANEL_3D_ASSEMBLY::onAddCustomMate,    this );
-    m_editMateButton->Bind(    wxEVT_BUTTON, &PANEL_3D_ASSEMBLY::onEditCustomMate,   this );
-    m_markPrimaryButton->Bind( wxEVT_BUTTON, &PANEL_3D_ASSEMBLY::onMarkMatePrimary,  this );
-    m_disableMateButton->Bind( wxEVT_BUTTON, &PANEL_3D_ASSEMBLY::onDisableMate,      this );
-    m_deleteMateButton->Bind(  wxEVT_BUTTON, &PANEL_3D_ASSEMBLY::onDeleteCustomMate, this );
+    m_addMateButton->Bind(      wxEVT_BUTTON, &PANEL_3D_ASSEMBLY::onAddCustomMate,    this );
+    m_editMateButton->Bind(     wxEVT_BUTTON, &PANEL_3D_ASSEMBLY::onEditCustomMate,   this );
+    m_moveMateUpButton->Bind(   wxEVT_BUTTON, &PANEL_3D_ASSEMBLY::onMoveMateUp,       this );
+    m_moveMateDownButton->Bind( wxEVT_BUTTON, &PANEL_3D_ASSEMBLY::onMoveMateDown,     this );
+    m_disableMateButton->Bind(  wxEVT_BUTTON, &PANEL_3D_ASSEMBLY::onDisableMate,      this );
+    m_deleteMateButton->Bind(   wxEVT_BUTTON, &PANEL_3D_ASSEMBLY::onDeleteCustomMate, this );
+
+    // View toggles control gizmo entry filtering in the manager.
+    m_showMatesCheck->Bind( wxEVT_CHECKBOX, &PANEL_3D_ASSEMBLY::onShowMatesToggled, this );
+    m_showCollisionsCheck->Bind( wxEVT_CHECKBOX,
+                                  &PANEL_3D_ASSEMBLY::onShowCollisionsToggled, this );
+    m_showContactsCheck->Bind( wxEVT_CHECKBOX,
+                                &PANEL_3D_ASSEMBLY::onShowContactsToggled, this );
 }
 
 
 void PANEL_3D_ASSEMBLY::RefreshBoardList()
 {
     m_boardListBox->Clear();
+    m_positionBoardChoice->Clear();
     m_boardUuids.clear();
-    m_selectedBoardIndex = wxNOT_FOUND;
 
     if( !m_manager )
+    {
+        m_selectedBoardIndex = wxNOT_FOUND;
+        UpdateSelectedBoardControls();
         return;
+    }
 
     const auto& instances = m_manager->GetBoardInstances();
 
@@ -316,7 +447,21 @@ void PANEL_3D_ASSEMBLY::RefreshBoardList()
     {
         int index = m_boardListBox->Append( inst.displayName );
         m_boardListBox->Check( index, inst.visible );
+        m_positionBoardChoice->Append( inst.displayName );
         m_boardUuids.push_back( inst.uuid );
+    }
+
+    // Default the Position picker to the first board (if any) so the
+    // X/Y/Z + rotation fields show meaningful values immediately
+    // instead of "Select a board" placeholder.
+    if( !instances.empty() )
+    {
+        m_positionBoardChoice->SetSelection( 0 );
+        m_selectedBoardIndex = 0;
+    }
+    else
+    {
+        m_selectedBoardIndex = wxNOT_FOUND;
     }
 
     UpdateSelectedBoardControls();
@@ -327,7 +472,6 @@ void PANEL_3D_ASSEMBLY::UpdateSelectedBoardControls()
 {
     if( m_selectedBoardIndex == wxNOT_FOUND || !m_manager )
     {
-        m_selectedBoardLabel->SetLabel( _( "Select a board" ) );
         m_posXCtrl->SetValue( "0" );
         m_posYCtrl->SetValue( "0" );
         m_posZCtrl->SetValue( "0" );
@@ -342,8 +486,6 @@ void PANEL_3D_ASSEMBLY::UpdateSelectedBoardControls()
 
     if( !inst )
         return;
-
-    m_selectedBoardLabel->SetLabel( inst->displayName );
 
     m_posXCtrl->SetValue( wxString::Format( "%.2f", inst->position.x ) );
     m_posYCtrl->SetValue( wxString::Format( "%.2f", inst->position.y ) );
@@ -369,17 +511,27 @@ KIID PANEL_3D_ASSEMBLY::GetSelectedBoardUuid() const
 
 void PANEL_3D_ASSEMBLY::onBoardSelected( wxCommandEvent& aEvent )
 {
-    m_selectedBoardIndex = m_boardListBox->GetSelection();
+    // Vestigial: m_boardListBox no longer fires wxEVT_LISTBOX (it's
+    // visibility-only now). Selection moved to onPositionBoardChoice.
+    (void) aEvent;
+}
+
+
+void PANEL_3D_ASSEMBLY::onPositionBoardChoice( wxCommandEvent& aEvent )
+{
+    int sel = m_positionBoardChoice->GetSelection();
+
+    if( sel < 0 || sel >= static_cast<int>( m_boardUuids.size() ) )
+        return;
+
+    m_selectedBoardIndex = sel;
     UpdateSelectedBoardControls();
 
-    // Repoint the frame's 3D adapter at the newly-selected sub-board.
-    // Pre-M6.C: only one instance renders at a time; selection drives
-    // which. Panel still tracks every instance for layout/mating.
-    if( m_frame && m_selectedBoardIndex != wxNOT_FOUND
-        && m_selectedBoardIndex < static_cast<int>( m_boardUuids.size() ) )
-    {
-        m_frame->SetActiveAssemblyInstance( m_boardUuids[m_selectedBoardIndex] );
-    }
+    // Drive the frame's "active instance" so cross-probe (selection
+    // events from a sub-project schematic / pcbnew) still has something
+    // to focus on.
+    if( m_frame )
+        m_frame->SetActiveAssemblyInstance( m_boardUuids[sel] );
 }
 
 
@@ -392,6 +544,7 @@ void PANEL_3D_ASSEMBLY::onBoardVisibilityChanged( wxCommandEvent& aEvent )
     bool visible = m_boardListBox->IsChecked( index );
     m_manager->SetBoardVisible( m_boardUuids[index], visible );
 
+    autoRunCollisionCheck();
     refresh3DView();
 }
 
@@ -412,6 +565,7 @@ void PANEL_3D_ASSEMBLY::onLayoutModeChanged( wxCommandEvent& aEvent )
     m_manager->ArrangeBoards( mode, 20.0f );
     m_manager->PersistAllInstances();
     UpdateSelectedBoardControls();
+    autoRunCollisionCheck();
     refresh3DView();
 }
 
@@ -431,6 +585,7 @@ void PANEL_3D_ASSEMBLY::onPositionChanged( wxCommandEvent& aEvent )
     m_manager->SetBoardPosition( uuid, SFVEC3F( static_cast<float>( x ),
                                                  static_cast<float>( y ),
                                                  static_cast<float>( z ) ) );
+    autoRunCollisionCheck();
     refresh3DView();
 }
 
@@ -450,6 +605,7 @@ void PANEL_3D_ASSEMBLY::onRotationChanged( wxCommandEvent& aEvent )
     m_manager->SetBoardRotation( uuid, SFVEC3F( static_cast<float>( x ),
                                                  static_cast<float>( y ),
                                                  static_cast<float>( z ) ) );
+    autoRunCollisionCheck();
     refresh3DView();
 }
 
@@ -461,6 +617,7 @@ void PANEL_3D_ASSEMBLY::onResetPositions( wxCommandEvent& aEvent )
 
     m_manager->ResetPositions();
     UpdateSelectedBoardControls();
+    autoRunCollisionCheck();
     refresh3DView();
 }
 
@@ -481,6 +638,7 @@ void PANEL_3D_ASSEMBLY::onMateConnectors( wxCommandEvent& aEvent )
     }
 
     UpdateSelectedBoardControls();
+    autoRunCollisionCheck();
     refresh3DView();
     RefreshMatesTree();
 }
@@ -488,11 +646,43 @@ void PANEL_3D_ASSEMBLY::onMateConnectors( wxCommandEvent& aEvent )
 
 void PANEL_3D_ASSEMBLY::onRunCollisionCheck( wxCommandEvent& aEvent )
 {
+    // Vestigial: the manual "Run Collision Check" button retired in
+    // favour of auto-run on every position change. Kept so existing
+    // bindings (none in current code) wouldn't break if a future caller
+    // wires it up — and so the handler signature stays around for
+    // anyone reading old comments.
+    (void) aEvent;
+    autoRunCollisionCheck();
+}
+
+
+void PANEL_3D_ASSEMBLY::autoRunCollisionCheck()
+{
     if( !m_manager )
         return;
 
-    std::vector<COLLISION_RESULT> collisions = m_manager->RunCollisionCheck();
+    m_manager->RunCollisionCheck();
     updateCollisionStatus();
+}
+
+
+void PANEL_3D_ASSEMBLY::onShowCollisionsToggled( wxCommandEvent& aEvent )
+{
+    if( !m_manager )
+        return;
+
+    m_manager->SetShowCollisionHighlights( m_showCollisionsCheck->GetValue() );
+    refresh3DView();
+}
+
+
+void PANEL_3D_ASSEMBLY::onShowContactsToggled( wxCommandEvent& aEvent )
+{
+    if( !m_manager )
+        return;
+
+    m_manager->SetShowContactHighlights( m_showContactsCheck->GetValue() );
+    refresh3DView();
 }
 
 
@@ -690,12 +880,26 @@ void PANEL_3D_ASSEMBLY::RefreshMatesTree()
         edgeMeta.instanceB  = edge.instanceB;
         m_mateTreeRows[edgeNode.GetID()] = edgeMeta;
 
+        // BuildMateGraph sorted edge.pairs: head = primary,
+        // alignmentOnly pairs sink to the bottom. The first non-
+        // alignmentOnly pair is the primary the solver will use.
+        const MATE_PAIR* primary = nullptr;
+
+        for( const MATE_PAIR& p : edge.pairs )
+        {
+            if( !p.alignmentOnly )
+            {
+                primary = &p;
+                break;
+            }
+        }
+
         for( const MATE_PAIR& pair : edge.pairs )
         {
             wxString badge;
 
-            if( pair.forcedPrimary )
-                badge << "[PRIMARY*]";
+            if( &pair == primary )
+                badge << "[PRIMARY]";
             else if( pair.alignmentOnly )
                 badge << "[SECONDARY]";
 
@@ -730,6 +934,29 @@ void PANEL_3D_ASSEMBLY::RefreshMatesTree()
 }
 
 
+void PANEL_3D_ASSEMBLY::selectMatePairRow( const wxString& aPairId )
+{
+    if( aPairId.IsEmpty() || !m_matesTree )
+        return;
+
+    for( const auto& [id, row] : m_mateTreeRows )
+    {
+        if( row.isEdgeNode )
+            continue;
+
+        wxString thisId = ASSEMBLY_3D_MANAGER::MakeMatePairId(
+                row.instanceA, row.footprintRefA,
+                row.instanceB, row.footprintRefB );
+
+        if( thisId == aPairId )
+        {
+            m_matesTree->SelectItem( wxTreeItemId( id ) );
+            return;
+        }
+    }
+}
+
+
 void PANEL_3D_ASSEMBLY::updateMateButtons()
 {
     bool haveSelection = false;
@@ -753,13 +980,15 @@ void PANEL_3D_ASSEMBLY::updateMateButtons()
     // Add is always available when a project is loaded.
     m_addMateButton->Enable( m_manager && m_manager->GetBoardInstances().size() >= 2 );
 
-    // Edit only on CUSTOM rows (AUTO mates aren't user-data; the user
-    // can derive a CUSTOM override via Primary/Disable instead).
-    m_editMateButton->Enable( isCustomLeaf );
+    // Edit works on any leaf — AUTO rows promote to a fresh CUSTOM
+    // override on save; CUSTOM rows update in place.
+    m_editMateButton->Enable( haveSelection );
 
-    // Mark primary works on any leaf — for AUTO it creates a new
-    // CUSTOM PRIMARY override; for CUSTOM it bumps role to PRIMARY.
-    m_markPrimaryButton->Enable( haveSelection );
+    // Up/Down reorder pairs within their edge — head of the edge is
+    // the primary. Enabled on any leaf; the manager no-ops when at
+    // top/bottom so we don't need to compute index here.
+    m_moveMateUpButton->Enable( haveSelection );
+    m_moveMateDownButton->Enable( haveSelection );
 
     // Disable creates a CUSTOM DISABLED for an AUTO leaf, or flips a
     // CUSTOM mate's role to DISABLED.
@@ -1069,18 +1298,49 @@ void PANEL_3D_ASSEMBLY::onEditCustomMate( wxCommandEvent& aEvent )
     wxTreeItemId sel = m_matesTree->GetSelection();
     auto         it  = m_mateTreeRows.find( sel.IsOk() ? sel.GetID() : nullptr );
 
-    if( it == m_mateTreeRows.end() || it->second.isEdgeNode || it->second.isAuto )
+    if( it == m_mateTreeRows.end() || it->second.isEdgeNode )
         return;
 
-    const KIID&                    targetUuid = it->second.customMateUuid;
-    const std::vector<CUSTOM_MATE>& mates      = m_manager->GetCustomMates();
-    auto                            cm         = std::find_if( mates.begin(), mates.end(),
-                                          [&]( const CUSTOM_MATE& m ) { return m.uuid == targetUuid; } );
+    const MATE_TREE_ROW& row = it->second;
 
-    if( cm == mates.end() )
-        return;
+    // For auto-derived rows, build a prefill record on the fly from the
+    // tree row metadata so the dialog opens with the same endpoints.
+    // On OK we add it as a NEW custom mate (auto pairs aren't user
+    // data, so editing them really means "create an override").
+    CUSTOM_MATE        prefillStorage;
+    const CUSTOM_MATE* prefill   = nullptr;
+    KIID               targetUuid;
 
-    ADD_CUSTOM_MATE_DIALOG dlg( this, m_manager, &( *cm ) );
+    if( row.isAuto )
+    {
+        prefillStorage.role = CUSTOM_MATE_ROLE::PRIMARY;
+        prefillStorage.type = CUSTOM_MATE_TYPE::CONNECTOR;
+
+        if( const BOARD_3D_INSTANCE* iA = m_manager->GetBoardInstance( row.instanceA ) )
+            prefillStorage.endA.subProjectUuid = iA->subProjectUuid;
+
+        if( const BOARD_3D_INSTANCE* iB = m_manager->GetBoardInstance( row.instanceB ) )
+            prefillStorage.endB.subProjectUuid = iB->subProjectUuid;
+
+        prefillStorage.endA.footprintRef = row.footprintRefA;
+        prefillStorage.endB.footprintRef = row.footprintRefB;
+        prefill = &prefillStorage;
+    }
+    else
+    {
+        targetUuid = row.customMateUuid;
+        const std::vector<CUSTOM_MATE>& mates = m_manager->GetCustomMates();
+        auto cm = std::find_if( mates.begin(), mates.end(),
+                                [&]( const CUSTOM_MATE& m ) { return m.uuid == targetUuid; } );
+
+        if( cm == mates.end() )
+            return;
+
+        prefillStorage = *cm;
+        prefill        = &prefillStorage;
+    }
+
+    ADD_CUSTOM_MATE_DIALOG dlg( this, m_manager, prefill );
 
     if( dlg.ShowModal() != wxID_OK )
         return;
@@ -1094,15 +1354,24 @@ void PANEL_3D_ASSEMBLY::onEditCustomMate( wxCommandEvent& aEvent )
         return;
     }
 
-    // Preserve the original UUID so the mate stays the same row
-    // (BuildResult returns a fresh default-UUID record).
-    updated.uuid = targetUuid;
-
-    if( !m_manager->UpdateCustomMate( updated ) )
+    if( row.isAuto )
     {
-        wxMessageBox( _( "Couldn't update the custom mate." ),
-                      _( "Edit Custom Mate" ), wxOK | wxICON_ERROR, this );
-        return;
+        // Promote auto → custom by adding a fresh override row. The
+        // dialog returned a default-UUID record; AddCustomMate assigns
+        // a new UUID and stores it.
+        m_manager->AddCustomMate( updated );
+    }
+    else
+    {
+        // Preserve the original UUID so the mate stays the same row.
+        updated.uuid = targetUuid;
+
+        if( !m_manager->UpdateCustomMate( updated ) )
+        {
+            wxMessageBox( _( "Couldn't update the custom mate." ),
+                          _( "Edit Custom Mate" ), wxOK | wxICON_ERROR, this );
+            return;
+        }
     }
 
     if( m_manager->GetState().mateConnectors )
@@ -1117,11 +1386,13 @@ void PANEL_3D_ASSEMBLY::onEditCustomMate( wxCommandEvent& aEvent )
 
 void PANEL_3D_ASSEMBLY::onMateTreeActivated( wxTreeEvent& aEvent )
 {
-    // Double-click activate routes to Edit on a CUSTOM row. AUTO rows
-    // and edge headers ignore activation — there's nothing to edit.
+    // Double-click activate routes to Edit on any leaf row. Edge
+    // headers ignore activation — there's nothing to edit on the
+    // group node itself. AUTO rows promote to a fresh CUSTOM override
+    // when the dialog returns.
     auto it = m_mateTreeRows.find( aEvent.GetItem().IsOk() ? aEvent.GetItem().GetID() : nullptr );
 
-    if( it == m_mateTreeRows.end() || it->second.isEdgeNode || it->second.isAuto )
+    if( it == m_mateTreeRows.end() || it->second.isEdgeNode )
         return;
 
     wxCommandEvent dummy;
@@ -1129,7 +1400,7 @@ void PANEL_3D_ASSEMBLY::onMateTreeActivated( wxTreeEvent& aEvent )
 }
 
 
-void PANEL_3D_ASSEMBLY::onMarkMatePrimary( wxCommandEvent& aEvent )
+void PANEL_3D_ASSEMBLY::onMoveMateUp( wxCommandEvent& aEvent )
 {
     if( !m_manager )
         return;
@@ -1141,45 +1412,46 @@ void PANEL_3D_ASSEMBLY::onMarkMatePrimary( wxCommandEvent& aEvent )
         return;
 
     const MATE_TREE_ROW& row = it->second;
+    wxString             pairId = ASSEMBLY_3D_MANAGER::MakeMatePairId(
+            row.instanceA, row.footprintRefA,
+            row.instanceB, row.footprintRefB );
 
-    if( row.isAuto )
-    {
-        // Auto mates can't be edited directly. Add a CUSTOM PRIMARY
-        // override that aliases the same canonical pair.
-        CUSTOM_MATE override;
-        override.role = CUSTOM_MATE_ROLE::PRIMARY;
-        override.type = CUSTOM_MATE_TYPE::CONNECTOR;
+    m_manager->ShiftPairUp( pairId );
 
-        if( const BOARD_3D_INSTANCE* iA = m_manager->GetBoardInstance( row.instanceA ) )
-            override.endA.subProjectUuid = iA->subProjectUuid;
+    // Re-solve so the head-of-edge change drives a new pose.
+    if( m_manager->GetState().mateConnectors )
+        m_manager->MateConnectors();
 
-        if( const BOARD_3D_INSTANCE* iB = m_manager->GetBoardInstance( row.instanceB ) )
-            override.endB.subProjectUuid = iB->subProjectUuid;
+    RefreshMatesTree();
+    selectMatePairRow( pairId );
+    updateMateButtons();
+    refresh3DView();
+}
 
-        override.endA.footprintRef = row.footprintRefA;
-        override.endB.footprintRef = row.footprintRefB;
 
-        m_manager->AddCustomMate( override );
-    }
-    else
-    {
-        // Update the existing CUSTOM mate's role.
-        const std::vector<CUSTOM_MATE>& mates = m_manager->GetCustomMates();
-        auto cm = std::find_if( mates.begin(), mates.end(),
-                                [&]( const CUSTOM_MATE& m ) { return m.uuid == row.customMateUuid; } );
+void PANEL_3D_ASSEMBLY::onMoveMateDown( wxCommandEvent& aEvent )
+{
+    if( !m_manager )
+        return;
 
-        if( cm == mates.end() )
-            return;
+    wxTreeItemId sel = m_matesTree->GetSelection();
+    auto         it  = m_mateTreeRows.find( sel.IsOk() ? sel.GetID() : nullptr );
 
-        CUSTOM_MATE updated = *cm;
-        updated.role        = CUSTOM_MATE_ROLE::PRIMARY;
-        m_manager->UpdateCustomMate( updated );
-    }
+    if( it == m_mateTreeRows.end() || it->second.isEdgeNode )
+        return;
+
+    const MATE_TREE_ROW& row = it->second;
+    wxString             pairId = ASSEMBLY_3D_MANAGER::MakeMatePairId(
+            row.instanceA, row.footprintRefA,
+            row.instanceB, row.footprintRefB );
+
+    m_manager->ShiftPairDown( pairId );
 
     if( m_manager->GetState().mateConnectors )
         m_manager->MateConnectors();
 
     RefreshMatesTree();
+    selectMatePairRow( pairId );
     updateMateButtons();
     refresh3DView();
 }

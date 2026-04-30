@@ -136,6 +136,148 @@ bool isPlaceholderBoard( const BOARD* aBoard )
 }
 
 
+// ===== M6.E phase-3 mesh-level collision helpers =====
+
+/// Single triangle in world-mm space, with cached AABB for the
+/// pair-test broad phase.
+struct WorldTri
+{
+    glm::vec3 v0, v1, v2;
+    glm::vec3 aabbMin, aabbMax;
+};
+
+
+/// Möller-Trumbore segment-vs-triangle test. Returns true iff the
+/// segment p0→p1 (parameter t ∈ [0, 1]) hits the triangle U0,U1,U2.
+/// Used as the per-edge test in our triangle-triangle intersection
+/// routine — six of these calls (3 edges of each triangle vs. the
+/// other) cover all non-degenerate intersection cases.
+inline bool segmentHitsTriangle( const glm::vec3& p0, const glm::vec3& p1,
+                                  const glm::vec3& U0, const glm::vec3& U1,
+                                  const glm::vec3& U2 )
+{
+    const glm::vec3 dir = p1 - p0;
+    const glm::vec3 E1  = U1 - U0;
+    const glm::vec3 E2  = U2 - U0;
+    const glm::vec3 P   = glm::cross( dir, E2 );
+    const float     det = glm::dot( E1, P );
+
+    if( std::abs( det ) < 1e-9f )
+        return false;   // segment parallel to triangle's plane
+
+    const float     invDet = 1.0f / det;
+    const glm::vec3 T      = p0 - U0;
+    const float     u      = glm::dot( T, P ) * invDet;
+
+    if( u < 0.0f || u > 1.0f )
+        return false;
+
+    const glm::vec3 Q = glm::cross( T, E1 );
+    const float     v = glm::dot( dir, Q ) * invDet;
+
+    if( v < 0.0f || u + v > 1.0f )
+        return false;
+
+    const float t = glm::dot( E2, Q ) * invDet;
+
+    // Allow tiny numerical slack at the segment endpoints so a
+    // triangle pair that exactly touches at a shared vertex / edge
+    // still registers as a hit.
+    return t >= -1e-7f && t <= 1.0f + 1e-7f;
+}
+
+
+/// True when triangle (V0,V1,V2) and triangle (U0,U1,U2) intersect
+/// in 3D. Uses the symmetric "edges of one vs the other's plane"
+/// approach — six segment-triangle tests per pair. Misses the
+/// degenerate "fully coplanar with overlap and no edge crossing"
+/// case, which doesn't occur in practice for arbitrary 3D-model
+/// connector meshes.
+inline bool trianglesIntersect( const glm::vec3& V0, const glm::vec3& V1, const glm::vec3& V2,
+                                 const glm::vec3& U0, const glm::vec3& U1, const glm::vec3& U2 )
+{
+    return segmentHitsTriangle( V0, V1, U0, U1, U2 )
+        || segmentHitsTriangle( V1, V2, U0, U1, U2 )
+        || segmentHitsTriangle( V2, V0, U0, U1, U2 )
+        || segmentHitsTriangle( U0, U1, V0, V1, V2 )
+        || segmentHitsTriangle( U1, U2, V0, V1, V2 )
+        || segmentHitsTriangle( U2, U0, V0, V1, V2 );
+}
+
+
+/// Squared distance from a point to a triangle in 3D — closed-form
+/// from Eberly's "Distance Between Point and Triangle in 3D" (the
+/// 7-region barycentric construction). We only care about the
+/// distance, not the closest point, so the return is squared so
+/// callers can compare against a margin² without a sqrt in the inner
+/// loop.
+inline float pointTriangleDistSq( const glm::vec3& p,
+                                   const glm::vec3& a, const glm::vec3& b, const glm::vec3& c )
+{
+    const glm::vec3 ab = b - a;
+    const glm::vec3 ac = c - a;
+    const glm::vec3 ap = p - a;
+
+    const float d1 = glm::dot( ab, ap );
+    const float d2 = glm::dot( ac, ap );
+
+    if( d1 <= 0.0f && d2 <= 0.0f )
+        return glm::dot( ap, ap );   // closest is vertex a
+
+    const glm::vec3 bp = p - b;
+    const float     d3 = glm::dot( ab, bp );
+    const float     d4 = glm::dot( ac, bp );
+
+    if( d3 >= 0.0f && d4 <= d3 )
+        return glm::dot( bp, bp );   // closest is vertex b
+
+    const float vc = d1 * d4 - d3 * d2;
+
+    if( vc <= 0.0f && d1 >= 0.0f && d3 <= 0.0f )
+    {
+        const float     v_   = d1 / ( d1 - d3 );
+        const glm::vec3 q    = a + v_ * ab;
+        const glm::vec3 diff = p - q;
+        return glm::dot( diff, diff );
+    }
+
+    const glm::vec3 cp = p - c;
+    const float     d5 = glm::dot( ab, cp );
+    const float     d6 = glm::dot( ac, cp );
+
+    if( d6 >= 0.0f && d5 <= d6 )
+        return glm::dot( cp, cp );   // closest is vertex c
+
+    const float vb = d5 * d2 - d1 * d6;
+
+    if( vb <= 0.0f && d2 >= 0.0f && d6 <= 0.0f )
+    {
+        const float     w_   = d2 / ( d2 - d6 );
+        const glm::vec3 q    = a + w_ * ac;
+        const glm::vec3 diff = p - q;
+        return glm::dot( diff, diff );
+    }
+
+    const float va = d3 * d6 - d5 * d4;
+
+    if( va <= 0.0f && ( d4 - d3 ) >= 0.0f && ( d5 - d6 ) >= 0.0f )
+    {
+        const float     w_   = ( d4 - d3 ) / ( ( d4 - d3 ) + ( d5 - d6 ) );
+        const glm::vec3 q    = b + w_ * ( c - b );
+        const glm::vec3 diff = p - q;
+        return glm::dot( diff, diff );
+    }
+
+    // Closest point is inside the triangle face → project onto its plane.
+    const float denom = 1.0f / ( va + vb + vc );
+    const float v_    = vb * denom;
+    const float w_    = vc * denom;
+    const glm::vec3 q    = a + ab * v_ + ac * w_;
+    const glm::vec3 diff = p - q;
+    return glm::dot( diff, diff );
+}
+
+
 } // namespace
 
 
@@ -162,6 +304,24 @@ void ASSEMBLY_3D_MANAGER::LoadProjectBoards( PROJECT* aProject )
 
     if( !aProject )
         return;
+
+    // Apply user-configured local env vars (kicad_common.json
+    // `environment.vars`) before the per-instance S3D_CACHE resolvers
+    // expand any model paths. PCB_EDIT_FRAME does this at frame init
+    // via PythonSyncEnvironmentVariables, but in a fresh session the
+    // assembly 3D viewer can be the first frame to resolve
+    // `${KIPRJMOD}/...` paths — and PGM_BASE::loadCommonSettings
+    // explicitly skips KIPRJMOD on app startup, so the user's saved
+    // value (e.g. a stock 3D-models directory) only takes effect once
+    // some pcbnew sibling has run. Without this call the multi-board
+    // 3D viewer's first open silently drops every model whose path
+    // depends on the user-configured KIPRJMOD fallback. (Per
+    // SETTINGS_MANAGER::LoadProject only the active-project path is
+    // pushed into the env when sub-projects are loaded with
+    // aSetActive=false, which doesn't match the user's stock-models
+    // intent for `${KIPRJMOD}`.)
+    if( PgmOrNull() )
+        Pgm().SetLocalEnvVariables();
 
     PROJECT_FILE& projectFile = aProject->GetProjectFile();
 
@@ -249,7 +409,7 @@ void ASSEMBLY_3D_MANAGER::Clear()
 
     m_boardInstances.clear();
     m_lastCollisions.clear();
-    m_lastCollisionPairs.clear();
+    m_lastOverlapBoxes.clear();
     m_project = nullptr;
 
     // Camera cache is frame-owned; clear the pointer so a stale CAMERA*
@@ -716,7 +876,119 @@ std::vector<MATE_EDGE> ASSEMBLY_3D_MANAGER::BuildMateGraph() const
     for( auto& [k, e] : edgeMap )
         edges.push_back( std::move( e ) );
 
+    // Sort each edge's pairs so the head of the list is the primary
+    // candidate. Order is governed by:
+    //   1. priority bump (lower = earlier; user-controlled via
+    //      ShiftPairUp/Down — defaults to 0)
+    //   2. alignmentOnly pairs ALWAYS sink to the bottom — secondary
+    //      mates are never primary regardless of priority bump
+    //   3. forcedPrimary first (legacy CUSTOM PRIMARY override)
+    //   4. higher pinCount earlier (more electrical evidence)
+    //   5. canonical refs as deterministic tiebreaker
+    auto bumpFor = [this]( const MATE_PAIR& p ) -> int
+    {
+        wxString id = MakeMatePairId( p.instanceA, p.footprintRefA,
+                                       p.instanceB, p.footprintRefB );
+        auto it = m_pairPriorityBumps.find( id );
+        return it == m_pairPriorityBumps.end() ? 0 : it->second;
+    };
+
+    for( MATE_EDGE& e : edges )
+    {
+        std::sort( e.pairs.begin(), e.pairs.end(),
+                   [&]( const MATE_PAIR& a, const MATE_PAIR& b )
+                   {
+                       if( a.alignmentOnly != b.alignmentOnly )
+                           return !a.alignmentOnly;   // non-secondary first
+
+                       int ba = bumpFor( a );
+                       int bb = bumpFor( b );
+
+                       if( ba != bb )
+                           return ba < bb;             // lower bump first
+
+                       if( a.forcedPrimary != b.forcedPrimary )
+                           return a.forcedPrimary;     // forced first
+
+                       if( a.pinCount != b.pinCount )
+                           return a.pinCount > b.pinCount;
+
+                       return std::tie( a.footprintRefA, a.footprintRefB )
+                              < std::tie( b.footprintRefA, b.footprintRefB );
+                   } );
+    }
+
     return edges;
+}
+
+
+void ASSEMBLY_3D_MANAGER::ShiftPairUp( const wxString& aPairId )
+{
+    if( aPairId.IsEmpty() )
+        return;
+
+    std::vector<MATE_EDGE> edges = BuildMateGraph();
+
+    for( const MATE_EDGE& edge : edges )
+    {
+        for( size_t i = 0; i < edge.pairs.size(); i++ )
+        {
+            const MATE_PAIR& p = edge.pairs[i];
+            wxString id = MakeMatePairId( p.instanceA, p.footprintRefA,
+                                           p.instanceB, p.footprintRefB );
+
+            if( id != aPairId )
+                continue;
+
+            if( i == 0 )
+                return;   // already at top
+
+            const MATE_PAIR& above   = edge.pairs[i - 1];
+            wxString         aboveId = MakeMatePairId( above.instanceA, above.footprintRefA,
+                                                       above.instanceB, above.footprintRefB );
+
+            int aboveBump = m_pairPriorityBumps.count( aboveId )
+                            ? m_pairPriorityBumps.at( aboveId ) : 0;
+            // Sit one slot below the previous head — stable on repeated
+            // clicks (won't drift further negative once at the top).
+            m_pairPriorityBumps[aPairId] = aboveBump - 1;
+            return;
+        }
+    }
+}
+
+
+void ASSEMBLY_3D_MANAGER::ShiftPairDown( const wxString& aPairId )
+{
+    if( aPairId.IsEmpty() )
+        return;
+
+    std::vector<MATE_EDGE> edges = BuildMateGraph();
+
+    for( const MATE_EDGE& edge : edges )
+    {
+        for( size_t i = 0; i < edge.pairs.size(); i++ )
+        {
+            const MATE_PAIR& p = edge.pairs[i];
+            wxString id = MakeMatePairId( p.instanceA, p.footprintRefA,
+                                           p.instanceB, p.footprintRefB );
+
+            if( id != aPairId )
+                continue;
+
+            if( i + 1 >= edge.pairs.size() )
+                return;   // already at bottom
+
+            const MATE_PAIR& below   = edge.pairs[i + 1];
+            wxString         belowId = MakeMatePairId( below.instanceA, below.footprintRefA,
+                                                       below.instanceB, below.footprintRefB );
+
+            int belowBump = m_pairPriorityBumps.count( belowId )
+                            ? m_pairPriorityBumps.at( belowId ) : 0;
+            m_pairPriorityBumps[aPairId] = belowBump + 1;
+            return;
+        }
+    }
 }
 
 
@@ -1349,7 +1621,7 @@ bool ASSEMBLY_3D_MANAGER::RemoveCustomMate( const KIID& aMateUuid )
 std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
 {
     m_lastCollisions.clear();
-    m_lastCollisionPairs.clear();
+    m_lastOverlapBoxes.clear();
 
     // Mated pairs are expected contact (mate gizmo renders them green/cyan);
     // skip them in the collision pass so users see only the unintended
@@ -1456,19 +1728,188 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
     // sufficient for 2D rectangle intersection. Per-instance rotation
     // around Z is the only assembly-pose rotation this models — board
     // tilt (X/Y rotation) is rare in practice and a phase-3 concern.
+    //
+    // `meshTris` holds the same footprint's 3D-model triangles in
+    // world-mm space, used by the M6.E phase-3 narrow phase to tell
+    // real penetration apart from "AABB overlap because a header pin
+    // fits inside its mating socket's air space."
     struct FPCollisionShape
     {
-        const FOOTPRINT* fp;
-        wxString         ref;
-        glm::vec2        centerXY;     ///< world XY (mm)
-        glm::vec2        axisX;        ///< unit vector
-        glm::vec2        axisY;        ///< unit vector, ⊥ axisX
-        float            halfX;        ///< half-extent along axisX
-        float            halfY;        ///< half-extent along axisY
-        float            zMin;
-        float            zMax;
-        SFVEC3F          worldMin;     ///< axis-aligned bounds for broad phase
-        SFVEC3F          worldMax;
+        const FOOTPRINT*      fp;
+        wxString              ref;
+        glm::vec2             centerXY;     ///< world XY (mm)
+        glm::vec2             axisX;        ///< unit vector
+        glm::vec2             axisY;        ///< unit vector, ⊥ axisX
+        float                 halfX;        ///< half-extent along axisX
+        float                 halfY;        ///< half-extent along axisY
+        float                 zMin;
+        float                 zMax;
+        SFVEC3F               worldMin;     ///< axis-aligned bounds for broad phase
+        SFVEC3F               worldMax;
+        std::vector<WorldTri> meshTris;     ///< world-mm triangles
+        SFVEC3F               meshAabbMin;
+        SFVEC3F               meshAabbMax;
+    };
+
+    // Build the world-mm triangle list for one footprint by walking
+    // every visible FP_3DMODEL in its `Models()` and applying the same
+    // transform chain the renderer uses (`render_3d_opengl.cpp` /
+    // `raytracing/create_scene.cpp:1942-2030`) — minus the
+    // BIU→3d-units scale (we want mm) and the renderer's Y-flip
+    // (we keep KiCad's Y-positive convention for collision math).
+    //
+    // Chain: instance pose · footprint pose · (flip if back-side) ·
+    //        FP_3DMODEL offset · -Rz · -Ry · -Rx · Scale
+    auto buildFpMeshTris = [this]( const BOARD_3D_INSTANCE&  aInst,
+                                    const FOOTPRINT*          aFp,
+                                    std::vector<WorldTri>&    aOutTris,
+                                    SFVEC3F&                  aOutAabbMin,
+                                    SFVEC3F&                  aOutAabbMax,
+                                    bool&                     aOutHaveAabb ) -> void
+    {
+        aOutTris.clear();
+        aOutHaveAabb = false;
+
+        if( !aInst.board || !aFp )
+            return;
+
+        PROJECT* prj = aInst.subProject ? aInst.subProject : aInst.board->GetProject();
+
+        if( !prj )
+            return;
+
+        S3D_CACHE* cache = PROJECT_PCB::Get3DCacheManager( prj );
+
+        if( !cache )
+            return;
+
+        // Footprint frame in world mm — Y-positive, no BIU→3d scale.
+        const VECTOR2I fpPos     = aFp->GetPosition();
+        const float    fpx_mm    = fpPos.x / 1e6f;
+        const float    fpy_mm    = fpPos.y / 1e6f;
+        const float    boardThk  = GetBoardThickness( aInst.board.get() );
+        const float    fpz_mm    = aFp->IsFlipped() ? aInst.position.z
+                                                     : aInst.position.z + boardThk;
+
+        glm::mat4 instMat( 1.0f );
+        instMat = glm::translate( instMat, glm::vec3( aInst.position.x,
+                                                       aInst.position.y, 0.0f ) );
+        instMat = glm::rotate( instMat, glm::radians( aInst.rotation.z ),
+                               glm::vec3( 0, 0, 1 ) );
+        instMat = glm::rotate( instMat, glm::radians( aInst.rotation.y ),
+                               glm::vec3( 0, 1, 0 ) );
+        instMat = glm::rotate( instMat, glm::radians( aInst.rotation.x ),
+                               glm::vec3( 1, 0, 0 ) );
+
+        glm::mat4 fpMat = instMat;
+        fpMat = glm::translate( fpMat, glm::vec3( fpx_mm, fpy_mm, fpz_mm ) );
+
+        const double fpOrientRad = aFp->GetOrientation().AsRadians();
+
+        if( fpOrientRad != 0.0 )
+            fpMat = glm::rotate( fpMat, static_cast<float>( fpOrientRad ),
+                                 glm::vec3( 0, 0, 1 ) );
+
+        if( aFp->IsFlipped() )
+        {
+            fpMat = glm::rotate( fpMat, glm::pi<float>(), glm::vec3( 0, 1, 0 ) );
+            fpMat = glm::rotate( fpMat, glm::pi<float>(), glm::vec3( 0, 0, 1 ) );
+        }
+
+        for( const FP_3DMODEL& fp_model : aFp->Models() )
+        {
+            if( !fp_model.m_Show || fp_model.m_Filename.empty() )
+                continue;
+
+            std::vector<const EMBEDDED_FILES*> stack;
+            stack.push_back( aFp->GetEmbeddedFiles() );
+            stack.push_back( aInst.board->GetEmbeddedFiles() );
+            const S3DMODEL* model = cache->GetModel( fp_model.m_Filename,
+                                                     wxEmptyString,
+                                                     std::move( stack ) );
+
+            if( !model || model->m_MeshesSize == 0 )
+                continue;
+
+            glm::mat4 mtx = fpMat;
+            mtx = glm::translate( mtx, glm::vec3( fp_model.m_Offset.x,
+                                                   fp_model.m_Offset.y,
+                                                   fp_model.m_Offset.z ) );
+            mtx = glm::rotate( mtx,
+                               glm::radians( -static_cast<float>( fp_model.m_Rotation.z ) ),
+                               glm::vec3( 0, 0, 1 ) );
+            mtx = glm::rotate( mtx,
+                               glm::radians( -static_cast<float>( fp_model.m_Rotation.y ) ),
+                               glm::vec3( 0, 1, 0 ) );
+            mtx = glm::rotate( mtx,
+                               glm::radians( -static_cast<float>( fp_model.m_Rotation.x ) ),
+                               glm::vec3( 1, 0, 0 ) );
+            mtx = glm::scale( mtx, glm::vec3( fp_model.m_Scale.x,
+                                               fp_model.m_Scale.y,
+                                               fp_model.m_Scale.z ) );
+
+            for( unsigned int m = 0; m < model->m_MeshesSize; m++ )
+            {
+                const SMESH& mesh = model->m_Meshes[m];
+
+                if( mesh.m_FaceIdxSize % 3 != 0 )
+                    continue;
+
+                // Pre-transform every vertex once. Mesh sizes for
+                // typical connector models run 100s–few thousand
+                // verts; an 18-flop mat4×vec4 each is fine.
+                std::vector<glm::vec3> worldVerts( mesh.m_VertexSize );
+
+                for( unsigned int v = 0; v < mesh.m_VertexSize; v++ )
+                {
+                    glm::vec4 p( mesh.m_Positions[v].x,
+                                 mesh.m_Positions[v].y,
+                                 mesh.m_Positions[v].z, 1.0f );
+                    worldVerts[v] = glm::vec3( mtx * p );
+                }
+
+                for( unsigned int f = 0; f < mesh.m_FaceIdxSize; f += 3 )
+                {
+                    unsigned int i0 = mesh.m_FaceIdx[f];
+                    unsigned int i1 = mesh.m_FaceIdx[f + 1];
+                    unsigned int i2 = mesh.m_FaceIdx[f + 2];
+
+                    if( i0 >= mesh.m_VertexSize || i1 >= mesh.m_VertexSize
+                        || i2 >= mesh.m_VertexSize )
+                        continue;
+
+                    WorldTri t;
+                    t.v0 = worldVerts[i0];
+                    t.v1 = worldVerts[i1];
+                    t.v2 = worldVerts[i2];
+
+                    t.aabbMin = glm::vec3( std::min( { t.v0.x, t.v1.x, t.v2.x } ),
+                                           std::min( { t.v0.y, t.v1.y, t.v2.y } ),
+                                           std::min( { t.v0.z, t.v1.z, t.v2.z } ) );
+                    t.aabbMax = glm::vec3( std::max( { t.v0.x, t.v1.x, t.v2.x } ),
+                                           std::max( { t.v0.y, t.v1.y, t.v2.y } ),
+                                           std::max( { t.v0.z, t.v1.z, t.v2.z } ) );
+
+                    if( !aOutHaveAabb )
+                    {
+                        aOutAabbMin = SFVEC3F( t.aabbMin.x, t.aabbMin.y, t.aabbMin.z );
+                        aOutAabbMax = SFVEC3F( t.aabbMax.x, t.aabbMax.y, t.aabbMax.z );
+                        aOutHaveAabb = true;
+                    }
+                    else
+                    {
+                        aOutAabbMin.x = std::min( aOutAabbMin.x, t.aabbMin.x );
+                        aOutAabbMin.y = std::min( aOutAabbMin.y, t.aabbMin.y );
+                        aOutAabbMin.z = std::min( aOutAabbMin.z, t.aabbMin.z );
+                        aOutAabbMax.x = std::max( aOutAabbMax.x, t.aabbMax.x );
+                        aOutAabbMax.y = std::max( aOutAabbMax.y, t.aabbMax.y );
+                        aOutAabbMax.z = std::max( aOutAabbMax.z, t.aabbMax.z );
+                    }
+
+                    aOutTris.push_back( t );
+                }
+            }
+        }
     };
 
     auto buildShape = [&]( const BOARD_3D_INSTANCE& aInst, const FOOTPRINT* aFp,
@@ -1505,6 +1946,20 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
         const float     spanY = std::abs( dx.y ) + std::abs( dy.y );
         aOut.worldMin = SFVEC3F( aOut.centerXY.x - spanX, aOut.centerXY.y - spanY, aOut.zMin );
         aOut.worldMax = SFVEC3F( aOut.centerXY.x + spanX, aOut.centerXY.y + spanY, aOut.zMax );
+
+        // Build per-footprint mesh-tri list eagerly. Small upfront
+        // cost (matrix multiply per vertex) saved across all O(N²)
+        // pair checks below.
+        bool haveMeshAabb = false;
+        buildFpMeshTris( aInst, aFp, aOut.meshTris,
+                          aOut.meshAabbMin, aOut.meshAabbMax, haveMeshAabb );
+
+        if( !haveMeshAabb )
+        {
+            aOut.meshAabbMin = aOut.worldMin;
+            aOut.meshAabbMax = aOut.worldMax;
+        }
+
         return true;
     };
 
@@ -1550,12 +2005,19 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
     }
 
     // Penetration threshold — collisions shallower than this are
-    // discarded as edge-case noise (component bbox overhang, almost-
-    // touching connectors). 0.05 mm is well below pad thickness and
-    // typical model tolerance, so anything above is a real collision.
+    // demoted to a CONTACT highlight (yellow) rather than COLLISION
+    // (red). 0.05 mm is well below pad thickness and typical model
+    // tolerance, so anything above is a real collision.
     constexpr float kMinPenetrationMm = 0.05f;
 
-    // Cross-board cross-footprint pair check: AABB broad → OBB-XY narrow.
+    // Proximity threshold — pairs within this many mm of touching but
+    // NOT penetrating get a CONTACT highlight too. Lets the user spot
+    // "this header pin clears the housing by 0.2 mm" issues without
+    // having to manually run a clearance pass.
+    constexpr float kContactMarginMm  = 0.5f;
+
+    // Cross-board cross-footprint pair check: inflated AABB broad →
+    // OBB-XY narrow with proximity-aware penetration.
     for( size_t i = 0; i < m_boardInstances.size(); i++ )
     {
         if( perInstance[i].empty() )
@@ -1573,26 +2035,33 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
             {
                 for( const FPCollisionShape& b : perInstance[j] )
                 {
-                    // Broad phase — AABB.
-                    if( a.worldMax.x <= b.worldMin.x || b.worldMax.x <= a.worldMin.x )
+                    // Broad phase — AABB inflated by the contact margin
+                    // on each side so we capture near-misses, not just
+                    // actual overlaps. Margin is symmetric (each box
+                    // gets the full margin), so two boxes 1.0 mm apart
+                    // pass the broad phase if margin = 0.5 mm.
+                    const float m = kContactMarginMm;
+                    if( a.worldMax.x + m <= b.worldMin.x - m
+                        || b.worldMax.x + m <= a.worldMin.x - m )
                         continue;
-                    if( a.worldMax.y <= b.worldMin.y || b.worldMax.y <= a.worldMin.y )
+                    if( a.worldMax.y + m <= b.worldMin.y - m
+                        || b.worldMax.y + m <= a.worldMin.y - m )
                         continue;
-                    if( a.worldMax.z <= b.worldMin.z || b.worldMax.z <= a.worldMin.z )
+                    if( a.worldMax.z + m <= b.worldMin.z - m
+                        || b.worldMax.z + m <= a.worldMin.z - m )
                         continue;
 
-                    // Narrow phase — OBB SAT in XY. Z stays an interval
-                    // because per-instance X/Y rotation is out of scope
-                    // for this phase.
-                    if( !obbXYOverlap( a, b ) )
-                        continue;
-
-                    if( isMated( inst1.uuid, a.ref, inst2.uuid, b.ref ) )
-                        continue;
-
-                    // Penetration approximation along each axis. Use
-                    // OBB axes (more meaningful than world AABB axes
-                    // when boards are rotated), plus the Z interval.
+                    // Narrow phase — full OBB SAT (4 XY axes + Z). The
+                    // SAT theorem says: if there is any axis on which
+                    // the projected radii fail to overlap, the OBBs
+                    // are separated. minPen is the signed min across
+                    // all 4 XY axes plus Z; positive = overlap on
+                    // every axis (real intersection), negative = gap
+                    // of that magnitude on the worst-case axis.
+                    //
+                    // Earlier 2-axis variant only checked a's frame,
+                    // giving false positives on rotated boards (it
+                    // missed separating axes from b's frame).
                     auto axisPen = [&]( const glm::vec2& L ) -> float
                     {
                         float radA = std::abs( glm::dot( a.axisX, L ) ) * a.halfX
@@ -1603,41 +2072,186 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
                         return ( radA + radB ) - dist;
                     };
 
-                    float xPen = axisPen( a.axisX );
-                    float yPen = axisPen( a.axisY );
-                    float zPen = std::min( a.worldMax.z - b.worldMin.z,
-                                           b.worldMax.z - a.worldMin.z );
-                    float minPen = std::min( { xPen, yPen, zPen } );
+                    float xyPen = std::min( { axisPen( a.axisX ),
+                                               axisPen( a.axisY ),
+                                               axisPen( b.axisX ),
+                                               axisPen( b.axisY ) } );
 
-                    if( minPen < kMinPenetrationMm )
+                    // Z is interval-only (no per-instance X/Y tilt
+                    // yet) — same signed convention.
+                    float zPenA = a.worldMax.z - b.worldMin.z;
+                    float zPenB = b.worldMax.z - a.worldMin.z;
+                    float zPen  = std::min( zPenA, zPenB );
+
+                    float minPen = std::min( xyPen, zPen );
+
+                    // Skip pairs whose nearest separation exceeds the
+                    // contact margin — they're not even close.
+                    if( minPen < -kContactMarginMm )
                         continue;
 
-                    COLLISION_RESULT result;
-                    result.board1Uuid = inst1.uuid;
-                    result.board2Uuid = inst2.uuid;
-                    result.item1Desc  = wxString::Format( wxT( "%s:%s" ),
-                                                          inst1.displayName, a.ref );
-                    result.item2Desc  = wxString::Format( wxT( "%s:%s" ),
-                                                          inst2.displayName, b.ref );
+                    bool mated = isMated( inst1.uuid, a.ref, inst2.uuid, b.ref );
 
-                    glm::vec2 midXY = ( a.centerXY + b.centerXY ) * 0.5f;
-                    float midZ = ( std::max( a.worldMin.z, b.worldMin.z )
-                                   + std::min( a.worldMax.z, b.worldMax.z ) ) * 0.5f;
-                    result.collisionPoint = SFVEC3F( midXY.x, midXY.y, midZ );
-                    result.penetrationMm  = minPen;
+                    // Skip ALL mated pairs from the highlight pass —
+                    // intentional contact / mating overshoot is what
+                    // the green/cyan mate gizmo communicates already.
+                    if( mated )
+                        continue;
 
-                    m_lastCollisions.push_back( result );
+                    // M6.E phase-3 mesh-level narrow phase. The OBB
+                    // SAT above only knows about footprint pad/silk
+                    // bboxes × model height, which doesn't tell a
+                    // mated header from a collision — both have AABBs
+                    // that deeply overlap. Walk the actual 3D-model
+                    // triangles to discriminate.
+                    const float       margin   = kContactMarginMm;
+                    const float       marginSq = margin * margin;
+                    bool              anyHit   = false;
+                    float             minDistSq = std::numeric_limits<float>::infinity();
+                    glm::vec3         hitMin( 0.0f );
+                    glm::vec3         hitMax( 0.0f );
+                    bool              haveHit  = false;
+                    glm::vec3         nearMin( 0.0f );
+                    glm::vec3         nearMax( 0.0f );
+                    bool              haveNear = false;
 
-                    // Track endpoint instance + footprint refs so the
-                    // collision gizmo can project them to world space
-                    // via projectFootprintCentroidToWorld (matching the
-                    // mate gizmo's pose math exactly).
-                    CollisionPair pair;
-                    pair.instanceA = inst1.uuid;
-                    pair.refA      = a.ref;
-                    pair.instanceB = inst2.uuid;
-                    pair.refB      = b.ref;
-                    m_lastCollisionPairs.push_back( pair );
+                    auto growBox = [&]( glm::vec3& aMin, glm::vec3& aMax,
+                                        const glm::vec3& aP, bool& aHave )
+                    {
+                        if( !aHave )
+                        {
+                            aMin = aMax = aP;
+                            aHave = true;
+                        }
+                        else
+                        {
+                            aMin = glm::min( aMin, aP );
+                            aMax = glm::max( aMax, aP );
+                        }
+                    };
+
+                    // Mesh-level pair walk. Per-tri AABB inflated by
+                    // contact margin keeps this cheap when the meshes
+                    // are far apart on most triangles.
+                    for( const WorldTri& ta : a.meshTris )
+                    {
+                        for( const WorldTri& tb : b.meshTris )
+                        {
+                            // Tri-tri AABB broad phase with margin.
+                            if( ta.aabbMax.x + margin < tb.aabbMin.x
+                                || tb.aabbMax.x + margin < ta.aabbMin.x )
+                                continue;
+                            if( ta.aabbMax.y + margin < tb.aabbMin.y
+                                || tb.aabbMax.y + margin < ta.aabbMin.y )
+                                continue;
+                            if( ta.aabbMax.z + margin < tb.aabbMin.z
+                                || tb.aabbMax.z + margin < ta.aabbMin.z )
+                                continue;
+
+                            if( trianglesIntersect( ta.v0, ta.v1, ta.v2,
+                                                     tb.v0, tb.v1, tb.v2 ) )
+                            {
+                                anyHit = true;
+                                growBox( hitMin, hitMax, ta.v0, haveHit );
+                                growBox( hitMin, hitMax, ta.v1, haveHit );
+                                growBox( hitMin, hitMax, ta.v2, haveHit );
+                                growBox( hitMin, hitMax, tb.v0, haveHit );
+                                growBox( hitMin, hitMax, tb.v1, haveHit );
+                                growBox( hitMin, hitMax, tb.v2, haveHit );
+                                continue;
+                            }
+
+                            // Not intersecting — track min vertex-to-
+                            // triangle distance for CONTACT detection.
+                            // Sample a's 3 vertices vs b and vice-versa
+                            // → 6 point-tri tests per tri pair, far
+                            // cheaper than full edge-edge closest-
+                            // point but enough for connector-scale
+                            // proximity checks.
+                            float d2;
+
+                            d2 = pointTriangleDistSq( ta.v0, tb.v0, tb.v1, tb.v2 );
+                            if( d2 < minDistSq ) minDistSq = d2;
+                            d2 = pointTriangleDistSq( ta.v1, tb.v0, tb.v1, tb.v2 );
+                            if( d2 < minDistSq ) minDistSq = d2;
+                            d2 = pointTriangleDistSq( ta.v2, tb.v0, tb.v1, tb.v2 );
+                            if( d2 < minDistSq ) minDistSq = d2;
+                            d2 = pointTriangleDistSq( tb.v0, ta.v0, ta.v1, ta.v2 );
+                            if( d2 < minDistSq ) minDistSq = d2;
+                            d2 = pointTriangleDistSq( tb.v1, ta.v0, ta.v1, ta.v2 );
+                            if( d2 < minDistSq ) minDistSq = d2;
+                            d2 = pointTriangleDistSq( tb.v2, ta.v0, ta.v1, ta.v2 );
+                            if( d2 < minDistSq ) minDistSq = d2;
+
+                            if( minDistSq <= marginSq )
+                            {
+                                // Track the bbox of the participating
+                                // tri pair so the highlight box hugs
+                                // the contact zone and not the whole
+                                // footprint.
+                                growBox( nearMin, nearMax, ta.v0, haveNear );
+                                growBox( nearMin, nearMax, ta.v1, haveNear );
+                                growBox( nearMin, nearMax, ta.v2, haveNear );
+                                growBox( nearMin, nearMax, tb.v0, haveNear );
+                                growBox( nearMin, nearMax, tb.v1, haveNear );
+                                growBox( nearMin, nearMax, tb.v2, haveNear );
+                            }
+                        }
+                    }
+
+                    OVERLAP_KIND kind;
+                    glm::vec3    boxMin, boxMax;
+
+                    if( anyHit )
+                    {
+                        kind   = OVERLAP_KIND::COLLISION;
+                        boxMin = hitMin;
+                        boxMax = hitMax;
+                    }
+                    else if( haveNear )
+                    {
+                        kind   = OVERLAP_KIND::CONTACT;
+                        boxMin = nearMin;
+                        boxMax = nearMax;
+                    }
+                    else
+                    {
+                        // Mesh-level test cleared this pair — no
+                        // intersection, no proximity. AABB false
+                        // positive (e.g. mated header inside its
+                        // socket's air space). Move on.
+                        continue;
+                    }
+
+                    OverlapBox box;
+                    box.minMm     = SFVEC3F( boxMin.x, boxMin.y, boxMin.z );
+                    box.maxMm     = SFVEC3F( boxMax.x, boxMax.y, boxMax.z );
+                    box.kind      = kind;
+                    box.instanceA = inst1.uuid;
+                    box.instanceB = inst2.uuid;
+                    box.refA      = a.ref;
+                    box.refB      = b.ref;
+                    m_lastOverlapBoxes.push_back( box );
+
+                    // Only true collisions populate m_lastCollisions
+                    // (which drives the panel status label).
+                    if( kind == OVERLAP_KIND::COLLISION )
+                    {
+                        COLLISION_RESULT result;
+                        result.board1Uuid = inst1.uuid;
+                        result.board2Uuid = inst2.uuid;
+                        result.item1Desc  = wxString::Format( wxT( "%s:%s" ),
+                                                              inst1.displayName, a.ref );
+                        result.item2Desc  = wxString::Format( wxT( "%s:%s" ),
+                                                              inst2.displayName, b.ref );
+
+                        glm::vec3 mid     = ( boxMin + boxMax ) * 0.5f;
+                        result.collisionPoint = SFVEC3F( mid.x, mid.y, mid.z );
+                        result.penetrationMm  = std::max( minPen,
+                                                          kMinPenetrationMm );
+
+                        m_lastCollisions.push_back( result );
+                    }
                 }
             }
         }
@@ -2160,7 +2774,17 @@ bool ASSEMBLY_3D_MANAGER::RedrawAll( bool aIsMoving, REPORTER* aStatusReporter,
     // the camera's view matrix directly (no per-instance pose) — the
     // gizmo entries already carry world-space coords computed from the
     // same pose math the renderer used.
-    if( m_showMateGizmos && !firstPass && m_camera )
+    //
+    // The outer gate fires when ANY of the three overlay toggles is on
+    // — per-entry filtering inside rebuildMateGizmoEntries decides
+    // which entries actually populate the entry list. This way "Show
+    // collisions" alone is enough to keep collision markers visible
+    // when the user has hidden mate gizmos.
+    const bool anyOverlayOn = m_showMateGizmos
+                              || m_showCollisionHighlights
+                              || m_showContactHighlights;
+
+    if( anyOverlayOn && !firstPass && m_camera )
     {
         if( !m_mateGizmo )
             m_mateGizmo = std::make_unique<MATE_GIZMO>();
@@ -2374,6 +2998,16 @@ void ASSEMBLY_3D_MANAGER::rebuildMateGizmoEntries()
 
     const bool anySelected = !m_selectedMatePairId.IsEmpty();
 
+    // Mate-pair entries draw when EITHER "Show mate gizmos" or "Show
+    // contact highlights" is on. They share the same geometry (the
+    // line connecting two mating connectors) — semantically "mate
+    // gizmo" describes the abstract relation while "contact highlight"
+    // describes that the parts are touching. Either toggle should
+    // surface them; neither one off should hide them as long as the
+    // other is on.
+    const bool drawMatePairs = m_showMateGizmos || m_showContactHighlights;
+
+    if( drawMatePairs )
     for( const MATE_EDGE& edge : edges )
     {
         const MATE_PAIR* primary = PickPrimaryPair( edge );
@@ -2437,52 +3071,68 @@ void ASSEMBLY_3D_MANAGER::rebuildMateGizmoEntries()
         }
     }
 
-    // M6.E phase-2: append collision entries from the last collision
-    // run. Same gizmo, distinct SOURCE::COLLISION → red colour. Mate
-    // entries above already cover "expected contact" (green/cyan), so
-    // the user sees both colour-coded in one overlay pass.
-    for( const CollisionPair& cp : m_lastCollisionPairs )
+    m_mateGizmo->SetEntries( std::move( entries ) );
+
+    // M6.E phase-2 visualization: convert OverlapBox records (mm) to
+    // shared 3D-viewer world units and hand them to the gizmo as
+    // translucent boxes. The same conversion factors the mate-pair
+    // entries use are applied here, plus the Y-flip the renderer
+    // applies to footprint coordinates. Result: boxes overlay on top
+    // of the actual model geometry instead of floating as line
+    // gizmos between centroids.
+    std::vector<MATE_GIZMO::OVERLAP_BOX> boxes;
+
+    if( m_showCollisionHighlights || m_showContactHighlights )
     {
-        const auto itA = adapterIndexByInst.find( cp.instanceA );
-        const auto itB = adapterIndexByInst.find( cp.instanceB );
+        constexpr float biuPerMm = 1e6f;
+        const float     sharedF  = static_cast<float>( m_sharedBiuTo3Dunits );
 
-        if( itA == adapterIndexByInst.end() || itB == adapterIndexByInst.end() )
-            continue;
+        SFVEC3F   bboxMin, bboxMax;
+        GetAssemblyBoundingBox( bboxMin, bboxMax );
+        SFVEC3F   centerMm = ( bboxMin + bboxMax ) * 0.5f;
+        glm::vec3 centerShared(  centerMm.x * biuPerMm * sharedF,
+                                -centerMm.y * biuPerMm * sharedF,
+                                 centerMm.z * biuPerMm * sharedF );
 
-        const size_t idxA = itA->second;
-        const size_t idxB = itB->second;
+        auto mmToShared = [&]( const SFVEC3F& aMm ) -> glm::vec3
+        {
+            return glm::vec3(  aMm.x * biuPerMm * sharedF,
+                              -aMm.y * biuPerMm * sharedF,
+                               aMm.z * biuPerMm * sharedF ) - centerShared;
+        };
 
-        if( idxA >= m_instanceAdapters.size() || idxB >= m_instanceAdapters.size() )
-            continue;
+        for( const OverlapBox& ob : m_lastOverlapBoxes )
+        {
+            const bool isCollision = ( ob.kind == OVERLAP_KIND::COLLISION );
 
-        const BOARD_ADAPTER* adapterA = m_instanceAdapters[idxA].get();
-        const BOARD_ADAPTER* adapterB = m_instanceAdapters[idxB].get();
+            if( isCollision && !m_showCollisionHighlights )
+                continue;
 
-        if( !adapterA || !adapterB )
-            continue;
+            if( !isCollision && !m_showContactHighlights )
+                continue;
 
-        glm::vec3 worldA, worldB;
+            // Y is negated in the world conversion, so the AABB's
+            // post-conversion min/max can swap on the Y axis. Build
+            // the box from the corner-by-corner mapping and re-extract
+            // axis-aligned min/max afterwards.
+            glm::vec3 sMin = mmToShared( ob.minMm );
+            glm::vec3 sMax = mmToShared( ob.maxMm );
 
-        if( !projectFootprintCentroidToWorld( m_boardInstances[idxA], *adapterA,
-                                              cp.refA, worldA ) )
-            continue;
+            glm::vec3 actualMin( std::min( sMin.x, sMax.x ),
+                                 std::min( sMin.y, sMax.y ),
+                                 std::min( sMin.z, sMax.z ) );
+            glm::vec3 actualMax( std::max( sMin.x, sMax.x ),
+                                 std::max( sMin.y, sMax.y ),
+                                 std::max( sMin.z, sMax.z ) );
 
-        if( !projectFootprintCentroidToWorld( m_boardInstances[idxB], *adapterB,
-                                              cp.refB, worldB ) )
-            continue;
-
-        MATE_GIZMO::ENTRY e;
-        e.posA        = worldA;
-        e.posB        = worldB;
-        e.source      = MATE_GIZMO::SOURCE::COLLISION;
-        e.role        = MATE_GIZMO::ROLE::PRIMARY;  // unused for COLLISION styling
-        e.matePairId  = wxString::Format( wxT( "collision|%s|%s|%s|%s" ),
-                                           cp.instanceA.AsString(), cp.refA,
-                                           cp.instanceB.AsString(), cp.refB );
-        e.selected    = false;
-        e.anySelected = anySelected;
-        entries.push_back( e );
+            MATE_GIZMO::OVERLAP_BOX b;
+            b.minWorld = actualMin;
+            b.maxWorld = actualMax;
+            b.kind     = isCollision ? MATE_GIZMO::OVERLAP_KIND::COLLISION
+                                     : MATE_GIZMO::OVERLAP_KIND::CONTACT;
+            boxes.push_back( b );
+        }
     }
 
-    m_mateGizmo->SetEntries( std::move( entries ) );
+    m_mateGizmo->SetOverlapBoxes( std::move( boxes ) );
 }

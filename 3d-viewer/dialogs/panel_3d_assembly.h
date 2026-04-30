@@ -39,6 +39,7 @@ class wxCheckListBox;
 class wxChoice;
 class wxListCtrl;
 class wxListEvent;
+class wxScrolledWindow;
 class wxStaticText;
 class wxTextCtrl;
 class wxTreeCtrl;
@@ -98,12 +99,29 @@ private:
     // M6.D-phase-2 custom mate handlers
     void onAddCustomMate( wxCommandEvent& aEvent );
     void onEditCustomMate( wxCommandEvent& aEvent );
-    void onMarkMatePrimary( wxCommandEvent& aEvent );
+    void onMoveMateUp( wxCommandEvent& aEvent );
+    void onMoveMateDown( wxCommandEvent& aEvent );
     void onDisableMate( wxCommandEvent& aEvent );
     void onDeleteCustomMate( wxCommandEvent& aEvent );
     void onMateTreeSelectionChanged( wxTreeEvent& aEvent );
     void onMateTreeActivated( wxTreeEvent& aEvent );    ///< double-click → edit
     void onShowMatesToggled( wxCommandEvent& aEvent );
+    void onShowCollisionsToggled( wxCommandEvent& aEvent );
+    void onShowContactsToggled( wxCommandEvent& aEvent );
+
+    /**
+     * Position section's own board picker — independent of the
+     * Boards visibility list. Switching the picker just repaints
+     * the X/Y/Z + rotation fields with that board's current state.
+     */
+    void onPositionBoardChoice( wxCommandEvent& aEvent );
+
+    /**
+     * Run collision detection and refresh the gizmo + status label.
+     * Called from every position/rotation/visibility change so the
+     * red collision markers stay live without a manual button.
+     */
+    void autoRunCollisionCheck();
 
     /**
      * Rebuild the mates tree from the manager's current mate graph
@@ -112,10 +130,18 @@ private:
     void RefreshMatesTree();
 
     /**
-     * Update the per-row action buttons (Mark primary / Disable /
-     * Delete) based on the currently-selected mate row.
+     * Update the per-row action buttons (Move up / Move down / Disable
+     * / Delete) based on the currently-selected mate row.
      */
     void updateMateButtons();
+
+    /**
+     * Re-select the mate-tree row whose canonical pair-id matches
+     * `aPairId`. Called after RefreshMatesTree (which clears the
+     * selection) so the user keeps focus on the row they just acted
+     * on. No-op if the row no longer exists.
+     */
+    void selectMatePairRow( const wxString& aPairId );
 
     /**
      * Update the 3D view after a change.
@@ -135,7 +161,12 @@ private:
     EDA_3D_VIEWER_FRAME*    m_frame;
     ASSEMBLY_3D_MANAGER*    m_manager;
 
-    // Board list
+    // Scrolled inner panel hosting all sections (so the panel scrolls
+    // when the AUI pane is shorter than the section column).
+    wxScrolledWindow*       m_scrolled;
+
+    // Board list (visibility only; selection for Position is now a
+    // separate wxChoice in the Position section).
     wxCheckListBox*         m_boardListBox;
     wxButton*               m_showAllButton;
     wxButton*               m_hideAllButton;
@@ -143,8 +174,9 @@ private:
     // Layout
     wxChoice*               m_layoutModeChoice;
 
-    // Position controls (for selected board)
-    wxStaticText*           m_selectedBoardLabel;
+    // Position controls — own board picker, decoupled from the Boards
+    // visibility list.
+    wxChoice*               m_positionBoardChoice;
     wxTextCtrl*             m_posXCtrl;
     wxTextCtrl*             m_posYCtrl;
     wxTextCtrl*             m_posZCtrl;
@@ -152,26 +184,33 @@ private:
     wxTextCtrl*             m_rotYCtrl;
     wxTextCtrl*             m_rotZCtrl;
     wxButton*               m_resetPositionsButton;
-
-    // Assembly options
-    wxCheckBox*             m_mateConnectorsCheck;
     wxCheckBox*             m_transparentCheck;
 
-    // Validation
-    wxButton*               m_collisionCheckButton;
+    // M6.D-phase-2 mates UI. "Mate connectors" toggle moved here so
+    // the mate-related controls live together. View toggles below
+    // (mate gizmos / collision / contact highlights) are independent
+    // of the mate solver state.
+    wxCheckBox*             m_mateConnectorsCheck;
+    wxTreeCtrl*             m_matesTree;
+    wxButton*               m_addMateButton;
+    wxButton*               m_editMateButton;
+    wxButton*               m_moveMateUpButton;
+    wxButton*               m_moveMateDownButton;
+    wxButton*               m_disableMateButton;
+    wxButton*               m_deleteMateButton;
+
+    // View / overlay toggles. Independent of the underlying solver
+    // and collision state — controls *what* the gizmo pass renders.
+    wxCheckBox*             m_showMatesCheck;
+    wxCheckBox*             m_showCollisionsCheck;
+    wxCheckBox*             m_showContactsCheck;
+
+    // Validation. Auto-runs on every position/visibility change; the
+    // status label reflects the latest result.
     wxStaticText*           m_collisionStatusLabel;
 
     // Export
     wxButton*               m_exportSTEPButton;
-
-    // M6.D-phase-2 mates UI
-    wxCheckBox*             m_showMatesCheck;
-    wxTreeCtrl*             m_matesTree;
-    wxButton*               m_addMateButton;
-    wxButton*               m_editMateButton;
-    wxButton*               m_markPrimaryButton;
-    wxButton*               m_disableMateButton;
-    wxButton*               m_deleteMateButton;
 
     /// Per-row metadata attached to mate-tree leaves so the action
     /// buttons can map a tree selection back to the underlying

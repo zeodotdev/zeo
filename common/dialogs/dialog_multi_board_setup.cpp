@@ -25,6 +25,7 @@
 
 #include <env_vars.h>
 #include <pgm_base.h>
+#include <project.h>
 #include <project/project_file.h>
 #include <project_template.h>
 #include <wildcards_and_files_ext.h>
@@ -88,16 +89,57 @@ static bool persistContainerOrWarn( wxWindow* aParent, PROJECT_FILE* aProject,
     // Force the save through even if Store()'s MatchesFile heuristic
     // believes nothing changed — we just performed a deliberate edit
     // and the user expects it on disk.
-    if( !aProject->SaveToFile( aContainerDir, /*aForce=*/true ) )
+    if( aProject->SaveToFile( aContainerDir, /*aForce=*/true ) )
+        return true;
+
+    // Diagnose the failure: SaveToFile has a handful of early-exit gates
+    // (read-only flag, empty filename, unwritable directory, file write
+    // error). Reconstruct the same path it would have used and probe each
+    // gate so the popup can tell the user exactly which one tripped.
+    wxString filename = aProject->GetFilename();   // basename for live PFs
+    wxString fileExt  = wxString::FromUTF8( FILEEXT::ProjectFileExtension );
+
+    wxFileName probe;
+
+    if( aContainerDir.IsEmpty() )
     {
-        wxMessageBox(
-                _( "Could not persist the multi-board project. Your edit is in memory "
-                   "but is not yet on disk; closing the project now will lose it." ),
-                _( "Save Failed" ), wxOK | wxICON_ERROR, aParent );
-        return false;
+        probe.Assign( filename );
+        probe.SetExt( fileExt );
+    }
+    else
+    {
+        probe.Assign( aContainerDir, filename, fileExt );
     }
 
-    return true;
+    wxString detail;
+
+    if( aProject->IsReadOnly() )
+        detail = _( "the project is marked read-only (m_writeFile=false)." );
+    else if( filename.IsEmpty() )
+        detail = _( "the PROJECT_FILE has no filename." );
+    else if( !probe.DirExists() )
+        detail = wxString::Format(
+                _( "the project directory does not exist: %s" ), probe.GetPath() );
+    else if( probe.FileExists() && !probe.IsFileWritable() )
+        detail = wxString::Format(
+                _( "the project file is not writable: %s" ), probe.GetFullPath() );
+    else if( !probe.FileExists() && !probe.IsDirWritable() )
+        detail = wxString::Format(
+                _( "the project directory is not writable: %s" ), probe.GetPath() );
+    else
+        detail = wxString::Format(
+                _( "writing %s failed (filesystem error or JSON serialisation)." ),
+                probe.GetFullPath() );
+
+    wxMessageBox(
+            wxString::Format(
+                    _( "Could not persist the multi-board project. Your edit is in "
+                       "memory but is not yet on disk; closing the project now will "
+                       "lose it.\n\nDiagnostic: %s\n\nTried directory: %s\nFilename: %s" ),
+                    detail, aContainerDir, filename ),
+            _( "Save Failed" ), wxOK | wxICON_ERROR, aParent );
+
+    return false;
 }
 
 
@@ -108,13 +150,21 @@ DIALOG_MULTI_BOARD_SETUP::~DIALOG_MULTI_BOARD_SETUP()
 
 wxFileName DIALOG_MULTI_BOARD_SETUP::containerDir() const
 {
-    // Derive from m_multiProjectPath (the absolute `.kicad_pro` path
-    // passed to the dialog ctor), not m_project->GetFullFilename() —
-    // the latter is just the basename ("name.kicad_pro") for a live
-    // PROJECT_FILE because SETTINGS_MANAGER constructs PROJECT_FILE
-    // with the basename as m_filename. SetFullName("") strips the
-    // trailing file part, leaving the directory.
-    wxFileName dir( m_multiProjectPath );
+    // Prefer the live PROJECT's absolute path (via the PROJECT_FILE
+    // back-pointer): SETTINGS_MANAGER stores the canonical
+    // "/abs/path/name.kicad_pro" on PROJECT, while PROJECT_FILE's own
+    // m_filename is only the basename. Falling back to
+    // m_multiProjectPath covers any free-standing PROJECT_FILE that
+    // isn't owned by SETTINGS_MANAGER (no current callers, but defensive
+    // — also covers the historic broken callers that passed only a
+    // basename in m_multiProjectPath).
+    wxFileName dir;
+
+    if( m_project && m_project->GetProject() )
+        dir.Assign( m_project->GetProject()->GetProjectFullName() );
+    else
+        dir = m_multiProjectPath;
+
     dir.SetFullName( wxEmptyString );
     return dir;
 }

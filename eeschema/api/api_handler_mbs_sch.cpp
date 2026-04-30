@@ -313,9 +313,13 @@ API_HANDLER_MBS_SCH::handleGetCrossBoardNets(
     //
     // Pass the project directory explicitly: m_filename on a live
     // PROJECT_FILE is just the basename, so an empty aDirectory would
-    // resolve relative to CWD. See settings_manager.cpp::loadProjectFile.
-    projectFile.LoadFromFile(
-            wxFileName( m_frame->Prj().GetProjectFullName() ).GetPath() );
+    // resolve relative to CWD. Resolve via the back-pointer rather
+    // than m_frame->Prj() to dodge the multi-project ambiguity.
+    if( projectFile.GetProject() )
+    {
+        projectFile.LoadFromFile(
+                wxFileName( projectFile.GetProject()->GetProjectFullName() ).GetPath() );
+    }
 
     for( const MB_CROSS_BOARD_NET& net : projectFile.GetCrossBoardNets() )
     {
@@ -531,7 +535,14 @@ API_HANDLER_MBS_SCH::handleSyncCrossBoardNetsToPcb(
     // For live PROJECT_FILEs, m_filename is the basename only — Load /
     // SaveToFile with no aDirectory resolve relative to CWD and miss
     // the actual .kicad_pro on disk. Pass the project directory.
-    wxString containerDir = wxFileName( m_frame->Prj().GetProjectFullName() ).GetPath();
+    // Resolve via the PROJECT_FILE back-pointer rather than
+    // m_frame->Prj(): the back-pointer is unambiguous, while Prj()
+    // can return the wrong project in multi-project sessions when
+    // no per-frame override is set.
+    wxString containerDir;
+
+    if( container.GetProject() )
+        containerDir = wxFileName( container.GetProject()->GetProjectFullName() ).GetPath();
 
     // Reload to pick up cross-board nets written by the MBSCH save hook;
     // the in-memory PROJECT_FILE won't reflect a recent save otherwise.

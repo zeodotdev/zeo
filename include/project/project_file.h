@@ -389,6 +389,16 @@ public:
         m_project = aProject;
     }
 
+    /// Back-pointer to the owning PROJECT (set by SETTINGS_MANAGER::loadProjectFile).
+    /// Returns nullptr for free-standing PROJECT_FILEs that aren't registered with
+    /// SETTINGS_MANAGER (e.g. the temporary instances used by the MBSCH save hook
+    /// or the cross-board net extractor). Callers that need the absolute path of
+    /// the .kicad_pro on disk should prefer this over GetFullFilename(): for
+    /// SETTINGS_MANAGER-owned PROJECT_FILEs, m_filename is the basename only
+    /// (set in settings_manager.cpp::loadProjectFile), so GetFullFilename()
+    /// returns "name.kicad_pro" without a directory.
+    PROJECT* GetProject() const { return m_project; }
+
     std::vector<FILE_INFO_PAIR>& GetSheets()
     {
         return m_sheets;

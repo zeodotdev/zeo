@@ -305,6 +305,18 @@ API_HANDLER_MBS_SCH::handleGetCrossBoardNets(
     if( !projectFile.IsMultiBoardContainer() )
         return response;
 
+    // onSchematicSaved() extracts cross-board nets into a freshly-loaded
+    // PROJECT_FILE instance and saves it to disk; the MBS frame's own
+    // in-memory PROJECT_FILE never sees those updates. Reload from disk
+    // so callers always get the latest extraction (matches the same
+    // pattern in handleSyncCrossBoardNetsToPcb below).
+    //
+    // Pass the project directory explicitly: m_filename on a live
+    // PROJECT_FILE is just the basename, so an empty aDirectory would
+    // resolve relative to CWD. See settings_manager.cpp::loadProjectFile.
+    projectFile.LoadFromFile(
+            wxFileName( m_frame->Prj().GetProjectFullName() ).GetPath() );
+
     for( const MB_CROSS_BOARD_NET& net : projectFile.GetCrossBoardNets() )
     {
         kiapi::schematic::types::CrossBoardNet* netMsg = response.add_nets();
@@ -516,13 +528,18 @@ API_HANDLER_MBS_SCH::handleSyncCrossBoardNetsToPcb(
         return tl::unexpected( e );
     }
 
+    // For live PROJECT_FILEs, m_filename is the basename only — Load /
+    // SaveToFile with no aDirectory resolve relative to CWD and miss
+    // the actual .kicad_pro on disk. Pass the project directory.
+    wxString containerDir = wxFileName( m_frame->Prj().GetProjectFullName() ).GetPath();
+
     // Reload to pick up cross-board nets written by the MBSCH save hook;
     // the in-memory PROJECT_FILE won't reflect a recent save otherwise.
-    container.LoadFromFile();
+    container.LoadFromFile( containerDir );
 
     MB_CROSS_BOARD_SYNC_RESULT result = ApplyCrossBoardNetsToSubProjectPCBs( container );
 
-    container.SaveToFile();
+    container.SaveToFile( containerDir );
 
     kiapi::schematic::commands::SyncCrossBoardNetsToPcbResponse response;
     response.set_sub_projects_touched( result.subProjectsTouched );

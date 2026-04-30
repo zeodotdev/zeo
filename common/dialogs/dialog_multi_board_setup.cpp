@@ -60,6 +60,47 @@ DIALOG_MULTI_BOARD_SETUP::DIALOG_MULTI_BOARD_SETUP( wxWindow*            aParent
 }
 
 
+/**
+ * Persist the current sub-project list to disk and surface any failure to
+ * the user. Called after every Add/Remove operation so that each edit is
+ * locked in immediately — the previous "save only on Done" behaviour
+ * silently lost edits if anything between the operation and Done caused
+ * the in-memory PROJECT_FILE to be re-loaded from disk (peer save hooks,
+ * sub-project open paths that touch SETTINGS_MANAGER, app crashes, etc.).
+ *
+ * `aContainerDir` MUST be the absolute directory containing the
+ * `.kicad_pro`. SaveToFile derives the on-disk path from m_filename +
+ * aDirectory; for a live PROJECT_FILE registered with SETTINGS_MANAGER,
+ * m_filename is just the basename (set in settings_manager.cpp's
+ * `loadProjectFile`), so passing an empty `aDirectory` would write
+ * relative to CWD — usually the wrong place — and on a non-writable
+ * CWD would silently fail. Always pass the project directory.
+ *
+ * Returns true on success, false otherwise; the caller is responsible
+ * for reverting the in-memory change if persistence fails.
+ */
+static bool persistContainerOrWarn( wxWindow* aParent, PROJECT_FILE* aProject,
+                                    const wxString& aContainerDir )
+{
+    if( !aProject )
+        return false;
+
+    // Force the save through even if Store()'s MatchesFile heuristic
+    // believes nothing changed — we just performed a deliberate edit
+    // and the user expects it on disk.
+    if( !aProject->SaveToFile( aContainerDir, /*aForce=*/true ) )
+    {
+        wxMessageBox(
+                _( "Could not persist the multi-board project. Your edit is in memory "
+                   "but is not yet on disk; closing the project now will lose it." ),
+                _( "Save Failed" ), wxOK | wxICON_ERROR, aParent );
+        return false;
+    }
+
+    return true;
+}
+
+
 DIALOG_MULTI_BOARD_SETUP::~DIALOG_MULTI_BOARD_SETUP()
 {
 }
@@ -67,7 +108,13 @@ DIALOG_MULTI_BOARD_SETUP::~DIALOG_MULTI_BOARD_SETUP()
 
 wxFileName DIALOG_MULTI_BOARD_SETUP::containerDir() const
 {
-    wxFileName dir( m_project->GetFullFilename() );
+    // Derive from m_multiProjectPath (the absolute `.kicad_pro` path
+    // passed to the dialog ctor), not m_project->GetFullFilename() —
+    // the latter is just the basename ("name.kicad_pro") for a live
+    // PROJECT_FILE because SETTINGS_MANAGER constructs PROJECT_FILE
+    // with the basename as m_filename. SetFullName("") strips the
+    // trailing file part, leaving the directory.
+    wxFileName dir( m_multiProjectPath );
     dir.SetFullName( wxEmptyString );
     return dir;
 }
@@ -124,8 +171,11 @@ void DIALOG_MULTI_BOARD_SETUP::buildUI()
 
     Bind( wxEVT_BUTTON,
           [this]( wxCommandEvent& ) {
-              if( m_project )
-                  m_project->SaveToFile();
+              // Final safety save. Per-op saves in onCreateNew / onImportExisting /
+              // onRemove are the source of truth for state persistence; this is
+              // a defensive forced save so that any field the dialog mutated
+              // outside the per-op handlers also lands.
+              persistContainerOrWarn( this, m_project, containerDir().GetPath() );
               EndModal( wxID_OK );
           },
           wxID_OK );
@@ -281,6 +331,16 @@ bool DIALOG_MULTI_BOARD_SETUP::importExistingProject( const wxFileName& aSourceP
     info.relativePath = relProFile.GetFullPath( wxPATH_UNIX );
 
     m_project->AddSubProject( info );
+
+    // Persist immediately so the import is locked into the .kicad_pro
+    // before any peer-frame side effects (MBSCH save hook, sub-project
+    // open paths) can race with us.
+    if( !persistContainerOrWarn( this, m_project, containerDir().GetPath() ) )
+    {
+        m_project->RemoveSubProject( info.uuid );
+        return false;
+    }
+
     return true;
 }
 
@@ -363,6 +423,14 @@ bool DIALOG_MULTI_BOARD_SETUP::createNewSubProject( const wxString& aName )
     info.relativePath = relProFile.GetFullPath( wxPATH_UNIX );
 
     m_project->AddSubProject( info );
+
+    // Persist immediately — see comment in importExistingProject.
+    if( !persistContainerOrWarn( this, m_project, containerDir().GetPath() ) )
+    {
+        m_project->RemoveSubProject( info.uuid );
+        return false;
+    }
+
     return true;
 }
 
@@ -393,5 +461,13 @@ void DIALOG_MULTI_BOARD_SETUP::onRemove( wxCommandEvent& )
     }
 
     m_project->RemoveSubProject( toRemove.uuid );
+
+    // Persist immediately so the removal is locked into the .kicad_pro
+    // before any subsequent operation (Add D, peer save hook, etc.) can
+    // race with us. Roll back the in-memory removal if the disk write
+    // failed — otherwise the dialog state would diverge from disk.
+    if( !persistContainerOrWarn( this, m_project, containerDir().GetPath() ) )
+        m_project->AddSubProject( toRemove );
+
     refreshList();
 }

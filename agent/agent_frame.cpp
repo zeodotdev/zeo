@@ -2728,16 +2728,24 @@ void AGENT_FRAME::DoPendingChangesAcceptAll()
 {
     wxLogInfo( "AGENT_FRAME::DoPendingChangesAcceptAll" );
 
-    // Accept schematic changes
-    if( !m_pendingSchSheets.empty() )
+    auto broadcastSchClass = [this]( MAIL_T aMail )
     {
-        KIWAY_PLAYER* schPlayer = Kiway().Player( FRAME_SCH, false );
-        if( schPlayer )
+        // Mail BOTH frame types — pending changes on either get approved.
+        // ExpressMail to a frame type is broadcast to all peers of that
+        // type, so this also covers M4 peer SCH frames automatically.
+        for( FRAME_T ft : { FRAME_SCH, FRAME_MBSCH } )
         {
-            std::string payload;
-            Kiway().ExpressMail( FRAME_SCH, MAIL_AGENT_APPROVE, payload );
+            if( Kiway().Player( ft, false ) )
+            {
+                std::string payload;
+                Kiway().ExpressMail( ft, aMail, payload );
+            }
         }
-    }
+    };
+
+    // Accept schematic changes (regular sch + MBSCH)
+    if( !m_pendingSchSheets.empty() )
+        broadcastSchClass( MAIL_AGENT_APPROVE );
 
     // Accept PCB changes
     if( m_hasPcbChanges )
@@ -2762,16 +2770,21 @@ void AGENT_FRAME::DoPendingChangesRejectAll()
 {
     wxLogInfo( "AGENT_FRAME::DoPendingChangesRejectAll" );
 
-    // Reject schematic changes
-    if( !m_pendingSchSheets.empty() )
+    auto broadcastSchClass = [this]( MAIL_T aMail )
     {
-        KIWAY_PLAYER* schPlayer = Kiway().Player( FRAME_SCH, false );
-        if( schPlayer )
+        for( FRAME_T ft : { FRAME_SCH, FRAME_MBSCH } )
         {
-            std::string payload;
-            Kiway().ExpressMail( FRAME_SCH, MAIL_AGENT_REJECT, payload );
+            if( Kiway().Player( ft, false ) )
+            {
+                std::string payload;
+                Kiway().ExpressMail( ft, aMail, payload );
+            }
         }
-    }
+    };
+
+    // Reject schematic changes (regular sch + MBSCH)
+    if( !m_pendingSchSheets.empty() )
+        broadcastSchClass( MAIL_AGENT_REJECT );
 
     // Reject PCB changes
     if( m_hasPcbChanges )
@@ -2809,13 +2822,16 @@ void AGENT_FRAME::DoPendingChangesAcceptSheet( const wxString& aPath, bool aIsPc
     }
     else
     {
-        KIWAY_PLAYER* schPlayer = Kiway().Player( FRAME_SCH, false );
-        if( schPlayer )
+        // Broadcast to both schematic frame types — peers of either type
+        // filter on sheet_path themselves, so this is safe.
+        nlohmann::json j;
+        j["sheet_path"] = aPath.ToStdString();
+        std::string payload = j.dump();
+
+        for( FRAME_T ft : { FRAME_SCH, FRAME_MBSCH } )
         {
-            nlohmann::json j;
-            j["sheet_path"] = aPath.ToStdString();
-            std::string payload = j.dump();
-            Kiway().ExpressMail( FRAME_SCH, MAIL_AGENT_APPROVE, payload );
+            if( Kiway().Player( ft, false ) )
+                Kiway().ExpressMail( ft, MAIL_AGENT_APPROVE, payload );
         }
         m_pendingSchSheets.erase( aPath );
     }
@@ -2840,13 +2856,14 @@ void AGENT_FRAME::DoPendingChangesRejectSheet( const wxString& aPath, bool aIsPc
     }
     else
     {
-        KIWAY_PLAYER* schPlayer = Kiway().Player( FRAME_SCH, false );
-        if( schPlayer )
+        nlohmann::json j;
+        j["sheet_path"] = aPath.ToStdString();
+        std::string payload = j.dump();
+
+        for( FRAME_T ft : { FRAME_SCH, FRAME_MBSCH } )
         {
-            nlohmann::json j;
-            j["sheet_path"] = aPath.ToStdString();
-            std::string payload = j.dump();
-            Kiway().ExpressMail( FRAME_SCH, MAIL_AGENT_REJECT, payload );
+            if( Kiway().Player( ft, false ) )
+                Kiway().ExpressMail( ft, MAIL_AGENT_REJECT, payload );
         }
         m_pendingSchSheets.erase( aPath );
     }
@@ -4033,12 +4050,20 @@ void AGENT_FRAME::QueryPendingChanges()
         return;
     }
 
-    // Query schematic editor for pending changes
-    KIWAY_PLAYER* schPlayer = Kiway().Player( FRAME_SCH, false );
-    if( schPlayer )
+    // Query both regular schematic AND multi-board schematic editors for
+    // pending changes. They share the SCH_EDIT_FRAME hierarchy and respond
+    // to the same MAIL_AGENT_HAS_CHANGES mail; without the FRAME_MBSCH
+    // arm, MBS-canvas edits show their diff overlay but never surface
+    // the agent's Accept/Reject UI.
+    auto queryFrameForChanges = [this]( FRAME_T aFrameType )
     {
+        KIWAY_PLAYER* player = Kiway().Player( aFrameType, false );
+
+        if( !player )
+            return;
+
         std::string response;
-        Kiway().ExpressMail( FRAME_SCH, MAIL_AGENT_HAS_CHANGES, response );
+        Kiway().ExpressMail( aFrameType, MAIL_AGENT_HAS_CHANGES, response );
 
         try
         {
@@ -4060,9 +4085,13 @@ void AGENT_FRAME::QueryPendingChanges()
         }
         catch( const std::exception& e )
         {
-            wxLogInfo( "AGENT_FRAME: Failed to parse schematic response: %s", e.what() );
+            wxLogInfo( "AGENT_FRAME: Failed to parse schematic response (frame %d): %s",
+                       static_cast<int>( aFrameType ), e.what() );
         }
-    }
+    };
+
+    queryFrameForChanges( FRAME_SCH );
+    queryFrameForChanges( FRAME_MBSCH );
 
     // Query PCB editor for pending changes
     KIWAY_PLAYER* pcbPlayer = Kiway().Player( FRAME_PCB_EDITOR, false );

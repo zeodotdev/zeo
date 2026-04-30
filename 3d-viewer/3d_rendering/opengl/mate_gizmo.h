@@ -52,11 +52,15 @@ class GLUquadric;
 class MATE_GIZMO
 {
 public:
-    /// Source of the mate (auto-derived vs user-declared) — drives hue.
+    /// Source of the gizmo entry — drives hue.
+    /// AUTO/CUSTOM: M6.D mate-pair connections (intentional contact).
+    /// COLLISION : M6.E unintended component overlap (rendered red so
+    /// users can find the offending pair in the 3D view).
     enum class SOURCE
     {
         AUTO,
-        CUSTOM
+        CUSTOM,
+        COLLISION
     };
 
     /// Solver role — drives line weight + sphere size.

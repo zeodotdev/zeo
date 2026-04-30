@@ -112,6 +112,30 @@ FOOTPRINT* findFootprintByRef( BOARD* aBoard, const wxString& aRef )
 }
 
 
+/**
+ * True when a sub-board's PCB has nothing meaningful to render — no
+ * footprints AND no board outline (Edge.Cuts) geometry. The 3D
+ * pipeline falls back to a unit-cube placeholder for these, which is
+ * confusing in a multi-board view; hide them by default and let the
+ * user toggle them on if they want to see the placeholder.
+ */
+bool isPlaceholderBoard( const BOARD* aBoard )
+{
+    if( !aBoard )
+        return true;
+
+    if( !aBoard->Footprints().empty() )
+        return false;
+
+    BOX2I outlineBox = aBoard->GetBoardEdgesBoundingBox();
+
+    if( outlineBox.GetWidth() > 0 && outlineBox.GetHeight() > 0 )
+        return false;
+
+    return true;
+}
+
+
 } // namespace
 
 
@@ -195,36 +219,20 @@ void ASSEMBLY_3D_MANAGER::LoadProjectBoards( PROJECT* aProject )
     // Default flat layout; user can switch via PANEL_3D_ASSEMBLY.
     ArrangeBoards( BOARD_LAYOUT_MODE::FLAT, 20.0f );
 
-    // Pre-warm each sub-project's S3D_CACHE by loading every footprint's
-    // 3D model. The per-instance renderer's load3dModels would do this
-    // lazily on its first reload, but in practice the first-open path
-    // sometimes leaves m_3dModelMap missing entries (timing-related), and
-    // Load3dModelsIfNeeded's `size > 0` short-circuit prevents retry. By
-    // forcing the cache hot here, the renderer's first load is identical
-    // to a re-open after a sub-project's pcbnew/3D viewer warmed it.
+    // M6.G: persisted per-instance state on the container `.kicad_pro`
+    // overrides the FLAT default for any sub-project the user has
+    // already arranged.
+    applyPersistedInstanceStates();
+
+    // Hide sub-boards that have no PCB content yet (no footprints and
+    // no Edge.Cuts outline). Without this the 3D pipeline draws a
+    // unit-cube placeholder for them, which is confusing in an
+    // assembly view. The user can still toggle them on via the panel
+    // if they want to see the placeholder.
     for( BOARD_3D_INSTANCE& inst : m_boardInstances )
     {
-        if( !inst.board || !inst.subProject )
-            continue;
-
-        S3D_CACHE* cache = PROJECT_PCB::Get3DCacheManager( inst.subProject );
-
-        if( !cache )
-            continue;
-
-        for( const FOOTPRINT* fp : inst.board->Footprints() )
-        {
-            for( const FP_3DMODEL& fp_model : fp->Models() )
-            {
-                if( !fp_model.m_Show || fp_model.m_Filename.empty() )
-                    continue;
-
-                std::vector<const EMBEDDED_FILES*> stack;
-                stack.push_back( fp->GetEmbeddedFiles() );
-                stack.push_back( inst.board->GetEmbeddedFiles() );
-                cache->GetModel( fp_model.m_Filename, wxEmptyString, std::move( stack ) );
-            }
-        }
+        if( inst.board && isPlaceholderBoard( inst.board.get() ) )
+            inst.visible = false;
     }
 }
 
@@ -241,6 +249,7 @@ void ASSEMBLY_3D_MANAGER::Clear()
 
     m_boardInstances.clear();
     m_lastCollisions.clear();
+    m_lastCollisionPairs.clear();
     m_project = nullptr;
 
     // Camera cache is frame-owned; clear the pointer so a stale CAMERA*
@@ -308,14 +317,20 @@ const BOARD_3D_INSTANCE* ASSEMBLY_3D_MANAGER::GetBoardInstance( const KIID& aIns
 void ASSEMBLY_3D_MANAGER::SetBoardPosition( const KIID& aInstanceUuid, const SFVEC3F& aPosition )
 {
     if( BOARD_3D_INSTANCE* inst = GetBoardInstance( aInstanceUuid ) )
+    {
         inst->position = aPosition;
+        persistInstanceState( *inst );
+    }
 }
 
 
 void ASSEMBLY_3D_MANAGER::SetBoardRotation( const KIID& aInstanceUuid, const SFVEC3F& aRotation )
 {
     if( BOARD_3D_INSTANCE* inst = GetBoardInstance( aInstanceUuid ) )
+    {
         inst->rotation = aRotation;
+        persistInstanceState( *inst );
+    }
 }
 
 
@@ -378,13 +393,24 @@ void ASSEMBLY_3D_MANAGER::ResetPositions()
     }
 
     ArrangeBoards( BOARD_LAYOUT_MODE::FLAT, 20.0f );
+    PersistAllInstances();
+}
+
+
+void ASSEMBLY_3D_MANAGER::PersistAllInstances()
+{
+    for( const BOARD_3D_INSTANCE& inst : m_boardInstances )
+        persistInstanceState( inst );
 }
 
 
 void ASSEMBLY_3D_MANAGER::SetBoardVisible( const KIID& aInstanceUuid, bool aVisible )
 {
     if( BOARD_3D_INSTANCE* inst = GetBoardInstance( aInstanceUuid ) )
+    {
         inst->visible = aVisible;
+        persistInstanceState( *inst );
+    }
 }
 
 
@@ -395,6 +421,7 @@ void ASSEMBLY_3D_MANAGER::SetBoardTransparent( const KIID& aInstanceUuid, bool a
     {
         inst->transparent = aTransparent;
         inst->opacity = aOpacity;
+        persistInstanceState( *inst );
     }
 }
 
@@ -1322,11 +1349,12 @@ bool ASSEMBLY_3D_MANAGER::RemoveCustomMate( const KIID& aMateUuid )
 std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
 {
     m_lastCollisions.clear();
+    m_lastCollisionPairs.clear();
 
-    // Build a set of "expected contact" pairs from the mate graph so the
-    // mated connector overlaps don't drown out real collisions. Only
-    // PRIMARY/SECONDARY mate pairs count — alignment-only pairs aren't
-    // supposed to be in contact and any overlap there IS a problem.
+    // Mated pairs are expected contact (mate gizmo renders them green/cyan);
+    // skip them in the collision pass so users see only the unintended
+    // overlaps. Alignment-only mates still count as collisions — they're
+    // not supposed to be in contact.
     std::vector<MATE_EDGE> mateEdges = BuildMateGraph();
 
     auto isMated = [&]( const KIID& aInstA, const wxString& aFpA,
@@ -1351,30 +1379,13 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
         return false;
     };
 
-    // Compute a footprint's world-space AABB in mm. XY comes from the
-    // footprint's pad/silk bounding box; Z from the largest 3D model
-    // attached to it (or a 0.5mm default when no model is loadable).
-    // Phase-1 ignores per-instance and per-footprint rotation; the
-    // resulting AABB is conservative for unrotated assemblies.
-    auto getFootprintWorldAABB = [this]( const BOARD_3D_INSTANCE& aInst,
-                                     const FOOTPRINT*         aFp,
-                                     SFVEC3F&                 aMin,
-                                     SFVEC3F&                 aMax ) -> bool
+    // Per-footprint Z extent in board-local mm (top of board → top of
+    // tallest 3D model on it). Same logic as the M6.D Z-gap helper but
+    // returning min/max instead of a single value.
+    auto computeFpZExtent = [this]( const BOARD_3D_INSTANCE& aInst, const FOOTPRINT* aFp,
+                                    float& aZMin, float& aZMax )
     {
-        if( !aInst.board || !aFp )
-            return false;
-
-        BOX2I bbox = aFp->GetBoundingBox( /*aIncludeText=*/false );
-        const float xMin = bbox.GetLeft() / 1e6f;
-        const float xMax = bbox.GetRight() / 1e6f;
-        const float yMin = bbox.GetTop() / 1e6f;
-        const float yMax = bbox.GetBottom() / 1e6f;
-
-        // Default Z extent so trivial XY overlaps still get flagged when
-        // the 3D model fails to load. 0.5 mm is roughly the height of
-        // most SMD passives; not a precise number, just non-zero.
         float modelHeight = 0.5f;
-
         PROJECT* prj = aInst.subProject ? aInst.subProject : aInst.board->GetProject();
 
         if( prj )
@@ -1386,13 +1397,12 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
                     if( !fp_model.m_Show || fp_model.m_Filename.empty() )
                         continue;
 
-                    std::vector<const EMBEDDED_FILES*> embeddedFilesStack;
-                    embeddedFilesStack.push_back( aFp->GetEmbeddedFiles() );
-                    embeddedFilesStack.push_back( aInst.board->GetEmbeddedFiles() );
-
+                    std::vector<const EMBEDDED_FILES*> stack;
+                    stack.push_back( aFp->GetEmbeddedFiles() );
+                    stack.push_back( aInst.board->GetEmbeddedFiles() );
                     const S3DMODEL* model = cache->GetModel( fp_model.m_Filename,
                                                              wxEmptyString,
-                                                             std::move( embeddedFilesStack ) );
+                                                             std::move( stack ) );
 
                     if( !model )
                         continue;
@@ -1427,44 +1437,101 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
             }
         }
 
-        // F.Cu = top side; model extends Z+ from the board top surface.
-        // B.Cu (flipped) = bottom side; model extends Z- from the bottom.
         const float boardThicknessMm = GetBoardThickness( aInst.board.get() );
-        const bool  isFlipped        = aFp->IsFlipped();
 
-        float zLocalMin, zLocalMax;
-
-        if( isFlipped )
+        if( aFp->IsFlipped() )
         {
-            zLocalMax = 0.0f;
-            zLocalMin = -modelHeight;
+            aZMax = aInst.position.z + 0.0f;
+            aZMin = aInst.position.z - modelHeight;
         }
         else
         {
-            zLocalMin = boardThicknessMm;
-            zLocalMax = boardThicknessMm + modelHeight;
+            aZMin = aInst.position.z + boardThicknessMm;
+            aZMax = aInst.position.z + boardThicknessMm + modelHeight;
         }
-
-        // Apply the per-instance translation. Per-instance rotation is
-        // out of scope for phase-1.
-        aMin = SFVEC3F( xMin + aInst.position.x, yMin + aInst.position.y,
-                        zLocalMin + aInst.position.z );
-        aMax = SFVEC3F( xMax + aInst.position.x, yMax + aInst.position.y,
-                        zLocalMax + aInst.position.z );
-        return true;
     };
 
-    // Cache per-instance footprint AABBs once so the cross-board loop is
-    // O(N×M) on already-computed boxes rather than recomputing.
-    struct FPAABB
+    // OBB representation in world XY: center + axes + half-extents.
+    // SAT (separating-axis theorem) on 4 axes (axisX/Y of each OBB) is
+    // sufficient for 2D rectangle intersection. Per-instance rotation
+    // around Z is the only assembly-pose rotation this models — board
+    // tilt (X/Y rotation) is rare in practice and a phase-3 concern.
+    struct FPCollisionShape
     {
         const FOOTPRINT* fp;
         wxString         ref;
-        SFVEC3F          min;
-        SFVEC3F          max;
+        glm::vec2        centerXY;     ///< world XY (mm)
+        glm::vec2        axisX;        ///< unit vector
+        glm::vec2        axisY;        ///< unit vector, ⊥ axisX
+        float            halfX;        ///< half-extent along axisX
+        float            halfY;        ///< half-extent along axisY
+        float            zMin;
+        float            zMax;
+        SFVEC3F          worldMin;     ///< axis-aligned bounds for broad phase
+        SFVEC3F          worldMax;
     };
 
-    std::vector<std::vector<FPAABB>> perInstance( m_boardInstances.size() );
+    auto buildShape = [&]( const BOARD_3D_INSTANCE& aInst, const FOOTPRINT* aFp,
+                           FPCollisionShape& aOut ) -> bool
+    {
+        if( !aInst.board || !aFp )
+            return false;
+
+        BOX2I bbox = aFp->GetBoundingBox( /*aIncludeText=*/false );
+        const float lcx = bbox.GetCenter().x / 1e6f;
+        const float lcy = bbox.GetCenter().y / 1e6f;
+        const float lhx = ( bbox.GetWidth()  / 2.0f ) / 1e6f;
+        const float lhy = ( bbox.GetHeight() / 2.0f ) / 1e6f;
+
+        const float thetaRad = aInst.rotation.z * static_cast<float>( M_PI ) / 180.0f;
+        const float c = std::cos( thetaRad );
+        const float s = std::sin( thetaRad );
+
+        aOut.fp       = aFp;
+        aOut.ref      = aFp->GetReference();
+        aOut.axisX    = glm::vec2( c, s );
+        aOut.axisY    = glm::vec2( -s, c );
+        aOut.halfX    = lhx;
+        aOut.halfY    = lhy;
+        aOut.centerXY = glm::vec2( c * lcx - s * lcy + aInst.position.x,
+                                   s * lcx + c * lcy + aInst.position.y );
+
+        computeFpZExtent( aInst, aFp, aOut.zMin, aOut.zMax );
+
+        // Broad-phase AABB = axis-aligned envelope of the rotated rect.
+        const glm::vec2 dx = aOut.axisX * lhx;
+        const glm::vec2 dy = aOut.axisY * lhy;
+        const float     spanX = std::abs( dx.x ) + std::abs( dy.x );
+        const float     spanY = std::abs( dx.y ) + std::abs( dy.y );
+        aOut.worldMin = SFVEC3F( aOut.centerXY.x - spanX, aOut.centerXY.y - spanY, aOut.zMin );
+        aOut.worldMax = SFVEC3F( aOut.centerXY.x + spanX, aOut.centerXY.y + spanY, aOut.zMax );
+        return true;
+    };
+
+    // SAT XY-overlap test. Fast: 4 dot products and 1 abs per axis × 4
+    // axes = O(constant). The per-axis interval test is the standard
+    // "if separation axis exists, no overlap."
+    auto obbXYOverlap = []( const FPCollisionShape& a, const FPCollisionShape& b ) -> bool
+    {
+        const glm::vec2 axes[4] = { a.axisX, a.axisY, b.axisX, b.axisY };
+        const glm::vec2 d       = b.centerXY - a.centerXY;
+
+        for( const glm::vec2& L : axes )
+        {
+            float radA = std::abs( glm::dot( a.axisX, L ) ) * a.halfX
+                         + std::abs( glm::dot( a.axisY, L ) ) * a.halfY;
+            float radB = std::abs( glm::dot( b.axisX, L ) ) * b.halfX
+                         + std::abs( glm::dot( b.axisY, L ) ) * b.halfY;
+            float dist = std::abs( glm::dot( d, L ) );
+
+            if( dist > radA + radB )
+                return false;
+        }
+        return true;
+    };
+
+    // Build per-instance shape lists.
+    std::vector<std::vector<FPCollisionShape>> perInstance( m_boardInstances.size() );
 
     for( size_t i = 0; i < m_boardInstances.size(); i++ )
     {
@@ -1475,16 +1542,20 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
 
         for( const FOOTPRINT* fp : inst.board->Footprints() )
         {
-            FPAABB e;
-            e.fp  = fp;
-            e.ref = fp->GetReference();
+            FPCollisionShape s;
 
-            if( getFootprintWorldAABB( inst, fp, e.min, e.max ) )
-                perInstance[i].push_back( std::move( e ) );
+            if( buildShape( inst, fp, s ) )
+                perInstance[i].push_back( std::move( s ) );
         }
     }
 
-    // Pair-wise per-footprint AABB overlap, skipping mated pairs.
+    // Penetration threshold — collisions shallower than this are
+    // discarded as edge-case noise (component bbox overhang, almost-
+    // touching connectors). 0.05 mm is well below pad thickness and
+    // typical model tolerance, so anything above is a real collision.
+    constexpr float kMinPenetrationMm = 0.05f;
+
+    // Cross-board cross-footprint pair check: AABB broad → OBB-XY narrow.
     for( size_t i = 0; i < m_boardInstances.size(); i++ )
     {
         if( perInstance[i].empty() )
@@ -1498,42 +1569,75 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
             const BOARD_3D_INSTANCE& inst1 = m_boardInstances[i];
             const BOARD_3D_INSTANCE& inst2 = m_boardInstances[j];
 
-            for( const FPAABB& a : perInstance[i] )
+            for( const FPCollisionShape& a : perInstance[i] )
             {
-                for( const FPAABB& b : perInstance[j] )
+                for( const FPCollisionShape& b : perInstance[j] )
                 {
-                    if( a.max.x <= b.min.x || b.max.x <= a.min.x )
+                    // Broad phase — AABB.
+                    if( a.worldMax.x <= b.worldMin.x || b.worldMax.x <= a.worldMin.x )
                         continue;
-                    if( a.max.y <= b.min.y || b.max.y <= a.min.y )
+                    if( a.worldMax.y <= b.worldMin.y || b.worldMax.y <= a.worldMin.y )
                         continue;
-                    if( a.max.z <= b.min.z || b.max.z <= a.min.z )
+                    if( a.worldMax.z <= b.worldMin.z || b.worldMax.z <= a.worldMin.z )
+                        continue;
+
+                    // Narrow phase — OBB SAT in XY. Z stays an interval
+                    // because per-instance X/Y rotation is out of scope
+                    // for this phase.
+                    if( !obbXYOverlap( a, b ) )
                         continue;
 
                     if( isMated( inst1.uuid, a.ref, inst2.uuid, b.ref ) )
                         continue;
 
+                    // Penetration approximation along each axis. Use
+                    // OBB axes (more meaningful than world AABB axes
+                    // when boards are rotated), plus the Z interval.
+                    auto axisPen = [&]( const glm::vec2& L ) -> float
+                    {
+                        float radA = std::abs( glm::dot( a.axisX, L ) ) * a.halfX
+                                     + std::abs( glm::dot( a.axisY, L ) ) * a.halfY;
+                        float radB = std::abs( glm::dot( b.axisX, L ) ) * b.halfX
+                                     + std::abs( glm::dot( b.axisY, L ) ) * b.halfY;
+                        float dist = std::abs( glm::dot( b.centerXY - a.centerXY, L ) );
+                        return ( radA + radB ) - dist;
+                    };
+
+                    float xPen = axisPen( a.axisX );
+                    float yPen = axisPen( a.axisY );
+                    float zPen = std::min( a.worldMax.z - b.worldMin.z,
+                                           b.worldMax.z - a.worldMin.z );
+                    float minPen = std::min( { xPen, yPen, zPen } );
+
+                    if( minPen < kMinPenetrationMm )
+                        continue;
+
                     COLLISION_RESULT result;
                     result.board1Uuid = inst1.uuid;
                     result.board2Uuid = inst2.uuid;
-                    result.item1Desc = wxString::Format( wxT( "%s:%s" ),
+                    result.item1Desc  = wxString::Format( wxT( "%s:%s" ),
                                                           inst1.displayName, a.ref );
-                    result.item2Desc = wxString::Format( wxT( "%s:%s" ),
+                    result.item2Desc  = wxString::Format( wxT( "%s:%s" ),
                                                           inst2.displayName, b.ref );
 
-                    float cx = ( std::max( a.min.x, b.min.x )
-                                 + std::min( a.max.x, b.max.x ) ) * 0.5f;
-                    float cy = ( std::max( a.min.y, b.min.y )
-                                 + std::min( a.max.y, b.max.y ) ) * 0.5f;
-                    float cz = ( std::max( a.min.z, b.min.z )
-                                 + std::min( a.max.z, b.max.z ) ) * 0.5f;
-                    result.collisionPoint = SFVEC3F( cx, cy, cz );
-
-                    float xPen = std::min( a.max.x - b.min.x, b.max.x - a.min.x );
-                    float yPen = std::min( a.max.y - b.min.y, b.max.y - a.min.y );
-                    float zPen = std::min( a.max.z - b.min.z, b.max.z - a.min.z );
-                    result.penetrationMm = std::min( { xPen, yPen, zPen } );
+                    glm::vec2 midXY = ( a.centerXY + b.centerXY ) * 0.5f;
+                    float midZ = ( std::max( a.worldMin.z, b.worldMin.z )
+                                   + std::min( a.worldMax.z, b.worldMax.z ) ) * 0.5f;
+                    result.collisionPoint = SFVEC3F( midXY.x, midXY.y, midZ );
+                    result.penetrationMm  = minPen;
 
                     m_lastCollisions.push_back( result );
+
+                    // Track endpoint instance + footprint refs so the
+                    // collision gizmo can project them to world space
+                    // via projectFootprintCentroidToWorld (matching the
+                    // mate gizmo's pose math exactly).
+                    CollisionPair pair;
+                    pair.instanceA = inst1.uuid;
+                    pair.refA      = a.ref;
+                    pair.instanceB = inst2.uuid;
+                    pair.refB      = b.ref;
+                    m_lastCollisionPairs.push_back( pair );
                 }
             }
         }
@@ -1543,14 +1647,44 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
 }
 
 
+// File-static so the 3d-viewer library has no link-time reference to
+// the pcbnew-only OCCT exporter. The pcbnew kiface populates this
+// pointer at startup; cvpcb's footprint preview leaves it null.
+static ASSEMBLY_3D_MANAGER::STEPExportCallback g_stepExportCallback = nullptr;
+
+
+void ASSEMBLY_3D_MANAGER::SetSTEPExportCallback( STEPExportCallback aCallback )
+{
+    g_stepExportCallback = aCallback;
+}
+
+
 bool ASSEMBLY_3D_MANAGER::ExportAssemblySTEP( const wxString& aFilename )
 {
-    // M6.F deliverable — implement via OpenCASCADE STEP compound:
-    // 1. For each visible board instance, drive existing per-board STEP
-    //    export to an in-memory TopoDS_Shape.
-    // 2. Apply the instance transform as a TopLoc_Location.
-    // 3. Compose into a STEP compound and write.
-    return false;
+    if( !g_stepExportCallback )
+        return false;
+
+    std::vector<STEPBoardEntry> entries;
+    entries.reserve( m_boardInstances.size() );
+
+    for( const BOARD_3D_INSTANCE& inst : m_boardInstances )
+    {
+        if( !inst.visible || !inst.board )
+            continue;
+
+        STEPBoardEntry e;
+        e.board       = inst.board.get();
+        e.name        = inst.displayName.IsEmpty() ? wxString( wxT( "board" ) )
+                                                    : inst.displayName;
+        e.positionMm  = inst.position;
+        e.rotationDeg = inst.rotation;
+        entries.push_back( std::move( e ) );
+    }
+
+    if( entries.empty() )
+        return false;
+
+    return g_stepExportCallback( entries, aFilename );
 }
 
 
@@ -1604,6 +1738,76 @@ float ASSEMBLY_3D_MANAGER::GetBoardThickness( const BOARD* aBoard ) const
 
     const BOARD_DESIGN_SETTINGS& bds = aBoard->GetDesignSettings();
     return static_cast<float>( bds.GetBoardThickness() ) / 1000000.0f;
+}
+
+
+// ========== M6.G persistence helpers ==========
+
+void ASSEMBLY_3D_MANAGER::persistInstanceState( const BOARD_3D_INSTANCE& aInst )
+{
+    if( !m_project )
+        return;
+
+    PROJECT_FILE& pf = m_project->GetProjectFile();
+
+    if( !pf.IsMultiBoardContainer() )
+        return;
+
+    // Anonymous instances (added via AddBoardInstance with a null
+    // sub-project UUID) have no stable key to persist against.
+    if( aInst.subProjectUuid == niluuid )
+        return;
+
+    auto& states = pf.GetAssemblyInstances();
+    auto  it     = std::find_if( states.begin(), states.end(),
+                                 [&]( const ASSEMBLY_INSTANCE_STATE& s )
+                                 { return s.subProjectUuid == aInst.subProjectUuid; } );
+
+    if( it == states.end() )
+    {
+        ASSEMBLY_INSTANCE_STATE s;
+        s.subProjectUuid = aInst.subProjectUuid;
+        states.push_back( s );
+        it = states.end() - 1;
+    }
+
+    it->position    = VECTOR3D( aInst.position.x, aInst.position.y, aInst.position.z );
+    it->rotation    = VECTOR3D( aInst.rotation.x, aInst.rotation.y, aInst.rotation.z );
+    it->visible     = aInst.visible;
+    it->transparent = aInst.transparent;
+    it->opacity     = aInst.opacity;
+}
+
+
+void ASSEMBLY_3D_MANAGER::applyPersistedInstanceStates()
+{
+    if( !m_project )
+        return;
+
+    const PROJECT_FILE& pf = m_project->GetProjectFile();
+
+    if( !pf.IsMultiBoardContainer() )
+        return;
+
+    for( const ASSEMBLY_INSTANCE_STATE& s : pf.GetAssemblyInstances() )
+    {
+        for( BOARD_3D_INSTANCE& inst : m_boardInstances )
+        {
+            if( inst.subProjectUuid != s.subProjectUuid )
+                continue;
+
+            inst.position    = SFVEC3F( static_cast<float>( s.position.x ),
+                                        static_cast<float>( s.position.y ),
+                                        static_cast<float>( s.position.z ) );
+            inst.rotation    = SFVEC3F( static_cast<float>( s.rotation.x ),
+                                        static_cast<float>( s.rotation.y ),
+                                        static_cast<float>( s.rotation.z ) );
+            inst.visible     = s.visible;
+            inst.transparent = s.transparent;
+            inst.opacity     = static_cast<float>( s.opacity );
+            break;
+        }
+    }
 }
 
 
@@ -1937,10 +2141,16 @@ bool ASSEMBLY_3D_MANAGER::RedrawAll( bool aIsMoving, REPORTER* aStatusReporter,
     // its local board center. We centered the composite at world
     // origin via the pose above, so force the look-at back to origin
     // so rotation pivots around the boards (not wherever the last
-    // renderer's reload happened to set it).
+    // renderer's reload happened to set it). Also reset zoom + pan
+    // so the autoframe shows the whole assembly (the shared BIU→3D
+    // factor scales the composite into ±RANGE_SCALE_3D so the default
+    // zoom fits) instead of stranding the user at whatever zoom the
+    // single-board reload left behind.
     if( m_camera && m_cameraFitPending && !firstPass )
     {
         m_camera->SetBoardLookAtPos( SFVEC3F( 0.0f, 0.0f, 0.0f ) );
+        m_camera->ResetXYpos();
+        m_camera->ZoomReset();
         m_cameraFitPending = false;
         requestAnother = true;
     }
@@ -2225,6 +2435,53 @@ void ASSEMBLY_3D_MANAGER::rebuildMateGizmoEntries()
 
             entries.push_back( e );
         }
+    }
+
+    // M6.E phase-2: append collision entries from the last collision
+    // run. Same gizmo, distinct SOURCE::COLLISION → red colour. Mate
+    // entries above already cover "expected contact" (green/cyan), so
+    // the user sees both colour-coded in one overlay pass.
+    for( const CollisionPair& cp : m_lastCollisionPairs )
+    {
+        const auto itA = adapterIndexByInst.find( cp.instanceA );
+        const auto itB = adapterIndexByInst.find( cp.instanceB );
+
+        if( itA == adapterIndexByInst.end() || itB == adapterIndexByInst.end() )
+            continue;
+
+        const size_t idxA = itA->second;
+        const size_t idxB = itB->second;
+
+        if( idxA >= m_instanceAdapters.size() || idxB >= m_instanceAdapters.size() )
+            continue;
+
+        const BOARD_ADAPTER* adapterA = m_instanceAdapters[idxA].get();
+        const BOARD_ADAPTER* adapterB = m_instanceAdapters[idxB].get();
+
+        if( !adapterA || !adapterB )
+            continue;
+
+        glm::vec3 worldA, worldB;
+
+        if( !projectFootprintCentroidToWorld( m_boardInstances[idxA], *adapterA,
+                                              cp.refA, worldA ) )
+            continue;
+
+        if( !projectFootprintCentroidToWorld( m_boardInstances[idxB], *adapterB,
+                                              cp.refB, worldB ) )
+            continue;
+
+        MATE_GIZMO::ENTRY e;
+        e.posA        = worldA;
+        e.posB        = worldB;
+        e.source      = MATE_GIZMO::SOURCE::COLLISION;
+        e.role        = MATE_GIZMO::ROLE::PRIMARY;  // unused for COLLISION styling
+        e.matePairId  = wxString::Format( wxT( "collision|%s|%s|%s|%s" ),
+                                           cp.instanceA.AsString(), cp.refA,
+                                           cp.instanceB.AsString(), cp.refB );
+        e.selected    = false;
+        e.anySelected = anySelected;
+        entries.push_back( e );
     }
 
     m_mateGizmo->SetEntries( std::move( entries ) );

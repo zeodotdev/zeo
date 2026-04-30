@@ -89,6 +89,9 @@ PROJECT_FILE::PROJECT_FILE( const wxString& aFullPath ) :
     m_params.emplace_back( new PARAM_LIST<CUSTOM_MATE>( "multi_board.assembly_3d.mates",
             &m_customMates, {} ) );
 
+    m_params.emplace_back( new PARAM_LIST<ASSEMBLY_INSTANCE_STATE>(
+            "multi_board.assembly_3d.instances", &m_assemblyInstances, {} ) );
+
     // M7.2: sub-project opt-in to inherit container's net classes / DRC
     // rules at runtime. Default false for back-compat.
     m_params.emplace_back( new PARAM<bool>( "multi_board.inherit_net_settings",
@@ -1626,4 +1629,54 @@ void from_json( const nlohmann::json& aJson, CUSTOM_MATE& aMate )
             aMate.hasOffset = true;
         }
     }
+}
+
+
+void to_json( nlohmann::json& aJson, const ASSEMBLY_INSTANCE_STATE& aState )
+{
+    aJson = nlohmann::json{
+        { "sub_project", aState.subProjectUuid.AsString().ToUTF8() },
+        { "position",    { aState.position.x, aState.position.y, aState.position.z } },
+        { "rotation",    { aState.rotation.x, aState.rotation.y, aState.rotation.z } },
+        { "visible",     aState.visible },
+        { "transparent", aState.transparent },
+        { "opacity",     aState.opacity }
+    };
+}
+
+
+void from_json( const nlohmann::json& aJson, ASSEMBLY_INSTANCE_STATE& aState )
+{
+    wxCHECK( aJson.is_object(), /* void */ );
+
+    if( aJson.contains( "sub_project" ) )
+    {
+        aState.subProjectUuid =
+                KIID( wxString::FromUTF8( aJson["sub_project"].get<std::string>().c_str() ) );
+    }
+
+    if( aJson.contains( "position" ) && aJson["position"].is_array()
+        && aJson["position"].size() == 3 )
+    {
+        aState.position = VECTOR3D( aJson["position"][0].get<double>(),
+                                    aJson["position"][1].get<double>(),
+                                    aJson["position"][2].get<double>() );
+    }
+
+    if( aJson.contains( "rotation" ) && aJson["rotation"].is_array()
+        && aJson["rotation"].size() == 3 )
+    {
+        aState.rotation = VECTOR3D( aJson["rotation"][0].get<double>(),
+                                    aJson["rotation"][1].get<double>(),
+                                    aJson["rotation"][2].get<double>() );
+    }
+
+    if( aJson.contains( "visible" ) )
+        aState.visible = aJson["visible"].get<bool>();
+
+    if( aJson.contains( "transparent" ) )
+        aState.transparent = aJson["transparent"].get<bool>();
+
+    if( aJson.contains( "opacity" ) )
+        aState.opacity = aJson["opacity"].get<double>();
 }

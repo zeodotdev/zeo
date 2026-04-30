@@ -48,6 +48,21 @@ struct STYLE
 
 STYLE styleFor( MATE_GIZMO::SOURCE aSource, MATE_GIZMO::ROLE aRole, bool aSelected )
 {
+    // M6.E collision entries always render in red regardless of role —
+    // the user is supposed to fix the collision, not categorize it as
+    // primary/secondary/disabled.
+    if( aSource == MATE_GIZMO::SOURCE::COLLISION )
+    {
+        STYLE s;
+        glm::vec3 red( 1.0f, 0.20f, 0.20f );
+        s.color        = aSelected ? glm::min( red * 1.4f + glm::vec3( 0.05f ),
+                                                glm::vec3( 1.0f ) )
+                                    : red;
+        s.lineRadius   = aSelected ? 0.10f : 0.06f;
+        s.sphereRadius = aSelected ? 0.18f : 0.12f;
+        return s;
+    }
+
     // Custom mates lean blue/cyan; auto mates lean green/yellow.
     glm::vec3 base = ( aSource == MATE_GIZMO::SOURCE::CUSTOM )
                              ? glm::vec3( 0.20f, 0.80f, 1.00f )      // cyan

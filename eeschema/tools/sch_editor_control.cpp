@@ -749,7 +749,14 @@ int SCH_EDITOR_CONTROL::MbsManageSubBoards( const TOOL_EVENT& aEvent )
         return 0;
     }
 
-    wxFileName containerFile( container.GetFullFilename() );
+    // Use the PROJECT's full name (absolute path), not the PROJECT_FILE's
+    // GetFullFilename() — for live PROJECT_FILEs registered with
+    // SETTINGS_MANAGER, m_filename is set to the basename only (see
+    // settings_manager.cpp::loadProjectFile), so GetFullFilename()
+    // returns "name.kicad_pro" with no directory. The dialog needs the
+    // absolute path to compute the boards/ directory and to target
+    // SaveToFile correctly.
+    wxFileName containerFile( m_frame->Prj().GetProjectFullName() );
 
     // Dialog now lives in common/dialogs so it's linkable from both
     // the KiCad main binary and the eeschema kiface — previously it
@@ -760,8 +767,10 @@ int SCH_EDITOR_CONTROL::MbsManageSubBoards( const TOOL_EVENT& aEvent )
     dlg.ShowModal();
 
     // The dialog's Done handler saves, but do a safety save in case
-    // the user closed with the window chrome.
-    container.SaveToFile();
+    // the user closed with the window chrome. Pass the project's
+    // directory explicitly — see comment above on why GetFullFilename()
+    // alone isn't enough for live PROJECT_FILEs.
+    container.SaveToFile( containerFile.GetPath() );
 
     return 0;
 }
@@ -779,10 +788,16 @@ int SCH_EDITOR_CONTROL::MbsSyncCrossBoardNets( const TOOL_EVENT& aEvent )
         return 0;
     }
 
+    // For live PROJECT_FILEs, m_filename is the basename only — Load /
+    // SaveToFile with no aDirectory resolve relative to CWD and miss
+    // the actual .kicad_pro on disk. Always pass the project directory
+    // explicitly. See settings_manager.cpp::loadProjectFile.
+    wxString containerDir = wxFileName( m_frame->Prj().GetProjectFullName() ).GetPath();
+
     // Reload cross-board nets from disk — they're written during the
     // MBSCH save hook, but the in-memory PROJECT_FILE won't reflect
     // them until a reload.
-    container.LoadFromFile();
+    container.LoadFromFile( containerDir );
 
     if( container.GetCrossBoardNets().empty() )
     {
@@ -795,7 +810,7 @@ int SCH_EDITOR_CONTROL::MbsSyncCrossBoardNets( const TOOL_EVENT& aEvent )
 
     MB_CROSS_BOARD_SYNC_RESULT result = ApplyCrossBoardNetsToSubProjectPCBs( container );
 
-    container.SaveToFile();
+    container.SaveToFile( containerDir );
 
     wxMessageBox( result.summary, _( "Cross-Board Net Sync" ),
                   wxOK | wxICON_INFORMATION, m_frame );

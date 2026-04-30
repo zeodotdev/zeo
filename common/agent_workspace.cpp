@@ -315,14 +315,13 @@ void AGENT_WORKSPACE::notifyTransactionStateChanged()
     j["sheet_uuid"] = m_targetSheet.AsStdString();
     std::string payload = j.dump();
 
-    if( m_transactionActive )
-    {
-        m_kiway->ExpressMail( FRAME_SCH, MAIL_AGENT_BEGIN_TRANSACTION, payload );
-        m_kiway->ExpressMail( FRAME_PCB_EDITOR, MAIL_AGENT_BEGIN_TRANSACTION, payload );
-    }
-    else
-    {
-        m_kiway->ExpressMail( FRAME_SCH, MAIL_AGENT_END_TRANSACTION, payload );
-        m_kiway->ExpressMail( FRAME_PCB_EDITOR, MAIL_AGENT_END_TRANSACTION, payload );
-    }
+    // Mirror to FRAME_MBSCH so multi-board schematic edits also get a snapshot
+    // and post-edit diff detection — without it, MBS edits show the diff overlay
+    // (terminal-path BEGIN/END handles that) but anything that depends on the
+    // workspace-level transaction wrapping would skip MBSCH frames.
+    MAIL_T mailType = m_transactionActive ? MAIL_AGENT_BEGIN_TRANSACTION
+                                          : MAIL_AGENT_END_TRANSACTION;
+
+    for( FRAME_T ft : { FRAME_SCH, FRAME_MBSCH, FRAME_PCB_EDITOR } )
+        m_kiway->ExpressMail( ft, mailType, payload );
 }

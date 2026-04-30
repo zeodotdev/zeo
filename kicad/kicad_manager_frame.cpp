@@ -1208,7 +1208,12 @@ bool KICAD_MANAGER_FRAME::LoadMultiBoardProject( const wxFileName& aMultiProject
     {
         DIALOG_MULTI_BOARD_SETUP setupDlg( this, &pf, aMultiProjectFile );
         setupDlg.ShowModal();
-        pf.SaveToFile();
+        // Pass the project directory explicitly; for live PROJECT_FILEs
+        // m_filename is just the basename (set in
+        // settings_manager.cpp::loadProjectFile), so an empty aDirectory
+        // would resolve relative to CWD and silently miss the actual
+        // .kicad_pro on disk.
+        pf.SaveToFile( aMultiProjectFile.GetPath() );
     }
 
     // Guarantee the canonical `<container>.kicad_mbs` exists on disk as
@@ -1218,7 +1223,7 @@ bool KICAD_MANAGER_FRAME::LoadMultiBoardProject( const wxFileName& aMultiProject
     // start. Also runs the one-time `.kicad_sch` → `.kicad_mbs`
     // migration for projects that predate this convention.
     ::EnsureMbsFile( pf, aMultiProjectFile.GetName() );
-    pf.SaveToFile();
+    pf.SaveToFile( aMultiProjectFile.GetPath() );
 
     PrintPrjInfo();
 

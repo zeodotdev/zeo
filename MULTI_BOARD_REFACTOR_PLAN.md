@@ -199,6 +199,14 @@ Two patterns coexist; pick the right one for new mail commands:
 | M6.A/B | 3D assembly skeleton ported to container model; assembly frame renders one sub-board at a time |
 | M6.C-phase-1 | OpenGL multi-board composition with translation-only per-instance transforms |
 | M6.D (partial) | Connector mating — see active 3D viewer work |
+| M6.D Z-gap | `ComputeMateZGap` reads connector 3D-model bounding box (rotation-aware via `T·R_z·R_y·R_x·S` corner transform) to derive mate Z; no longer 5 mm fallback when the model loads. Resolves the "boards float above their connectors" symptom on EasyEDA-imported parts whose STEP files use a non-Z-up axis convention. |
+| M6.E phase 1 | Per-component AABB collision in `RunCollisionCheck` — uses each footprint's pad/silk bbox for XY and the largest 3D-model max-Z for Z. Mated connector pairs (PRIMARY/SECONDARY from `BuildMateGraph`) are excluded so they don't drown out real collisions. `COLLISION_RESULT.item1Desc/item2Desc` now reports `"<board>:<ref>"` (e.g. `"esp_cm:U5"` vs `"esp_cm_breakout:J1"`). Phase-2 (OBB / GJK narrow phase + collision highlights in the canvas) remains. |
+| M6 virtual-model resolution | KIPRJMOD substitution for sub-project models works via per-instance S3D_CACHE routing (each `BOARD_3D_INSTANCE` carries its `subProject` PROJECT*) plus the global env-var fallback when the sub-project's KIPRJMOD points elsewhere (Zeo bundles a stock `EASYEDA_MODELS/` under `${KICAD9_3DMODEL_DIR}` and ships with `KIPRJMOD` pointing at it). |
+| M6.G | Per-instance pose + visibility + transparency persistence on the container `.kicad_pro` under `multi_board.assembly_3d.instances[]`, keyed by sub-project UUID. New `ASSEMBLY_INSTANCE_STATE` struct in `project_file.h` with JSON to/from. Manager helpers `persistInstanceState` / `applyPersistedInstanceStates` / public `PersistAllInstances`; direct setters persist on each call, `ResetPositions` and `onLayoutModeChanged` call the bulk variant. Custom mate offsets continue to live on `multi_board.assembly_3d.mates[]` (M6.D-phase-2). |
+| M6.F | STEP assembly export. New module `pcbnew/exporters/step/assembly_step.{h,cpp}`: drives `EXPORTER_STEP` per visible instance into a temp directory, re-reads each STEP via `STEPControl_Reader`, applies the per-board `TopLoc_Location` built from `(position, rotation)` (T·R_z·R_y·R_x — same Euler order as `BOARD_3D_INSTANCE::GetTransformMatrix`), composes a `TopoDS_Compound`, and writes the result with `STEPControl_Writer`. Per-board failures are non-fatal — that board is skipped and the rest of the assembly is still written. `ASSEMBLY_3D_MANAGER::ExportAssemblySTEP` wires through a function-pointer hook (`SetSTEPExportCallback`) so `cvpcb_kiface` (which links 3d-viewer but not OCCT) doesn't pull OCCT into its link surface. The pcbnew kiface installs the bridge in `OnKifaceStart`. Panel handler wraps the call in `wxBusyCursor` + `wxBusyInfo` for "the app is doing something" feedback during the synchronous OCCT work; per-board exporter `wxYield`s between boards so the busy info repaints. The export currently writes a flat compound (no XCAF assembly tree); CAD tools see correct positioned geometry but not a labeled per-board tree — promotion to XCAF is a polish item if/when needed. |
+| Placeholder board hiding | `isPlaceholderBoard(BOARD*)` → true when board has no footprints AND no Edge.Cuts geometry. `LoadProjectBoards` walks instances after `applyPersistedInstanceStates` and forces `visible=false` on placeholders so the 3D pipeline's unit-cube fallback doesn't crowd the assembly view. User can manually toggle them back on; that toggle persists via the M6.G state. |
+| M6 autoframe | The existing one-shot `m_cameraFitPending` set on first paint now calls `m_camera->ResetXYpos()` + `m_camera->ZoomReset()` alongside `SetBoardLookAtPos(origin)`, so the assembly viewer opens with a clean centred view of the whole composite (the shared BIU→3D factor already scales the assembly into ±RANGE_SCALE_3D so default zoom fits). |
+| M6.E phase 2 (narrow phase + highlight) | `RunCollisionCheck` now builds an OBB per footprint (footprint pad/silk bbox in board mm + per-instance Z rotation) and uses SAT on 4 axes for the XY narrow phase, with the previous AABB now serving as the broad-phase filter. Z stays an interval check (per-instance X/Y rotation deferred). Penetration computed against OBB axes; collisions shallower than 0.05 mm are discarded as edge-case noise. Each collision is recorded in `m_lastCollisionPairs` (instanceA/refA/instanceB/refB) alongside `m_lastCollisions`. `rebuildMateGizmoEntries` appends per-collision `MATE_GIZMO::ENTRY`s with `SOURCE::COLLISION`; mate_gizmo.cpp's `styleFor` returns red for that source. Contact highlight (intentional contact at mated connectors) is already covered by the existing AUTO/CUSTOM mate-pair entries (green/cyan). |
 | M8.4 | Cross-board net binding DRC check |
 | M8.6 | All MBS edit operations (delete, rotate, mirror, drag-corner resize, move-with-wire-pinning, single-click wire termination) |
 | M8.9.1 | Sub-project ERC suppresses no-driver false positives on cross-board pins |
@@ -229,6 +237,29 @@ Two patterns coexist; pick the right one for new mail commands:
 
 ### Incomplete or fragile
 
+- **Multi-board 3D viewer first-open virtual models**. On the first
+  open of the multi-board (assembly) 3D viewer in a fresh session,
+  footprints whose 3D models reference `${KIPRJMOD}/EASYEDA_MODELS/...`
+  do not render — `m_3dModelMap` on the per-instance `RENDER_3D_OPENGL`
+  appears to miss those entries even though the cache resolves them
+  successfully (verified via the diagnostic `[3DLOAD]` line that ran
+  during this investigation). Workaround: open any sub-project's
+  per-board pcbnew → 3D viewer, close it, reopen the multi-board view —
+  models then render correctly across subsequent opens within the same
+  session. Cache pre-warm in `LoadProjectBoards` (call `cache->GetModel`
+  for every footprint model before the per-instance renderer reloads)
+  did not fix it. Triggering an automatic second reload after the first
+  paint via `m_extraReloadPending → RequestReload()` made the viewer
+  blank — wrong tool, the per-instance renderers' GL-context-release
+  pattern doesn't tolerate a `ReloadRequest` issued from inside
+  `RedrawAll`. Likely root cause is timing during first GL context
+  initialization (`MODEL_3D` VBO allocation in the constructor, called
+  from `load3dModels`, which runs inside `RunWithoutCtxLock`). Next
+  investigation: instrument per-instance `m_3dModelMap` content after
+  the first reload completes to determine whether the EasyEDA entries
+  are missing from the map (load-pipeline issue) or present but failing
+  to render (renderer issue / GL-state issue). Non-blocking — workaround
+  is reproducible and takes ~5 seconds.
 - **Directory-walk container lookup** (M5.2). Used by:
   `eeschema/tools/sch_editor_control.cpp::RefreshMbsFromSubProjects`,
   `eeschema/files-io.cpp::syncCrossBoardNetsIfMbs`,
@@ -262,9 +293,27 @@ None currently open.
   to land on the container `.kicad_pro` before per-board pin-count
   DRC can fire automatically — currently exposed only via the
   runtime engine API.
-- **M6 (3D viewer)** *(separate agent)*. M6.D mating refinements,
-  M6.E real-geometry collision, M6.F STEP assembly export, M6.G
-  persistence + polish.
+- **M6 (3D viewer)** *(separate agent)*. Remaining:
+  M6.E phase 2 (OBB/GJK narrow-phase collision + canvas highlights),
+  M6.C-phase-2 (raytracer multi-instance, model cache dedup,
+  parallel sub-board load, camera auto-frame on open),
+  XCAF promotion for STEP export (preserve per-board tree label in
+  the output so CAD tools show an assembly hierarchy).
+  See "Shipped" for the M6 work that has landed.
+  - **M6.H — Cross-probe highlight in assembly viewer**. The
+    assembly 3D viewer must respond to selection / highlight events
+    originating in any peer schematic (sub-project SCH or MBSCH) or
+    PCB editor: highlighting a symbol / footprint / net in the
+    source frame should highlight the corresponding 3D footprint
+    instance in the assembly view, scoped to the correct sub-board
+    instance. Single-board pcbnew already wires this via
+    `MAIL_CROSS_PROBE` / `MAIL_SELECTION` into `EDA_3D_VIEWER_FRAME`;
+    assembly mode needs the equivalent path with
+    `(projectName, footprintRef)` keying so the right per-instance
+    transform is picked. Receivers should use the M4 peer-mail
+    project scope filter so highlights from one sub-project don't
+    bleed into siblings, and the in-band `$PROJECT:` token pattern
+    when MBSCH originates a scoped probe.
 - **M7.1 — Container library architecture** *(separate agent)*.
   Physical replication model (see locked-in decision #8). Pieces:
   - **Foundation** ✓ landed. `PROJECT::GetContainerProjectPath()` walk-up
@@ -433,6 +482,31 @@ None currently open.
 - **Properties dialog wxFormBuilder rewrite** (~30 min). Currently
   hand-coded; standard pattern uses a `.fbp` + matching `_base`
   class.
+- **MBS block properties — sidebar + E-key dialog cleanup**
+  (~1-2 sessions). Two related gaps:
+  - **Properties Manager sidebar wiring.** Selecting a
+    `SCH_MODULE_BLOCK` or `SCH_MODULE_PIN` on the MBS canvas should
+    populate the eeschema Properties panel (the live sidebar that
+    other `SCH_ITEM`s already drive via the `PROPERTIES_TOOL` /
+    `PROPERTY_MANAGER` reflection layer). Today the panel is empty
+    on MBS selection. Action: register the block + pin properties
+    (component ref, pin number, net name, electrical type, sub-
+    project) with `PROPERTY_MANAGER::AddProperty` in the item ctors,
+    matching what `SCH_HIERLABEL` / `SCH_SHEET_PIN` already do.
+    Read-only fields where edits aren't legal at this stage; live
+    rename for net name / electrical type.
+  - **E-key (Edit Properties) dialog cleanup.** The current
+    `dialog_module_block_properties` is hand-built and inconsistent
+    with sibling KiCad property dialogs — pin-functions tab is
+    cramped, "Open" button placement is inconsistent with the
+    standard properties layout, and the General tab still shows
+    fields that belong on the (sidebar) selection inspector rather
+    than a modal. Action: rebuild via wxFormBuilder (subsumes the
+    "Properties dialog wxFormBuilder rewrite" item above), align
+    field grouping with `dialog_sheet_pin_properties` /
+    `dialog_label_properties`, and move read-only inspection-style
+    fields out of the dialog onto the Properties panel sidebar so
+    the modal is action-only.
 - **M9 — Agent integration** *(separate agent)*. Kipy bindings for
   container + module-block; tool schemas in `agent/tools/`;
   IPC handlers in `eeschema/api/` and `pcbnew/api/`.

@@ -1139,6 +1139,14 @@ wxFileName EnsureMbsFile( PROJECT_FILE& aContainer, const wxString& aContainerBa
             wxFileName pcbFile = mainPcbForSubProject( proFile );
 
             std::vector<wxString> connectors = scanConnectorReferences( schFile );
+
+            // No connectors → no cross-board interface to represent. Skip
+            // entirely rather than emitting an empty placeholder block;
+            // a later refresh will add a block once the user introduces
+            // a connector to this sub-project.
+            if( connectors.empty() )
+                continue;
+
             std::map<wxString, std::vector<MULTI_BOARD_PAD_INFO>> pads =
                     scanConnectorPads( pcbFile );
 
@@ -1208,23 +1216,6 @@ wxFileName EnsureMbsFile( PROJECT_FILE& aContainer, const wxString& aContainerBa
 
                 rowCursorX += blockWidth + blockSpacing;
                 rowMaxHeight = std::max( rowMaxHeight, thisHeight );
-            }
-
-            // If this sub-project has no connectors yet, drop a single
-            // placeholder so the sub-project is still visually represented.
-            if( connectors.empty() )
-            {
-                blocksSection += wxString::Format(
-                        wxT( "\t(module_block\n"
-                             "\t\t(at %.2f %.2f)\n"
-                             "\t\t(size %.2f %.2f)\n"
-                             "\t\t(sub_project \"%s\")\n"
-                             "\t\t(name \"%s\")\n"
-                             "\t\t(uuid \"%s\")\n"
-                             "\t)\n" ),
-                        rowCursorX, cursorY, blockWidth, minHeight,
-                        info.relativePath, subName, KIID().AsString() );
-                rowMaxHeight = std::max( rowMaxHeight, minHeight );
             }
 
             cursorY += rowMaxHeight + rowSpacing;

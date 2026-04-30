@@ -26,6 +26,8 @@
 #include <pcbnew_scripting_helpers.h>
 #include <pgm_base.h>
 #include <eda_pattern_match.h>
+#include <3d_viewer/3d_viewer_assembly.h>
+#include <exporters/step/assembly_step.h>
 #include <background_jobs_monitor.h>
 #include <cli_progress_reporter.h>
 #include <confirm.h>
@@ -615,11 +617,42 @@ KIFACE_API KIFACE* KIFACE_GETTER( int* aKIFACEversion, int aKiwayVersion, PGM_BA
 }
 
 
+/// Bridge between the 3d-viewer module's lightweight per-board entry
+/// type and the OCCT-using assembly STEP exporter that lives here in
+/// pcbnew_kiface_objects. Wires up at OnKifaceStart so cvpcb_kiface
+/// (which links 3d-viewer but not OCCT) can leave the export hook
+/// null instead of pulling OCCT into its link surface.
+static bool pcbnew_assembly_step_bridge( const std::vector<ASSEMBLY_3D_MANAGER::STEPBoardEntry>& aEntries,
+                                         const wxString& aOutputFile )
+{
+    std::vector<ASSEMBLY_STEP_BOARD> entries;
+    entries.reserve( aEntries.size() );
+
+    for( const ASSEMBLY_3D_MANAGER::STEPBoardEntry& src : aEntries )
+    {
+        ASSEMBLY_STEP_BOARD e;
+        e.board       = src.board;
+        e.name        = src.name;
+        e.positionMm  = VECTOR3D( src.positionMm.x, src.positionMm.y, src.positionMm.z );
+        e.rotationDeg = VECTOR3D( src.rotationDeg.x, src.rotationDeg.y, src.rotationDeg.z );
+        entries.push_back( std::move( e ) );
+    }
+
+    return ExportPcbAssemblyToSTEP( entries, aOutputFile );
+}
+
+
 bool IFACE::OnKifaceStart( PGM_BASE* aProgram, int aCtlBits, KIWAY* aKiway )
 {
     // This is process-level-initialization, not project-level-initialization of the DSO.
     // Do nothing in here pertinent to a project!
     InitSettings( new PCBNEW_SETTINGS );
+
+    // M6.F: install the OCCT-backed assembly STEP exporter into the
+    // 3d-viewer module. Other kifaces that link 3d-viewer but not
+    // pcbnew_kiface_objects (cvpcb's footprint preview) leave this
+    // null and the assembly view's export button reports a no-op.
+    ASSEMBLY_3D_MANAGER::SetSTEPExportCallback( &pcbnew_assembly_step_bridge );
 
     SETTINGS_MANAGER& mgr = aProgram->GetSettingsManager();
 

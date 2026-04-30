@@ -170,6 +170,16 @@ wxString MBS_CHANGE::Describe() const
     switch( kind )
     {
     case KIND::ADD_BLOCK:
+        // Empty componentRef + empty pad list = "the sub-project exists in
+        // the container but has no connectors yet, and nothing on the MBS
+        // represents it." Emit a placeholder block so the user can see the
+        // sub-project on the canvas; it'll be replaced by real connector
+        // blocks on a future refresh once connectors are added.
+        if( componentRef.IsEmpty() && blockAllPads.empty() )
+            return wxString::Format( _( "Add placeholder block for %s "
+                                        "(no connectors detected yet)" ),
+                                     boardLabel );
+
         return wxString::Format( _( "Add block %s (%s, %zu pin(s))" ),
                                  componentRef, boardLabel, blockAllPads.size() );
 
@@ -272,6 +282,15 @@ std::vector<MBS_CHANGE> ComputeMbsRefreshDiff( SCH_SCREEN& aMbsScreen,
     std::map<std::pair<wxString, wxString>, SCH_MODULE_BLOCK*> byPath;
     std::map<std::pair<wxString, wxString>, SCH_MODULE_BLOCK*> byName;
 
+    // Connector-less placeholder index: keyed on sub-project UUID alone
+    // (componentRef is empty by definition for a placeholder). Used to
+    // (a) keep an existing placeholder matched on a refresh while the
+    // sub-project still has no connectors — i.e. avoid REMOVE/ADD churn
+    // — and (b) detect "newly-added sub-project with no representation
+    // on the MBS" so we can emit a fresh placeholder for it. See the
+    // sub-project-walk below.
+    std::map<KIID, SCH_MODULE_BLOCK*> placeholderByUuid;
+
     for( SCH_ITEM* item : aMbsScreen.Items().OfType( SCH_MODULE_BLOCK_T ) )
     {
         SCH_MODULE_BLOCK* b = static_cast<SCH_MODULE_BLOCK*>( item );
@@ -289,6 +308,9 @@ std::vector<MBS_CHANGE> ComputeMbsRefreshDiff( SCH_SCREEN& aMbsScreen,
 
         if( !existingName.IsEmpty() )
             byName[{ existingName, b->GetComponentRef() }] = b;
+
+        if( b->GetComponentRef().IsEmpty() && b->GetSubProjectUuid() != niluuid )
+            placeholderByUuid[b->GetSubProjectUuid()] = b;
 
         wxLogInfo( wxT( "MBS diff: existing block uuid=%s path=%s ref=%s name=%s" ),
                    b->GetSubProjectUuid().AsString(),
@@ -482,6 +504,43 @@ std::vector<MBS_CHANGE> ComputeMbsRefreshDiff( SCH_SCREEN& aMbsScreen,
                 ch.oldLabel              = pin->GetText();
                 ch.existingBlock         = existing;
                 ch.existingPin           = pin;
+                changes.push_back( std::move( ch ) );
+            }
+        }
+
+        // Placeholder block for sub-projects with no connectors yet.
+        //
+        // A sub-project added to the container via Manage Boards starts
+        // life with no connector-class symbols (the default project
+        // template doesn't include any). Without this branch the
+        // connector loop never executes for it, so the diff is empty
+        // and the user thinks the refresh "missed" their newly-added
+        // board. We emit a placeholder ADD_BLOCK (empty componentRef,
+        // no pads) so the new sub-project becomes visible on the MBS;
+        // a later refresh — once the user has actually added a
+        // connector to that sub-project — replaces the placeholder
+        // with real connector blocks via the orphan/add path.
+        //
+        // If a placeholder for this sub-project already exists, mark
+        // it as matched so we don't churn (REMOVE+ADD on every
+        // refresh).
+        if( connectors.empty() )
+        {
+            auto pit = placeholderByUuid.find( info.uuid );
+
+            if( pit != placeholderByUuid.end() )
+            {
+                matchedBlocks.insert( pit->second );
+            }
+            else
+            {
+                MBS_CHANGE ch;
+                ch.kind                  = MBS_CHANGE::KIND::ADD_BLOCK;
+                ch.subProjectUuid        = info.uuid;
+                ch.subProjectPath        = info.relativePath;
+                ch.subProjectDisplayName = displayName;
+                ch.componentRef          = wxEmptyString;
+                ch.blockAllPads          = {};
                 changes.push_back( std::move( ch ) );
             }
         }
@@ -681,7 +740,16 @@ MBS_REFRESH_RESULT ApplyMbsRefreshChanges( SCH_SCREEN& aMbsScreen,
 
             wxString label = ch->subProjectDisplayName.IsEmpty() ? ch->subProjectPath
                                                                  : ch->subProjectDisplayName;
-            block->SetDisplayName( label + wxT( " / " ) + ch->componentRef );
+
+            // Placeholder blocks (empty componentRef, no pads) are
+            // emitted for sub-projects without connectors so the user
+            // can still see the sub-project on the MBS. Drop the
+            // " / <ref>" suffix in that case — it'd render as a
+            // trailing " / " with nothing after it.
+            if( ch->componentRef.IsEmpty() )
+                block->SetDisplayName( label );
+            else
+                block->SetDisplayName( label + wxT( " / " ) + ch->componentRef );
 
             int height = computeBlockHeight( ch->blockAllPads.size() );
             block->SetSize( VECTOR2I( BLOCK_WIDTH_IU, height ) );
@@ -779,7 +847,17 @@ MBS_REFRESH_RESULT ApplyMbsRefreshChanges( SCH_SCREEN& aMbsScreen,
     // unchecked, or when a sub-project lost its last connector between
     // refreshes. An MBS block exists to host pins — without any, it's a
     // bare label that can't take wires, so auto-deletion is safe.
+    //
+    // Exception: blocks added in THIS apply pass with an intentionally
+    // empty pad list — i.e. placeholder blocks for sub-projects that
+    // have no connectors yet (see ComputeMbsRefreshDiff's "placeholder"
+    // branch). Those are placed precisely so the user can see the
+    // newly-added sub-project on the MBS until they introduce a
+    // connector; sweeping them would defeat the point.
     {
+        std::set<SCH_MODULE_BLOCK*> newlyAdded( result.newlyAddedBlocks.begin(),
+                                                result.newlyAddedBlocks.end() );
+
         std::vector<SCH_MODULE_BLOCK*> empties;
 
         for( SCH_ITEM* item : aMbsScreen.Items() )
@@ -788,6 +866,9 @@ MBS_REFRESH_RESULT ApplyMbsRefreshChanges( SCH_SCREEN& aMbsScreen,
                 continue;
 
             SCH_MODULE_BLOCK* block = static_cast<SCH_MODULE_BLOCK*>( item );
+
+            if( newlyAdded.count( block ) )
+                continue;
 
             if( block->GetPins().empty() && !deletedBlocks.count( block ) )
                 empties.push_back( block );

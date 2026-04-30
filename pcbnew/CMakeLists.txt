@@ -260,6 +260,7 @@ set( PCBNEW_EXPORTERS
     exporters/export_gencad.cpp
     exporters/export_gencad_writer.cpp
     exporters/export_idf.cpp
+    exporters/step/assembly_step.cpp
     exporters/step/exporter_step.cpp
     exporters/step/kicad3d_info.cpp
     exporters/step/step_pcb_model.cpp

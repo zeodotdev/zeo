@@ -285,6 +285,15 @@ public:
     const std::vector<BOARD_3D_INSTANCE>& GetBoardInstances() const { return m_boardInstances; }
 
     /**
+     * M6.G: snapshot every instance's pose / visibility / transparency
+     * into the container `.kicad_pro`'s assembly state list. Use after
+     * bulk operations (`ArrangeBoards`, `ResetPositions`, layout-mode
+     * change) so the persisted state matches what's on screen. Per-
+     * instance setters call this internally for direct edits.
+     */
+    void PersistAllInstances();
+
+    /**
      * Get a board instance by UUID.
      */
     BOARD_3D_INSTANCE* GetBoardInstance( const KIID& aInstanceUuid );
@@ -484,11 +493,41 @@ public:
     // ========== Export ==========
 
     /**
-     * Export the assembly as a STEP file.
+     * Export the assembly as a STEP file. The actual OCCT-using
+     * implementation lives in `pcbnew/exporters/step/assembly_step.cpp`
+     * and registers itself via `SetSTEPExportCallback` from the pcbnew
+     * kiface init path; in any kiface that doesn't pull pcbnew in
+     * (e.g. cvpcb's footprint preview viewer) this returns false
+     * instead of pulling OCCT into that kiface's link line.
+     *
      * @param aFilename Output filename
      * @return true if export succeeded
      */
     bool ExportAssemblySTEP( const wxString& aFilename );
+
+    /**
+     * Plain-old-data view of one board in the export, with the
+     * world-space pose to apply. Defined here so the 3d-viewer
+     * library doesn't need to reach into pcbnew's exporter headers
+     * (or pull OCCT) to invoke the registered callback.
+     */
+    struct STEPBoardEntry
+    {
+        BOARD*   board;        ///< pcbcommon BOARD; already in 3d-viewer's link surface
+        wxString name;
+        SFVEC3F  positionMm;   ///< mm
+        SFVEC3F  rotationDeg;  ///< Z-Y-X Euler in degrees
+    };
+
+    using STEPExportCallback = bool ( * )( const std::vector<STEPBoardEntry>& aEntries,
+                                           const wxString&                    aOutputFile );
+
+    /**
+     * Install the actual STEP export implementation. Called once from
+     * pcbnew kiface init; subsequent calls overwrite. Pass nullptr to
+     * disable.
+     */
+    static void SetSTEPExportCallback( STEPExportCallback aCallback );
 
     /**
      * Get the combined bounding box of all visible boards.
@@ -558,6 +597,23 @@ private:
      * Get the board thickness in mm.
      */
     float GetBoardThickness( const BOARD* aBoard ) const;
+
+    /**
+     * M6.G: copy the given instance's pose/visibility/transparency
+     * into the container `.kicad_pro`'s
+     * `multi_board.assembly_3d.instances[]`. Inserts a new entry when
+     * the sub-project has no persisted state yet, otherwise overwrites.
+     * No-op when the manager isn't bound to a container project.
+     */
+    void persistInstanceState( const BOARD_3D_INSTANCE& aInst );
+
+    /**
+     * M6.G: apply persisted per-instance state from the container
+     * `.kicad_pro` to every BOARD_3D_INSTANCE whose sub-project UUID
+     * matches an entry. Called from `LoadProjectBoards` AFTER the
+     * default `ArrangeBoards(FLAT)` so persisted overrides win.
+     */
+    void applyPersistedInstanceStates();
 
     // ========== M6.D-phase-1 mate solver pipeline ==========
     //
@@ -629,8 +685,22 @@ private:
                                           const wxString&          aFootprintRef,
                                           glm::vec3&               aOutWorld ) const;
 
+    /// One unintended collision pair from M6.E phase-2. Stored
+    /// alongside `m_lastCollisions` (one entry per index) so the
+    /// collision gizmo can project both endpoints to world space
+    /// using `projectFootprintCentroidToWorld` — matches the mate
+    /// gizmo's pose math.
+    struct CollisionPair
+    {
+        KIID     instanceA;
+        wxString refA;
+        KIID     instanceB;
+        wxString refB;
+    };
+
     std::vector<BOARD_3D_INSTANCE>  m_boardInstances;
     std::vector<COLLISION_RESULT>   m_lastCollisions;
+    std::vector<CollisionPair>      m_lastCollisionPairs;
     std::vector<MATE_RESIDUAL>      m_lastMateResiduals;
     ASSEMBLY_STATE                  m_state;
     PROJECT*                        m_project;

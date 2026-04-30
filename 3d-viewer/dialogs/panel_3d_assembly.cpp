@@ -30,6 +30,7 @@
 #include <project.h>
 #include <project/project_file.h>
 
+#include <wx/busyinfo.h>
 #include <wx/button.h>
 #include <wx/checkbox.h>
 #include <wx/checklst.h>
@@ -38,6 +39,7 @@
 #include <wx/filedlg.h>
 #include <wx/msgdlg.h>
 #include <wx/sizer.h>
+#include <wx/utils.h>
 #include <wx/statbox.h>
 #include <wx/stattext.h>
 #include <wx/textctrl.h>
@@ -408,6 +410,7 @@ void PANEL_3D_ASSEMBLY::onLayoutModeChanged( wxCommandEvent& aEvent )
         mode = BOARD_LAYOUT_MODE::CUSTOM;
 
     m_manager->ArrangeBoards( mode, 20.0f );
+    m_manager->PersistAllInstances();
     UpdateSelectedBoardControls();
     refresh3DView();
 }
@@ -503,18 +506,38 @@ void PANEL_3D_ASSEMBLY::onExportSTEP( wxCommandEvent& aEvent )
                       _( "STEP files" ) + " (*.step;*.stp)|*.step;*.stp",
                       wxFD_SAVE | wxFD_OVERWRITE_PROMPT );
 
-    if( dlg.ShowModal() == wxID_OK )
+    if( dlg.ShowModal() != wxID_OK )
+        return;
+
+    bool ok;
+
     {
-        if( m_manager->ExportAssemblySTEP( dlg.GetPath() ) )
-        {
-            wxMessageBox( _( "Assembly exported successfully." ), _( "Export" ),
-                          wxOK | wxICON_INFORMATION, this );
-        }
-        else
-        {
-            wxMessageBox( _( "Failed to export assembly." ), _( "Export Error" ),
-                          wxOK | wxICON_ERROR, this );
-        }
+        // STEP export drives the per-board OCCT exporter once per visible
+        // sub-board, then re-reads each output to compose the final
+        // compound. Each per-board step takes seconds-to-minutes; the
+        // operation is synchronous on the UI thread, so without an
+        // explicit busy indicator the app appears frozen. wxBusyInfo
+        // keeps a modal "Exporting..." panel up while the work runs and
+        // changes the cursor; events fire normally inside the export
+        // (the assembly_step exporter calls wxYield between boards) so
+        // the busy panel remains responsive.
+        wxBusyCursor busyCursor;
+        wxBusyInfo   busyInfo(
+                _( "Exporting assembly to STEP — this may take a few minutes..." ), this );
+        wxYield();
+
+        ok = m_manager->ExportAssemblySTEP( dlg.GetPath() );
+    }
+
+    if( ok )
+    {
+        wxMessageBox( _( "Assembly exported successfully." ), _( "Export" ),
+                      wxOK | wxICON_INFORMATION, this );
+    }
+    else
+    {
+        wxMessageBox( _( "Failed to export assembly." ), _( "Export Error" ),
+                      wxOK | wxICON_ERROR, this );
     }
 }
 

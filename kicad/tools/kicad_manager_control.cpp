@@ -900,13 +900,22 @@ int KICAD_MANAGER_CONTROL::ManageSubBoards( const TOOL_EVENT& aEvent )
         return 0;
     }
 
-    wxFileName multiFile( multi->GetFullFilename() );
+    // Use the PROJECT's full name (absolute path), not the PROJECT_FILE's
+    // GetFullFilename() — for live PROJECT_FILEs registered with
+    // SETTINGS_MANAGER, m_filename is the basename only (see
+    // settings_manager.cpp::loadProjectFile), so GetFullFilename()
+    // returns "name.kicad_pro" with no directory. The dialog needs the
+    // absolute path to compute the boards/ directory and to target
+    // SaveToFile correctly.
+    wxFileName multiFile( m_frame->Prj().GetProjectFullName() );
 
     DIALOG_MULTI_BOARD_SETUP dlg( m_frame, multi, multiFile );
     dlg.ShowModal();
 
-    // Safety save (the dialog's Done handler also saves)
-    multi->SaveToFile();
+    // Safety save (the dialog's Done handler also saves). Pass the
+    // project directory explicitly since m_filename alone is just the
+    // basename for a live PROJECT_FILE.
+    multi->SaveToFile( multiFile.GetPath() );
 
     return 0;
 }

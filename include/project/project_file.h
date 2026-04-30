@@ -310,6 +310,41 @@ struct KICOMMON_API CUSTOM_MATE
 
 
 /**
+ * Persisted per-instance state for the M6 3D assembly viewer
+ * (M6.G). Lives on the container `.kicad_pro` under
+ * `multi_board.assembly_3d.instances[]`, keyed by sub-project UUID
+ * so renames of relative paths or display names don't lose layout.
+ *
+ * Scope: pose (translation + rotation), visibility, and transparency.
+ * Custom mate offsets stay on `CUSTOM_MATE.offsetTranslation/Rotation`.
+ */
+struct KICOMMON_API ASSEMBLY_INSTANCE_STATE
+{
+    KIID     subProjectUuid;                      ///< Keys this state to a sub-project
+    VECTOR3D position;                            ///< mm (X, Y, Z)
+    VECTOR3D rotation;                            ///< degrees (X, Y, Z)
+    bool     visible;                             ///< Render this instance
+    bool     transparent;                         ///< Render with transparency
+    double   opacity;                             ///< 0..1; ignored when !transparent
+
+    ASSEMBLY_INSTANCE_STATE() :
+            position( 0.0, 0.0, 0.0 ),
+            rotation( 0.0, 0.0, 0.0 ),
+            visible( true ),
+            transparent( false ),
+            opacity( 1.0 )
+    {}
+
+    bool operator==( const ASSEMBLY_INSTANCE_STATE& aOther ) const
+    {
+        return subProjectUuid == aOther.subProjectUuid && position == aOther.position
+               && rotation == aOther.rotation && visible == aOther.visible
+               && transparent == aOther.transparent && opacity == aOther.opacity;
+    }
+};
+
+
+/**
  * For storing PcbNew MRU paths of various types
  */
 enum LAST_PATH_TYPE : unsigned int
@@ -531,6 +566,26 @@ public:
     void SetCustomMates( std::vector<CUSTOM_MATE> aMates )
     {
         m_customMates = std::move( aMates );
+    }
+
+    /**
+     * Persisted per-instance assembly state (M6.G). One entry per
+     * sub-project that has non-default pose / visibility / transparency.
+     * Container projects only.
+     */
+    std::vector<ASSEMBLY_INSTANCE_STATE>& GetAssemblyInstances()
+    {
+        return m_assemblyInstances;
+    }
+
+    const std::vector<ASSEMBLY_INSTANCE_STATE>& GetAssemblyInstances() const
+    {
+        return m_assemblyInstances;
+    }
+
+    void SetAssemblyInstances( std::vector<ASSEMBLY_INSTANCE_STATE> aStates )
+    {
+        m_assemblyInstances = std::move( aStates );
     }
 
     /// Convenience accessor for the MBS schematic filename referenced by
@@ -759,6 +814,10 @@ private:
     /// augment the auto-derived assembly mate graph (M6.D-phase-2).
     std::vector<CUSTOM_MATE> m_customMates;
 
+    /// For container projects: persisted per-instance assembly state
+    /// (pose + visibility + transparency). M6.G.
+    std::vector<ASSEMBLY_INSTANCE_STATE> m_assemblyInstances;
+
     /// For container projects: filename of the multi-board schematic.
     wxString m_mbsFileName;
 
@@ -826,5 +885,11 @@ void from_json( const nlohmann::json& aJson, MB_CROSS_BOARD_NET& aNet );
 void to_json( nlohmann::json& aJson, const CUSTOM_MATE& aMate );
 
 void from_json( const nlohmann::json& aJson, CUSTOM_MATE& aMate );
+
+// Specializations for ASSEMBLY_INSTANCE_STATE
+
+void to_json( nlohmann::json& aJson, const ASSEMBLY_INSTANCE_STATE& aState );
+
+void from_json( const nlohmann::json& aJson, ASSEMBLY_INSTANCE_STATE& aState );
 
 #endif

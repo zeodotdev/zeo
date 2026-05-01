@@ -46,3 +46,29 @@ else()
         COMPONENT binary
         )
 endif()
+
+# Native Windows MCP launcher. Embeds python311.dll (same one Zeo.exe links)
+# and runs kipy.mcp.server from the bundled bin/Lib/site-packages. Replaces
+# the bash zeo script for MCP integration on Windows, where bash isn't viable.
+if( WIN32 )
+    add_executable( zeo-mcp WIN32 zeo-mcp/zeo-mcp.cpp )
+
+    target_include_directories( zeo-mcp PRIVATE ${PYTHON_INCLUDE_DIRS} )
+    target_link_libraries( zeo-mcp PRIVATE ${PYTHON_LIBRARIES} )
+
+    if( MSVC )
+        # Override the WIN32 subsystem with CONSOLE for stdio MCP transport.
+        # Mirrors the kicad-cli pattern in kicad/CMakeLists.txt.
+        set_target_properties( zeo-mcp PROPERTIES COMPILE_DEFINITIONS_DEBUG          "_CONSOLE" )
+        set_target_properties( zeo-mcp PROPERTIES COMPILE_DEFINITIONS_RELWITHDEBINFO "_CONSOLE" )
+        set_target_properties( zeo-mcp PROPERTIES LINK_FLAGS_DEBUG          "/SUBSYSTEM:CONSOLE" )
+        set_target_properties( zeo-mcp PROPERTIES LINK_FLAGS_RELWITHDEBINFO "/SUBSYSTEM:CONSOLE" )
+        set_target_properties( zeo-mcp PROPERTIES LINK_FLAGS_RELEASE        "/SUBSYSTEM:CONSOLE" )
+        set_target_properties( zeo-mcp PROPERTIES LINK_FLAGS_MINSIZEREL     "/SUBSYSTEM:CONSOLE" )
+    endif()
+
+    install( TARGETS zeo-mcp
+        DESTINATION ${KICAD_BIN}
+        COMPONENT binary
+        )
+endif()

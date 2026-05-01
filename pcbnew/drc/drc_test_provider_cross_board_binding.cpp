@@ -52,7 +52,7 @@
       to the MBS
 
     Errors generated:
-    - DRCE_GENERIC_ERROR — the binding contract isn't satisfied
+    - DRCE_CROSS_BOARD_BINDING — the binding contract isn't satisfied
 */
 
 class DRC_TEST_PROVIDER_CROSS_BOARD_BINDING : public DRC_TEST_PROVIDER
@@ -110,7 +110,7 @@ bool DRC_TEST_PROVIDER_CROSS_BOARD_BINDING::Run()
 
     for( const MULTI_BOARD_CROSS_BOARD_BINDING& binding : bindings )
     {
-        if( m_drcEngine->IsErrorLimitExceeded( DRCE_GENERIC_ERROR ) )
+        if( m_drcEngine->IsErrorLimitExceeded( DRCE_CROSS_BOARD_BINDING ) )
             return true;
 
         if( !reportProgress( ii++, total, progressDelta ) )
@@ -121,7 +121,7 @@ bool DRC_TEST_PROVIDER_CROSS_BOARD_BINDING::Run()
 
         if( it == fpByRef.end() )
         {
-            std::shared_ptr<DRC_ITEM> drcItem = DRC_ITEM::Create( DRCE_GENERIC_ERROR );
+            std::shared_ptr<DRC_ITEM> drcItem = DRC_ITEM::Create( DRCE_CROSS_BOARD_BINDING );
             drcItem->SetErrorMessage( wxString::Format(
                     _( "MBS cross-board net '%s' references connector '%s' "
                        "which is not present on this board." ),
@@ -146,7 +146,7 @@ bool DRC_TEST_PROVIDER_CROSS_BOARD_BINDING::Run()
 
         if( !pad )
         {
-            std::shared_ptr<DRC_ITEM> drcItem = DRC_ITEM::Create( DRCE_GENERIC_ERROR );
+            std::shared_ptr<DRC_ITEM> drcItem = DRC_ITEM::Create( DRCE_CROSS_BOARD_BINDING );
             drcItem->SetItems( fp );
             drcItem->SetErrorMessage( wxString::Format(
                     _( "MBS cross-board net '%s' references pin %s/%s "
@@ -159,7 +159,7 @@ bool DRC_TEST_PROVIDER_CROSS_BOARD_BINDING::Run()
         // 3. Pad must have a net assigned.
         if( pad->GetNetCode() <= 0 )
         {
-            std::shared_ptr<DRC_ITEM> drcItem = DRC_ITEM::Create( DRCE_GENERIC_ERROR );
+            std::shared_ptr<DRC_ITEM> drcItem = DRC_ITEM::Create( DRCE_CROSS_BOARD_BINDING );
             drcItem->SetItems( pad );
             drcItem->SetErrorMessage( wxString::Format(
                     _( "Connector pin %s/%s should carry cross-board net '%s' "
@@ -209,7 +209,7 @@ bool DRC_TEST_PROVIDER_CROSS_BOARD_BINDING::Run()
 
         if( !matches )
         {
-            std::shared_ptr<DRC_ITEM> drcItem = DRC_ITEM::Create( DRCE_GENERIC_ERROR );
+            std::shared_ptr<DRC_ITEM> drcItem = DRC_ITEM::Create( DRCE_CROSS_BOARD_BINDING );
             drcItem->SetItems( pad );
 
             // Show the unescaped form in the marker so the user sees

@@ -301,6 +301,12 @@ set( PCBNEW_DRC_SRCS
     drc/drc_test_provider_connectivity.cpp
     drc/drc_test_provider_cross_board_binding.cpp
     drc/drc_test_provider_cross_board_consistency.cpp
+    drc/drc_test_provider_cross_board_orphan_pad.cpp
+    drc/drc_test_provider_cross_board_power_pins.cpp
+    drc/drc_test_provider_cross_board_length.cpp
+    drc/drc_test_provider_cross_board_diff_pair.cpp
+    drc/drc_test_provider_cross_board_current.cpp
+    drc/drc_test_provider_cross_board_voltage_drop.cpp
     drc/drc_test_provider_connection_width.cpp
     drc/drc_test_provider_copper_clearance.cpp
     drc/drc_test_provider_physical_clearance.cpp

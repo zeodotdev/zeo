@@ -169,6 +169,10 @@ ERC_ITEM ERC_ITEM::fieldNameWhitespace( ERCE_FIELD_NAME_WHITESPACE,
         _HKI( "Field name has leading or trailing whitespace" ),
         wxT( "field_name_whitespace" ) );
 
+ERC_ITEM ERC_ITEM::crossBoardStalePin( ERCE_CROSS_BOARD_STALE_PIN,
+        _HKI( "Cross-board: module pin's target sub-project pad is missing" ),
+        wxT( "cross_board_stale_pin" ) );
+
 ERC_ITEM ERC_ITEM::unresolvedVariable( ERCE_UNRESOLVED_VARIABLE,
         _HKI( "Unresolved text variable" ),
         wxT( "unresolved_variable" ) );
@@ -278,6 +282,7 @@ std::vector<std::reference_wrapper<RC_ITEM>> ERC_ITEM::allItemTypes(
             ERC_ITEM::heading_misc,
             ERC_ITEM::stackedPinName,
             ERC_ITEM::fieldNameWhitespace,
+            ERC_ITEM::crossBoardStalePin,
             ERC_ITEM::unannotated,
             ERC_ITEM::unresolvedVariable,
             ERC_ITEM::undefinedNetclass,
@@ -363,6 +368,7 @@ std::shared_ptr<ERC_ITEM> ERC_ITEM::Create( int aErrorCode )
     case ERCE_UNCONNECTED_WIRE_ENDPOINT: return std::make_shared<ERC_ITEM>( unconnectedWireEndpoint );
     case ERCE_STACKED_PIN_SYNTAX:      return std::make_shared<ERC_ITEM>( stackedPinName );
     case ERCE_FIELD_NAME_WHITESPACE:   return std::make_shared<ERC_ITEM>( fieldNameWhitespace );
+    case ERCE_CROSS_BOARD_STALE_PIN:   return std::make_shared<ERC_ITEM>( crossBoardStalePin );
     case ERCE_UNSPECIFIED:
     default:
         wxFAIL_MSG( wxS( "Unknown ERC error code" ) );

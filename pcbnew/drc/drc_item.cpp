@@ -314,6 +314,38 @@ DRC_ITEM DRC_ITEM::trackOnPostMachinedLayer( DRCE_TRACK_ON_POST_MACHINED_LAYER,
         _HKI( "Track connected to post-machined or backdrilled layer" ),
         wxT( "track_on_post_machined_layer" ) );
 
+DRC_ITEM DRC_ITEM::crossBoardBinding( DRCE_CROSS_BOARD_BINDING,
+        _HKI( "Cross-board: connector pad doesn't carry the MBS-declared net" ),
+        wxT( "cross_board_binding" ) );
+
+DRC_ITEM DRC_ITEM::crossBoardConsistency( DRCE_CROSS_BOARD_CONSISTENCY,
+        _HKI( "Cross-board: sibling sub-project pad drift" ),
+        wxT( "cross_board_consistency" ) );
+
+DRC_ITEM DRC_ITEM::crossBoardOrphanPad( DRCE_CROSS_BOARD_ORPHAN_PAD,
+        _HKI( "Cross-board: connector pad not part of any cross-board net" ),
+        wxT( "cross_board_orphan_pad" ) );
+
+DRC_ITEM DRC_ITEM::crossBoardPowerPins( DRCE_CROSS_BOARD_POWER_PINS,
+        _HKI( "Cross-board: power net has fewer connector pins than rule requires" ),
+        wxT( "cross_board_power_pins" ) );
+
+DRC_ITEM DRC_ITEM::crossBoardLength( DRCE_CROSS_BOARD_LENGTH,
+        _HKI( "Cross-board: net total length across all boards exceeds rule" ),
+        wxT( "cross_board_length" ) );
+
+DRC_ITEM DRC_ITEM::crossBoardDiffPair( DRCE_CROSS_BOARD_DIFF_PAIR,
+        _HKI( "Cross-board: diff pair not routed consistently across all boards" ),
+        wxT( "cross_board_diff_pair" ) );
+
+DRC_ITEM DRC_ITEM::crossBoardCurrent( DRCE_CROSS_BOARD_CURRENT,
+        _HKI( "Cross-board: connector pin count insufficient for expected current" ),
+        wxT( "cross_board_current" ) );
+
+DRC_ITEM DRC_ITEM::crossBoardVoltageDrop( DRCE_CROSS_BOARD_VOLTAGE_DROP,
+        _HKI( "Cross-board: estimated voltage drop exceeds rule" ),
+        wxT( "cross_board_voltage_drop" ) );
+
 std::vector<std::reference_wrapper<RC_ITEM>> DRC_ITEM::allItemTypes( {
         DRC_ITEM::heading_electrical,
         DRC_ITEM::shortingItems,
@@ -354,6 +386,14 @@ std::vector<std::reference_wrapper<RC_ITEM>> DRC_ITEM::allItemTypes( {
         DRC_ITEM::footprintFilters,
         DRC_ITEM::netConflict,
         DRC_ITEM::unconnectedItems,
+        DRC_ITEM::crossBoardBinding,
+        DRC_ITEM::crossBoardConsistency,
+        DRC_ITEM::crossBoardOrphanPad,
+        DRC_ITEM::crossBoardPowerPins,
+        DRC_ITEM::crossBoardLength,
+        DRC_ITEM::crossBoardDiffPair,
+        DRC_ITEM::crossBoardCurrent,
+        DRC_ITEM::crossBoardVoltageDrop,
 
         DRC_ITEM::heading_signal_integrity,
         DRC_ITEM::lengthOutOfRange,
@@ -466,6 +506,14 @@ std::shared_ptr<DRC_ITEM> DRC_ITEM::Create( int aErrorCode )
     case DRCE_NONMIRRORED_TEXT_ON_BACK_LAYER:      return std::make_shared<DRC_ITEM>( nonMirroredTextOnBackLayer );
     case DRCE_MISSING_TUNING_PROFILE:   return std::make_shared<DRC_ITEM>( missingTuningProfile );
     case DRCE_TRACK_ON_POST_MACHINED_LAYER: return std::make_shared<DRC_ITEM>( trackOnPostMachinedLayer );
+    case DRCE_CROSS_BOARD_BINDING:      return std::make_shared<DRC_ITEM>( crossBoardBinding );
+    case DRCE_CROSS_BOARD_CONSISTENCY:  return std::make_shared<DRC_ITEM>( crossBoardConsistency );
+    case DRCE_CROSS_BOARD_ORPHAN_PAD:   return std::make_shared<DRC_ITEM>( crossBoardOrphanPad );
+    case DRCE_CROSS_BOARD_POWER_PINS:   return std::make_shared<DRC_ITEM>( crossBoardPowerPins );
+    case DRCE_CROSS_BOARD_LENGTH:       return std::make_shared<DRC_ITEM>( crossBoardLength );
+    case DRCE_CROSS_BOARD_DIFF_PAIR:    return std::make_shared<DRC_ITEM>( crossBoardDiffPair );
+    case DRCE_CROSS_BOARD_CURRENT:      return std::make_shared<DRC_ITEM>( crossBoardCurrent );
+    case DRCE_CROSS_BOARD_VOLTAGE_DROP: return std::make_shared<DRC_ITEM>( crossBoardVoltageDrop );
     default:
         wxFAIL_MSG( wxT( "Unknown DRC error code" ) );
         return nullptr;

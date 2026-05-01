@@ -4974,6 +4974,12 @@ void AGENT_FRAME::OnChatToolStart( wxThreadEvent& aEvent )
     {
         OPEN_EDITOR_HANDLER handler;
 
+        // Refresh container/sub-project info before resolving allowed paths,
+        // otherwise the multi-board allow-list (sibling sub-projects + container
+        // dir) can be empty when no editor is open and the registry hasn't been
+        // re-published since startup.
+        PublishOpenEditorStatusToRegistry();
+
         std::vector<std::string> allowedPaths;
         for( const auto& p : GetAllowedPaths() )
             allowedPaths.push_back( p.ToStdString() );
@@ -6586,6 +6592,44 @@ std::vector<wxString> AGENT_FRAME::GetAllowedPaths()
     {
         wxFileName fn( f );
         paths.push_back( fn.GetPath() );
+    }
+
+    // Multi-board container: also allow the container directory and every
+    // sub-project directory. Without this, an agent that has only one
+    // sub-project editor open is locked to that sub-project's folder and
+    // can't open a sibling sub-project or the container's .kicad_mbs.
+    // Same problem when no editor is open at all — Prj() may be empty,
+    // leaving only the KiCad docs root in the allow list.
+    const std::string& mbContainer = TOOL_REGISTRY::Instance().GetMultiBoardContainerJson();
+
+    if( !mbContainer.empty() )
+    {
+        auto cj = nlohmann::json::parse( mbContainer, nullptr, false );
+
+        if( !cj.is_discarded() )
+        {
+            std::string containerPro = cj.value( "pro_path", std::string() );
+
+            if( !containerPro.empty() )
+            {
+                wxFileName containerFn( wxString::FromUTF8( containerPro ) );
+                paths.push_back( containerFn.GetPath() );
+            }
+
+            if( cj.contains( "sub_projects" ) && cj["sub_projects"].is_array() )
+            {
+                for( const auto& sp : cj["sub_projects"] )
+                {
+                    std::string absPath = sp.value( "absolute_path", std::string() );
+
+                    if( !absPath.empty() )
+                    {
+                        wxFileName subFn( wxString::FromUTF8( absPath ) );
+                        paths.push_back( subFn.GetPath() );
+                    }
+                }
+            }
+        }
     }
 
     wxString pathList;

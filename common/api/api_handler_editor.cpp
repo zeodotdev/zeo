@@ -183,10 +183,17 @@ HANDLER_RESULT<bool> API_HANDLER_EDITOR::validateDocument( const DocumentSpecifi
     {
         wxLogMessage( "API_HANDLER_EDITOR[%p]: validateDocument FAILED - validateDocumentInternal returned false",
                       this );
+        // AS_UNHANDLED, not AS_BAD_REQUEST: with multiple peer-window handlers
+        // of the same document type (e.g. one PCB editor per sub-project of a
+        // multi-board container), the request may belong to a sibling handler
+        // that the API server hasn't iterated yet. Returning AS_BAD_REQUEST
+        // would short-circuit the server's first-handler-wins loop and surface
+        // a misleading "document not open" error even when it IS open on
+        // another handler. AS_UNHANDLED lets the server try the next one; if
+        // truly no handler matches, the server returns its own
+        // "no handler available" error.
         ApiResponseStatus e;
-        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
-        e.set_error_message( fmt::format( "the requested document {} is not open",
-                                          aDocument.board_filename() ) );
+        e.set_status( ApiStatusCode::AS_UNHANDLED );
         return tl::unexpected( e );
     }
 
@@ -213,10 +220,10 @@ HANDLER_RESULT<std::optional<KIID>> API_HANDLER_EDITOR::validateItemHeaderDocume
 
     if( !validateDocumentInternal( aHeader.document() ) )
     {
+        // See the same-named branch in validateDocument above — AS_UNHANDLED
+        // so the API server keeps iterating peer handlers.
         ApiResponseStatus e;
-        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
-        e.set_error_message( fmt::format( "the requested document {} is not open",
-                                          aHeader.document().board_filename() ) );
+        e.set_status( ApiStatusCode::AS_UNHANDLED );
         return tl::unexpected( e );
     }
 

@@ -26,8 +26,10 @@
 #include <env_vars.h>
 #include <pgm_base.h>
 #include <project.h>
+#include <project/multi_board_scan.h>
 #include <project/project_file.h>
 #include <project_template.h>
+#include <settings/settings_manager.h>
 #include <wildcards_and_files_ext.h>
 
 #include <wx/button.h>
@@ -86,10 +88,43 @@ static bool persistContainerOrWarn( wxWindow* aParent, PROJECT_FILE* aProject,
     if( !aProject )
         return false;
 
+    // Resolve the directory to write to. We deliberately don't use
+    // `aProject->GetProject()` (the PROJECT_FILE back-pointer) — it's
+    // a raw PROJECT* with no destroy hook and can dangle if any flow
+    // reloads/unloads the PROJECT. Instead: look up the canonical path
+    // through SETTINGS_MANAGER's open-projects list (lifetime-safe);
+    // if that doesn't find a match, fall back to the caller's hint and
+    // finally to CWD (SETTINGS_MANAGER::LoadProject sets CWD to the
+    // project directory on load).
+    wxString targetDir = aContainerDir;
+    wxString resolvedFrom = wxT( "caller" );
+
+    {
+        SETTINGS_MANAGER& sm = Pgm().GetSettingsManager();
+
+        for( const wxString& proPath : sm.GetOpenProjects() )
+        {
+            PROJECT* prj = sm.GetProject( proPath );
+
+            if( prj && &prj->GetProjectFile() == aProject )
+            {
+                targetDir = wxFileName( proPath ).GetPath();
+                resolvedFrom = wxT( "settings-manager" );
+                break;
+            }
+        }
+    }
+
+    if( targetDir.IsEmpty() )
+    {
+        targetDir = wxGetCwd();
+        resolvedFrom = wxT( "cwd" );
+    }
+
     // Force the save through even if Store()'s MatchesFile heuristic
     // believes nothing changed — we just performed a deliberate edit
     // and the user expects it on disk.
-    if( aProject->SaveToFile( aContainerDir, /*aForce=*/true ) )
+    if( aProject->SaveToFile( targetDir, /*aForce=*/true ) )
         return true;
 
     // Diagnose the failure: SaveToFile has a handful of early-exit gates
@@ -101,14 +136,14 @@ static bool persistContainerOrWarn( wxWindow* aParent, PROJECT_FILE* aProject,
 
     wxFileName probe;
 
-    if( aContainerDir.IsEmpty() )
+    if( targetDir.IsEmpty() )
     {
         probe.Assign( filename );
         probe.SetExt( fileExt );
     }
     else
     {
-        probe.Assign( aContainerDir, filename, fileExt );
+        probe.Assign( targetDir, filename, fileExt );
     }
 
     wxString detail;
@@ -135,8 +170,9 @@ static bool persistContainerOrWarn( wxWindow* aParent, PROJECT_FILE* aProject,
             wxString::Format(
                     _( "Could not persist the multi-board project. Your edit is in "
                        "memory but is not yet on disk; closing the project now will "
-                       "lose it.\n\nDiagnostic: %s\n\nTried directory: %s\nFilename: %s" ),
-                    detail, aContainerDir, filename ),
+                       "lose it.\n\nDiagnostic: %s\n\nTried directory: %s\nResolved from: %s\n"
+                       "Filename: %s\nCWD: %s" ),
+                    detail, targetDir, resolvedFrom, filename, wxGetCwd() ),
             _( "Save Failed" ), wxOK | wxICON_ERROR, aParent );
 
     return false;
@@ -150,21 +186,16 @@ DIALOG_MULTI_BOARD_SETUP::~DIALOG_MULTI_BOARD_SETUP()
 
 wxFileName DIALOG_MULTI_BOARD_SETUP::containerDir() const
 {
-    // Prefer the live PROJECT's absolute path (via the PROJECT_FILE
-    // back-pointer): SETTINGS_MANAGER stores the canonical
-    // "/abs/path/name.kicad_pro" on PROJECT, while PROJECT_FILE's own
-    // m_filename is only the basename. Falling back to
-    // m_multiProjectPath covers any free-standing PROJECT_FILE that
-    // isn't owned by SETTINGS_MANAGER (no current callers, but defensive
-    // — also covers the historic broken callers that passed only a
-    // basename in m_multiProjectPath).
-    wxFileName dir;
-
-    if( m_project && m_project->GetProject() )
-        dir.Assign( m_project->GetProject()->GetProjectFullName() );
-    else
-        dir = m_multiProjectPath;
-
+    // Use the absolute `.kicad_pro` path the caller passed at
+    // construction. We deliberately don't go through
+    // `m_project->GetProject()` (the PROJECT_FILE back-pointer): it's a
+    // raw `PROJECT*` with no destroy hook, so it can dangle if any
+    // intervening flow unloads/reloads the PROJECT. Calling methods on
+    // a dangling PROJECT* segfaults at random small offsets. All
+    // current callers resolve the path through SETTINGS_MANAGER's
+    // open-projects list (authoritative, lifetime-safe) before passing
+    // it in.
+    wxFileName dir( m_multiProjectPath );
     dir.SetFullName( wxEmptyString );
     return dir;
 }
@@ -391,6 +422,16 @@ bool DIALOG_MULTI_BOARD_SETUP::importExistingProject( const wxFileName& aSourceP
         return false;
     }
 
+    // Write the back-reference into the sub-project's .kicad_pro so
+    // future container-aware lookups can skip the legacy 6-level dir
+    // walk. Best-effort — failures don't block the import.
+    if( m_project->GetProject() )
+    {
+        wxFileName subProAbs = m_project->ResolveSubProjectPath( info );
+        wxFileName containerAbs( m_project->GetProject()->GetProjectFullName() );
+        MultiBoardWriteContainerBackRef( subProAbs, containerAbs );
+    }
+
     return true;
 }
 
@@ -479,6 +520,13 @@ bool DIALOG_MULTI_BOARD_SETUP::createNewSubProject( const wxString& aName )
     {
         m_project->RemoveSubProject( info.uuid );
         return false;
+    }
+
+    if( m_project->GetProject() )
+    {
+        wxFileName subProAbs = m_project->ResolveSubProjectPath( info );
+        wxFileName containerAbs( m_project->GetProject()->GetProjectFullName() );
+        MultiBoardWriteContainerBackRef( subProAbs, containerAbs );
     }
 
     return true;

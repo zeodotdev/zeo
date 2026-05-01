@@ -543,6 +543,21 @@ public:
         m_isMultiBoardContainer = aIsContainer;
     }
 
+    /// Sub-project back-reference: relative path from this `.kicad_pro` to
+    /// the enclosing container `.kicad_pro`. Empty when this project is
+    /// standalone or is itself the container. Set by AddSubProject when
+    /// registering a sub-project; consumed by container-resolution helpers
+    /// to skip the legacy 6-level directory walk.
+    const wxString& GetContainerProjectRelativePath() const
+    {
+        return m_containerProjectRelativePath;
+    }
+
+    void SetContainerProjectRelativePath( const wxString& aPath )
+    {
+        m_containerProjectRelativePath = aPath;
+    }
+
     std::vector<SUB_PROJECT_INFO>& GetSubProjects() { return m_subProjects; }
 
     const std::vector<SUB_PROJECT_INFO>& GetSubProjects() const { return m_subProjects; }
@@ -563,6 +578,69 @@ public:
     void SetCrossBoardNets( std::vector<MB_CROSS_BOARD_NET> aNets )
     {
         m_crossBoardNets = std::move( aNets );
+    }
+
+    /// Container-level rule: minimum number of pins each named power
+    /// net must have on each sub-project (e.g. `{"GND": 4, "VCC": 2}`).
+    /// Empty by default. Consumed by the per-board cross-board power
+    /// DRC test provider.
+    std::map<wxString, int>& GetMinPowerPins() { return m_minPowerPins; }
+
+    const std::map<wxString, int>& GetMinPowerPins() const { return m_minPowerPins; }
+
+    /// Container-level rule: maximum total trace length (in nanometers)
+    /// for each named cross-board net, summed across all sub-projects.
+    /// Used by per-board cross-board length DRC: when a cross-board
+    /// net has an entry here, the test provider sums per-board lengths
+    /// and flags overruns with the total.
+    std::map<wxString, int64_t>& GetMaxLengthNm() { return m_maxLengthNm; }
+
+    const std::map<wxString, int64_t>& GetMaxLengthNm() const { return m_maxLengthNm; }
+
+    /// Container-level rule: cross-board diff-pair declarations. Each
+    /// pair `(netA, netB)` says "these two cross-board nets must be a
+    /// diff pair on every sub-project they touch." Order within the
+    /// pair is irrelevant for matching.
+    std::vector<std::pair<wxString, wxString>>& GetCrossBoardDiffPairs()
+    {
+        return m_crossBoardDiffPairs;
+    }
+
+    const std::vector<std::pair<wxString, wxString>>& GetCrossBoardDiffPairs() const
+    {
+        return m_crossBoardDiffPairs;
+    }
+
+    /// Current-capacity rule per cross-board net.
+    struct MB_CURRENT_RULE
+    {
+        double expectedAmps   = 0.0;  ///< Expected DC current draw on this net
+        double pinRatingAmps  = 0.0;  ///< Per-connector-pin current rating
+    };
+
+    std::map<wxString, MB_CURRENT_RULE>& GetCrossBoardCurrentRules() { return m_currentRules; }
+
+    const std::map<wxString, MB_CURRENT_RULE>& GetCrossBoardCurrentRules() const
+    {
+        return m_currentRules;
+    }
+
+    /// Voltage-drop rule per cross-board net. Optional override fields
+    /// fall back to documented defaults when zero.
+    struct MB_VOLTAGE_RULE
+    {
+        double expectedAmps               = 0.0;  ///< Expected DC current
+        double maxDropMv                  = 0.0;  ///< Max acceptable total drop
+        double traceWidthUm               = 0.0;  ///< Default 250 if 0
+        double traceSheetRMOhmsPerSq      = 0.0;  ///< Default 0.5 (1oz copper) if 0
+        double contactRPerPinMOhms        = 0.0;  ///< Default 20 if 0
+    };
+
+    std::map<wxString, MB_VOLTAGE_RULE>& GetCrossBoardVoltageRules() { return m_voltageRules; }
+
+    const std::map<wxString, MB_VOLTAGE_RULE>& GetCrossBoardVoltageRules() const
+    {
+        return m_voltageRules;
     }
 
     /**
@@ -831,10 +909,39 @@ private:
     /// For container projects: filename of the multi-board schematic.
     wxString m_mbsFileName;
 
+    /// For container projects: minimum pin count rule per power net
+    /// name. Persisted as `multi_board.min_power_pins` (JSON object).
+    std::map<wxString, int> m_minPowerPins;
+
+    /// For container projects: max total trace length (nm) per cross-
+    /// board net name, summed across all sub-projects. Persisted as
+    /// `multi_board.max_length_nm` (JSON object).
+    std::map<wxString, int64_t> m_maxLengthNm;
+
+    /// For container projects: cross-board diff-pair declarations.
+    /// Persisted as `multi_board.cross_board_diff_pairs`
+    /// (JSON array of `{"a":"NET_DP", "b":"NET_DN"}` objects).
+    std::vector<std::pair<wxString, wxString>> m_crossBoardDiffPairs;
+
+    /// For container projects: per-net current rules. Persisted as
+    /// `multi_board.current_rules`.
+    std::map<wxString, MB_CURRENT_RULE> m_currentRules;
+
+    /// For container projects: per-net voltage-drop rules. Persisted as
+    /// `multi_board.voltage_rules`.
+    std::map<wxString, MB_VOLTAGE_RULE> m_voltageRules;
+
     /// M7.2: sub-project flag — when true and container is reachable,
     /// NetSettings() returns the container's overlay instead of this
     /// project's own. Persisted as `multi_board.inherit_net_settings`.
     bool m_inheritNetSettingsFromContainer = false;
+
+    /// M5.2: sub-project back-reference — relative path from this
+    /// `.kicad_pro` to the enclosing container `.kicad_pro`. Empty
+    /// for stand-alone projects and for the container itself. Lets
+    /// container-aware code skip the legacy 6-level directory walk.
+    /// Persisted as `multi_board.container_project_relative_path`.
+    wxString m_containerProjectRelativePath;
 
     /// A link to the owning PROJECT
     PROJECT* m_project;

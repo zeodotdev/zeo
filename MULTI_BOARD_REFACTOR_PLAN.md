@@ -226,6 +226,16 @@ Two patterns coexist; pick the right one for new mail commands:
 | M5.5 | `DRC_ENGINE_CROSS_BOARD` ported to container model — `CheckConnectorMatching` and `CheckNetCompleteness` consume `GetSubProjects()` + `GetCrossBoardNets()`. Engine ready for project-wide invocation. |
 | M5.6 (partial) | `CheckPowerDistribution` min-pin count landed; voltage drop and current capacity remain TODO (need analog modeling). |
 | M8.4 (sibling) | Cross-board net consistency DRC check (`drc_test_provider_cross_board_consistency.cpp`) — auto-fires in pcbnew DRC alongside the binding check. Lazy-loads each sibling sub-project's BOARD by path (no PROJECT object) and verifies sibling pads carry the same net as this board's pads on each cross-board net. Catches sibling-board drift the user wouldn't see without running DRC on every sub-project independently. |
+| M8.4 (orphan) | Orphan connector pad DRC check (`drc_test_provider_cross_board_orphan_pad.cpp`) — auto-fires alongside the binding check. Flags pads marked as connector pads (`BOARD::GetConnectorPads`) that no cross-board net references. Inverse direction of the binding check; catches "marked the pad as connector but never refreshed the MBS / never wired the pin." Also surfaces dangling connector-pad markers when the underlying pad has been deleted. |
+| M5.8 (stale-pin) | MBSCH ERC stale-module-pin check — extends `TestCrossBoardConnectivity` to flag module pins whose target sub-project pad has been removed/renamed since the MBS was last refreshed. Caches per-sub-project PCB scans so cost is one disk read per sub-project per ERC run. Surfaces the same gap the MBS Refresh dialog catches, but auto-fires instead of waiting for an explicit refresh. |
+| M5.2 | Explicit parent ref — sub-projects now persist `multi_board.container_project_relative_path` in their `.kicad_pro`. New `MultiBoardResolveContainerForSubProject()` helper tries this O(1) ref first; falls back to the legacy 6-level dir walk for older projects. `MultiBoardWriteContainerBackRef()` writes the back-ref to the sub-project's JSON when the container's `AddSubProject` is invoked from `DIALOG_MULTI_BOARD_SETUP` or the project tree pane. The three previous walkers (`forEachCrossBoardEndpoint`, `MultiBoardCollectCrossBoardProbesForLocalNet`, `MultiBoardBuildContainerView`) now share the new resolution helper. |
+| Cross-cutting (severity codes) | Dedicated `DRCE_CROSS_BOARD_BINDING` / `DRCE_CROSS_BOARD_CONSISTENCY` / `DRCE_CROSS_BOARD_ORPHAN_PAD` / `DRCE_CROSS_BOARD_POWER_PINS` and `ERCE_CROSS_BOARD_STALE_PIN` so users can configure severity per check, and so audit agents can distinguish which check fired without parsing message strings. |
+| Power-pin rule | Container `.kicad_pro` persists `multi_board.min_power_pins` (map of net name → minimum pin count). Surfaced through `MULTI_BOARD_CONTAINER_VIEW`. New `drc_test_provider_cross_board_power_pins.cpp` auto-fires alongside the other cross-board providers and flags any rule whose pin count on this board falls below the minimum. Skips nets that don't touch this board. |
+| Cross-board length | Container `.kicad_pro` persists `multi_board.max_length_nm` (net name → max nanometers, total across boards). New `drc_test_provider_cross_board_length.cpp` sums per-net trace length on this board (via the standard `LENGTH_DELAY_CALCULATION`) plus every sibling sub-project's contribution (lazy-loaded via `PCB_IO_KICAD_SEXPR`). Flags `DRCE_CROSS_BOARD_LENGTH` when the total exceeds the rule. Catches the "I tuned my trace to spec but the partner board's segment puts the total over" case. |
+| Cross-board diff-pair | Container `.kicad_pro` persists `multi_board.cross_board_diff_pairs` (list of `(netA, netB)` pairs). New `drc_test_provider_cross_board_diff_pair.cpp` enforces two invariants on each pair: (1) both halves must be cross-board nets (not just one), (2) both halves must touch the same set of sub-projects. Flags `DRCE_CROSS_BOARD_DIFF_PAIR` when a pair member is missing or single-sided. Catches "diff pair routed only on one board → single-ended at the connector". |
+| M8.1 (plot) | `SCH_MODULE_BLOCK::Plot` implemented (was an empty stub). Mirrors `SCH_SHEET::Plot`: background fill rectangle, outline, header text (MBS ref or fallback), plus child pin Plot dispatch. PDF/SVG/DXF export of the MBSCH now includes module blocks. |
+| M5.6 (current) | Container `.kicad_pro` persists `multi_board.current_rules` (per-net `expected_amps` + `pin_rating_amps`). New `drc_test_provider_cross_board_current.cpp` counts unique connector endpoints on this board for each rule, multiplies by `pin_rating_amps`, and flags `DRCE_CROSS_BOARD_CURRENT` when below `expected_amps`. |
+| M5.6 (voltage drop) | Container persists `multi_board.voltage_rules` (per-net `expected_amps` + `max_drop_mv` + optional trace-width / sheet-R / contact-R overrides). New `drc_test_provider_cross_board_voltage_drop.cpp` estimates total resistance via lumped model (sum of per-board trace R + per-crossing parallel-pin contact R) and flags `DRCE_CROSS_BOARD_VOLTAGE_DROP` when `current × R > max_drop`. Defaults: 250 μm width, 0.5 mΩ/sq (1oz copper), 20 mΩ per pin. |
 | M8.0 | `SCH_SCREEN::RunOnItemsRecursive` helper — emits top-level rtree items + `RunOnChildren` descendants. Eliminates the per-surface hand-rolled "iterate children of containers" pattern. |
 | M8.1 (partial) | Find/Replace and `SCH_SEARCH_HANDLER::FindAll` retrofitted to use `RunOnItemsRecursive` — text search now reaches `SCH_MODULE_PIN`s. |
 
@@ -268,13 +278,7 @@ None currently open.
 
 ### P1 (important for parity)
 
-- **M5.6 remainder — Cross-board DRC analog checks**
-  (~2-3 sessions). `CheckSignalIntegrity` (length, impedance) and
-  `CheckPowerDistribution` voltage drop + current capacity. Min-pin
-  count is landed. Power rule persistence (`min_power_pins`) needs
-  to land on the container `.kicad_pro` before per-board pin-count
-  DRC can fire automatically — currently exposed only via the
-  runtime engine API.
+- ~~M5.6 remainder — voltage drop + current capacity.~~ **Landed.** All P1 cross-board ERC/DRC checks complete.
 - **M6 (3D viewer)** *(separate agent)*. Remaining:
   M6.E phase 2 (OBB/GJK narrow-phase collision + canvas highlights),
   M6.C-phase-2 (raytracer multi-instance, model cache dedup,
@@ -426,9 +430,16 @@ None currently open.
   (~1 session). Single token in `.kicad_mbs` + a small refactor of
   the four callers listed above. Eliminates the 6-level guess.
 - **M5.3 — Replace text-level PCB sync with BOARD-level edits**
-  (~1-2 sessions). `PCB_IO_KICAD_SEXPR::LoadBoard` round-trip; reuses
-  `ApplyCrossBoardNetsToBoard` (M8.3) but operating on a transient
-  in-memory load.
+  (architecturally non-trivial — see below). The bulk push is
+  called from MBSCH (eeschema kiface), which links `kicommon` but
+  NOT `pcbcommon` — so it can't manipulate `BOARD` or invoke
+  `PCB_IO_KICAD_SEXPR` directly. Three viable paths:
+  (a) Kiway mail to pcbnew kiface to perform the operation;
+  (b) link pcbcommon into eeschema (heavy);
+  (c) keep file-level but harden the parser.
+  Current text-level sync is runtime-verified — fragility risk is
+  edge-case escapes / unusual whitespace, not correctness in the
+  common case. Decide before implementing.
 - **M5.4 — Comment sweep** (~30 min). Remove stale `.kicad_multi` /
   `MULTI_BOARD_PROJECT` mentions in comments only; code paths
   already migrated.
@@ -458,12 +469,19 @@ None currently open.
     info)
   - `exporters/place_file_exporter.cpp` (no cross-board de-dup)
   - `dialogs/dialog_pad_properties_base*` (no cross-board indicator)
+### P3 (deferred polish)
+
 - **M8.5 (icons) — Visual polish** (~1 session). New MBS file-format
   icon, dedicated icons for the MBS toolbar's Refresh / Manage
   Boards / Sync to PCB actions.
 - **Properties dialog wxFormBuilder rewrite** (~30 min). Currently
   hand-coded; standard pattern uses a `.fbp` + matching `_base`
   class.
+- **Headless schematic sync** (~1-2 sessions). Today
+  `PCB_EDIT_FRAME::TestStandalone` opens / spawns a project-matched
+  SCH frame before fetching a netlist. A frame-less path would load
+  the `.kicad_sch` headlessly via `SCH_IO_KICAD_SEXPR`, build a
+  transient `SCHEMATIC`, and run `NETLIST_EXPORTER_KICAD` directly.
 - **MBS block properties — sidebar + E-key dialog cleanup**
   (~1-2 sessions). Two related gaps:
   - **Properties Manager sidebar wiring.** Selecting a
@@ -492,14 +510,6 @@ None currently open.
 - **M9 — Agent integration** *(separate agent)*. Kipy bindings for
   container + module-block; tool schemas in `agent/tools/`;
   IPC handlers in `eeschema/api/` and `pcbnew/api/`.
-- **Headless schematic sync** (~1-2 sessions). Today
-  `PCB_EDIT_FRAME::TestStandalone` opens / spawns a project-matched
-  SCH frame before fetching a netlist. A frame-less path would load
-  the `.kicad_sch` headlessly via `SCH_IO_KICAD_SEXPR`, build a
-  transient `SCHEMATIC`, and run `NETLIST_EXPORTER_KICAD` directly
-  — eliminating the schematic-frame side effect of every PCB sync.
-  Requires moving the netlist exporter behind a kiface entry point
-  callable from pcbnew, or duplicating the loader path in pcbnew.
 - **M3 — Launcher redesign**. wxAuiManager center+sidebar layout,
   multi-board-aware actions visible only when
   `IsMultiBoardContainer()`. Most launcher work landed; remaining

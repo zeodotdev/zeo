@@ -90,7 +90,9 @@ enum ERCE_T
     ERCE_STACKED_PIN_SYNTAX,      ///< Pin name resembles stacked pin notation.
     ERCE_FIELD_NAME_WHITESPACE,   ///< Field name has leading or trailing whitespace.
 
-    ERCE_LAST = ERCE_FIELD_NAME_WHITESPACE,
+    ERCE_CROSS_BOARD_STALE_PIN,   ///< MBSCH module pin's target sub-project pad is missing.
+
+    ERCE_LAST = ERCE_CROSS_BOARD_STALE_PIN,
 
     ERCE_DUPLICATE_PIN_ERROR,
     ERCE_PIN_TO_PIN_WARNING,    // pin connected to an other pin: warning level

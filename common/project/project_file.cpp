@@ -97,6 +97,247 @@ PROJECT_FILE::PROJECT_FILE( const wxString& aFullPath ) :
     m_params.emplace_back( new PARAM<bool>( "multi_board.inherit_net_settings",
             &m_inheritNetSettingsFromContainer, false ) );
 
+    // M5.2: sub-project back-reference to the enclosing container
+    // .kicad_pro (relative path). Empty for standalone or container
+    // projects. Container-aware code prefers this O(1) ref over the
+    // legacy 6-level directory walk.
+    m_params.emplace_back( new PARAM<wxString>( "multi_board.container_project_relative_path",
+            &m_containerProjectRelativePath, wxEmptyString ) );
+
+    // Container-level rule: minimum pin count per named power net.
+    // Persisted as a JSON object `{ "GND": 4, "VCC": 2 }`. Empty by
+    // default; consumed by the per-board cross-board power DRC.
+    m_params.emplace_back( new PARAM_LAMBDA<nlohmann::json>( "multi_board.min_power_pins",
+            [&]() -> nlohmann::json
+            {
+                nlohmann::json ret = nlohmann::json::object();
+
+                for( const auto& [netName, minPins] : m_minPowerPins )
+                    ret[netName.utf8_string()] = minPins;
+
+                return ret;
+            },
+            [&]( const nlohmann::json& aJson )
+            {
+                m_minPowerPins.clear();
+
+                if( !aJson.is_object() )
+                    return;
+
+                for( auto it = aJson.begin(); it != aJson.end(); ++it )
+                {
+                    if( it.value().is_number_integer() )
+                    {
+                        m_minPowerPins[wxString::FromUTF8( it.key() )] =
+                                it.value().get<int>();
+                    }
+                }
+            },
+            nlohmann::json::object() ) );
+
+    // Container-level rule: maximum total trace length (nanometers)
+    // per cross-board net, summed across all sub-projects. Persisted
+    // as `{ "DDR_CMD0": 75000000, "USB_DP": 80000000 }`.
+    m_params.emplace_back( new PARAM_LAMBDA<nlohmann::json>( "multi_board.max_length_nm",
+            [&]() -> nlohmann::json
+            {
+                nlohmann::json ret = nlohmann::json::object();
+
+                for( const auto& [netName, maxNm] : m_maxLengthNm )
+                    ret[netName.utf8_string()] = maxNm;
+
+                return ret;
+            },
+            [&]( const nlohmann::json& aJson )
+            {
+                m_maxLengthNm.clear();
+
+                if( !aJson.is_object() )
+                    return;
+
+                for( auto it = aJson.begin(); it != aJson.end(); ++it )
+                {
+                    if( it.value().is_number_integer() )
+                    {
+                        m_maxLengthNm[wxString::FromUTF8( it.key() )] =
+                                it.value().get<int64_t>();
+                    }
+                }
+            },
+            nlohmann::json::object() ) );
+
+    // Container-level rule: per-net current capacity. Each entry holds
+    // expected DC current draw and per-pin current rating; the per-board
+    // DRC compares (numPins * pinRating) against expectedAmps.
+    m_params.emplace_back( new PARAM_LAMBDA<nlohmann::json>( "multi_board.current_rules",
+            [&]() -> nlohmann::json
+            {
+                nlohmann::json ret = nlohmann::json::object();
+
+                for( const auto& [netName, rule] : m_currentRules )
+                {
+                    ret[netName.utf8_string()] = {
+                            { "expected_amps",     rule.expectedAmps },
+                            { "pin_rating_amps",   rule.pinRatingAmps }
+                    };
+                }
+
+                return ret;
+            },
+            [&]( const nlohmann::json& aJson )
+            {
+                m_currentRules.clear();
+
+                if( !aJson.is_object() )
+                    return;
+
+                for( auto it = aJson.begin(); it != aJson.end(); ++it )
+                {
+                    if( !it.value().is_object() )
+                        continue;
+
+                    MB_CURRENT_RULE rule;
+
+                    if( it.value().contains( "expected_amps" )
+                        && it.value()["expected_amps"].is_number() )
+                    {
+                        rule.expectedAmps = it.value()["expected_amps"].get<double>();
+                    }
+
+                    if( it.value().contains( "pin_rating_amps" )
+                        && it.value()["pin_rating_amps"].is_number() )
+                    {
+                        rule.pinRatingAmps = it.value()["pin_rating_amps"].get<double>();
+                    }
+
+                    m_currentRules[wxString::FromUTF8( it.key() )] = rule;
+                }
+            },
+            nlohmann::json::object() ) );
+
+    // Container-level rule: per-net voltage drop. Optional override fields
+    // (trace_width_um / trace_sheet_r_mohm / contact_r_pin_mohm) fall back
+    // to documented defaults when zero or absent.
+    m_params.emplace_back( new PARAM_LAMBDA<nlohmann::json>( "multi_board.voltage_rules",
+            [&]() -> nlohmann::json
+            {
+                nlohmann::json ret = nlohmann::json::object();
+
+                for( const auto& [netName, rule] : m_voltageRules )
+                {
+                    nlohmann::json entry = {
+                            { "expected_amps",          rule.expectedAmps },
+                            { "max_drop_mv",            rule.maxDropMv }
+                    };
+
+                    if( rule.traceWidthUm > 0.0 )
+                        entry["trace_width_um"] = rule.traceWidthUm;
+
+                    if( rule.traceSheetRMOhmsPerSq > 0.0 )
+                        entry["trace_sheet_r_mohm"] = rule.traceSheetRMOhmsPerSq;
+
+                    if( rule.contactRPerPinMOhms > 0.0 )
+                        entry["contact_r_pin_mohm"] = rule.contactRPerPinMOhms;
+
+                    ret[netName.utf8_string()] = entry;
+                }
+
+                return ret;
+            },
+            [&]( const nlohmann::json& aJson )
+            {
+                m_voltageRules.clear();
+
+                if( !aJson.is_object() )
+                    return;
+
+                for( auto it = aJson.begin(); it != aJson.end(); ++it )
+                {
+                    if( !it.value().is_object() )
+                        continue;
+
+                    MB_VOLTAGE_RULE rule;
+
+                    if( it.value().contains( "expected_amps" )
+                        && it.value()["expected_amps"].is_number() )
+                    {
+                        rule.expectedAmps = it.value()["expected_amps"].get<double>();
+                    }
+
+                    if( it.value().contains( "max_drop_mv" )
+                        && it.value()["max_drop_mv"].is_number() )
+                    {
+                        rule.maxDropMv = it.value()["max_drop_mv"].get<double>();
+                    }
+
+                    if( it.value().contains( "trace_width_um" )
+                        && it.value()["trace_width_um"].is_number() )
+                    {
+                        rule.traceWidthUm = it.value()["trace_width_um"].get<double>();
+                    }
+
+                    if( it.value().contains( "trace_sheet_r_mohm" )
+                        && it.value()["trace_sheet_r_mohm"].is_number() )
+                    {
+                        rule.traceSheetRMOhmsPerSq =
+                                it.value()["trace_sheet_r_mohm"].get<double>();
+                    }
+
+                    if( it.value().contains( "contact_r_pin_mohm" )
+                        && it.value()["contact_r_pin_mohm"].is_number() )
+                    {
+                        rule.contactRPerPinMOhms =
+                                it.value()["contact_r_pin_mohm"].get<double>();
+                    }
+
+                    m_voltageRules[wxString::FromUTF8( it.key() )] = rule;
+                }
+            },
+            nlohmann::json::object() ) );
+
+    // Container-level rule: cross-board diff-pair declarations.
+    // Persisted as `[{"a":"USB_DP","b":"USB_DN"}, ...]`.
+    m_params.emplace_back( new PARAM_LAMBDA<nlohmann::json>( "multi_board.cross_board_diff_pairs",
+            [&]() -> nlohmann::json
+            {
+                nlohmann::json ret = nlohmann::json::array();
+
+                for( const auto& [a, b] : m_crossBoardDiffPairs )
+                {
+                    nlohmann::json entry = {
+                            { "a", a.utf8_string() },
+                            { "b", b.utf8_string() }
+                    };
+                    ret.push_back( entry );
+                }
+
+                return ret;
+            },
+            [&]( const nlohmann::json& aJson )
+            {
+                m_crossBoardDiffPairs.clear();
+
+                if( !aJson.is_array() )
+                    return;
+
+                for( const nlohmann::json& entry : aJson )
+                {
+                    if( !entry.is_object() )
+                        continue;
+
+                    if( !entry.contains( "a" ) || !entry["a"].is_string() )
+                        continue;
+
+                    if( !entry.contains( "b" ) || !entry["b"].is_string() )
+                        continue;
+
+                    m_crossBoardDiffPairs.emplace_back(
+                            wxString::FromUTF8( entry["a"].get<std::string>() ),
+                            wxString::FromUTF8( entry["b"].get<std::string>() ) );
+                }
+            },
+            nlohmann::json::array() ) );
+
     m_params.emplace_back( new PARAM_WXSTRING_MAP( "text_variables",
             &m_TextVars, {}, false, true /* array behavior, even though stored as a map */ ) );
 

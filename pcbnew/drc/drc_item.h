@@ -117,7 +117,19 @@ enum PCB_DRC_CODE
 
     DRCE_SCHEMATIC_FIELDS_PARITY, // Mismatch with schematic fields
 
-    DRCE_LAST = DRCE_SCHEMATIC_FIELDS_PARITY
+    // Multi-board cross-board checks. Distinct codes so users can configure
+    // severity per check and so test audits can distinguish which check
+    // fired without parsing message strings.
+    DRCE_CROSS_BOARD_BINDING,        // Local connector pad doesn't carry the MBS-declared net
+    DRCE_CROSS_BOARD_CONSISTENCY,    // Sibling sub-project pad drift
+    DRCE_CROSS_BOARD_ORPHAN_PAD,     // Pad marked as connector but not part of any cross-board net
+    DRCE_CROSS_BOARD_POWER_PINS,     // Cross-board power net has fewer connector pins than rule requires
+    DRCE_CROSS_BOARD_LENGTH,         // Cross-board net total length exceeds rule
+    DRCE_CROSS_BOARD_DIFF_PAIR,      // Cross-board diff pair not consistently routed across sub-projects
+    DRCE_CROSS_BOARD_CURRENT,        // Connector pin count insufficient for expected current
+    DRCE_CROSS_BOARD_VOLTAGE_DROP,   // Estimated voltage drop on cross-board net exceeds rule
+
+    DRCE_LAST = DRCE_CROSS_BOARD_VOLTAGE_DROP
 };
 
 
@@ -254,6 +266,14 @@ private:
     static DRC_ITEM tuningProfileImplicitRules;
     static DRC_ITEM trackOnPostMachinedLayer;
     static DRC_ITEM schematicFieldsParity;
+    static DRC_ITEM crossBoardBinding;
+    static DRC_ITEM crossBoardConsistency;
+    static DRC_ITEM crossBoardOrphanPad;
+    static DRC_ITEM crossBoardPowerPins;
+    static DRC_ITEM crossBoardLength;
+    static DRC_ITEM crossBoardDiffPair;
+    static DRC_ITEM crossBoardCurrent;
+    static DRC_ITEM crossBoardVoltageDrop;
 
 private:
     DRC_RULE*          m_violatingRule = nullptr;

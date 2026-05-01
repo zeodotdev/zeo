@@ -57,7 +57,7 @@
         running DRC on every sub-project independently.
 
     Errors generated:
-    - DRCE_GENERIC_ERROR — sibling pad missing or carrying a different net
+    - DRCE_CROSS_BOARD_CONSISTENCY — sibling pad missing or carrying a different net
 */
 
 class DRC_TEST_PROVIDER_CROSS_BOARD_CONSISTENCY : public DRC_TEST_PROVIDER
@@ -184,7 +184,7 @@ bool DRC_TEST_PROVIDER_CROSS_BOARD_CONSISTENCY::Run()
 
     for( const MULTI_BOARD_CROSS_BOARD_NET_VIEW& netView : view.crossBoardNets )
     {
-        if( m_drcEngine->IsErrorLimitExceeded( DRCE_GENERIC_ERROR ) )
+        if( m_drcEngine->IsErrorLimitExceeded( DRCE_CROSS_BOARD_CONSISTENCY ) )
             return true;
 
         if( !reportProgress( ii++, total, progressDelta ) )
@@ -219,7 +219,7 @@ bool DRC_TEST_PROVIDER_CROSS_BOARD_CONSISTENCY::Run()
 
             if( !sibBoard )
             {
-                std::shared_ptr<DRC_ITEM> drcItem = DRC_ITEM::Create( DRCE_GENERIC_ERROR );
+                std::shared_ptr<DRC_ITEM> drcItem = DRC_ITEM::Create( DRCE_CROSS_BOARD_CONSISTENCY );
                 drcItem->SetItems( myResolved.front().pad );
                 drcItem->SetErrorMessage( wxString::Format(
                         _( "Cross-board net '%s' references sibling board '%s' "
@@ -236,7 +236,7 @@ bool DRC_TEST_PROVIDER_CROSS_BOARD_CONSISTENCY::Run()
 
             if( !sibPad )
             {
-                std::shared_ptr<DRC_ITEM> drcItem = DRC_ITEM::Create( DRCE_GENERIC_ERROR );
+                std::shared_ptr<DRC_ITEM> drcItem = DRC_ITEM::Create( DRCE_CROSS_BOARD_CONSISTENCY );
                 drcItem->SetItems( myResolved.front().pad );
                 drcItem->SetErrorMessage( wxString::Format(
                         _( "Cross-board net '%s' endpoint %s/%s missing on sibling board '%s'." ),
@@ -262,7 +262,7 @@ bool DRC_TEST_PROVIDER_CROSS_BOARD_CONSISTENCY::Run()
 
                 if( !matches )
                 {
-                    std::shared_ptr<DRC_ITEM> drcItem = DRC_ITEM::Create( DRCE_GENERIC_ERROR );
+                    std::shared_ptr<DRC_ITEM> drcItem = DRC_ITEM::Create( DRCE_CROSS_BOARD_CONSISTENCY );
                     drcItem->SetItems( mine.pad );
                     drcItem->SetErrorMessage( wxString::Format(
                             _( "Cross-board net '%s': pin %s/%s on this board carries '%s' "

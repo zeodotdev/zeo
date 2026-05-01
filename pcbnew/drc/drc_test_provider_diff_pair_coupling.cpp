@@ -385,8 +385,10 @@ static void extractDiffPairCoupledItems( DIFF_PAIR_ITEMS& aDp )
 
             // check if there's anything in between the segments suspected to be coupled. If
             // there's nothing, assume they are really coupled.
-
-            if( !tree->CheckColliding( &checkSeg, sp->GetLayer(), 0, excludeSelf ) )
+            // The cache can be nullptr if IncrementTimeStamp() raced with the cache
+            // generator (e.g. another API request mutated the board mid-DRC); skip
+            // the obstruction check rather than crashing — pair is still likely coupled.
+            if( !tree || !tree->CheckColliding( &checkSeg, sp->GetLayer(), 0, excludeSelf ) )
                 aDp.coupled.push_back( *coupled );
         }
     }
@@ -480,8 +482,9 @@ static void extractDiffPairCoupledItems( DIFF_PAIR_ITEMS& aDp )
 
             // check if there's anything in between the segments suspected to be coupled. If
             // there's nothing, assume they are really coupled.
-
-            if( !tree->CheckColliding( &checkArcMid, sp->GetLayer(), 0, excludeSelf ) )
+            // See null-check note in extractDiffPairCoupledItems above — the cache
+            // can race to nullptr mid-DRC.
+            if( !tree || !tree->CheckColliding( &checkArcMid, sp->GetLayer(), 0, excludeSelf ) )
                 aDp.coupled.push_back( *coupled );
         }
     }

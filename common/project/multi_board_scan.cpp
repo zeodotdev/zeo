@@ -28,6 +28,8 @@
 #include <string_utils.h>
 #include <wildcards_and_files_ext.h>
 
+#include <nlohmann/json.hpp>
+
 #include <wx/dir.h>
 #include <wx/ffile.h>
 #include <wx/log.h>
@@ -440,73 +442,46 @@ template <typename PerEndpointFn>
 void forEachCrossBoardEndpoint( const wxFileName& aSubProjectPro,
                                  PerEndpointFn aPerEndpoint )
 {
-    if( !aSubProjectPro.IsOk() || !aSubProjectPro.FileExists() )
+    wxFileName containerPro = MultiBoardResolveContainerForSubProject( aSubProjectPro );
+
+    if( !containerPro.IsOk() || !containerPro.FileExists() )
+        return;
+
+    PROJECT_FILE probe( containerPro.GetFullPath() );
+
+    if( !probe.LoadFromFile() || !probe.IsMultiBoardContainer() )
         return;
 
     wxFileName subPro( aSubProjectPro );
     subPro.Normalize( wxPATH_NORM_ABSOLUTE | wxPATH_NORM_DOTS );
     wxString subProAbs = subPro.GetFullPath();
 
-    wxFileName searchDir( subPro );
-    searchDir.SetFullName( wxEmptyString );
+    KIID matchedUuid;
+    bool matched = false;
 
-    for( int depth = 0; depth < 6 && searchDir.GetPath().Length() > 1; ++depth )
+    for( const SUB_PROJECT_INFO& info : probe.GetSubProjects() )
     {
-        wxArrayString files;
-        wxDir::GetAllFiles( searchDir.GetPath(), &files, wxT( "*.kicad_pro" ),
-                            wxDIR_FILES );
+        wxFileName resolved = probe.ResolveSubProjectPath( info );
+        resolved.Normalize( wxPATH_NORM_ABSOLUTE | wxPATH_NORM_DOTS );
 
-        for( const wxString& candidate : files )
+        if( resolved.GetFullPath() == subProAbs )
         {
-            wxFileName candFn( candidate );
-
-            if( candFn.GetFullPath() == subProAbs )
-                continue;
-
-            PROJECT_FILE probe( candidate );
-
-            if( !probe.LoadFromFile() )
-                continue;
-
-            if( !probe.IsMultiBoardContainer() )
-                continue;
-
-            KIID matchedUuid;
-            bool matched = false;
-
-            for( const SUB_PROJECT_INFO& info : probe.GetSubProjects() )
-            {
-                wxFileName subRel( info.relativePath );
-
-                if( !subRel.IsAbsolute() )
-                    subRel.MakeAbsolute( candFn.GetPath() );
-
-                subRel.Normalize( wxPATH_NORM_ABSOLUTE | wxPATH_NORM_DOTS );
-
-                if( subRel.GetFullPath() == subProAbs )
-                {
-                    matchedUuid = info.uuid;
-                    matched = true;
-                    break;
-                }
-            }
-
-            if( !matched )
-                continue;
-
-            for( const MB_CROSS_BOARD_NET& net : probe.GetCrossBoardNets() )
-            {
-                for( const MB_CROSS_BOARD_NET_ENDPOINT& ep : net.endpoints )
-                {
-                    if( ep.subProjectUuid == matchedUuid )
-                        aPerEndpoint( net, ep );
-                }
-            }
-
-            return;   // first match wins
+            matchedUuid = info.uuid;
+            matched     = true;
+            break;
         }
+    }
 
-        searchDir.RemoveLastDir();
+    if( !matched )
+        return;
+
+    for( const MB_CROSS_BOARD_NET& net : probe.GetCrossBoardNets() )
+    {
+        for( const MB_CROSS_BOARD_NET_ENDPOINT& ep : net.endpoints )
+        {
+            if( ep.subProjectUuid == matchedUuid )
+                aPerEndpoint( net, ep );
+        }
     }
 }
 
@@ -588,131 +563,90 @@ MultiBoardCollectCrossBoardProbesForLocalNet( const wxFileName& aSubProjectPro,
 
     wxString normLocalNet = normaliseNetForMatch( aLocalNetName );
 
-    // Walk up looking for the enclosing container .kicad_pro. Same
-    // 6-level search as the other lookups; M5.2 will replace this with
-    // an explicit parent reference stored in the .kicad_mbs.
-    wxFileName searchDir( subPro );
-    searchDir.SetFullName( wxEmptyString );
+    wxFileName containerPro = MultiBoardResolveContainerForSubProject( aSubProjectPro );
 
-    for( int depth = 0; depth < 6 && searchDir.GetPath().Length() > 1; ++depth )
+    if( !containerPro.IsOk() || !containerPro.FileExists() )
+        return result;
+
+    PROJECT_FILE container( containerPro.GetFullPath() );
+
+    if( !container.LoadFromFile() || !container.IsMultiBoardContainer() )
+        return result;
+
+    // Locate this sender's sub-project entry to get its UUID and so we can
+    // compute peer absolute paths relative to the container's directory.
+    KIID senderUuid;
+    bool matched = false;
+
+    std::map<KIID, wxString> subProjectAbsPaths;
+
+    for( const SUB_PROJECT_INFO& info : container.GetSubProjects() )
     {
-        wxArrayString files;
-        wxDir::GetAllFiles( searchDir.GetPath(), &files, wxT( "*.kicad_pro" ),
-                            wxDIR_FILES );
+        wxFileName resolved = container.ResolveSubProjectPath( info );
+        resolved.Normalize( wxPATH_NORM_ABSOLUTE | wxPATH_NORM_DOTS );
+        subProjectAbsPaths[info.uuid] = resolved.GetFullPath();
 
-        for( const wxString& candidate : files )
+        if( resolved.GetFullPath() == subProAbs )
         {
-            wxFileName candFn( candidate );
+            senderUuid = info.uuid;
+            matched    = true;
+        }
+    }
 
-            if( candFn.GetFullPath() == subProAbs )
-                continue;
+    if( !matched )
+        return result;
 
-            PROJECT_FILE container( candidate );
+    // For each cross-board net, decide if it matches the sender's local
+    // net. Two ways:
+    //   (a) one of THIS sub-project's endpoints has a pinName that
+    //       normalises to the same form as aLocalNetName
+    //   (b) the net's canonical name normalises to the same form
+    //       (covers broadcasts that already use the canonical name,
+    //       e.g. MBSCH originating)
+    for( const MB_CROSS_BOARD_NET& net : container.GetCrossBoardNets() )
+    {
+        bool netMatches = false;
 
-            if( !container.LoadFromFile() )
-                continue;
+        if( normaliseNetForMatch( net.name ) == normLocalNet )
+            netMatches = true;
 
-            if( !container.IsMultiBoardContainer() )
-                continue;
-
-            // Locate this sender's sub-project entry to get its UUID
-            // and so we can compute peer absolute paths relative to
-            // the container's directory.
-            KIID senderUuid;
-            bool matched = false;
-
-            for( const SUB_PROJECT_INFO& info : container.GetSubProjects() )
+        if( !netMatches )
+        {
+            for( const MB_CROSS_BOARD_NET_ENDPOINT& ep : net.endpoints )
             {
-                wxFileName subRel( info.relativePath );
+                if( ep.subProjectUuid != senderUuid )
+                    continue;
 
-                if( !subRel.IsAbsolute() )
-                    subRel.MakeAbsolute( candFn.GetPath() );
-
-                subRel.Normalize( wxPATH_NORM_ABSOLUTE | wxPATH_NORM_DOTS );
-
-                if( subRel.GetFullPath() == subProAbs )
+                if( normaliseNetForMatch( ep.pinName ) == normLocalNet )
                 {
-                    senderUuid = info.uuid;
-                    matched = true;
+                    netMatches = true;
                     break;
                 }
             }
-
-            if( !matched )
-                continue;
-
-            // Build a quick lookup from sub-project UUID → absolute
-            // .kicad_pro path so peer probes can be scoped properly.
-            std::map<KIID, wxString> subProjectAbsPaths;
-
-            for( const SUB_PROJECT_INFO& info : container.GetSubProjects() )
-            {
-                wxFileName subRel( info.relativePath );
-
-                if( !subRel.IsAbsolute() )
-                    subRel.MakeAbsolute( candFn.GetPath() );
-
-                subRel.Normalize( wxPATH_NORM_ABSOLUTE | wxPATH_NORM_DOTS );
-                subProjectAbsPaths[info.uuid] = subRel.GetFullPath();
-            }
-
-            // For each cross-board net, decide if it matches the
-            // sender's local net. Two ways:
-            //   (a) one of THIS sub-project's endpoints has a pinName
-            //       that normalises to the same form as aLocalNetName
-            //   (b) the net's canonical name normalises to the same
-            //       form (covers broadcasts that already use the
-            //       canonical name, e.g. MBSCH originating)
-            for( const MB_CROSS_BOARD_NET& net : container.GetCrossBoardNets() )
-            {
-                bool netMatches = false;
-
-                if( normaliseNetForMatch( net.name ) == normLocalNet )
-                    netMatches = true;
-
-                if( !netMatches )
-                {
-                    for( const MB_CROSS_BOARD_NET_ENDPOINT& ep : net.endpoints )
-                    {
-                        if( ep.subProjectUuid != senderUuid )
-                            continue;
-
-                        if( normaliseNetForMatch( ep.pinName ) == normLocalNet )
-                        {
-                            netMatches = true;
-                            break;
-                        }
-                    }
-                }
-
-                if( !netMatches )
-                    continue;
-
-                // Emit a probe for every endpoint that DOESN'T live on
-                // the sender's own sub-project — those are the peers
-                // we need to fan out to.
-                for( const MB_CROSS_BOARD_NET_ENDPOINT& ep : net.endpoints )
-                {
-                    if( ep.subProjectUuid == senderUuid )
-                        continue;
-
-                    auto pathIt = subProjectAbsPaths.find( ep.subProjectUuid );
-
-                    if( pathIt == subProjectAbsPaths.end() )
-                        continue;
-
-                    MULTI_BOARD_CROSS_BOARD_PROBE probe;
-                    probe.targetSubProjectAbsPath = pathIt->second;
-                    probe.componentRef            = ep.componentRef;
-                    probe.pinNumber               = ep.pinNumber;
-                    result.push_back( std::move( probe ) );
-                }
-            }
-
-            return result;   // first matching container wins
         }
 
-        searchDir.RemoveLastDir();
+        if( !netMatches )
+            continue;
+
+        // Emit a probe for every endpoint that DOESN'T live on the
+        // sender's own sub-project — those are the peers we need to
+        // fan out to.
+        for( const MB_CROSS_BOARD_NET_ENDPOINT& ep : net.endpoints )
+        {
+            if( ep.subProjectUuid == senderUuid )
+                continue;
+
+            auto pathIt = subProjectAbsPaths.find( ep.subProjectUuid );
+
+            if( pathIt == subProjectAbsPaths.end() )
+                continue;
+
+            MULTI_BOARD_CROSS_BOARD_PROBE probe;
+            probe.targetSubProjectAbsPath = pathIt->second;
+            probe.componentRef            = ep.componentRef;
+            probe.pinNumber               = ep.pinNumber;
+            result.push_back( std::move( probe ) );
+        }
     }
 
     return result;
@@ -742,116 +676,114 @@ MULTI_BOARD_CONTAINER_VIEW MultiBoardBuildContainerView( const wxFileName& aSubP
     subPro.Normalize( wxPATH_NORM_ABSOLUTE | wxPATH_NORM_DOTS );
     wxString subProAbs = subPro.GetFullPath();
 
-    wxFileName searchDir( subPro );
-    searchDir.SetFullName( wxEmptyString );
+    wxFileName containerPro = MultiBoardResolveContainerForSubProject( aSubProjectPro );
 
-    for( int depth = 0; depth < 6 && searchDir.GetPath().Length() > 1; ++depth )
+    if( !containerPro.IsOk() || !containerPro.FileExists() )
+        return view;
+
+    PROJECT_FILE container( containerPro.GetFullPath() );
+
+    if( !container.LoadFromFile() || !container.IsMultiBoardContainer() )
+        return view;
+
+    // Resolve every sub-project's absolute path once. We need this both
+    // to find ourselves in the container and to label each sibling
+    // endpoint with its on-disk path so the caller can load sibling
+    // boards by path (no PROJECT object required).
+    std::map<KIID, wxString> subProjectAbsByUuid;
+    std::map<KIID, wxString> subProjectNameByUuid;
+
+    for( const SUB_PROJECT_INFO& info : container.GetSubProjects() )
     {
-        wxArrayString files;
-        wxDir::GetAllFiles( searchDir.GetPath(), &files, wxT( "*.kicad_pro" ),
-                            wxDIR_FILES );
+        wxFileName resolved = container.ResolveSubProjectPath( info );
+        resolved.Normalize( wxPATH_NORM_ABSOLUTE | wxPATH_NORM_DOTS );
+        subProjectAbsByUuid[info.uuid]  = resolved.GetFullPath();
+        subProjectNameByUuid[info.uuid] = info.displayName.IsEmpty() ? info.name
+                                                                     : info.displayName;
+    }
 
-        for( const wxString& candidate : files )
+    KIID matchedUuid;
+    bool matched = false;
+
+    for( const auto& [uuid, absPath] : subProjectAbsByUuid )
+    {
+        if( absPath == subProAbs )
         {
-            wxFileName candFn( candidate );
+            matchedUuid = uuid;
+            matched     = true;
+            break;
+        }
+    }
 
-            if( candFn.GetFullPath() == subProAbs )
-                continue;
+    if( !matched )
+        return view;
 
-            PROJECT_FILE container( candidate );
+    view.containerProAbsPath  = containerPro.GetFullPath();
+    view.mySubProjectUuid     = matchedUuid;
+    view.minPowerPins         = container.GetMinPowerPins();
+    view.maxLengthNm          = container.GetMaxLengthNm();
+    view.crossBoardDiffPairs  = container.GetCrossBoardDiffPairs();
 
-            if( !container.LoadFromFile() )
-                continue;
+    for( const auto& [netName, rule] : container.GetCrossBoardCurrentRules() )
+    {
+        MULTI_BOARD_CURRENT_RULE viewRule;
+        viewRule.expectedAmps  = rule.expectedAmps;
+        viewRule.pinRatingAmps = rule.pinRatingAmps;
+        view.currentRules[netName] = viewRule;
+    }
 
-            if( !container.IsMultiBoardContainer() )
-                continue;
+    for( const auto& [netName, rule] : container.GetCrossBoardVoltageRules() )
+    {
+        MULTI_BOARD_VOLTAGE_RULE viewRule;
+        viewRule.expectedAmps          = rule.expectedAmps;
+        viewRule.maxDropMv             = rule.maxDropMv;
+        viewRule.traceWidthUm          = rule.traceWidthUm;
+        viewRule.traceSheetRMOhmsPerSq = rule.traceSheetRMOhmsPerSq;
+        viewRule.contactRPerPinMOhms   = rule.contactRPerPinMOhms;
+        view.voltageRules[netName] = viewRule;
+    }
 
-            // Resolve every sub-project's absolute path once. We need this
-            // both to find ourselves in the container and to label each
-            // sibling endpoint with its on-disk path so the caller can
-            // load sibling boards by path (no PROJECT object required).
-            std::map<KIID, wxString>           subProjectAbsByUuid;
-            std::map<KIID, wxString>           subProjectNameByUuid;
+    for( const MB_CROSS_BOARD_NET& net : container.GetCrossBoardNets() )
+    {
+        MULTI_BOARD_CROSS_BOARD_NET_VIEW netView;
+        bool touchesUs = false;
 
-            for( const SUB_PROJECT_INFO& info : container.GetSubProjects() )
+        for( const MB_CROSS_BOARD_NET_ENDPOINT& ep : net.endpoints )
+        {
+            MULTI_BOARD_NET_ENDPOINT_VIEW epView;
+            epView.subProjectUuid = ep.subProjectUuid;
+            epView.componentRef   = ep.componentRef;
+            epView.pinNumber      = ep.pinNumber;
+            epView.pinName        = ep.pinName;
+
+            auto nameIt = subProjectNameByUuid.find( ep.subProjectUuid );
+
+            if( nameIt != subProjectNameByUuid.end() )
+                epView.subProjectName = nameIt->second;
+
+            auto pathIt = subProjectAbsByUuid.find( ep.subProjectUuid );
+
+            if( pathIt != subProjectAbsByUuid.end() )
+                epView.subProjectAbsPath = pathIt->second;
+
+            if( ep.subProjectUuid == matchedUuid )
             {
-                wxFileName subRel( info.relativePath );
-
-                if( !subRel.IsAbsolute() )
-                    subRel.MakeAbsolute( candFn.GetPath() );
-
-                subRel.Normalize( wxPATH_NORM_ABSOLUTE | wxPATH_NORM_DOTS );
-                subProjectAbsByUuid[info.uuid]  = subRel.GetFullPath();
-                subProjectNameByUuid[info.uuid] = info.displayName.IsEmpty() ? info.name
-                                                                             : info.displayName;
+                netView.myEndpoints.push_back( std::move( epView ) );
+                touchesUs = true;
             }
-
-            KIID matchedUuid;
-            bool matched = false;
-
-            for( const auto& [uuid, absPath] : subProjectAbsByUuid )
+            else
             {
-                if( absPath == subProAbs )
-                {
-                    matchedUuid = uuid;
-                    matched     = true;
-                    break;
-                }
+                netView.siblingEndpoints.push_back( std::move( epView ) );
             }
-
-            if( !matched )
-                continue;
-
-            view.containerProAbsPath = candFn.GetFullPath();
-            view.mySubProjectUuid    = matchedUuid;
-
-            for( const MB_CROSS_BOARD_NET& net : container.GetCrossBoardNets() )
-            {
-                MULTI_BOARD_CROSS_BOARD_NET_VIEW netView;
-                bool touchesUs = false;
-
-                for( const MB_CROSS_BOARD_NET_ENDPOINT& ep : net.endpoints )
-                {
-                    MULTI_BOARD_NET_ENDPOINT_VIEW epView;
-                    epView.subProjectUuid = ep.subProjectUuid;
-                    epView.componentRef   = ep.componentRef;
-                    epView.pinNumber      = ep.pinNumber;
-                    epView.pinName        = ep.pinName;
-
-                    auto nameIt = subProjectNameByUuid.find( ep.subProjectUuid );
-
-                    if( nameIt != subProjectNameByUuid.end() )
-                        epView.subProjectName = nameIt->second;
-
-                    auto pathIt = subProjectAbsByUuid.find( ep.subProjectUuid );
-
-                    if( pathIt != subProjectAbsByUuid.end() )
-                        epView.subProjectAbsPath = pathIt->second;
-
-                    if( ep.subProjectUuid == matchedUuid )
-                    {
-                        netView.myEndpoints.push_back( std::move( epView ) );
-                        touchesUs = true;
-                    }
-                    else
-                    {
-                        netView.siblingEndpoints.push_back( std::move( epView ) );
-                    }
-                }
-
-                if( !touchesUs )
-                    continue;
-
-                netView.netName = net.name;
-                netView.netUuid = net.uuid;
-
-                view.crossBoardNets.push_back( std::move( netView ) );
-            }
-
-            return view;   // first matching container wins
         }
 
-        searchDir.RemoveLastDir();
+        if( !touchesUs )
+            continue;
+
+        netView.netName = net.name;
+        netView.netUuid = net.uuid;
+
+        view.crossBoardNets.push_back( std::move( netView ) );
     }
 
     return view;
@@ -1234,4 +1166,202 @@ wxFileName EnsureMbsFile( PROJECT_FILE& aContainer, const wxString& aContainerBa
     out.Close();
 
     return mbsPath;
+}
+
+
+bool MultiBoardWriteContainerBackRef( const wxFileName& aSubProjectPro,
+                                       const wxFileName& aContainerPro )
+{
+    if( !aSubProjectPro.FileExists() || !aContainerPro.FileExists() )
+        return false;
+
+    // Compute the back-ref relative to the sub-project's directory.
+    wxFileName subDir( aSubProjectPro );
+    subDir.SetFullName( wxEmptyString );
+
+    wxFileName containerRel( aContainerPro );
+    containerRel.MakeRelativeTo( subDir.GetFullPath() );
+    wxString backRef = containerRel.GetFullPath( wxPATH_UNIX );
+
+    // Read sub-project JSON, set the field, write back. Avoid loading
+    // PROJECT_FILE proper — that path requires a PROJECT and a live
+    // SETTINGS_MANAGER, which we don't have at AddSubProject time.
+    wxFFile in( aSubProjectPro.GetFullPath(), wxT( "r" ) );
+
+    if( !in.IsOpened() )
+        return false;
+
+    wxString rawText;
+
+    if( !in.ReadAll( &rawText ) )
+        return false;
+
+    in.Close();
+
+    nlohmann::json doc;
+
+    try
+    {
+        doc = nlohmann::json::parse( rawText.utf8_string() );
+    }
+    catch( const nlohmann::json::exception& )
+    {
+        return false;
+    }
+
+    // No-op when the existing back-ref already matches.
+    if( doc.contains( "multi_board" ) && doc["multi_board"].is_object()
+        && doc["multi_board"].contains( "container_project_relative_path" )
+        && doc["multi_board"]["container_project_relative_path"].is_string()
+        && doc["multi_board"]["container_project_relative_path"].get<std::string>()
+                   == backRef.utf8_string() )
+    {
+        return true;
+    }
+
+    if( !doc.contains( "multi_board" ) || !doc["multi_board"].is_object() )
+        doc["multi_board"] = nlohmann::json::object();
+
+    doc["multi_board"]["container_project_relative_path"] = backRef.utf8_string();
+
+    wxFFile out( aSubProjectPro.GetFullPath(), wxT( "w" ) );
+
+    if( !out.IsOpened() )
+        return false;
+
+    if( !out.Write( wxString::FromUTF8( doc.dump( 2 ) ) ) )
+        return false;
+
+    out.Close();
+
+    return true;
+}
+
+
+wxFileName MultiBoardResolveContainerForSubProject( const wxFileName& aSubProjectPro )
+{
+    if( !aSubProjectPro.IsOk() || !aSubProjectPro.FileExists() )
+        return wxFileName();
+
+    // Try the explicit back-ref first. Avoids the dir walk on healthy
+    // multi-board projects (the common case once the user has run
+    // through DIALOG_MULTI_BOARD_SETUP at least once).
+    {
+        wxFFile in( aSubProjectPro.GetFullPath(), wxT( "r" ) );
+
+        if( in.IsOpened() )
+        {
+            wxString rawText;
+
+            if( in.ReadAll( &rawText ) )
+            {
+                try
+                {
+                    nlohmann::json doc = nlohmann::json::parse( rawText.utf8_string() );
+
+                    if( doc.contains( "multi_board" ) && doc["multi_board"].is_object()
+                        && doc["multi_board"].contains( "container_project_relative_path" )
+                        && doc["multi_board"]["container_project_relative_path"].is_string() )
+                    {
+                        std::string ref = doc["multi_board"]
+                                                 ["container_project_relative_path"]
+                                                 .get<std::string>();
+
+                        if( !ref.empty() )
+                        {
+                            wxFileName subDir( aSubProjectPro );
+                            subDir.SetFullName( wxEmptyString );
+
+                            wxFileName container( wxString::FromUTF8( ref ) );
+
+                            if( !container.IsAbsolute() )
+                                container.MakeAbsolute( subDir.GetFullPath() );
+
+                            container.Normalize( wxPATH_NORM_ABSOLUTE | wxPATH_NORM_DOTS );
+
+                            if( container.FileExists() )
+                            {
+                                // Sanity-check: container actually claims
+                                // this sub-project. Stale back-refs (e.g.
+                                // sub-project moved without container
+                                // update) fall through to the dir walk.
+                                PROJECT_FILE probe( container.GetFullPath() );
+
+                                if( probe.LoadFromFile() && probe.IsMultiBoardContainer() )
+                                {
+                                    wxFileName subPro( aSubProjectPro );
+                                    subPro.Normalize( wxPATH_NORM_ABSOLUTE
+                                                       | wxPATH_NORM_DOTS );
+                                    wxString subAbs = subPro.GetFullPath();
+
+                                    for( const SUB_PROJECT_INFO& info : probe.GetSubProjects() )
+                                    {
+                                        wxFileName resolved =
+                                                probe.ResolveSubProjectPath( info );
+                                        resolved.Normalize( wxPATH_NORM_ABSOLUTE
+                                                             | wxPATH_NORM_DOTS );
+
+                                        if( resolved.GetFullPath() == subAbs )
+                                            return container;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                catch( const nlohmann::json::exception& )
+                {
+                    // Fall through to dir walk below.
+                }
+            }
+
+            in.Close();
+        }
+    }
+
+    // Legacy fallback: 6-level directory walk. Same logic as the inline
+    // walk in forEachCrossBoardEndpoint — kept here so first-time-open
+    // sub-projects (no back-ref yet) still resolve to their container.
+    wxFileName subPro( aSubProjectPro );
+    subPro.Normalize( wxPATH_NORM_ABSOLUTE | wxPATH_NORM_DOTS );
+    wxString subProAbs = subPro.GetFullPath();
+
+    wxFileName searchDir( subPro );
+    searchDir.SetFullName( wxEmptyString );
+
+    for( int depth = 0; depth < 6 && searchDir.GetPath().Length() > 1; ++depth )
+    {
+        wxArrayString files;
+        wxDir::GetAllFiles( searchDir.GetPath(), &files, wxT( "*.kicad_pro" ),
+                            wxDIR_FILES );
+
+        for( const wxString& candidate : files )
+        {
+            wxFileName candFn( candidate );
+
+            if( candFn.GetFullPath() == subProAbs )
+                continue;
+
+            PROJECT_FILE probe( candidate );
+
+            if( !probe.LoadFromFile() )
+                continue;
+
+            if( !probe.IsMultiBoardContainer() )
+                continue;
+
+            for( const SUB_PROJECT_INFO& info : probe.GetSubProjects() )
+            {
+                wxFileName resolved = probe.ResolveSubProjectPath( info );
+                resolved.Normalize( wxPATH_NORM_ABSOLUTE | wxPATH_NORM_DOTS );
+
+                if( resolved.GetFullPath() == subProAbs )
+                    return candFn;
+            }
+        }
+
+        searchDir.RemoveLastDir();
+    }
+
+    return wxFileName();
 }

@@ -248,21 +248,83 @@ struct KICOMMON_API MULTI_BOARD_CROSS_BOARD_NET_VIEW
  *    board loading),
  *  - this sub-project's UUID inside the container,
  *  - the cross-board nets that touch this sub-project, with each net's
- *    endpoints split into local vs sibling sets.
+ *    endpoints split into local vs sibling sets,
+ *  - the container's `multi_board.min_power_pins` rule, so per-board
+ *    DRC providers can enforce minimum pin counts without re-loading
+ *    the container project file.
  *
  * Empty `containerProAbsPath` means resolution failed: no container
  * within 6 directory levels, container failed to load, or this sub-
  * project isn't a member of any container.
  */
+/**
+ * Per-net current capacity rule. Mirror of PROJECT_FILE::MB_CURRENT_RULE
+ * carried in the view so DRC providers don't need to load the container.
+ */
+struct KICOMMON_API MULTI_BOARD_CURRENT_RULE
+{
+    double expectedAmps  = 0.0;
+    double pinRatingAmps = 0.0;
+};
+
+
+/**
+ * Per-net voltage-drop rule. Mirror of PROJECT_FILE::MB_VOLTAGE_RULE.
+ * Override fields fall back to documented defaults when zero.
+ */
+struct KICOMMON_API MULTI_BOARD_VOLTAGE_RULE
+{
+    double expectedAmps             = 0.0;
+    double maxDropMv                = 0.0;
+    double traceWidthUm             = 0.0;
+    double traceSheetRMOhmsPerSq    = 0.0;
+    double contactRPerPinMOhms      = 0.0;
+};
+
+
 struct KICOMMON_API MULTI_BOARD_CONTAINER_VIEW
 {
     wxString containerProAbsPath;
     KIID     mySubProjectUuid;
     std::vector<MULTI_BOARD_CROSS_BOARD_NET_VIEW> crossBoardNets;
+    std::map<wxString, int>                       minPowerPins;
+    std::map<wxString, int64_t>                   maxLengthNm;
+    std::vector<std::pair<wxString, wxString>>    crossBoardDiffPairs;
+    std::map<wxString, MULTI_BOARD_CURRENT_RULE>  currentRules;
+    std::map<wxString, MULTI_BOARD_VOLTAGE_RULE>  voltageRules;
 };
 
 
 KICOMMON_API MULTI_BOARD_CONTAINER_VIEW
 MultiBoardBuildContainerView( const wxFileName& aSubProjectPro );
+
+
+/**
+ * Write a back-reference into a sub-project's `.kicad_pro` so that
+ * future container-aware lookups can skip the legacy 6-level directory
+ * walk. Persists `multi_board.container_project_relative_path` on the
+ * sub-project's PROJECT_FILE via raw JSON I/O — no PROJECT or
+ * SETTINGS_MANAGER involvement, safe to call without a live project.
+ *
+ * Returns false on file/parse errors. A no-op (and returns true) when
+ * the sub-project's existing back-ref already points at the same
+ * container — avoids unnecessary writes during refresh churn.
+ */
+KICOMMON_API bool MultiBoardWriteContainerBackRef( const wxFileName& aSubProjectPro,
+                                                    const wxFileName& aContainerPro );
+
+
+/**
+ * Resolve the enclosing multi-board container `.kicad_pro` for a given
+ * sub-project. Tries the sub-project's stored back-reference
+ * (`multi_board.container_project_relative_path`) first; falls back to
+ * the legacy 6-level directory walk when the back-ref is empty or
+ * stale. Returns an empty path when no container can be found.
+ *
+ * Used by every container-aware helper as a single resolution point
+ * so the back-ref vs. walk policy lives in one place.
+ */
+KICOMMON_API wxFileName
+MultiBoardResolveContainerForSubProject( const wxFileName& aSubProjectPro );
 
 #endif // KICAD_MULTI_BOARD_SCAN_H

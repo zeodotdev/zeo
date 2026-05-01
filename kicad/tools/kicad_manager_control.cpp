@@ -614,14 +614,39 @@ int KICAD_MANAGER_CONTROL::EditMultiBoardSchematic( const TOOL_EVENT& aEvent )
         return 0;
     }
 
-    // The container's absolute on-disk path. Pull it from the back-pointer
-    // PROJECT — not from GetFullFilename(), which for a SETTINGS_MANAGER-
-    // owned PROJECT_FILE is just the basename ("name.kicad_pro" with no
-    // directory) and turns every downstream path lookup into a miss.
-    wxString containerFullPath;
+    // The container's absolute on-disk path. Resolve it through
+    // SETTINGS_MANAGER's open-projects list — that's the authoritative
+    // path tracking. We deliberately AVOID `multi->GetProject()` here:
+    // the PROJECT_FILE's back-pointer is a raw `PROJECT*` with no
+    // destroy hook, so it can dangle if any path destroys/reloads the
+    // PROJECT without resetting the back-pointer first. Calling methods
+    // on a dangling PROJECT* segfaults at random offsets (seen in
+    // EXC_BAD_ACCESS @ 0x29 with a multi/single-board switch in flight).
+    //
+    // GetFullFilename() on a live PROJECT_FILE is also unusable here:
+    // SETTINGS_MANAGER constructs PROJECT_FILE with the basename only
+    // (`settings_manager.cpp::loadProjectFile`), so it returns
+    // "name.kicad_pro" with no directory.
+    SETTINGS_MANAGER& sm = Pgm().GetSettingsManager();
+    wxString          containerFullPath;
 
-    if( multi->GetProject() )
-        containerFullPath = multi->GetProject()->GetProjectFullName();
+    for( const wxString& proPath : sm.GetOpenProjects() )
+    {
+        PROJECT* prj = sm.GetProject( proPath );
+
+        if( prj && &prj->GetProjectFile() == multi )
+        {
+            containerFullPath = proPath;
+            break;
+        }
+    }
+
+    if( containerFullPath.IsEmpty() )
+    {
+        // Fall back to the active project — for the kicad manager this
+        // is the loaded multi-board container in normal flows.
+        containerFullPath = m_frame->Prj().GetProjectFullName();
+    }
 
     wxFileName containerFn( containerFullPath );
     wxString   containerBasename = containerFn.GetName();
@@ -676,8 +701,14 @@ int KICAD_MANAGER_CONTROL::EditMultiBoardSchematic( const TOOL_EVENT& aEvent )
     // the override, downstream code (Manage Sub-Boards, Refresh, etc.)
     // would resolve Prj() to whichever project happens to be first and
     // mutate / save the wrong one.
-    if( multi->GetProject() )
-        player->SetPrjOverride( multi->GetProject() );
+    //
+    // Resolve the container PROJECT* through SETTINGS_MANAGER (which
+    // owns the lifetime), not through the back-pointer (which dangles).
+    if( !containerFullPath.IsEmpty() )
+    {
+        if( PROJECT* containerProject = sm.GetProject( containerFullPath ) )
+            player->SetPrjOverride( containerProject );
+    }
 
     std::vector<wxString> file_list{ mbs.GetFullPath() };
 
@@ -916,18 +947,27 @@ int KICAD_MANAGER_CONTROL::ManageSubBoards( const TOOL_EVENT& aEvent )
     // GetFullFilename() — for live PROJECT_FILEs registered with
     // SETTINGS_MANAGER, m_filename is the basename only (see
     // settings_manager.cpp::loadProjectFile), so GetFullFilename()
-    // returns "name.kicad_pro" with no directory. The dialog needs the
-    // absolute path to compute the boards/ directory and to target
-    // SaveToFile correctly.
+    // returns "name.kicad_pro" with no directory.
     //
-    // Resolve via the PROJECT_FILE back-pointer rather than
-    // m_frame->Prj() — the back-pointer is unambiguous, while Prj()
-    // can return whichever PROJECT happens to be first in
-    // SETTINGS_MANAGER's list when no per-frame override is set.
-    wxString multiFullPath;
+    // Resolve via SETTINGS_MANAGER's open-projects list (authoritative,
+    // safe across project unload/reload) rather than the PROJECT_FILE
+    // back-pointer (raw pointer, can dangle and segfault).
+    SETTINGS_MANAGER& sm = Pgm().GetSettingsManager();
+    wxString          multiFullPath;
 
-    if( multi->GetProject() )
-        multiFullPath = multi->GetProject()->GetProjectFullName();
+    for( const wxString& proPath : sm.GetOpenProjects() )
+    {
+        PROJECT* prj = sm.GetProject( proPath );
+
+        if( prj && &prj->GetProjectFile() == multi )
+        {
+            multiFullPath = proPath;
+            break;
+        }
+    }
+
+    if( multiFullPath.IsEmpty() )
+        multiFullPath = m_frame->Prj().GetProjectFullName();
 
     wxFileName multiFile( multiFullPath );
 

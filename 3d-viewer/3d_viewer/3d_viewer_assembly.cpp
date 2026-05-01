@@ -1623,6 +1623,17 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
     m_lastCollisions.clear();
     m_lastOverlapBoxes.clear();
 
+    // Per-call diagnostic — shows how the mesh-level narrow phase is
+    // performing. Logged once at the end so it doesn't spam during
+    // the inner loops.
+    int diagPairsBroad   = 0;   // pairs that survived OBB broad phase
+    int diagPairsFallback = 0;  // pairs handled by OBB-only fallback (no mesh)
+    int diagPairsCollide = 0;
+    int diagPairsContact = 0;
+    int diagPairsCleared = 0;   // mesh test cleared as not-touching
+    int diagFpsWithMesh  = 0;
+    int diagFpsTotal     = 0;
+
     // Mated pairs are expected contact (mate gizmo renders them green/cyan);
     // skip them in the collision pass so users see only the unintended
     // overlaps. Alignment-only mates still count as collisions — they're
@@ -1959,6 +1970,21 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
             aOut.meshAabbMin = aOut.worldMin;
             aOut.meshAabbMax = aOut.worldMax;
         }
+        else
+        {
+            // Expand the broad-phase AABB to enclose the mesh too —
+            // a connector's 3D model can extend past the pad/silk
+            // bounding box (think a header's plastic shell extending
+            // beyond the pin matrix). Without this, the OBB broad
+            // phase rejects pairs that the mesh narrow phase would
+            // catch.
+            aOut.worldMin.x = std::min( aOut.worldMin.x, aOut.meshAabbMin.x );
+            aOut.worldMin.y = std::min( aOut.worldMin.y, aOut.meshAabbMin.y );
+            aOut.worldMin.z = std::min( aOut.worldMin.z, aOut.meshAabbMin.z );
+            aOut.worldMax.x = std::max( aOut.worldMax.x, aOut.meshAabbMax.x );
+            aOut.worldMax.y = std::max( aOut.worldMax.y, aOut.meshAabbMax.y );
+            aOut.worldMax.z = std::max( aOut.worldMax.z, aOut.meshAabbMax.z );
+        }
 
         return true;
     };
@@ -2000,7 +2026,12 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
             FPCollisionShape s;
 
             if( buildShape( inst, fp, s ) )
+            {
+                diagFpsTotal++;
+                if( !s.meshTris.empty() )
+                    diagFpsWithMesh++;
                 perInstance[i].push_back( std::move( s ) );
+            }
         }
     }
 
@@ -2090,6 +2121,8 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
                     if( minPen < -kContactMarginMm )
                         continue;
 
+                    diagPairsBroad++;
+
                     bool mated = isMated( inst1.uuid, a.ref, inst2.uuid, b.ref );
 
                     // Skip ALL mated pairs from the highlight pass —
@@ -2104,6 +2137,57 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
                     // mated header from a collision — both have AABBs
                     // that deeply overlap. Walk the actual 3D-model
                     // triangles to discriminate.
+                    //
+                    // Fallback: if EITHER footprint has no triangles
+                    // (model not in cache yet — same first-open case
+                    // the virtual-model bug exposes), tag the pair
+                    // using the OBB result so the user sees something
+                    // until the cache warms.
+                    if( a.meshTris.empty() || b.meshTris.empty() )
+                    {
+                        diagPairsFallback++;
+                        OVERLAP_KIND fbKind = ( minPen >= kMinPenetrationMm )
+                                              ? OVERLAP_KIND::COLLISION
+                                              : OVERLAP_KIND::CONTACT;
+
+                        const float fbM = kContactMarginMm;
+                        SFVEC3F     bMin( std::max( a.worldMin.x, b.worldMin.x ) - fbM * 0.5f,
+                                          std::max( a.worldMin.y, b.worldMin.y ) - fbM * 0.5f,
+                                          std::max( a.worldMin.z, b.worldMin.z ) - fbM * 0.5f );
+                        SFVEC3F     bMax( std::min( a.worldMax.x, b.worldMax.x ) + fbM * 0.5f,
+                                          std::min( a.worldMax.y, b.worldMax.y ) + fbM * 0.5f,
+                                          std::min( a.worldMax.z, b.worldMax.z ) + fbM * 0.5f );
+
+                        OverlapBox box;
+                        box.minMm     = bMin;
+                        box.maxMm     = bMax;
+                        box.kind      = fbKind;
+                        box.instanceA = inst1.uuid;
+                        box.instanceB = inst2.uuid;
+                        box.refA      = a.ref;
+                        box.refB      = b.ref;
+                        m_lastOverlapBoxes.push_back( box );
+
+                        if( fbKind == OVERLAP_KIND::COLLISION )
+                        {
+                            COLLISION_RESULT result;
+                            result.board1Uuid     = inst1.uuid;
+                            result.board2Uuid     = inst2.uuid;
+                            result.item1Desc      = wxString::Format(
+                                    wxT( "%s:%s" ), inst1.displayName, a.ref );
+                            result.item2Desc      = wxString::Format(
+                                    wxT( "%s:%s" ), inst2.displayName, b.ref );
+                            glm::vec2 midXY = ( a.centerXY + b.centerXY ) * 0.5f;
+                            float midZ = ( std::max( a.worldMin.z, b.worldMin.z )
+                                           + std::min( a.worldMax.z, b.worldMax.z ) ) * 0.5f;
+                            result.collisionPoint = SFVEC3F( midXY.x, midXY.y, midZ );
+                            result.penetrationMm  = minPen;
+                            m_lastCollisions.push_back( result );
+                        }
+
+                        continue;
+                    }
+
                     const float       margin   = kContactMarginMm;
                     const float       marginSq = margin * margin;
                     bool              anyHit   = false;
@@ -2207,12 +2291,14 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
                         kind   = OVERLAP_KIND::COLLISION;
                         boxMin = hitMin;
                         boxMax = hitMax;
+                        diagPairsCollide++;
                     }
                     else if( haveNear )
                     {
                         kind   = OVERLAP_KIND::CONTACT;
                         boxMin = nearMin;
                         boxMax = nearMax;
+                        diagPairsContact++;
                     }
                     else
                     {
@@ -2220,6 +2306,7 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
                         // intersection, no proximity. AABB false
                         // positive (e.g. mated header inside its
                         // socket's air space). Move on.
+                        diagPairsCleared++;
                         continue;
                     }
 
@@ -2256,6 +2343,13 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
             }
         }
     }
+
+    wxLogMessage( wxT( "[COLLIDE] fps=%d (mesh=%d) broad=%d fallback=%d "
+                       "→ collide=%d contact=%d cleared=%d boxes=%zu" ),
+                  diagFpsTotal, diagFpsWithMesh,
+                  diagPairsBroad, diagPairsFallback,
+                  diagPairsCollide, diagPairsContact, diagPairsCleared,
+                  m_lastOverlapBoxes.size() );
 
     return m_lastCollisions;
 }

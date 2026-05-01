@@ -87,6 +87,7 @@
 #include <build_version.h>
 #include <kiid.h>
 #include <project/project_archiver.h>
+#include <project/multi_board_scan.h>
 #include <project/project_file.h>
 #include <reporter.h>
 #include <sch_file_versions.h>
@@ -672,6 +673,14 @@ void PROJECT_TREE_PANE::onCreateNewBoard( wxCommandEvent& event )
 
     multi->AddSubProject( info );
     multi->SaveToFile();
+
+    // Write the back-reference into the new sub-project's .kicad_pro
+    // so future container-aware lookups can skip the dir walk.
+    {
+        wxFileName subProAbs = multi->ResolveSubProjectPath( info );
+        wxFileName containerAbs( multi->GetFullFilename() );
+        MultiBoardWriteContainerBackRef( subProAbs, containerAbs );
+    }
 
     // Refresh the tree so the new board shows up immediately.
     m_Parent->RefreshProjectTree();

@@ -26,9 +26,11 @@
 #include <kiway.h>
 #include <kiway_player.h>
 #include <frame_type.h>
+#include <pgm_base.h>
 #include <project/project_file.h>
 #include <project.h>
 #include <project/cross_board_pcb_sync.h>
+#include <settings/settings_manager.h>
 #include <schematic.h>
 #include <sch_edit_frame.h>
 #include <sch_screen.h>
@@ -313,13 +315,27 @@ API_HANDLER_MBS_SCH::handleGetCrossBoardNets(
     //
     // Pass the project directory explicitly: m_filename on a live
     // PROJECT_FILE is just the basename, so an empty aDirectory would
-    // resolve relative to CWD. Resolve via the back-pointer rather
-    // than m_frame->Prj() to dodge the multi-project ambiguity.
-    if( projectFile.GetProject() )
+    // resolve relative to CWD. Resolve via SETTINGS_MANAGER (safe across
+    // unload/reload) rather than the PROJECT_FILE back-pointer (raw
+    // pointer, can dangle).
+    SETTINGS_MANAGER& projSm = Pgm().GetSettingsManager();
+    wxString          projContainerDir;
+
+    for( const wxString& proPath : projSm.GetOpenProjects() )
     {
-        projectFile.LoadFromFile(
-                wxFileName( projectFile.GetProject()->GetProjectFullName() ).GetPath() );
+        PROJECT* prj = projSm.GetProject( proPath );
+
+        if( prj && &prj->GetProjectFile() == &projectFile )
+        {
+            projContainerDir = wxFileName( proPath ).GetPath();
+            break;
+        }
     }
+
+    if( projContainerDir.IsEmpty() )
+        projContainerDir = wxFileName( m_frame->Prj().GetProjectFullName() ).GetPath();
+
+    projectFile.LoadFromFile( projContainerDir );
 
     for( const MB_CROSS_BOARD_NET& net : projectFile.GetCrossBoardNets() )
     {
@@ -535,14 +551,25 @@ API_HANDLER_MBS_SCH::handleSyncCrossBoardNetsToPcb(
     // For live PROJECT_FILEs, m_filename is the basename only — Load /
     // SaveToFile with no aDirectory resolve relative to CWD and miss
     // the actual .kicad_pro on disk. Pass the project directory.
-    // Resolve via the PROJECT_FILE back-pointer rather than
-    // m_frame->Prj(): the back-pointer is unambiguous, while Prj()
-    // can return the wrong project in multi-project sessions when
-    // no per-frame override is set.
-    wxString containerDir;
+    // Resolve via SETTINGS_MANAGER's open-projects list (authoritative,
+    // safe across project unload/reload cycles) rather than the
+    // PROJECT_FILE back-pointer (raw pointer, can dangle).
+    SETTINGS_MANAGER& sm = Pgm().GetSettingsManager();
+    wxString          containerDir;
 
-    if( container.GetProject() )
-        containerDir = wxFileName( container.GetProject()->GetProjectFullName() ).GetPath();
+    for( const wxString& proPath : sm.GetOpenProjects() )
+    {
+        PROJECT* prj = sm.GetProject( proPath );
+
+        if( prj && &prj->GetProjectFile() == &container )
+        {
+            containerDir = wxFileName( proPath ).GetPath();
+            break;
+        }
+    }
+
+    if( containerDir.IsEmpty() )
+        containerDir = wxFileName( m_frame->Prj().GetProjectFullName() ).GetPath();
 
     // Reload to pick up cross-board nets written by the MBSCH save hook;
     // the in-memory PROJECT_FILE won't reflect a recent save otherwise.

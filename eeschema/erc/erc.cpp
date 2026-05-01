@@ -1313,6 +1313,7 @@ int ERC_TESTER::TestCrossBoardConnectivity()
     // connection_graph already groups them — we walk the cached nets
     // from this tester rather than re-running the graph.
     std::vector<SCH_MODULE_PIN*> allModulePins;
+    std::vector<SCH_MODULE_BLOCK*> allModuleBlocks;
 
     for( SCH_ITEM* item : rootScreen->Items() )
     {
@@ -1320,6 +1321,7 @@ int ERC_TESTER::TestCrossBoardConnectivity()
             continue;
 
         SCH_MODULE_BLOCK* block = static_cast<SCH_MODULE_BLOCK*>( item );
+        allModuleBlocks.push_back( block );
 
         for( SCH_MODULE_PIN* pin : block->GetPins() )
             allModulePins.push_back( pin );
@@ -1327,6 +1329,112 @@ int ERC_TESTER::TestCrossBoardConnectivity()
 
     if( allModulePins.empty() )
         return 0;   // nothing MBS-related on this schematic
+
+    // ---- Stale module pin (sub-project pad missing on PCB) ----
+    // Each module pin claims to bind to (componentRef, pinNumber) on a
+    // specific sub-project. Scan each sub-project's PCB once and flag
+    // pins whose target pad has been removed/renamed since the MBS was
+    // last refreshed. Catches "PCB edit + forgot to refresh MBS" without
+    // requiring the user to invoke the refresh dialog.
+    if( m_settings.IsTestEnabled( ERCE_CROSS_BOARD_STALE_PIN ) && !allModuleBlocks.empty() )
+    {
+        PROJECT& prj = m_schematic->Project();
+
+        {
+            PROJECT_FILE& projectFile = prj.GetProjectFile();
+
+            if( projectFile.IsMultiBoardContainer() )
+            {
+                // Cache per-sub-project pad scans. The PCB scan reads from
+                // disk via regex — caching avoids re-scanning when many
+                // module pins share a sub-project.
+                std::map<KIID, std::map<wxString, std::vector<MULTI_BOARD_PAD_INFO>>>
+                        padsBySubProject;
+
+                auto scanPads = [&]( const KIID& aSubProjectUuid )
+                        -> const std::map<wxString, std::vector<MULTI_BOARD_PAD_INFO>>*
+                {
+                    auto cacheIt = padsBySubProject.find( aSubProjectUuid );
+
+                    if( cacheIt != padsBySubProject.end() )
+                        return &cacheIt->second;
+
+                    const SUB_PROJECT_INFO* info = projectFile.GetSubProject( aSubProjectUuid );
+
+                    if( !info )
+                        return nullptr;
+
+                    wxFileName proFile = projectFile.ResolveSubProjectPath( *info );
+                    wxFileName pcbFile = MultiBoardMainPcb( proFile );
+
+                    auto pads = MultiBoardScanConnectorPads( pcbFile );
+                    auto result = padsBySubProject.emplace( aSubProjectUuid, std::move( pads ) );
+
+                    return &result.first->second;
+                };
+
+                for( SCH_MODULE_BLOCK* block : allModuleBlocks )
+                {
+                    const KIID& spUuid = block->GetSubProjectUuid();
+                    const std::map<wxString, std::vector<MULTI_BOARD_PAD_INFO>>* pads
+                            = scanPads( spUuid );
+
+                    // No PCB or sub-project not registered: skip silently.
+                    // The user gets an error elsewhere (e.g. refresh dialog
+                    // would surface it) so we don't double-report.
+                    if( !pads )
+                        continue;
+
+                    for( SCH_MODULE_PIN* pin : block->GetPins() )
+                    {
+                        const wxString& ref       = pin->GetComponentRef();
+                        const wxString& pinNumber = pin->GetPinNumber();
+
+                        auto refIt = pads->find( ref );
+                        bool found = false;
+
+                        if( refIt != pads->end() )
+                        {
+                            for( const MULTI_BOARD_PAD_INFO& padInfo : refIt->second )
+                            {
+                                if( padInfo.padNumber == pinNumber )
+                                {
+                                    found = true;
+                                    break;
+                                }
+                            }
+                        }
+
+                        if( found )
+                            continue;
+
+                        std::shared_ptr<ERC_ITEM> ercItem =
+                                ERC_ITEM::Create( ERCE_CROSS_BOARD_STALE_PIN );
+
+                        wxString blockRef = block->GetMbsReference();
+
+                        if( blockRef.IsEmpty() )
+                            blockRef = wxT( "?" );
+
+                        wxString detail = wxString::Format(
+                                _( "Module pin %s/%s on block %s is missing on the "
+                                   "sub-project's PCB — the connector's pad set has changed "
+                                   "since the MBS was last refreshed. Run MBS Refresh to "
+                                   "update this block." ),
+                                ref, pinNumber, blockRef );
+
+                        ercItem->SetItems( pin );
+                        ercItem->SetErrorMessage( detail );
+
+                        SCH_MARKER* marker = new SCH_MARKER( std::move( ercItem ),
+                                                              pin->GetPosition() );
+                        rootScreen->Append( marker );
+                        warnings++;
+                    }
+                }
+            }
+        }
+    }
 
     // For each module pin, find which net subgraph it belongs to and
     // count how many module pins share that net. Single-pin nets are
@@ -2417,7 +2525,8 @@ void ERC_TESTER::RunTests( DS_PROXY_VIEW_ITEM* aDrawingSheet, SCH_EDIT_FRAME* aE
         || m_settings.IsTestEnabled( ERCE_PIN_NOT_DRIVEN )
         || m_settings.IsTestEnabled( ERCE_POWERPIN_NOT_DRIVEN )
         || m_settings.IsTestEnabled( ERCE_PIN_TO_PIN_ERROR )
-        || m_settings.IsTestEnabled( ERCE_PIN_TO_PIN_WARNING ) )
+        || m_settings.IsTestEnabled( ERCE_PIN_TO_PIN_WARNING )
+        || m_settings.IsTestEnabled( ERCE_CROSS_BOARD_STALE_PIN ) )
     {
         TestCrossBoardConnectivity();
     }

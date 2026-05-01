@@ -23,8 +23,12 @@
 
 #include <bitmaps.h>
 #include <core/mirror.h>
+#include <font/font.h>
 #include <geometry/geometry_utils.h>
 #include <layer_ids.h>
+#include <plotters/plotter.h>
+#include <sch_render_settings.h>
+#include <schematic.h>
 #include <trigo.h>
 
 #include <algorithm>
@@ -271,6 +275,86 @@ void SCH_MODULE_BLOCK::RunOnChildren( const std::function<void( SCH_ITEM* )>& aF
 {
     for( SCH_MODULE_PIN* pin : m_pins )
         aFunction( pin );
+}
+
+
+void SCH_MODULE_BLOCK::Plot( PLOTTER* aPlotter, bool aBackground, const SCH_PLOT_OPTS& aPlotOpts,
+                             int aUnit, int aBodyStyle, const VECTOR2I& aOffset, bool aDimmed )
+{
+    if( aBackground && !aPlotter->GetColorMode() )
+        return;
+
+    SCH_RENDER_SETTINGS* renderSettings = static_cast<SCH_RENDER_SETTINGS*>(
+            aPlotter->RenderSettings() );
+
+    if( aBackground )
+    {
+        // Background fill matches the hierarchical-sheet background.
+        COLOR4D bg = renderSettings->GetLayerColor( LAYER_SHEET_BACKGROUND );
+
+        if( bg.a > 0.0 )
+        {
+            aPlotter->SetColor( bg );
+            aPlotter->Rect( m_pos, m_pos + m_size, FILL_T::FILLED_SHAPE, 1, 0 );
+        }
+    }
+    else
+    {
+        // Outline.
+        COLOR4D borderColor = renderSettings->GetLayerColor( LAYER_SHEET );
+        aPlotter->SetColor( borderColor );
+
+        int penWidth = GetEffectivePenWidth( renderSettings );
+        aPlotter->Rect( m_pos, m_pos + m_size, FILL_T::NO_FILL, penWidth, 0 );
+
+        // Header text — same priority as the painter: MBS reference
+        // first (annotation-scoped, unique), with the local componentRef
+        // / displayName trailing for context. Falls back to the raw
+        // component ref for legacy un-annotated blocks.
+        const wxString& mbsRef  = m_mbsReference;
+        const wxString& local   = m_componentRef;
+        const wxString& display = m_displayName;
+
+        wxString header;
+
+        if( !mbsRef.IsEmpty() )
+        {
+            header = mbsRef;
+
+            if( !local.IsEmpty() )
+                header += wxString::Format( wxT( " — %s" ), local );
+            else if( !display.IsEmpty() )
+                header += wxString::Format( wxT( " — %s" ), display );
+        }
+        else
+        {
+            header = display.IsEmpty() ? local : display;
+
+            if( !header.IsEmpty() )
+                header = wxT( "Module: " ) + header;
+        }
+
+        if( !header.IsEmpty() )
+        {
+            const int textSize = schIUScale.MilsToIU( 60 );
+
+            TEXT_ATTRIBUTES attrs;
+            attrs.m_Halign      = GR_TEXT_H_ALIGN_LEFT;
+            attrs.m_Valign      = GR_TEXT_V_ALIGN_BOTTOM;
+            attrs.m_Bold        = true;
+            attrs.m_Size        = VECTOR2I( textSize, textSize );
+            attrs.m_StrokeWidth = GetPenSizeForBold( textSize );
+            attrs.m_Color       = renderSettings->GetLayerColor( LAYER_SHEETNAME );
+
+            VECTOR2I anchor( m_pos.x, m_pos.y - schIUScale.MilsToIU( 20 ) );
+            aPlotter->PlotText( anchor, attrs.m_Color, header, attrs );
+        }
+    }
+
+    // Plot child pins. Each SCH_MODULE_PIN inherits SCH_HIERLABEL::Plot
+    // and renders itself + its label box.
+    for( SCH_MODULE_PIN* pin : m_pins )
+        pin->Plot( aPlotter, aBackground, aPlotOpts, aUnit, aBodyStyle, aOffset, aDimmed );
 }
 
 

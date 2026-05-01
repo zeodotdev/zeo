@@ -749,20 +749,29 @@ int SCH_EDITOR_CONTROL::MbsManageSubBoards( const TOOL_EVENT& aEvent )
         return 0;
     }
 
-    // Resolve the container's absolute path via the PROJECT_FILE
-    // back-pointer rather than `m_frame->Prj()`. The back-pointer is
-    // unambiguous: it's the PROJECT that owns this PROJECT_FILE,
-    // wired up by SETTINGS_MANAGER::loadProjectFile. `m_frame->Prj()`
-    // can resolve to whichever project happens to be first in
-    // SETTINGS_MANAGER if MBSCH wasn't pinned via SetPrjOverride —
-    // returning the wrong project in multi-project sessions and
-    // making downstream save/load target the wrong file. Both
-    // GetFullFilename() and m_filename are basename-only for a live
-    // PROJECT_FILE, so neither is usable for the absolute path.
-    wxString containerFullPath;
+    // Resolve the container's absolute path via SETTINGS_MANAGER's
+    // open-projects list. We deliberately avoid `container.GetProject()`
+    // (the PROJECT_FILE back-pointer): it's a raw `PROJECT*` with no
+    // destroy hook, so it can dangle if any path destroys/reloads the
+    // PROJECT — calling methods on a dangling pointer segfaults. The
+    // SETTINGS_MANAGER list is authoritative for currently-loaded
+    // projects and their canonical paths.
+    SETTINGS_MANAGER& sm = Pgm().GetSettingsManager();
+    wxString          containerFullPath;
 
-    if( container.GetProject() )
-        containerFullPath = container.GetProject()->GetProjectFullName();
+    for( const wxString& proPath : sm.GetOpenProjects() )
+    {
+        PROJECT* prj = sm.GetProject( proPath );
+
+        if( prj && &prj->GetProjectFile() == &container )
+        {
+            containerFullPath = proPath;
+            break;
+        }
+    }
+
+    if( containerFullPath.IsEmpty() )
+        containerFullPath = m_frame->Prj().GetProjectFullName();
 
     wxFileName containerFile( containerFullPath );
 
@@ -799,14 +808,24 @@ int SCH_EDITOR_CONTROL::MbsSyncCrossBoardNets( const TOOL_EVENT& aEvent )
     // For live PROJECT_FILEs, m_filename is the basename only — Load /
     // SaveToFile with no aDirectory resolve relative to CWD and miss
     // the actual .kicad_pro on disk. Always pass the project directory
-    // explicitly. We pull the path from the PROJECT_FILE back-pointer
-    // rather than m_frame->Prj() because the latter resolves to
-    // whichever project happens to be first in SETTINGS_MANAGER when
-    // there's no per-frame override. See settings_manager.cpp::loadProjectFile.
-    wxString containerDir;
+    // explicitly. Resolve via SETTINGS_MANAGER (authoritative, safe)
+    // rather than the PROJECT_FILE back-pointer (raw pointer, can dangle).
+    SETTINGS_MANAGER& sm = Pgm().GetSettingsManager();
+    wxString          containerDir;
 
-    if( container.GetProject() )
-        containerDir = wxFileName( container.GetProject()->GetProjectFullName() ).GetPath();
+    for( const wxString& proPath : sm.GetOpenProjects() )
+    {
+        PROJECT* prj = sm.GetProject( proPath );
+
+        if( prj && &prj->GetProjectFile() == &container )
+        {
+            containerDir = wxFileName( proPath ).GetPath();
+            break;
+        }
+    }
+
+    if( containerDir.IsEmpty() )
+        containerDir = wxFileName( m_frame->Prj().GetProjectFullName() ).GetPath();
 
     // Reload cross-board nets from disk — they're written during the
     // MBSCH save hook, but the in-memory PROJECT_FILE won't reflect

@@ -548,6 +548,18 @@ bool API_HANDLER_PCB::validateDocumentInternal( const DocumentSpecifier& aDocume
     if( !frame() )
         return false;
 
+    // Refuse to claim the request if our BOARD isn't fully bound to a
+    // project. BOARD::m_project (raw PROJECT*) nulls during project
+    // unload and on PROJECT destroy-hook fire — the same pattern as
+    // SCHEMATIC::m_project. Handlers that proceed with a null
+    // m_project crash inside BOARD methods that dereference it
+    // (settings access, design rules lookup, etc.). AS_UNHANDLED here
+    // lets the API server fall through to a peer handler (see
+    // common/api/api_server.cpp:501); if no peer is ready the agent
+    // gets a clean error rather than a process kill.
+    if( !frame()->GetBoard() || !frame()->GetBoard()->GetProject() )
+        return false;
+
     // When the request specifies a project path, filter by it so requests
     // route deterministically when multiple PCB editors are open (M4 peer
     // windows on a multi-board container's sub-projects).

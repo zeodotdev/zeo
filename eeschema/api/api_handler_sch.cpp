@@ -391,6 +391,24 @@ bool API_HANDLER_SCH::validateDocumentInternal( const DocumentSpecifier& aDocume
             return false;
     }
 
+    // Refuse to claim the request if our schematic isn't fully bound to a
+    // project. SCHEMATIC::m_project is a raw pointer that nulls during
+    // project unload (`Schematic().SetProject(nullptr)` in
+    // eeschema/files-io.cpp at the unload→load boundary) and on the
+    // destroy hook fired when SETTINGS_MANAGER tears down the PROJECT.
+    // Handlers that proceed without this check segfault inside
+    // SCHEMATIC::ErcSettings() / Settings() / etc., which all dereference
+    // m_project unconditionally — see EXC_BAD_ACCESS at schematic.cpp:591.
+    //
+    // Returning false here makes Handle() return AS_UNHANDLED, which the
+    // API server treats as "try the next handler" (see
+    // common/api/api_server.cpp:501). In M4 peer sessions another peer's
+    // handler may be ready even when ours isn't; if no peer is ready the
+    // agent gets a clear "no handler available" error instead of a
+    // process kill.
+    if( !m_frame || !m_frame->Schematic().IsValid() )
+        return false;
+
     return true;
 }
 

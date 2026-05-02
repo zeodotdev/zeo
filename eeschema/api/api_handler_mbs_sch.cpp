@@ -264,6 +264,17 @@ bool API_HANDLER_MBS_SCH::validateDocumentInternal(
 #endif
     }
 
+    // Refuse to claim the request if our MBSCH schematic isn't fully
+    // bound to a project. Same crash class as API_HANDLER_SCH —
+    // SCHEMATIC::m_project nulls during project unload and on PROJECT
+    // destroy-hook fire; downstream methods (ErcSettings(), Settings(),
+    // etc.) dereference it unconditionally and segfault. AS_UNHANDLED
+    // here lets the API server fall through to a peer handler (see
+    // common/api/api_server.cpp:501); if none is ready the agent gets
+    // a clean "no handler available" error rather than a process kill.
+    if( !m_frame || !m_frame->Schematic().IsValid() )
+        return false;
+
     return true;
 }
 

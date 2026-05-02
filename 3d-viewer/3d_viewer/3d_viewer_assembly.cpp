@@ -2283,7 +2283,12 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
                     // intentional contact / mating overshoot is what
                     // the green/cyan mate gizmo communicates already.
                     if( mated )
+                    {
+                        if( diagPairsBroad <= 16 )
+                            wxLogMessage( wxT( "[COLLIDE] skip(mated)    %s↔%s" ),
+                                          a.ref, b.ref );
                         continue;
+                    }
 
                     // Skip pairs where BOTH footprints are purely
                     // mechanical (no electrical pads — mounting holes,
@@ -2298,7 +2303,12 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
                     };
 
                     if( isMechanicalOnly( a.fp ) && isMechanicalOnly( b.fp ) )
+                    {
+                        if( diagPairsBroad <= 16 )
+                            wxLogMessage( wxT( "[COLLIDE] skip(mechOnly) %s↔%s" ),
+                                          a.ref, b.ref );
                         continue;
+                    }
 
                     // Debug visualization: blue wireframe AABB for
                     // every pair that survives the broad-phase pre-
@@ -2431,6 +2441,13 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
                     glm::vec3         nearMax( 0.0f );
                     bool              haveNear = false;
 
+                    // Per-pair counters so we can tell how the mesh
+                    // narrow phase is performing for each candidate —
+                    // tri-AABB-overlap reaches the Möller test, hits
+                    // are confirmed intersections.
+                    int diagTriAabbOverlap = 0;
+                    int diagTriHits        = 0;
+
                     auto growBox = [&]( glm::vec3& aMin, glm::vec3& aMax,
                                         const glm::vec3& aP, bool& aHave )
                     {
@@ -2464,10 +2481,13 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
                                 || tb.aabbMax.z + margin < ta.aabbMin.z )
                                 continue;
 
+                            diagTriAabbOverlap++;
+
                             if( trianglesIntersect( ta.v0, ta.v1, ta.v2,
                                                      tb.v0, tb.v1, tb.v2 ) )
                             {
                                 anyHit = true;
+                                diagTriHits++;
                                 growBox( hitMin, hitMax, ta.v0, haveHit );
                                 growBox( hitMin, hitMax, ta.v1, haveHit );
                                 growBox( hitMin, hitMax, ta.v2, haveHit );
@@ -2513,6 +2533,19 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
                                 growBox( nearMin, nearMax, tb.v2, haveNear );
                             }
                         }
+                    }
+
+                    // Per-pair mesh-test summary — first few candidates.
+                    if( diagPairsBroad <= 8 )
+                    {
+                        wxLogMessage( wxT( "[COLLIDE]   mesh %s↔%s  "
+                                           "tris=%zu×%zu  triAABB=%d  hits=%d  "
+                                           "minDist=%.3f mm" ),
+                                       a.ref, b.ref,
+                                       a.meshTris.size(), b.meshTris.size(),
+                                       diagTriAabbOverlap, diagTriHits,
+                                       std::isfinite( minDistSq )
+                                           ? std::sqrt( minDistSq ) : -1.0f );
                     }
 
                     OVERLAP_KIND kind;

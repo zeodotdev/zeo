@@ -1677,7 +1677,9 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
     // fallback so they still trigger collisions on first-open. A
     // footprint with no declared models gets 0 mm Z and won't generate
     // phantom OBB-fallback boxes — silk/fab markers don't have volume.
-    auto computeFpZExtent = [this]( const BOARD_3D_INSTANCE& aInst, const FOOTPRINT* aFp,
+    auto computeFpZExtent = [this]( const BOARD_3D_INSTANCE& aInst,
+                                    const BOARD_ADAPTER*     aAdapter,
+                                    const FOOTPRINT*         aFp,
                                     float& aZMin, float& aZMax,
                                     bool& aDeclared, bool& aLoaded )
     {
@@ -1752,17 +1754,42 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
         aDeclared = anyModelDeclared;
         aLoaded   = anyModelLoaded;
 
-        const float boardThicknessMm = GetBoardThickness( aInst.board.get() );
+        // Use the BOARD_ADAPTER's F_Paste / B_Paste Z directly so the
+        // OBB Z extent matches where the renderer actually places the
+        // footprint base. Fallback to boardThickness/2 around inst.z
+        // when no adapter is available.
+        float fpZLocalMm = 0.0f;
 
-        if( aFp->IsFlipped() )
+        if( aAdapter )
         {
-            aZMax = aInst.position.z + 0.0f;
-            aZMin = aInst.position.z - modelHeight;
+            const double biuTo3d  = aAdapter->BiuTo3dUnits();
+            const float  zPosUnit = aAdapter->GetFootprintZPos( aFp->IsFlipped() );
+
+            if( biuTo3d != 0.0 )
+                fpZLocalMm = static_cast<float>( zPosUnit / biuTo3d / 1e6 );
         }
         else
         {
-            aZMin = aInst.position.z + boardThicknessMm;
-            aZMax = aInst.position.z + boardThicknessMm + modelHeight;
+            const float boardThk = GetBoardThickness( aInst.board.get() );
+            fpZLocalMm = aFp->IsFlipped() ? -boardThk * 0.5f
+                                          :  boardThk * 0.5f;
+        }
+
+        const float fpBaseZ = aInst.position.z + fpZLocalMm;
+
+        if( aFp->IsFlipped() )
+        {
+            // Flipped fp sits on bottom face; model extends *down* from
+            // fp base.
+            aZMax = fpBaseZ;
+            aZMin = fpBaseZ - modelHeight;
+        }
+        else
+        {
+            // Non-flipped fp sits on top face; model extends *up* from
+            // fp base.
+            aZMin = fpBaseZ;
+            aZMax = fpBaseZ + modelHeight;
         }
     };
 
@@ -1811,6 +1838,7 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
     // Chain: instance pose · footprint pose · (flip if back-side) ·
     //        FP_3DMODEL offset · -Rz · -Ry · -Rx · Scale
     auto buildFpMeshTris = [this]( const BOARD_3D_INSTANCE&  aInst,
+                                    const BOARD_ADAPTER*      aAdapter,
                                     const FOOTPRINT*          aFp,
                                     std::vector<WorldTri>&    aOutTris,
                                     SFVEC3F&                  aOutAabbMin,
@@ -1834,12 +1862,39 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
             return;
 
         // Footprint frame in world mm — Y-positive, no BIU→3d scale.
-        const VECTOR2I fpPos     = aFp->GetPosition();
-        const float    fpx_mm    = fpPos.x / 1e6f;
-        const float    fpy_mm    = fpPos.y / 1e6f;
-        const float    boardThk  = GetBoardThickness( aInst.board.get() );
-        const float    fpz_mm    = aFp->IsFlipped() ? aInst.position.z
-                                                     : aInst.position.z + boardThk;
+        // The fp Z is taken from the BOARD_ADAPTER's F_Paste / B_Paste
+        // layer Z (the same value the renderer uses via
+        // GetFootprintZPos), converted from 3D-units to mm. Without
+        // this the AABB sat ~boardThickness/2 above the rendered model
+        // because the renderer treats inst.position.z as the BOARD
+        // CENTER (substrate centred around z=0 in board-local 3DU)
+        // whereas a naive `inst.z + boardThickness` formulation puts
+        // the fp at board *bottom* + thickness instead of board
+        // *centre* + half-thickness + cu/paste offsets.
+        const VECTOR2I fpPos = aFp->GetPosition();
+        const float    fpx_mm = fpPos.x / 1e6f;
+        const float    fpy_mm = fpPos.y / 1e6f;
+
+        float fpZLocalMm = 0.0f;
+
+        if( aAdapter )
+        {
+            const double biuTo3d  = aAdapter->BiuTo3dUnits();
+            const float  zPosUnit = aAdapter->GetFootprintZPos( aFp->IsFlipped() );
+
+            if( biuTo3d != 0.0 )
+                fpZLocalMm = static_cast<float>( zPosUnit / biuTo3d / 1e6 );
+        }
+        else
+        {
+            // Fallback when no adapter is wired (shouldn't happen in
+            // practice — every visible instance has one).
+            const float boardThk = GetBoardThickness( aInst.board.get() );
+            fpZLocalMm = aFp->IsFlipped() ? -boardThk * 0.5f
+                                          :  boardThk * 0.5f;
+        }
+
+        const float fpz_mm = aInst.position.z + fpZLocalMm;
 
         glm::mat4 instMat( 1.0f );
         instMat = glm::translate( instMat, glm::vec3( aInst.position.x,
@@ -1853,6 +1908,19 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
 
         glm::mat4 fpMat = instMat;
         fpMat = glm::translate( fpMat, glm::vec3( fpx_mm, fpy_mm, fpz_mm ) );
+
+        // Y-axis convention bridge: KiCad's 3D-model vertices use the
+        // CAD convention where +Y is "up" on the screen, which is the
+        // OPPOSITE of the PCB editor's +Y (where +Y is screen-down).
+        // The renderer compensates by negating the footprint position
+        // Y in its `T(px*BiuTo3d, -py*BiuTo3d, zpos)` translation. We
+        // work in board-frame Y-positive throughout, so we instead
+        // mirror the model coords on Y BEFORE the fp-position shift.
+        // Matrix order: this glm::scale appends, so it's APPLIED to
+        // the vertex after the model + flip + orient transforms but
+        // BEFORE the fp-position translation — exactly the spot the
+        // renderer's chain implies.
+        fpMat = glm::scale( fpMat, glm::vec3( 1.0f, -1.0f, 1.0f ) );
 
         const double fpOrientRad = aFp->GetOrientation().AsRadians();
 
@@ -1962,7 +2030,9 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
         }
     };
 
-    auto buildShape = [&]( const BOARD_3D_INSTANCE& aInst, const FOOTPRINT* aFp,
+    auto buildShape = [&]( const BOARD_3D_INSTANCE& aInst,
+                           const BOARD_ADAPTER*     aAdapter,
+                           const FOOTPRINT*         aFp,
                            FPCollisionShape& aOut ) -> bool
     {
         if( !aInst.board || !aFp )
@@ -1987,7 +2057,7 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
         aOut.centerXY = glm::vec2( c * lcx - s * lcy + aInst.position.x,
                                    s * lcx + c * lcy + aInst.position.y );
 
-        computeFpZExtent( aInst, aFp, aOut.zMin, aOut.zMax,
+        computeFpZExtent( aInst, aAdapter, aFp, aOut.zMin, aOut.zMax,
                           aOut.hasDeclaredModels, aOut.hasLoadedModels );
 
         // Broad-phase AABB = axis-aligned envelope of the rotated rect.
@@ -2002,7 +2072,7 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
         // cost (matrix multiply per vertex) saved across all O(N²)
         // pair checks below.
         bool haveMeshAabb = false;
-        buildFpMeshTris( aInst, aFp, aOut.meshTris,
+        buildFpMeshTris( aInst, aAdapter, aFp, aOut.meshTris,
                           aOut.meshAabbMin, aOut.meshAabbMax, haveMeshAabb );
 
         if( haveMeshAabb )
@@ -2061,11 +2131,14 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
         if( !inst.visible || !inst.board )
             continue;
 
+        const BOARD_ADAPTER* adapter = ( i < m_instanceAdapters.size() )
+                                        ? m_instanceAdapters[i].get() : nullptr;
+
         for( const FOOTPRINT* fp : inst.board->Footprints() )
         {
             FPCollisionShape s;
 
-            if( !buildShape( inst, fp, s ) )
+            if( !buildShape( inst, adapter, fp, s ) )
                 continue;
 
             diagFpsTotal++;

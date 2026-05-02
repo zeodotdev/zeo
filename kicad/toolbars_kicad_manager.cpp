@@ -43,8 +43,10 @@ std::optional<TOOLBAR_CONFIGURATION> KICAD_MANAGER_TOOLBAR_SETTINGS::DefaultTool
         // schematic/PCB, manage sub-boards) via double-click and right-
         // click, so this bar is reserved for *global* library editors and
         // utilities, plus the shell-integration group pinned at the
-        // bottom.
-        config.AppendAction( KICAD_MANAGER_ACTIONS::editSymbols )
+        // bottom. Agent leads the list because it's the primary entry
+        // point for AI-assisted workflows.
+        config.AppendAction( KICAD_MANAGER_ACTIONS::showAiAssistant )
+              .AppendAction( KICAD_MANAGER_ACTIONS::editSymbols )
               .AppendAction( KICAD_MANAGER_ACTIONS::editFootprints )
               .AppendAction( KICAD_MANAGER_ACTIONS::convertImage )
               .AppendAction( KICAD_MANAGER_ACTIONS::showCalculator )

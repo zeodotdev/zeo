@@ -817,6 +817,58 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
 
         // Show Claude Code promo (detection is now complete)
         MaybeShowCcPromo();
+
+        // Eagerly preload the terminal kiface frame.
+        //
+        // First-load construction of TERMINAL_FRAME currently throws a
+        // non-std exception inside the EDA_BASE_FRAME / wxFrame init list
+        // (root cause: latent wx-side timing race exposed by the multi-
+        // board build's increased link surface — see git log around
+        // multi-board commits and the in-flight investigation).
+        // The second attempt always succeeds.
+        //
+        // Workaround: take the first-load hit at agent startup, where a
+        // failure is harmless (subsequent on-demand creates from
+        // run_terminal / run_shell tools then succeed). The retry path
+        // here gives the runtime a beat to settle, which empirically is
+        // enough to make the second create succeed.
+        //
+        // Wrapped in CallAfter so it runs after the agent frame finishes
+        // its own construction — kiway needs the agent frame fully
+        // installed before it can create a peer.
+        CallAfter( [this]()
+        {
+            for( int attempt = 0; attempt < 2; ++attempt )
+            {
+                try
+                {
+                    KIWAY_PLAYER* term = Kiway().Player( FRAME_TERMINAL, true );
+
+                    if( term )
+                    {
+                        wxLogInfo( "AGENT: Terminal kiface preloaded "
+                                   "(attempt %d)", attempt + 1 );
+                        return;
+                    }
+                }
+                catch( ... )
+                {
+                    // First-load throws are expected; the catch in
+                    // KIWAY::Player has already logged the type info
+                    // via Pgm().HandleException. Fall through to retry.
+                    wxLogInfo( "AGENT: Terminal kiface preload attempt "
+                               "%d threw — retrying", attempt + 1 );
+                }
+            }
+
+            // Both attempts failed: log and proceed. run_terminal will
+            // surface a clear "Target frame is not open" error when the
+            // user tries to use it; that's recoverable, not a startup
+            // blocker.
+            wxLogWarning( "AGENT: Terminal kiface preload failed after "
+                          "2 attempts — run_terminal / run_shell tools "
+                          "will fail until kiface load succeeds." );
+        } );
     } );
 }
 
@@ -3809,7 +3861,30 @@ void AGENT_FRAME::RenderChatHistory()
                     std::string toolName = block.value( "name", "unknown" );
                     std::string toolId = block.value( "id", "" );
                     nlohmann::json toolInput = block.value( "input", nlohmann::json::object() );
-                    wxString desc = TOOL_REGISTRY::Instance().GetDescription( toolName, toolInput );
+
+                    // Describe functions are best-effort UI affordances; an
+                    // unexpected input shape (e.g. .get<std::string>() on an
+                    // object) should never abort the editor process. Catch
+                    // here so a malformed tool_use block degrades to the
+                    // generic "Executing X" string instead of crashing.
+                    wxString desc;
+
+                    try
+                    {
+                        desc = TOOL_REGISTRY::Instance().GetDescription( toolName, toolInput );
+                    }
+                    catch( const std::exception& e )
+                    {
+                        wxLogWarning( "GetDescription threw for tool '%s': %s",
+                                      toolName, e.what() );
+                        desc = wxString::FromUTF8( "Executing " + toolName );
+                    }
+                    catch( ... )
+                    {
+                        wxLogWarning( "GetDescription threw unknown exception for tool '%s'",
+                                      toolName );
+                        desc = wxString::FromUTF8( "Executing " + toolName );
+                    }
 
                     // Store in map keyed by tool_use id for pairing with tool_result
                     if( !toolId.empty() )
@@ -4987,8 +5062,59 @@ void AGENT_FRAME::OnChatToolStart( wxThreadEvent& aEvent )
         std::string editorType = data->input.value( "editor_type", "" );
         FRAME_T frameType = ( editorType == "sch" ) ? FRAME_SCH : FRAME_PCB_EDITOR;
 
-        KIWAY_PLAYER* existingPlayer = Kiway().Player( frameType, false );
-        bool editorShown = existingPlayer && existingPlayer->IsShown();
+        // Multi-board projects host one editor per sub-project as M4 peer
+        // windows. Kiway().Player(frameType, false) only returns the primary,
+        // so a peer-only configuration looks "no editor open" — the agent
+        // sees "was not open" on close even when check_status reports one
+        // visible. Walk every registered peer and pick the right one.
+        std::vector<KIWAY_PLAYER*> allPlayers = Kiway().GetAllPlayerFrames( frameType );
+
+        std::string requestedFilePath = data->input.value( "file_path", "" );
+        wxString    requestedFullPath;
+
+        if( !requestedFilePath.empty() )
+        {
+            wxFileName requestedFn( wxString::FromUTF8( requestedFilePath ) );
+            requestedFn.Normalize( wxPATH_NORM_ABSOLUTE | wxPATH_NORM_LONG );
+            requestedFullPath = requestedFn.GetFullPath();
+        }
+
+        // Pick the peer that already has the requested file open when given
+        // (so close/focus targets the right window in a multi-board layout);
+        // otherwise fall back to the first visible peer.
+        KIWAY_PLAYER* existingPlayer = nullptr;
+
+        if( !requestedFullPath.IsEmpty() )
+        {
+            for( KIWAY_PLAYER* p : allPlayers )
+            {
+                if( !p || !p->IsShown() )
+                    continue;
+
+                wxFileName playerFn( p->GetCurrentFileName() );
+                playerFn.Normalize( wxPATH_NORM_ABSOLUTE | wxPATH_NORM_LONG );
+
+                if( playerFn.GetFullPath() == requestedFullPath )
+                {
+                    existingPlayer = p;
+                    break;
+                }
+            }
+        }
+
+        if( !existingPlayer )
+        {
+            for( KIWAY_PLAYER* p : allPlayers )
+            {
+                if( p && p->IsShown() )
+                {
+                    existingPlayer = p;
+                    break;
+                }
+            }
+        }
+
+        bool editorShown = existingPlayer != nullptr;
         std::string currentFile = editorShown
                                       ? existingPlayer->GetCurrentFileName().ToStdString()
                                       : "";
@@ -5043,6 +5169,54 @@ void AGENT_FRAME::OnChatToolStart( wxThreadEvent& aEvent )
             m_pendingOpenPcb = !result.isSch;
             m_pendingOpenToolId = data->toolId;
             ShowOpenEditorApproval( result.editorLabel );
+            delete data;
+            return;
+
+        case OpenEditorResult::CLOSE_EDITOR:
+            // Tear down the editor frame(s) so the agent can edit the
+            // project's on-disk files (.kicad_pro JSON etc.) without the
+            // editor saving over them at close time. Use ProcessEvent to
+            // ensure synchronous close — the agent's next tool call
+            // typically expects the editor gone.
+            //
+            // Multi-board layouts host one editor per sub-project; when
+            // file_path is unspecified, close every visible peer of this
+            // type so the agent doesn't have to invoke the tool repeatedly
+            // to clear them. With file_path, only existingPlayer matches.
+            {
+                std::vector<KIWAY_PLAYER*> toClose;
+
+                if( !requestedFullPath.IsEmpty() )
+                {
+                    if( existingPlayer )
+                        toClose.push_back( existingPlayer );
+                }
+                else
+                {
+                    for( KIWAY_PLAYER* p : allPlayers )
+                    {
+                        if( p && p->IsShown() )
+                            toClose.push_back( p );
+                    }
+                }
+
+                for( KIWAY_PLAYER* target : toClose )
+                {
+                    wxCloseEvent closeEvt( wxEVT_CLOSE_WINDOW );
+                    closeEvt.SetEventObject( target );
+                    target->GetEventHandler()->ProcessEvent( closeEvt );
+                }
+
+                PublishOpenEditorStatusToRegistry();
+            }
+            if( m_chatController )
+                m_chatController->HandleToolResult( data->toolId, result.resultMessage, true );
+            delete data;
+            return;
+
+        case OpenEditorResult::ALREADY_CLOSED:
+            if( m_chatController )
+                m_chatController->HandleToolResult( data->toolId, result.resultMessage, true );
             delete data;
             return;
 

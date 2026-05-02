@@ -604,28 +604,48 @@ void SCH_EDIT_FRAME::OnCrossProbeFlashTimer( wxTimerEvent& aEvent )
 
 SCH_EDIT_FRAME::~SCH_EDIT_FRAME()
 {
+    // App-shutdown detector. PGM_KICAD::OnPgmExit() resets m_api_server before
+    // wxApp::CleanUp runs DeleteAllTLWs to destroy still-alive frames; M4 peer
+    // MBSCH_EDIT_FRAMEs aren't closed via the kiway player path so they hit
+    // this dtor *after* shared subsystems (settings, tool manager UI grid,
+    // local history) have been partially torn down. Operations below that
+    // touch those subsystems crash the process. Skip them on shutdown — the
+    // OS is about to reclaim the entire process anyway.
+    bool shuttingDown = false;
+#ifdef KICAD_IPC_API
+    shuttingDown = !Pgm().HasApiServer();
+#endif
+
 #ifdef KICAD_IPC_API
     // Safety net: ensure handler is deregistered even if doCloseWindow() was not called
     // (e.g. frame destroyed via Destroy() instead of Close()). Double-deregistration is
     // safe because std::set::erase on a non-existent key is a no-op.
-    Pgm().GetApiServer().DeregisterHandler( m_apiHandler.get() );
+    if( !shuttingDown )
+    {
+        Pgm().GetApiServer().DeregisterHandler( m_apiHandler.get() );
 
-    if( m_apiHandlerCommon )
-        Pgm().GetApiServer().DeregisterHandler( m_apiHandlerCommon.get() );
+        if( m_apiHandlerCommon )
+            Pgm().GetApiServer().DeregisterHandler( m_apiHandlerCommon.get() );
+    }
 #endif
 
     m_hierarchy->Unbind( wxEVT_SIZE, &SCH_EDIT_FRAME::OnResizeHierarchyNavigator, this );
 
-    // Ensure m_canvasType is up to date, to save it in config
-    m_canvasType = GetCanvas()->GetBackend();
+    if( !shuttingDown )
+    {
+        // Ensure m_canvasType is up to date, to save it in config
+        m_canvasType = GetCanvas()->GetBackend();
 
-    SetScreen( nullptr );
+        // SetScreen(nullptr) routes through m_toolManager->RunAction →
+        // UpdateUI → GRID::MessageText, which crashes on shutdown when the
+        // settings-owned GRID object has already been freed.
+        SetScreen( nullptr );
 
-    // Unregister the autosave saver before dropping m_schematic. doCloseWindow
-    // normally handles this, but frames destroyed via Destroy() bypass it —
-    // leaving a dangling pointer in LOCAL_HISTORY that fires on the next tick.
-    if( m_schematic )
-        Kiway().LocalHistory().UnregisterSaver( m_schematic );
+        // LocalHistory lives on Kiway, which has already had OnKiwayEnd()
+        // called during OnPgmExit. Touching it during shutdown is unsafe.
+        if( m_schematic )
+            Kiway().LocalHistory().UnregisterSaver( m_schematic );
+    }
 
     if( m_schematic )
         m_schematic->RemoveAllListeners();
@@ -638,8 +658,9 @@ SCH_EDIT_FRAME::~SCH_EDIT_FRAME()
     delete m_schematic;
     m_schematic = nullptr;
 
-    // Close the project if we are standalone, so it gets cleaned up properly
-    if( Kiface().IsSingle() )
+    // Close the project if we are standalone, so it gets cleaned up properly.
+    // Skipped on shutdown — settings_manager state may already be torn down.
+    if( !shuttingDown && Kiface().IsSingle() )
     {
         try
         {

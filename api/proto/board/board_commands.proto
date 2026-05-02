@@ -340,6 +340,39 @@ message PadstackPresenceResponse
   repeated PadstackPresenceEntry entries = 1;
 }
 
+// Connector-pad set: BOARD::m_connectorPads tags pads that connect to
+// other boards in a multi-board project. The set is a board-level property
+// (a std::set<KIID>), not part of the Pad proto, so it has its own commands.
+
+// Returns ConnectorPadsResponse listing every pad UUID currently marked
+// as a connector pad on the target board.
+message GetConnectorPads
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+}
+
+message ConnectorPadsResponse
+{
+  repeated kiapi.common.types.KIID pad_uuids = 1;
+}
+
+// Adds and/or removes pad UUIDs from the connector-pad set in one round
+// trip. Returns counts of items actually added/removed (UUIDs already in
+// the requested state are no-ops and not counted).
+message UpdateConnectorPadSet
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+
+  repeated kiapi.common.types.KIID add = 2;     // mark these pads as connector
+  repeated kiapi.common.types.KIID remove = 3;  // unmark these pads
+}
+
+message UpdateConnectorPadSetResponse
+{
+  int32 added = 1;
+  int32 removed = 2;
+}
+
 // DRC markers
 
 enum DrcSeverity // Since 10.0
@@ -524,6 +557,13 @@ message RunDRC
 
   // If true, test footprints against library footprints
   bool test_footprints = 4;
+
+  // If > 0, cancel the run after this many milliseconds of wall-clock time.
+  // The DRC engine polls IsCancelled() between test providers so cancellation
+  // is cooperative — the actual elapsed time may exceed the deadline by up
+  // to one provider's run length. Whatever violations were found before
+  // cancellation are still returned.
+  int32 cancel_after_ms = 5;
 }
 
 message RunDRCResponse
@@ -536,6 +576,9 @@ message RunDRCResponse
 
   // Number of exclusions (user-marked items to ignore)
   int32 exclusion_count = 3;
+
+  // True if the run was cut short by cancel_after_ms.
+  bool cancelled = 4;
 }
 
 // Get all current DRC violations/markers from the board
@@ -557,10 +600,10 @@ message DRCViolation
   // Severity of the violation
   DrcSeverity severity = 2;
 
-  // Error type/code
+  // Numeric DRCE_* error code (internal enum value; not stable across releases).
   int32 error_code = 3;
 
-  // Human-readable error type name
+  // Human-readable error type name (e.g. "Annular width")
   string error_type = 4;
 
   // Detailed error message
@@ -571,6 +614,12 @@ message DRCViolation
 
   // IDs of items involved in the violation
   repeated kiapi.common.types.KIID items = 7;
+
+  // Stable, machine-friendly identifier for the violation type
+  // (e.g. "annular_width", "cross_board_net_mismatch"). Sourced from
+  // the RC item's settings key so the test runner can assert structurally
+  // without text matching.
+  string error_type_code = 8;
 }
 
 message DRCViolationsResponse

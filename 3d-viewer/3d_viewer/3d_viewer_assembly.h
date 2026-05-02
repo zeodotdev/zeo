@@ -447,6 +447,14 @@ public:
     bool GetShowContactHighlights() const { return m_showContactHighlights; }
 
     /**
+     * Debug: blue wireframe boxes for every pair that survives the
+     * broad-phase AABB pre-filter — useful for diagnosing why the
+     * confirmed-collision pass disagrees with what the user sees.
+     */
+    void SetShowBroadAabbDebug( bool aShow ) { m_showBroadAabbDebug = aShow; }
+    bool GetShowBroadAabbDebug() const { return m_showBroadAabbDebug; }
+
+    /**
      * Highlight one mate pair in the gizmo render. The matching pair
      * draws bright + larger; all other pairs fade. Pass an empty
      * string to clear the selection.
@@ -723,7 +731,8 @@ private:
     enum class OVERLAP_KIND
     {
         COLLISION,
-        CONTACT
+        CONTACT,
+        BROAD     ///< AABB-only, debug visualization
     };
 
     struct OverlapBox
@@ -784,6 +793,11 @@ private:
     bool                            m_showMateGizmos          = true;
     bool                            m_showCollisionHighlights = true;
     bool                            m_showContactHighlights   = true;
+    /// Debug: render broad-phase AABB-overlap boxes (blue wireframe)
+    /// alongside the confirmed COLLISION/CONTACT boxes so the user
+    /// can compare what the AABB pre-filter is finding vs what the
+    /// mesh-level narrow phase confirms. Default off.
+    bool                            m_showBroadAabbDebug      = false;
 
     /// Currently-selected mate pair identifier (canonical encoded
     /// string from `MakeMatePairId`). Empty string = no selection

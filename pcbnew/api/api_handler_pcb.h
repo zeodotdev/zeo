@@ -216,6 +216,13 @@ private:
     HANDLER_RESULT<BoardStackupResponse> handleUpdateBoardStackup(
             const HANDLER_CONTEXT<UpdateBoardStackup>& aCtx );
 
+    // Connector-pad set (BOARD::m_connectorPads — multi-board metadata)
+    HANDLER_RESULT<ConnectorPadsResponse> handleGetConnectorPads(
+            const HANDLER_CONTEXT<GetConnectorPads>& aCtx );
+
+    HANDLER_RESULT<UpdateConnectorPadSetResponse> handleUpdateConnectorPadSet(
+            const HANDLER_CONTEXT<UpdateConnectorPadSet>& aCtx );
+
     // DRC handlers
     HANDLER_RESULT<RunDRCResponse> handleRunDRC( const HANDLER_CONTEXT<RunDRC>& aCtx );
 

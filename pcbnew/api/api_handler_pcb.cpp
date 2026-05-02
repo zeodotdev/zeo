@@ -133,6 +133,10 @@ API_HANDLER_PCB::API_HANDLER_PCB( PCB_EDIT_FRAME* aFrame ) :
             &API_HANDLER_PCB::handleGetPadShapeAsPolygon );
     registerHandler<CheckPadstackPresenceOnLayers, PadstackPresenceResponse>(
             &API_HANDLER_PCB::handleCheckPadstackPresenceOnLayers );
+    registerHandler<GetConnectorPads, ConnectorPadsResponse>(
+            &API_HANDLER_PCB::handleGetConnectorPads );
+    registerHandler<UpdateConnectorPadSet, UpdateConnectorPadSetResponse>(
+            &API_HANDLER_PCB::handleUpdateConnectorPadSet );
     // Use fully qualified names to ensure correct proto types are registered
     registerHandler<kiapi::common::commands::GetTitleBlockInfo, kiapi::common::types::TitleBlockInfo>(
             &API_HANDLER_PCB::handleGetTitleBlockInfo );
@@ -1820,6 +1824,72 @@ HANDLER_RESULT<PadstackPresenceResponse> API_HANDLER_PCB::handleCheckPadstackPre
 }
 
 
+HANDLER_RESULT<ConnectorPadsResponse> API_HANDLER_PCB::handleGetConnectorPads(
+        const HANDLER_CONTEXT<GetConnectorPads>& aCtx )
+{
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.board() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    BOARD* board = frame()->GetBoard();
+    ConnectorPadsResponse response;
+
+    for( const KIID& uuid : board->GetConnectorPads() )
+        response.add_pad_uuids()->set_value( uuid.AsStdString() );
+
+    return response;
+}
+
+
+HANDLER_RESULT<UpdateConnectorPadSetResponse> API_HANDLER_PCB::handleUpdateConnectorPadSet(
+        const HANDLER_CONTEXT<UpdateConnectorPadSet>& aCtx )
+{
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.board() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    BOARD* board = frame()->GetBoard();
+    UpdateConnectorPadSetResponse response;
+    int added = 0;
+    int removed = 0;
+
+    // Capture pre-state so we count actual changes (idempotent ops are no-ops).
+    const std::set<KIID>& current = board->GetConnectorPads();
+
+    for( const auto& msg : aCtx.Request.add() )
+    {
+        KIID uuid( msg.value() );
+
+        if( current.find( uuid ) == current.end() )
+            added++;
+
+        board->MarkAsConnectorPad( uuid );
+    }
+
+    for( const auto& msg : aCtx.Request.remove() )
+    {
+        KIID uuid( msg.value() );
+
+        if( current.find( uuid ) != current.end() )
+            removed++;
+
+        board->UnmarkConnectorPad( uuid );
+    }
+
+    if( added > 0 || removed > 0 )
+        frame()->OnModify();
+
+    response.set_added( added );
+    response.set_removed( removed );
+    return response;
+}
+
+
 HANDLER_RESULT<types::TitleBlockInfo> API_HANDLER_PCB::handleGetTitleBlockInfo(
         const HANDLER_CONTEXT<GetTitleBlockInfo>& aCtx )
 {
@@ -2597,11 +2667,62 @@ HANDLER_RESULT<RunDRCResponse> API_HANDLER_PCB::handleRunDRC(
     // Clear existing markers before running DRC
     board->DeleteMARKERs( true, false );
 
+    // Wrap the CLI progress reporter so IsCancelled() flips to true after
+    // cancel_after_ms wall-clock time. The DRC engine polls IsCancelled()
+    // between test providers (cooperative cancellation), so the actual
+    // elapsed time may exceed the deadline by one provider's run length.
+    class TIME_LIMITED_REPORTER : public PROGRESS_REPORTER
+    {
+    public:
+        TIME_LIMITED_REPORTER( PROGRESS_REPORTER& aBase, int aDeadlineMs ) :
+                m_base( aBase ),
+                m_start( wxGetLocalTimeMillis() ),
+                m_deadlineMs( aDeadlineMs )
+        {}
+
+        void   SetNumPhases( int n ) override { m_base.SetNumPhases( n ); }
+        void   AddPhases( int n ) override { m_base.AddPhases( n ); }
+        void   BeginPhase( int p ) override { m_base.BeginPhase( p ); }
+        void   AdvancePhase() override { m_base.AdvancePhase(); }
+        void   AdvancePhase( const wxString& m ) override { m_base.AdvancePhase( m ); }
+        void   Report( const wxString& m ) override { m_base.Report( m ); }
+        void   SetCurrentProgress( double p ) override { m_base.SetCurrentProgress( p ); }
+        void   SetMaxProgress( int m ) override { m_base.SetMaxProgress( m ); }
+        void   AdvanceProgress() override { m_base.AdvanceProgress(); }
+        bool   KeepRefreshing( bool w = false ) override { return m_base.KeepRefreshing( w ); }
+        void   SetTitle( const wxString& t ) override { m_base.SetTitle( t ); }
+
+        bool IsCancelled() const override
+        {
+            if( m_base.IsCancelled() )
+                return true;
+
+            if( m_deadlineMs <= 0 )
+                return false;
+
+            return ( wxGetLocalTimeMillis() - m_start ).ToLong() >= m_deadlineMs;
+        }
+
+    private:
+        PROGRESS_REPORTER& m_base;
+        wxLongLong         m_start;
+        int                m_deadlineMs;
+    };
+
+    int             cancelAfterMs = aCtx.Request.cancel_after_ms();
+    PROGRESS_REPORTER* baseReporter = &CLI_PROGRESS_REPORTER::GetInstance();
+    TIME_LIMITED_REPORTER limitedReporter( *baseReporter, cancelAfterMs );
+    PROGRESS_REPORTER* reporter = ( cancelAfterMs > 0 )
+                                          ? static_cast<PROGRESS_REPORTER*>( &limitedReporter )
+                                          : baseReporter;
+
     // Run DRC (blocking)
-    drcTool->RunTests( &CLI_PROGRESS_REPORTER::GetInstance(),
+    drcTool->RunTests( reporter,
                        aCtx.Request.refill_zones(),
                        aCtx.Request.report_all_track_errors(),
                        aCtx.Request.test_footprints() );
+
+    bool cancelled = ( cancelAfterMs > 0 ) && limitedReporter.IsCancelled();
 
     // Count results
     RunDRCResponse response;
@@ -2623,6 +2744,7 @@ HANDLER_RESULT<RunDRCResponse> API_HANDLER_PCB::handleRunDRC(
     response.set_error_count( errorCount );
     response.set_warning_count( warningCount );
     response.set_exclusion_count( exclusionCount );
+    response.set_cancelled( cancelled );
 
     return response;
 }
@@ -2668,6 +2790,7 @@ HANDLER_RESULT<DRCViolationsResponse> API_HANDLER_PCB::handleGetDRCViolations(
         {
             violation->set_error_code( rcItem->GetErrorCode() );
             violation->set_error_type( rcItem->GetErrorText( false ).ToStdString() );
+            violation->set_error_type_code( rcItem->GetSettingsKey().ToStdString() );
             violation->set_message( rcItem->GetErrorMessage( false ).ToStdString() );
 
             // Add involved items

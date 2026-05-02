@@ -789,6 +789,17 @@ int SCH_EDITOR_CONTROL::MbsManageSubBoards( const TOOL_EVENT& aEvent )
     // alone isn't enough for live PROJECT_FILEs.
     container.SaveToFile( containerFile.GetPath() );
 
+    // Note: if the launcher (kicad manager) is open, it won't pick up
+    // sub-project add/remove until the user manually refreshes (Cmd+R
+    // / F5). The launcher is not a KIWAY_PLAYER so it can't receive
+    // ExpressMail, and its file-system watcher handler keys on a
+    // modified path (which we don't have a single one for here — the
+    // dialog may have created a directory tree, modified the
+    // `.kicad_pro`, and deleted nothing). The kicad-manager-launched
+    // path through `KICAD_MANAGER_CONTROL::ManageSubBoards` calls
+    // `RefreshProjectTree()` directly; that's the user-visible
+    // launcher case. From MBSCH the auto-refresh is a follow-up.
+
     return 0;
 }
 

@@ -49,12 +49,82 @@ if _IS_MBS:
         # On MBS, ref typically matches the MBS-scoped annotation ('B1'..'B12')
         # set by mbs_refresh. Also accept matching component_ref ('CN1', 'J1')
         # as a fallback so the model can use whichever it has handy.
+        #
+        # Disambiguation: when two sub-projects own components with the same
+        # ref (e.g. CN1 on both esp_cm and esp_cm_breakout), a bare ref maps
+        # to multiple blocks. Two ways to disambiguate:
+        #   - target.sub_project_uuid: filter to a specific sub-project
+        #   - block_uuid: name the block directly (always unique)
+        # If neither is provided and >1 blocks match, error out with the full
+        # candidate list rather than silently picking one — silent picks have
+        # caused agent edits to land on the wrong board.
+        _target = TOOL_ARGS.get('target', {}) if isinstance(TOOL_ARGS, dict) else {}
+
+        if not isinstance(_target, dict):
+            _target = {}
+
+        _filter_sub_uuid = _target.get('sub_project_uuid', '') or ''
+        _explicit_block_uuid = TOOL_ARGS.get('block_uuid', '') if isinstance(TOOL_ARGS, dict) else ''
+
+        def _block_uuid(_b):
+            try:
+                return _b.id.value
+            except Exception:
+                return ''
+
+        _matches = []
+
         for _b in sch.multi_board.get_blocks():
-            if getattr(_b, 'mbs_reference', '') == ref \
-                    or getattr(_b, 'component_ref', '') == ref:
-                mbs_block = _b
-                _is_mbs_block = True
-                break
+            # Explicit block_uuid wins immediately and bypasses ref matching.
+            if _explicit_block_uuid:
+                if _block_uuid(_b) == _explicit_block_uuid:
+                    _matches = [_b]
+                    break
+                continue
+
+            if getattr(_b, 'mbs_reference', '') != ref \
+                    and getattr(_b, 'component_ref', '') != ref:
+                continue
+
+            if _filter_sub_uuid \
+                    and getattr(_b, 'sub_project_uuid', '') != _filter_sub_uuid:
+                continue
+
+            _matches.append(_b)
+
+        if len(_matches) > 1:
+            _candidates = [
+                {
+                    'mbs_reference': getattr(_m, 'mbs_reference', '') or '(empty)',
+                    'component_ref': getattr(_m, 'component_ref', ''),
+                    'sub_project_uuid': getattr(_m, 'sub_project_uuid', ''),
+                    'display_name': getattr(_m, 'display_name', ''),
+                    'block_uuid': _block_uuid(_m),
+                }
+                for _m in _matches
+            ]
+            results = [{
+                'error': (
+                    f"Ambiguous ref '{ref}' on MBS canvas: {len(_matches)} blocks match. "
+                    f"Disambiguate with target.sub_project_uuid (the uuid of the "
+                    f"sub-project that owns the intended block) or block_uuid (always "
+                    f"unique). If a candidate's mbs_reference is '(empty)', save the "
+                    f"MBS once to backfill it (auto-assigned at save) and re-run."
+                ),
+                'candidates': _candidates,
+            }]
+        elif len(_matches) == 1:
+            mbs_block = _matches[0]
+            _is_mbs_block = True
+        elif _explicit_block_uuid:
+            results = [{
+                'error': (
+                    f"block_uuid '{_explicit_block_uuid}' did not match any block "
+                    f"on the MBS canvas. Use mbs_inspect (section=\"blocks\") to "
+                    f"list valid block UUIDs."
+                )
+            }]
+        # else: zero matches without explicit uuid → fall through to symbol/sheet lookup.
     except Exception as _e:
         tool_log(f'[sch_label] MBS block lookup failed: {_e}')
 

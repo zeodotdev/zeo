@@ -617,8 +617,42 @@ static std::string DescribePcbDelete( const nlohmann::json& a )
     {
         size_t count = a["targets"].size();
 
+        // Pad/footprint targets land here as objects ({target_type:"pad",
+        // footprint_ref:"CN1", pad_number:"11", ...}); legacy callers pass
+        // bare ref strings. .get<std::string>() on an object throws
+        // nlohmann::json::type_error, which propagates out of GetDescription
+        // and terminates the editor process before the python script even
+        // runs — rendering the supposedly-disabled pad delete a hard crash.
         if( count == 1 )
-            return "Deleting " + a["targets"][0].get<std::string>();
+        {
+            const nlohmann::json& t = a["targets"][0];
+
+            if( t.is_string() )
+                return "Deleting " + t.get<std::string>();
+
+            if( t.is_object() )
+            {
+                std::string label;
+
+                if( t.contains( "target_type" ) && t["target_type"].is_string() )
+                    label = t["target_type"].get<std::string>();
+
+                if( t.contains( "footprint_ref" ) && t["footprint_ref"].is_string() )
+                {
+                    if( !label.empty() )
+                        label += " ";
+                    label += t["footprint_ref"].get<std::string>();
+                }
+
+                if( t.contains( "pad_number" ) && t["pad_number"].is_string() )
+                    label += "." + t["pad_number"].get<std::string>();
+
+                if( label.empty() )
+                    label = "1 element";
+
+                return "Deleting " + label;
+            }
+        }
 
         return "Deleting " + std::to_string( count ) + " elements";
     }
@@ -830,6 +864,28 @@ PYTHON_TOOL_HANDLER::PYTHON_TOOL_HANDLER()
     Register( "mbs_sync_to_pcb", "mbs", "schematic/mbs_sync_to_pcb.py",
               []( const nlohmann::json& ) {
                   return std::string( "Syncing cross-board nets to sub-project PCBs" );
+              } );
+
+    // mbs_setup: app="none" — kicad client is bootstrapped but no editor
+    // is bound. Container actions run without an MBSCH editor open; rule
+    // get/set branches lazily call kicad.get_mbs_schematic() and surface
+    // a clear error when no MBSCH frame is available.
+    // Use a non-empty mode token so the run_shell parser doesn't mis-
+    // tokenize (it splits on the first space after "run_shell ").
+    Register( "mbs_setup", "none", "schematic/mbs_setup.py",
+              []( const nlohmann::json& a ) {
+                  std::string action = a.value( "action", "get" );
+                  if( action == "get" )
+                      return std::string( "Reading MBS rules" );
+                  if( action == "set" )
+                      return std::string( "Updating MBS rules" );
+                  if( action == "create_container" )
+                      return std::string( "Creating multi-board container" );
+                  if( action == "add_sub_project" )
+                      return std::string( "Adding sub-project to container" );
+                  if( action == "remove_sub_project" )
+                      return std::string( "Removing sub-project from container" );
+                  return std::string( "MBS setup: " + action );
               } );
 
     Register( "sch_draft_circuit", "sch", "schematic/sch_draft_circuit.py",

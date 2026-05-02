@@ -188,6 +188,24 @@ void EDA_3D_CANVAS::releaseOpenGL()
     if( m_glRC )
     {
         GL_CONTEXT_MANAGER* gl_mgr = Pgm().GetGLContextManager();
+
+        // PGM_BASE::Destroy() (called from PGM_KICAD::OnPgmExit) tears down
+        // the GL context manager BEFORE wxApp::CleanUp runs DeleteAllTLWs to
+        // destroy the frames. M4 peer-window MBSCH frames host an
+        // EDA_3D_VIEWER_FRAME as a child, so when the MBSCH dtor cascades
+        // through wxFrame::DestroyChildren we end up here with gl_mgr null
+        // and crash inside LockCtx. Skip the GL teardown — the OS reclaims
+        // the entire process within milliseconds, including any leftover GL
+        // contexts.
+        if( !gl_mgr )
+        {
+            m_3d_render_raytracing = nullptr;
+            m_3d_render_opengl = nullptr;
+            m_3d_render = nullptr;
+            m_glRC = nullptr;
+            return;
+        }
+
         gl_mgr->LockCtx( m_glRC, this );
 
         // Tear down the assembly manager's per-instance renderers

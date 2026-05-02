@@ -763,7 +763,11 @@ PCB_EDIT_FRAME::~PCB_EDIT_FRAME()
     // Safety net: ensure handler is deregistered even if doCloseWindow() was not called
     // (e.g. frame destroyed via Destroy() instead of Close()). Double-deregistration is
     // safe because std::set::erase on a non-existent key is a no-op.
-    Pgm().GetApiServer().DeregisterHandler( m_apiHandler.get() );
+    //
+    // Skip when the API server has already been torn down — see SCH_EDIT_FRAME::~ for
+    // the macOS / multi-board peer-frame teardown ordering that surfaces this.
+    if( Pgm().HasApiServer() )
+        Pgm().GetApiServer().DeregisterHandler( m_apiHandler.get() );
 #endif
 
     ScriptingOnDestructPcbEditFrame( this );

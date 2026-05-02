@@ -36,6 +36,7 @@
 #include <wx/log.h>
 
 #include <settings/common_settings.h>
+#include <settings/settings_manager.h>
 #include <advanced_config.h>
 #include <bitmaps.h>
 #include <bitmap_store.h>
@@ -1093,7 +1094,31 @@ void PROJECT_TREE_PANE::ReCreateTreePrj()
     m_gitTreeCache.clear();
     m_gitStatusIcons.clear();
 
-    wxString pro_dir = m_Parent->GetProjectFileName();
+    // Resolve the project path through SETTINGS_MANAGER directly. The
+    // path on PROJECT (set by setProjectFullName, asserted absolute) is
+    // the authoritative location; deriving via m_Parent->GetProjectFileName()
+    // also goes through Prj() but defends against cases where the
+    // manager frame's project query returns a basename-only or empty
+    // string (which silently broke directory enumeration on reload —
+    // pro_dir came out empty, the dir walk skipped to the else branch
+    // and the tree showed only the root .kicad_pro).
+    wxString pro_dir;
+    wxString proSource = wxS( "none" );
+
+    if( Pgm().GetSettingsManager().IsProjectOpen() )
+    {
+        pro_dir = Pgm().GetSettingsManager().Prj().GetProjectFullName();
+        proSource = wxS( "settings-manager" );
+    }
+
+    if( pro_dir.IsEmpty() )
+    {
+        pro_dir = m_Parent->GetProjectFileName();
+        proSource = wxS( "manager-frame" );
+    }
+
+    wxLogMessage( wxS( "PROJECT_TREE_PANE::ReCreateTreePrj: pro_dir='%s' (resolved from %s)" ),
+                  pro_dir, proSource );
 
     if( !m_TreeProject )
         m_TreeProject = new PROJECT_TREE( this );
@@ -1173,14 +1198,25 @@ void PROJECT_TREE_PANE::ReCreateTreePrj()
     // Now adding all current files if available
     if( prjOpened )
     {
-        pro_dir = wxPathOnly( m_Parent->GetProjectFileName() );
-        wxDir dir( pro_dir );
+        // Use fn.GetPath() — the absolute project directory derived from
+        // SETTINGS_MANAGER above — rather than re-deriving via
+        // wxPathOnly(m_Parent->GetProjectFileName()). The latter returns
+        // an empty string when the manager-frame query gave us only a
+        // basename, which is exactly how reload was leaving the tree
+        // empty.
+        wxString  walkDir = fn.GetPath();
+        wxDir     dir( walkDir );
+
+        wxLogMessage( wxS( "PROJECT_TREE_PANE: rebuilding tree, project=%s, walkDir=%s, "
+                           "dirOpened=%d" ),
+                      fn.GetFullPath(), walkDir, dir.IsOpened() ? 1 : 0 );
 
         if( dir.IsOpened() )    // protected dirs will not open, see "man opendir()"
         {
             std::vector<wxString> projects = getProjects( dir );
             wxString              filename;
             bool                  haveFile = dir.GetFirst( &filename );
+            int                   itemsAdded = 0;
 
             while( haveFile )
             {
@@ -1190,11 +1226,21 @@ void PROJECT_TREE_PANE::ReCreateTreePrj()
 
                     // Add items living in the project directory, and populate the item
                     // if it is a directory (sub directories will be not populated)
-                    addItemToProjectTree( name, m_root, &projects, true );
+                    if( addItemToProjectTree( name, m_root, &projects, true ).IsOk() )
+                        itemsAdded++;
                 }
 
                 haveFile = dir.GetNext( &filename );
             }
+
+            wxLogMessage( wxS( "PROJECT_TREE_PANE: added %d top-level items under root" ),
+                          itemsAdded );
+        }
+        else
+        {
+            wxLogWarning( wxS( "PROJECT_TREE_PANE: failed to open project directory '%s' "
+                               "for tree rebuild — tree will be empty" ),
+                          walkDir );
         }
     }
     else
@@ -1202,10 +1248,11 @@ void PROJECT_TREE_PANE::ReCreateTreePrj()
         m_TreeProject->AppendItem( m_root, wxT( "Empty project" ) );
     }
 
-    m_TreeProject->Expand( m_root );
-
     // Sort filenames by alphabetic order
     m_TreeProject->SortChildren( m_root );
+
+    m_TreeProject->Expand( m_root );
+    m_TreeProject->Refresh();
 
     CallAfter(
             [this] ()

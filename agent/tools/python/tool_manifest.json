@@ -386,6 +386,130 @@
     "deferred": false
   },
   {
+    "name": "mbs_setup",
+    "description": "Manage a multi-board container project. Two scopes: (1) RULE SETS on the container .kicad_pro — action='get'|'set' for min_power_pins, max_length_nm, cross_board_diff_pairs, current_rules, voltage_rules (requires MBSCH editor open; routes via IPC so the live PROJECT_FILE invalidates correctly). (2) CONTAINER ACTIONS that edit .kicad_pro JSON files directly (no editor required) — action='create_container' makes a new container .kicad_pro + empty .kicad_mbs alongside; action='add_sub_project' registers an existing sub-project's .kicad_pro with a container and writes the back-reference into the sub-project; action='remove_sub_project' unregisters a sub-project and clears its back-reference. Container actions edit files on disk: if any file is loaded in an editor, call open_editor action='close' first to avoid the editor's autosave clobbering the JSON edits.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": ["get", "set", "create_container", "add_sub_project", "remove_sub_project"],
+          "description": "'get'/'set' for rule sets (need MBSCH open). 'create_container'/'add_sub_project'/'remove_sub_project' edit .kicad_pro files on disk (no editor required)."
+        },
+        "container_pro_path": {
+          "type": "string",
+          "description": "Absolute path to the container .kicad_pro. Required for create_container (must NOT exist), add_sub_project (must exist), remove_sub_project (must exist)."
+        },
+        "mbs_file_name": {
+          "type": "string",
+          "description": "create_container only. Filename for the new .kicad_mbs (defaults to <container_basename>.kicad_mbs). Must end with .kicad_mbs."
+        },
+        "sub_pro_path": {
+          "type": "string",
+          "description": "add_sub_project: absolute path to the sub-project's existing .kicad_pro (must exist). remove_sub_project: optional alternative to sub_project_uuid for naming the entry to remove."
+        },
+        "sub_project_uuid": {
+          "type": "string",
+          "description": "remove_sub_project: UUID of the entry to unregister (from check_status -> container.sub_projects[].uuid)."
+        },
+        "name": {
+          "type": "string",
+          "description": "add_sub_project: short name (defaults to .kicad_pro basename)."
+        },
+        "display_name": {
+          "type": "string",
+          "description": "add_sub_project: human-friendly name (defaults to name)."
+        },
+        "role": {
+          "type": "string",
+          "description": "add_sub_project: reserved field, defaults to 'standard'."
+        },
+        "uuid": {
+          "type": "string",
+          "description": "add_sub_project: explicit UUID for the sub-project entry (defaults to a fresh UUID)."
+        },
+        "rules": {
+          "type": "object",
+          "description": "Rule sets to replace (action='set' only). Each key is independent: present means replace, absent means leave alone. Empty list under a present key clears that set.",
+          "properties": {
+            "min_power_pins": {
+              "type": "array",
+              "description": "Minimum connector-pin count per cross-board power net.",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "net_name": { "type": "string" },
+                  "min_pins": { "type": "integer" }
+                },
+                "required": ["net_name", "min_pins"]
+              }
+            },
+            "max_length_nm": {
+              "type": "array",
+              "description": "Max total trace length (nm) per cross-board net, summed across sub-projects.",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "net_name": { "type": "string" },
+                  "max_length_nm": { "type": "integer" }
+                },
+                "required": ["net_name", "max_length_nm"]
+              }
+            },
+            "cross_board_diff_pairs": {
+              "type": "array",
+              "description": "Cross-board diff-pair declarations.",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "p": { "type": "string", "description": "Positive net name (e.g. 'USB_DP')." },
+                  "n": { "type": "string", "description": "Negative net name (e.g. 'USB_DN')." }
+                },
+                "required": ["p", "n"]
+              }
+            },
+            "current_rules": {
+              "type": "array",
+              "description": "Per-cross-board-net current capacity rules.",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "net_name": { "type": "string" },
+                  "expected_amps": { "type": "number" },
+                  "pin_rating_amps": { "type": "number" }
+                },
+                "required": ["net_name"]
+              }
+            },
+            "voltage_rules": {
+              "type": "array",
+              "description": "Per-cross-board-net voltage-drop rules. Optional override fields fall back to documented defaults when 0.",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "net_name": { "type": "string" },
+                  "expected_amps": { "type": "number" },
+                  "max_drop_mv": { "type": "number" },
+                  "trace_width_um": { "type": "number" },
+                  "trace_sheet_r_milliohm_per_sq": { "type": "number" },
+                  "contact_r_per_pin_milliohm": { "type": "number" }
+                },
+                "required": ["net_name"]
+              }
+            }
+          }
+        }
+      },
+      "required": []
+    },
+    "app": null,
+    "script": "schematic/mbs_setup.py",
+    "needs_bbox": false,
+    "read_only": false,
+    "group": "SCHEMATIC",
+    "deferred": false
+  },
+  {
     "name": "mbs_sync_to_pcb",
     "description": "Push cross-board nets declared on the MBS to each sub-project's PCB. For every cross-board net endpoint, locates the matching connector pad on the sub-project's PCB and writes the cross-board net name to that pad. Equivalent to the MBSCH 'Sync to PCB' toolbar button. Reports aggregate counts plus any net-name conflicts (when sub-projects use different local names for the same cross-board net). Requires the MBSCH editor open. Save the MBS first so the latest cross-board nets are extracted from the topology.",
     "input_schema": {
@@ -782,13 +906,17 @@
   },
   {
     "name": "sch_label",
-    "description": "Place labels on the pins of a symbol, sheet, or MBS module block. Auto-justifies text and orientation based on pin direction. For sheets, pass the sheet name as ref and use sheet pin names as label keys. Supports multi-unit symbols with optional unit filter. ON THE MULTI-BOARD CANVAS (target.doc_type=\"mbs\"): pass the module block's mbs_reference (e.g. \"B1\") or component_ref (e.g. \"CN1\") as ref, and the pin_number (e.g. \"10\") as the key in `labels`. Use mbs_inspect (section=\"blocks\") to discover valid block refs and pin numbers. Pin labels on MBS pins name the cross-board net at that pin.",
+    "description": "Place labels on the pins of a symbol, sheet, or MBS module block. Auto-justifies text and orientation based on pin direction. For sheets, pass the sheet name as ref and use sheet pin names as label keys. Supports multi-unit symbols with optional unit filter. ON THE MULTI-BOARD CANVAS (target.doc_type=\"mbs\"): pass the module block's mbs_reference (e.g. \"B1\") or component_ref (e.g. \"CN1\") as ref, and the pin_number (e.g. \"10\") as the key in `labels`. Use mbs_inspect (section=\"blocks\") to discover valid block refs and pin numbers. Pin labels on MBS pins name the cross-board net at that pin. Disambiguating duplicate refs on MBS: when two sub-projects have a block with the same component_ref (e.g. CN1 on both boards), bare ref is ambiguous and the call errors with the candidate list. Pass target.sub_project_uuid to filter by sub-project, OR pass block_uuid (always unique) to name the block directly.",
     "input_schema": {
       "type": "object",
       "properties": {
         "ref": {
           "type": "string",
-          "description": "Reference designator of the symbol (e.g., 'U1') or name of a hierarchical sheet (e.g., 'Power Supply')"
+          "description": "Reference designator of the symbol (e.g., 'U1') or name of a hierarchical sheet (e.g., 'Power Supply'). On the MBS canvas: the module block's mbs_reference ('B1') or component_ref ('CN1'). Ignored when block_uuid is set."
+        },
+        "block_uuid": {
+          "type": "string",
+          "description": "MBS-only. Direct block UUID from mbs_inspect (section=\"blocks\") -> blocks[].id. Use when ref is ambiguous (same component_ref on multiple sub-projects) or when you already have the uuid. Bypasses ref matching entirely."
         },
         "labels": {
           "type": "object",
@@ -1540,9 +1668,23 @@
                   "power",
                   "wire",
                   "no_connect",
-                  "bus_entry"
+                  "bus_entry",
+                  "label"
                 ],
-                "description": "Type of element to add"
+                "description": "Type of element to add. 'label' is a free-floating local/global/hierarchical label at coordinates (works on regular sch and the MBS canvas) — use sch_label instead when targeting a specific pin."
+              },
+              "text": {
+                "type": "string",
+                "description": "Label text (required when element_type='label')."
+              },
+              "label_type": {
+                "type": "string",
+                "enum": [
+                  "local",
+                  "global",
+                  "hierarchical"
+                ],
+                "description": "Label flavor when element_type='label'. Default 'local'."
               },
               "lib_id": {
                 "type": "string",
@@ -1634,7 +1776,7 @@
   },
   {
     "name": "sch_update",
-    "description": "Update elements in the schematic. Accepts an array of updates for single or batch operations. Can modify position, rotation, mirror, properties, and text field positions. Target by reference or UUID. Moves are rejected if the new position overlaps an existing component.",
+    "description": "Update elements in the schematic. Accepts an array of updates for single or batch operations. Can modify position, rotation, mirror, properties, and text field positions. Target by reference or UUID. Moves are rejected if the new position overlaps an existing component. ON THE MBS CANVAS: set target_type:'module_pin' (with pin_uuid OR block_uuid+pin_number) to mutate a module pin's text/electrical_type/side/position; set target_type:'module_block' with block_uuid to move a block.",
     "input_schema": {
       "type": "object",
       "properties": {
@@ -1645,14 +1787,53 @@
             "properties": {
               "target": {
                 "type": "string",
-                "description": "Reference (e.g. 'R1') or UUID"
+                "description": "Reference (e.g. 'R1') or UUID. Omit when using MBS module_pin/module_block targeting."
+              },
+              "target_type": {
+                "type": "string",
+                "enum": ["module_pin", "module_block"],
+                "description": "MBS-only. 'module_pin' edits a module pin (use pin_uuid OR block_uuid+pin_number). 'module_block' moves a module block (use block_uuid)."
+              },
+              "pin_uuid": {
+                "type": "string",
+                "description": "MBS module-pin UUID (from mbs_inspect section='blocks' -> blocks[].pins[].id)."
+              },
+              "block_uuid": {
+                "type": "string",
+                "description": "MBS module-block UUID (from mbs_inspect section='blocks' -> blocks[].id)."
+              },
+              "pin_number": {
+                "type": "string",
+                "description": "Pin number (use with block_uuid as an alternative to pin_uuid)."
+              },
+              "text": {
+                "type": "string",
+                "description": "MBS module-pin: new label text (cross-board net name)."
+              },
+              "electrical_type": {
+                "type": "string",
+                "enum": [
+                  "input", "output", "bidirectional", "tristate", "passive",
+                  "free", "unspecified", "power_input", "power_output",
+                  "open_collector", "open_emitter", "no_connect"
+                ],
+                "description": "MBS module-pin: new electrical type."
+              },
+              "side": {
+                "type": "string",
+                "enum": ["left", "right", "top", "bottom"],
+                "description": "MBS module-pin: which side of the block the pin lives on (label alignment)."
+              },
+              "mbs_reference": {
+                "type": "string",
+                "description": "MBS module-block: new mbs_reference (e.g. 'B7')."
               },
               "position": {
                 "type": "array",
                 "items": {
                   "type": "number"
                 },
-                "description": "New position [x, y] in mm"
+                "description": "New position [x, y] in mm. Works on symbols, MBS module pins, and MBS module blocks."
               },
               "angle": {
                 "type": "number",
@@ -1785,13 +1966,13 @@
   },
   {
     "name": "sch_delete",
-    "description": "Delete elements from the schematic. Targets can be reference designators ('R1'), UUIDs, or query objects to match by type/position/text. Automatically cleans up orphaned labels, wires, junctions, and power symbols on deleted symbol pins.",
+    "description": "Delete elements from the schematic. Targets can be reference designators ('R1'), UUIDs, or query objects to match by type/position/text. Automatically cleans up orphaned labels, wires, junctions, and power symbols on deleted symbol pins. ON THE MBS CANVAS: pass {target_type:'module_pin', pin_uuid OR (block_uuid + pin_number)} to remove a single module pin without affecting its parent block.",
     "input_schema": {
       "type": "object",
       "properties": {
         "targets": {
           "type": "array",
-          "description": "Array of targets to delete. Each item is a string (reference like 'R1' or UUID) or a query object. Query format: {type, text?, position?, ref?, start?, end?}. Types: wire, label, global_label, hierarchical_label, junction, no_connect, bus_entry. For labels, 'ref' is a symbol reference \u2014 matches labels located on that symbol's pins. Use 'position' only to disambiguate when multiple labels share the same text."
+          "description": "Array of targets to delete. Each item is a string (reference like 'R1' or UUID) or a query object. Query format: {type, text?, position?, ref?, start?, end?}. Types: wire, label, global_label, hierarchical_label, junction, no_connect, bus_entry. For MBS module pin removal: {target_type:'module_pin', pin_uuid OR (block_uuid + pin_number)}."
         },
         "delete_net": {
           "type": "boolean",
@@ -2300,7 +2481,7 @@
   },
   {
     "name": "pcb_inspect",
-    "description": "Inspect a specific section of the open PCB in detail.",
+    "description": "Inspect a specific section of the open PCB in detail. section='footprints' with include_pads:true returns per-pad info including is_connector_pad (multi-board metadata). section='connector_pads' returns just the list of pad UUIDs marked as connector pads on the board.",
     "input_schema": {
       "type": "object",
       "properties": {
@@ -2314,13 +2495,18 @@
             "drawings",
             "nets",
             "layers",
-            "stackup"
+            "stackup",
+            "connector_pads"
           ],
           "description": "Section to read"
         },
         "filter": {
           "type": "string",
           "description": "Optional filter by reference (e.g., 'U*'), net name, or layer"
+        },
+        "include_pads": {
+          "type": "boolean",
+          "description": "When section='footprints', include each footprint's pads array with id/number/net/position/is_connector_pad. Off by default — pad lists can be large."
         },
         "target": {
           "type": "object",
@@ -2392,7 +2578,7 @@
   },
   {
     "name": "pcb_run_drc",
-    "description": "Run Design Rule Check (DRC) on the open PCB. Detects clearance violations, unconnected items, track/via issues, and other errors. Returns error/warning counts and violation details.",
+    "description": "Run Design Rule Check (DRC) on the open PCB. Detects clearance violations, unconnected items, track/via issues, and other errors. Returns error/warning counts and violation details. Each violation in detailed/by_type output includes error_type_code (stable machine identifier like 'cross_board_net_mismatch') for assertion-friendly test runners. cancel_after_ms time-bounds long runs.",
     "input_schema": {
       "type": "object",
       "properties": {
@@ -2408,6 +2594,10 @@
             "by_type"
           ],
           "description": "Output format: 'summary', 'detailed', or 'by_type' (default: summary)"
+        },
+        "cancel_after_ms": {
+          "type": "integer",
+          "description": "If > 0, cancel the run after this many ms of wall-clock time. Cooperative — actual elapsed may overshoot by one DRC test provider's run length. Whatever violations were found before cancellation are still returned, and response.cancelled is true."
         },
         "target": {
           "type": "object",
@@ -2829,7 +3019,7 @@
   },
   {
     "name": "pcb_update",
-    "description": "Update elements in the PCB. Accepts an array of updates - use for single or batch operations. Target footprints by reference designator (e.g., 'U1') or any element by UUID.",
+    "description": "Update elements in the PCB. Accepts an array of updates - use for single or batch operations. Target footprints by reference designator (e.g., 'U1') or any element by UUID. PADS: set target_type:'pad' with pad_uuid OR footprint_ref+pad_number; supported properties: net, position, is_connector_pad (multi-board marker on BOARD::m_connectorPads). FOOTPRINT RENAME: set properties.Reference on a footprint target to rename it.",
     "input_schema": {
       "type": "object",
       "properties": {
@@ -2840,14 +3030,45 @@
             "properties": {
               "target": {
                 "type": "string",
-                "description": "Reference designator (e.g., 'U1') or UUID"
+                "description": "Reference designator (e.g., 'U1') or UUID. Omit when using pad addressing (target_type='pad' with pad_uuid OR footprint_ref+pad_number)."
+              },
+              "target_type": {
+                "type": "string",
+                "enum": ["pad"],
+                "description": "Set to 'pad' to address a pad inside a footprint. Use pad_uuid OR footprint_ref+pad_number to identify it."
+              },
+              "pad_uuid": {
+                "type": "string",
+                "description": "Direct pad UUID (from pcb_inspect section='footprints' include_pads:true)."
+              },
+              "footprint_ref": {
+                "type": "string",
+                "description": "Parent footprint reference (e.g., 'J1') when addressing a pad by ref+number."
+              },
+              "pad_number": {
+                "type": "string",
+                "description": "Pad number/name (e.g., '10') when addressing a pad by ref+number."
+              },
+              "is_connector_pad": {
+                "type": "boolean",
+                "description": "Pad target only. Mark/unmark this pad as a connector pad in BOARD::m_connectorPads (multi-board metadata). Independent of net assignment."
+              },
+              "properties": {
+                "type": "object",
+                "description": "Footprint property overrides. Currently supports {Reference: 'NEW_REF'} to rename a footprint.",
+                "properties": {
+                  "Reference": {
+                    "type": "string",
+                    "description": "New reference designator for the footprint."
+                  }
+                }
               },
               "position": {
                 "type": "array",
                 "items": {
                   "type": "number"
                 },
-                "description": "New position [x, y] in mm"
+                "description": "New position [x, y] in mm. Works on footprints, tracks, vias, shapes, text, AND pads."
               },
               "angle": {
                 "type": "number",
@@ -3002,16 +3223,35 @@
   },
   {
     "name": "pcb_delete",
-    "description": "Delete elements from the PCB. Accepts an array of targets - use for single or batch operations. Target footprints by reference designator (e.g., 'U1') or any element by UUID.",
+    "description": "Delete elements from the PCB. Accepts an array of targets - use for single or batch operations. Target footprints by reference designator (e.g., 'U1') or any element by UUID. PAD TARGETS ARE PARTIALLY DISABLED: passing {target_type:'pad', ...} will clear the connector-pad marker (when keep_connector_marker:false) but the pad itself will NOT be deleted — known crash in the C++ commit/listener path. To actually remove the pad, use the editor UI or edit the .kicad_pcb directly via run_terminal. The pad target still works for orphan-marker test setup (pass keep_connector_marker:false to clear just the marker).",
     "input_schema": {
       "type": "object",
       "properties": {
         "targets": {
           "type": "array",
           "items": {
-            "type": "string"
+            "oneOf": [
+              {
+                "type": "string",
+                "description": "Reference designator (e.g., 'R1') or UUID"
+              },
+              {
+                "type": "object",
+                "description": "Pad target. Set target_type:'pad' (or imply via pad_uuid / footprint_ref+pad_number).",
+                "properties": {
+                  "target_type": {"type": "string", "enum": ["pad"]},
+                  "pad_uuid": {"type": "string"},
+                  "footprint_ref": {"type": "string"},
+                  "pad_number": {"type": "string"},
+                  "keep_connector_marker": {
+                    "type": "boolean",
+                    "description": "When true, do NOT remove this pad's UUID from BOARD::m_connectorPads. Default false (delete pad and clear marker)."
+                  }
+                }
+              }
+            ]
           },
-          "description": "Array of reference designators or UUIDs to delete (e.g., ['R1', 'C1', 'uuid-here'])"
+          "description": "Array of reference designators, UUIDs, or pad target objects to delete (e.g., ['R1', 'C1', {target_type:'pad', footprint_ref:'J1', pad_number:'10'}])"
         },
         "query": {
           "type": "object",

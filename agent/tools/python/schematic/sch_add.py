@@ -382,6 +382,40 @@ try:
                 be = sch.buses.add_bus_entry(Vector2.from_xy_mm(pos_x, pos_y), direction=direction)
                 results.append({'index': i, 'element_type': 'bus_entry'})
 
+            elif element_type == "label":
+                # Free-floating label at coordinates (no pin lookup). Works on
+                # both regular schematics and the MBS canvas. Use sch_label
+                # instead when targeting a specific pin (auto-justify, side
+                # alignment).
+                text = elem.get("text", "")
+                if not text:
+                    results.append({'index': i, 'error': 'label requires text'})
+                    continue
+
+                pos = elem.get("position", [0, 0])
+                pos_x = snap_to_grid(pos[0]) if len(pos) >= 2 else 0
+                pos_y = snap_to_grid(pos[1]) if len(pos) >= 2 else 0
+                label_type = elem.get("label_type", "local")
+
+                _check_bounds(pos_x, pos_y, i)
+                position = Vector2.from_xy_mm(pos_x, pos_y)
+
+                if label_type == "global":
+                    lbl = sch.labels.add_global(text, position)
+                elif label_type == "hierarchical":
+                    lbl = sch.labels.add_hierarchical(text, position)
+                else:
+                    lbl = sch.labels.add_local(text, position)
+
+                _res = {'index': i, 'element_type': 'label',
+                        'label_type': label_type, 'text': text,
+                        'position': [pos_x, pos_y]}
+                try:
+                    _res['uuid'] = str(lbl.id.value)
+                except Exception:
+                    pass
+                results.append(_res)
+
             else:
                 results.append({'index': i, 'error': f'Unknown element_type: {element_type}'})
 

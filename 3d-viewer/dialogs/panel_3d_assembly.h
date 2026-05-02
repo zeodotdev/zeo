@@ -108,6 +108,7 @@ private:
     void onShowMatesToggled( wxCommandEvent& aEvent );
     void onShowCollisionsToggled( wxCommandEvent& aEvent );
     void onShowContactsToggled( wxCommandEvent& aEvent );
+    void onShowAabbDebugToggled( wxCommandEvent& aEvent );
 
     /**
      * Position section's own board picker — independent of the
@@ -204,6 +205,7 @@ private:
     wxCheckBox*             m_showMatesCheck;
     wxCheckBox*             m_showCollisionsCheck;
     wxCheckBox*             m_showContactsCheck;
+    wxCheckBox*             m_showAabbDebugCheck;
 
     // Validation. Auto-runs on every position/visibility change; the
     // status label reflects the latest result.

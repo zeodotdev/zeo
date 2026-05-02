@@ -109,6 +109,29 @@ Examples:
   "target": { "doc_type": "mbs" }
 }
 
+// Disambiguating duplicate component_refs on MBS:
+// When two sub-projects own a block with the same component_ref (e.g. CN1
+// on both esp_cm and esp_cm_breakout), bare ref:"CN1" is ambiguous. The
+// tool errors with the candidate list and never silently picks. Two ways
+// to disambiguate (pick whichever you have on hand from check_status /
+// mbs_inspect):
+//   (a) Filter by sub-project — uses the same target.sub_project_uuid you
+//       already use for routing sub-project sch/pcb edits.
+//   (b) Pass block_uuid directly — always unique, bypasses ref matching.
+{
+  "ref": "CN1",
+  "labels": { "10": "GPIO0" },
+  "target": {
+    "doc_type": "mbs",
+    "sub_project_uuid": "19c77058-0d24-4427-aaa3-c5a220296beb"
+  }
+}
+{
+  "block_uuid": "8b1545f4-...",
+  "labels": { "10": "GPIO0" },
+  "target": { "doc_type": "mbs" }
+}
+
 // Standalone label at coordinates (no pin lookup) — same as schematics
 {
   "elements": [{

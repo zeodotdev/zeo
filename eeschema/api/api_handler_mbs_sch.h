@@ -33,6 +33,16 @@ namespace kiapi { namespace schematic { namespace commands {
     class RefreshMbsFromSubProjectsResponse;
     class SyncCrossBoardNetsToPcb;
     class SyncCrossBoardNetsToPcbResponse;
+    class UpdateModulePin;
+    class UpdateModulePinResponse;
+    class DeleteModulePin;
+    class DeleteModulePinResponse;
+    class UpdateModuleBlock;
+    class UpdateModuleBlockResponse;
+    class GetMbsRules;
+    class GetMbsRulesResponse;
+    class SetMbsRules;
+    class SetMbsRulesResponse;
 } } }
 
 
@@ -87,6 +97,26 @@ private:
     HANDLER_RESULT<schematic::commands::SyncCrossBoardNetsToPcbResponse>
     handleSyncCrossBoardNetsToPcb(
             const HANDLER_CONTEXT<schematic::commands::SyncCrossBoardNetsToPcb>& aCtx );
+
+    HANDLER_RESULT<schematic::commands::UpdateModulePinResponse>
+    handleUpdateModulePin(
+            const HANDLER_CONTEXT<schematic::commands::UpdateModulePin>& aCtx );
+
+    HANDLER_RESULT<schematic::commands::DeleteModulePinResponse>
+    handleDeleteModulePin(
+            const HANDLER_CONTEXT<schematic::commands::DeleteModulePin>& aCtx );
+
+    HANDLER_RESULT<schematic::commands::UpdateModuleBlockResponse>
+    handleUpdateModuleBlock(
+            const HANDLER_CONTEXT<schematic::commands::UpdateModuleBlock>& aCtx );
+
+    HANDLER_RESULT<schematic::commands::GetMbsRulesResponse>
+    handleGetMbsRules(
+            const HANDLER_CONTEXT<schematic::commands::GetMbsRules>& aCtx );
+
+    HANDLER_RESULT<schematic::commands::SetMbsRulesResponse>
+    handleSetMbsRules(
+            const HANDLER_CONTEXT<schematic::commands::SetMbsRules>& aCtx );
 };
 
 #endif // KICAD_API_HANDLER_MBS_SCH_H

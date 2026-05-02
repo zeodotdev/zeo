@@ -56,12 +56,94 @@ else:
     for item in board.get_zones():
         id_to_item[str(item.id.value)] = ('zone', item)
 
+    # Index pads by uuid AND by (footprint_ref, pad_number) for lookup.
+    # Pads are children of footprints — mutating a pad requires re-saving
+    # the parent footprint via update_items([fp]).
+    pad_uuid_to_pad = {}
+    pad_uuid_to_fp = {}
+    fp_pad_lookup = {}  # (fp_ref, pad_number) -> (pad, fp)
+    for fp in all_fps:
+        fp_ref = fp.reference_field.text.value if hasattr(fp, 'reference_field') else None
+        for pad in fp.definition.pads:
+            puid = str(pad.id.value)
+            pad_uuid_to_pad[puid] = pad
+            pad_uuid_to_fp[puid] = fp
+            if fp_ref:
+                fp_pad_lookup[(fp_ref, pad.number)] = (pad, fp)
+
+    # Pending connector-pad set updates (batched into one IPC at end)
+    connector_pads_to_add = []
+    connector_pads_to_remove = []
+    # Footprints that need update_items called once at the end (avoid double-sends)
+    footprints_dirty = set()
+
     updated = []
     not_found = []
     errors = []
 
     for upd in updates:
         target = upd.get('target', '')
+        target_type = upd.get('target_type', '')
+        pad_uuid = upd.get('pad_uuid', '')
+        footprint_ref = upd.get('footprint_ref', '')
+        pad_number = upd.get('pad_number', '')
+
+        # Pad target — mutates a pad inside a footprint. Use update_items()
+        # on the parent footprint to persist; some updates (is_connector_pad)
+        # also require the connector-pad set IPC.
+        if target_type == 'pad' or pad_uuid or (footprint_ref and pad_number):
+            pad = None
+            parent_fp = None
+
+            if pad_uuid and pad_uuid in pad_uuid_to_pad:
+                pad = pad_uuid_to_pad[pad_uuid]
+                parent_fp = pad_uuid_to_fp[pad_uuid]
+            elif footprint_ref and pad_number is not None:
+                key = (footprint_ref, str(pad_number))
+                if key in fp_pad_lookup:
+                    pad, parent_fp = fp_pad_lookup[key]
+
+            if not pad:
+                not_found.append(pad_uuid or f'{footprint_ref}.{pad_number}')
+                continue
+
+            try:
+                pad_changed = False
+
+                if 'net' in upd:
+                    net_obj = Net()
+                    net_obj.name = upd['net']
+                    pad.net = net_obj
+                    pad_changed = True
+
+                if 'position' in upd and len(upd['position']) >= 2:
+                    pad.position = Vector2.from_xy(mm_to_nm(upd['position'][0]),
+                                                   mm_to_nm(upd['position'][1]))
+                    pad_changed = True
+
+                if 'is_connector_pad' in upd:
+                    puid = str(pad.id.value)
+                    if upd['is_connector_pad']:
+                        connector_pads_to_add.append(puid)
+                    else:
+                        connector_pads_to_remove.append(puid)
+                    # Marker change does not require update_items(); it goes
+                    # via update_connector_pad_set() at the end.
+
+                if pad_changed:
+                    footprints_dirty.add(str(parent_fp.id.value))
+                    # Stash the parent fp once for batch re-save below.
+                    id_to_item.setdefault(str(parent_fp.id.value),
+                                           ('footprint', parent_fp))
+                    updated.append(pad_uuid or f'{footprint_ref}.{pad_number}')
+                elif 'is_connector_pad' in upd:
+                    # Marker-only change still counts as updated.
+                    updated.append(pad_uuid or f'{footprint_ref}.{pad_number}')
+            except Exception as e:
+                errors.append({'target': pad_uuid or f'{footprint_ref}.{pad_number}',
+                               'error': str(e)})
+            continue
+
         if not target:
             errors.append({'error': 'missing target'})
             continue
@@ -84,6 +166,15 @@ else:
 
         try:
             changed = False
+
+            # Reference (footprint property) rename — gap 5
+            if is_footprint and 'properties' in upd \
+                    and isinstance(upd['properties'], dict) \
+                    and 'Reference' in upd['properties']:
+                new_ref = upd['properties']['Reference']
+                if hasattr(item, 'reference_field') and hasattr(item.reference_field, 'text'):
+                    item.reference_field.text.value = new_ref
+                    changed = True
 
             # Position update
             if 'position' in upd and len(upd['position']) >= 2:
@@ -217,5 +308,30 @@ else:
         except Exception as e:
             errors.append({'target': target, 'error': str(e)})
 
+    # Flush batched footprint updates from pad mutations.
+    if footprints_dirty:
+        try:
+            fps_to_save = [id_to_item[fp_uuid][1] for fp_uuid in footprints_dirty
+                           if fp_uuid in id_to_item]
+            if fps_to_save:
+                board.update_items(fps_to_save)
+        except Exception as e:
+            errors.append({'error': f'pad-parent footprint save failed: {e}'})
+
+    # Flush batched connector-pad set changes.
+    connector_pad_changes = None
+    if connector_pads_to_add or connector_pads_to_remove:
+        try:
+            added, removed = board.update_connector_pad_set(
+                add=connector_pads_to_add or None,
+                remove=connector_pads_to_remove or None
+            )
+            connector_pad_changes = {'added': added, 'removed': removed}
+        except Exception as e:
+            errors.append({'error': f'connector-pad set update failed: {e}'})
+
     status = 'success' if not errors and not not_found else 'partial'
-    print(json.dumps({'status': status, 'updated': updated, 'not_found': not_found, 'errors': errors}, indent=2))
+    out = {'status': status, 'updated': updated, 'not_found': not_found, 'errors': errors}
+    if connector_pad_changes is not None:
+        out['connector_pad_changes'] = connector_pad_changes
+    print(json.dumps(out, indent=2))

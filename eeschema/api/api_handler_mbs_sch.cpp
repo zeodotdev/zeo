@@ -87,6 +87,85 @@ static kiapi::schematic::types::SheetPinSide packSide( SHEET_SIDE aSide )
 }
 
 
+/// Inverse of packPinType — convert proto enum back to C++ ELECTRICAL_PINTYPE.
+static ELECTRICAL_PINTYPE unpackPinType( kiapi::common::types::ElectricalPinType aType )
+{
+    switch( aType )
+    {
+    case kiapi::common::types::EPT_INPUT:           return ELECTRICAL_PINTYPE::PT_INPUT;
+    case kiapi::common::types::EPT_OUTPUT:          return ELECTRICAL_PINTYPE::PT_OUTPUT;
+    case kiapi::common::types::EPT_BIDIRECTIONAL:   return ELECTRICAL_PINTYPE::PT_BIDI;
+    case kiapi::common::types::EPT_TRISTATE:        return ELECTRICAL_PINTYPE::PT_TRISTATE;
+    case kiapi::common::types::EPT_PASSIVE:         return ELECTRICAL_PINTYPE::PT_PASSIVE;
+    case kiapi::common::types::EPT_FREE:            return ELECTRICAL_PINTYPE::PT_NIC;
+    case kiapi::common::types::EPT_UNSPECIFIED:     return ELECTRICAL_PINTYPE::PT_UNSPECIFIED;
+    case kiapi::common::types::EPT_POWER_INPUT:     return ELECTRICAL_PINTYPE::PT_POWER_IN;
+    case kiapi::common::types::EPT_POWER_OUTPUT:    return ELECTRICAL_PINTYPE::PT_POWER_OUT;
+    case kiapi::common::types::EPT_OPEN_COLLECTOR:  return ELECTRICAL_PINTYPE::PT_OPENCOLLECTOR;
+    case kiapi::common::types::EPT_OPEN_EMITTER:    return ELECTRICAL_PINTYPE::PT_OPENEMITTER;
+    case kiapi::common::types::EPT_NO_CONNECT:      return ELECTRICAL_PINTYPE::PT_NC;
+    default:                                        return ELECTRICAL_PINTYPE::PT_UNSPECIFIED;
+    }
+}
+
+
+static SHEET_SIDE unpackSide( kiapi::schematic::types::SheetPinSide aSide )
+{
+    switch( aSide )
+    {
+    case kiapi::schematic::types::SPS_LEFT:   return SHEET_SIDE::LEFT;
+    case kiapi::schematic::types::SPS_RIGHT:  return SHEET_SIDE::RIGHT;
+    case kiapi::schematic::types::SPS_TOP:    return SHEET_SIDE::TOP;
+    case kiapi::schematic::types::SPS_BOTTOM: return SHEET_SIDE::BOTTOM;
+    default:                                  return SHEET_SIDE::LEFT;
+    }
+}
+
+
+/// Find a SCH_MODULE_BLOCK on the active sheet by UUID.
+static SCH_MODULE_BLOCK* findModuleBlock( SCH_EDIT_FRAME* aFrame, const KIID& aId )
+{
+    SCH_SCREEN* screen = aFrame->GetCurrentSheet().LastScreen();
+
+    if( !screen )
+        return nullptr;
+
+    for( SCH_ITEM* item : screen->Items().OfType( SCH_MODULE_BLOCK_T ) )
+    {
+        SCH_MODULE_BLOCK* b = static_cast<SCH_MODULE_BLOCK*>( item );
+
+        if( b->m_Uuid == aId )
+            return b;
+    }
+
+    return nullptr;
+}
+
+
+/// Find an SCH_MODULE_PIN on the active sheet by pin UUID, returning the pin and its parent block.
+static std::pair<SCH_MODULE_PIN*, SCH_MODULE_BLOCK*>
+findModulePin( SCH_EDIT_FRAME* aFrame, const KIID& aPinId )
+{
+    SCH_SCREEN* screen = aFrame->GetCurrentSheet().LastScreen();
+
+    if( !screen )
+        return { nullptr, nullptr };
+
+    for( SCH_ITEM* item : screen->Items().OfType( SCH_MODULE_BLOCK_T ) )
+    {
+        SCH_MODULE_BLOCK* b = static_cast<SCH_MODULE_BLOCK*>( item );
+
+        for( SCH_MODULE_PIN* pin : b->GetPins() )
+        {
+            if( pin && pin->GetPinUuid() == aPinId )
+                return { pin, b };
+        }
+    }
+
+    return { nullptr, nullptr };
+}
+
+
 API_HANDLER_MBS_SCH::API_HANDLER_MBS_SCH( SCH_EDIT_FRAME* aFrame ) :
         API_HANDLER_SCH( aFrame )
 {
@@ -114,6 +193,20 @@ API_HANDLER_MBS_SCH::API_HANDLER_MBS_SCH( SCH_EDIT_FRAME* aFrame ) :
             &API_HANDLER_MBS_SCH::handleRefreshMbsFromSubProjects );
     registerHandler<SyncCrossBoardNetsToPcb, SyncCrossBoardNetsToPcbResponse>(
             &API_HANDLER_MBS_SCH::handleSyncCrossBoardNetsToPcb );
+
+    // MBS module-pin / module-block edits.
+    registerHandler<UpdateModulePin, UpdateModulePinResponse>(
+            &API_HANDLER_MBS_SCH::handleUpdateModulePin );
+    registerHandler<DeleteModulePin, DeleteModulePinResponse>(
+            &API_HANDLER_MBS_SCH::handleDeleteModulePin );
+    registerHandler<UpdateModuleBlock, UpdateModuleBlockResponse>(
+            &API_HANDLER_MBS_SCH::handleUpdateModuleBlock );
+
+    // Container-level multi_board rule sets (read/write the .kicad_pro JSON).
+    registerHandler<GetMbsRules, GetMbsRulesResponse>(
+            &API_HANDLER_MBS_SCH::handleGetMbsRules );
+    registerHandler<SetMbsRules, SetMbsRulesResponse>(
+            &API_HANDLER_MBS_SCH::handleSetMbsRules );
 }
 
 
@@ -577,7 +670,10 @@ API_HANDLER_MBS_SCH::handleSyncCrossBoardNetsToPcb(
 
     MB_CROSS_BOARD_SYNC_RESULT result = ApplyCrossBoardNetsToSubProjectPCBs( container );
 
-    container.SaveToFile( containerDir );
+    // aForce=true: the sync mutates m_crossBoardNets via SetCrossBoardNets which
+    // bypasses the JSON_SETTINGS modified-tracking, so SaveToFile would otherwise
+    // skip the write and re-runs would see stale data.
+    container.SaveToFile( containerDir, /* aForce */ true );
 
     kiapi::schematic::commands::SyncCrossBoardNetsToPcbResponse response;
     response.set_sub_projects_touched( result.subProjectsTouched );
@@ -595,5 +691,462 @@ API_HANDLER_MBS_SCH::handleSyncCrossBoardNetsToPcb(
             msg->add_rejected( rej.ToStdString() );
     }
 
+    return response;
+}
+
+
+HANDLER_RESULT<kiapi::schematic::commands::UpdateModulePinResponse>
+API_HANDLER_MBS_SCH::handleUpdateModulePin(
+        const HANDLER_CONTEXT<kiapi::schematic::commands::UpdateModulePin>& aCtx )
+{
+    if( !validateDocumentInternal( aCtx.Request.document() ) )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_UNHANDLED );
+        return tl::unexpected( e );
+    }
+
+    KIID pinId( aCtx.Request.pin_id().value() );
+    auto [pin, block] = findModulePin( m_frame, pinId );
+
+    kiapi::schematic::commands::UpdateModulePinResponse response;
+
+    if( !pin || !block )
+    {
+        response.set_updated( false );
+        return response;
+    }
+
+    bool changed = false;
+
+    if( aCtx.Request.has_text() )
+    {
+        pin->SetText( wxString::FromUTF8( aCtx.Request.text() ) );
+        changed = true;
+    }
+
+    if( aCtx.Request.has_electrical_type() )
+    {
+        pin->SetType( unpackPinType( aCtx.Request.electrical_type() ) );
+        changed = true;
+    }
+
+    if( aCtx.Request.has_side() )
+    {
+        pin->SetSide( unpackSide( aCtx.Request.side() ) );
+        changed = true;
+    }
+
+    if( aCtx.Request.has_position() )
+    {
+        VECTOR2I newPos( aCtx.Request.position().x_nm(),
+                         aCtx.Request.position().y_nm() );
+        pin->SetPosition( newPos );
+        pin->ConstrainOnEdge( newPos, true );
+        changed = true;
+    }
+
+    if( changed )
+    {
+        m_frame->OnModify();
+
+        if( m_frame->GetCanvas() )
+            m_frame->GetCanvas()->Refresh();
+    }
+
+    response.set_updated( changed );
+    return response;
+}
+
+
+HANDLER_RESULT<kiapi::schematic::commands::DeleteModulePinResponse>
+API_HANDLER_MBS_SCH::handleDeleteModulePin(
+        const HANDLER_CONTEXT<kiapi::schematic::commands::DeleteModulePin>& aCtx )
+{
+    if( !validateDocumentInternal( aCtx.Request.document() ) )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_UNHANDLED );
+        return tl::unexpected( e );
+    }
+
+    KIID pinId( aCtx.Request.pin_id().value() );
+    auto [pin, block] = findModulePin( m_frame, pinId );
+
+    kiapi::schematic::commands::DeleteModulePinResponse response;
+
+    if( !pin || !block )
+    {
+        response.set_deleted( false );
+        return response;
+    }
+
+    block->RemovePin( pin );
+    m_frame->OnModify();
+
+    if( m_frame->GetCanvas() )
+        m_frame->GetCanvas()->Refresh();
+
+    response.set_deleted( true );
+    return response;
+}
+
+
+HANDLER_RESULT<kiapi::schematic::commands::UpdateModuleBlockResponse>
+API_HANDLER_MBS_SCH::handleUpdateModuleBlock(
+        const HANDLER_CONTEXT<kiapi::schematic::commands::UpdateModuleBlock>& aCtx )
+{
+    if( !validateDocumentInternal( aCtx.Request.document() ) )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_UNHANDLED );
+        return tl::unexpected( e );
+    }
+
+    KIID blockId( aCtx.Request.block_id().value() );
+    SCH_MODULE_BLOCK* block = findModuleBlock( m_frame, blockId );
+
+    kiapi::schematic::commands::UpdateModuleBlockResponse response;
+
+    if( !block )
+    {
+        response.set_updated( false );
+        return response;
+    }
+
+    bool changed = false;
+
+    if( aCtx.Request.has_position() )
+    {
+        VECTOR2I oldPos = block->GetPosition();
+        VECTOR2I newPos( aCtx.Request.position().x_nm(),
+                         aCtx.Request.position().y_nm() );
+        VECTOR2I delta = newPos - oldPos;
+
+        if( delta != VECTOR2I( 0, 0 ) )
+        {
+            block->Move( delta );
+            changed = true;
+        }
+    }
+
+    if( aCtx.Request.has_mbs_reference() )
+    {
+        block->SetMbsReference( wxString::FromUTF8( aCtx.Request.mbs_reference() ) );
+        changed = true;
+    }
+
+    if( changed )
+    {
+        m_frame->OnModify();
+
+        if( m_frame->GetCanvas() )
+            m_frame->GetCanvas()->Refresh();
+    }
+
+    response.set_updated( changed );
+    return response;
+}
+
+
+/// Resolve the on-disk container directory for the active MBSCH frame.
+/// Mirrors the idiom in handleSyncCrossBoardNetsToPcb: PROJECT_FILE has only
+/// the basename in m_filename for live projects, so Save/Load needs an
+/// explicit directory argument. Falls back to the project's full-name
+/// directory when the SETTINGS_MANAGER lookup misses.
+static wxString resolveContainerDir( SCH_EDIT_FRAME* aFrame, PROJECT_FILE& aContainer )
+{
+    wxString containerDir;
+
+    SETTINGS_MANAGER& mgr = Pgm().GetSettingsManager();
+
+    std::vector<wxString> openProjects = mgr.GetOpenProjects();
+
+    wxLogMessage( "resolveContainerDir: aContainer=%p aFrame=%p openProjects.size()=%zu",
+                  &aContainer, aFrame, openProjects.size() );
+
+    for( const wxString& proPath : openProjects )
+    {
+        PROJECT*      prj  = mgr.GetProject( proPath );
+        PROJECT_FILE* pf   = prj ? &prj->GetProjectFile() : nullptr;
+        bool          hit  = ( pf == &aContainer );
+
+        wxLogMessage( "  proPath='%s' prj=%p pf=%p hit=%s",
+                      proPath, prj, pf, hit ? "true" : "false" );
+
+        if( hit )
+        {
+            containerDir = wxFileName( proPath ).GetPath();
+            break;
+        }
+    }
+
+    wxString frameProjectFull;
+    try
+    {
+        frameProjectFull = aFrame->Prj().GetProjectFullName();
+    }
+    catch( ... )
+    {
+    }
+
+    wxLogMessage( "  frameProjectFull='%s' (fallback)", frameProjectFull );
+
+    if( containerDir.IsEmpty() )
+        containerDir = wxFileName( frameProjectFull ).GetPath();
+
+    // Last-ditch fallback: SCH_EDIT_FRAME tracks its own current file path
+    // (the .kicad_mbs we're editing). Take its directory when the upstream
+    // PROJECT lookups all miss — better to write to the right folder than
+    // to write nothing.
+    if( containerDir.IsEmpty() && aFrame )
+    {
+        wxString currentFile = aFrame->GetCurrentFileName();
+        wxLogMessage( "  currentFile='%s' (last-ditch)", currentFile );
+
+        if( !currentFile.IsEmpty() )
+            containerDir = wxFileName( currentFile ).GetPath();
+    }
+
+    return containerDir;
+}
+
+
+HANDLER_RESULT<kiapi::schematic::commands::GetMbsRulesResponse>
+API_HANDLER_MBS_SCH::handleGetMbsRules(
+        const HANDLER_CONTEXT<kiapi::schematic::commands::GetMbsRules>& aCtx )
+{
+    if( !validateDocumentInternal( aCtx.Request.document() ) )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_UNHANDLED );
+        return tl::unexpected( e );
+    }
+
+    PROJECT_FILE& container = m_frame->Prj().GetProjectFile();
+
+    if( !container.IsMultiBoardContainer() )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "Active project is not a multi-board container." );
+        return tl::unexpected( e );
+    }
+
+    // Reload from disk so we see any rule edits made out-of-band (or via
+    // a previous SetMbsRules call that hasn't propagated to the in-memory
+    // PROJECT_FILE yet — see the same pattern in handleGetCrossBoardNets).
+    wxString containerDir = resolveContainerDir( m_frame, container );
+
+    wxLogMessage( "MBS_GET[%p]: containerDir='%s' container=%p file='%s'",
+                  this, containerDir, &container, container.GetFilename() );
+
+    bool loadOk = container.LoadFromFile( containerDir );
+
+    wxLogMessage( "MBS_GET[%p]: LoadFromFile returned %s; map sizes: minPins=%zu "
+                  "maxLen=%zu diffPairs=%zu current=%zu voltage=%zu",
+                  this, loadOk ? "true" : "false",
+                  container.GetMinPowerPins().size(),
+                  container.GetMaxLengthNm().size(),
+                  container.GetCrossBoardDiffPairs().size(),
+                  container.GetCrossBoardCurrentRules().size(),
+                  container.GetCrossBoardVoltageRules().size() );
+
+    kiapi::schematic::commands::GetMbsRulesResponse response;
+    auto* rules = response.mutable_rules();
+
+    for( const auto& [name, minPins] : container.GetMinPowerPins() )
+    {
+        auto* msg = rules->add_min_power_pins();
+        msg->set_net_name( name.ToStdString() );
+        msg->set_min_pins( minPins );
+    }
+
+    for( const auto& [name, maxLen] : container.GetMaxLengthNm() )
+    {
+        auto* msg = rules->add_max_length_nm();
+        msg->set_net_name( name.ToStdString() );
+        msg->set_max_length_nm( maxLen );
+    }
+
+    for( const auto& [p, n] : container.GetCrossBoardDiffPairs() )
+    {
+        auto* msg = rules->add_cross_board_diff_pairs();
+        msg->set_p( p.ToStdString() );
+        msg->set_n( n.ToStdString() );
+    }
+
+    for( const auto& [name, rule] : container.GetCrossBoardCurrentRules() )
+    {
+        auto* msg = rules->add_current_rules();
+        msg->set_net_name( name.ToStdString() );
+        msg->set_expected_amps( rule.expectedAmps );
+        msg->set_pin_rating_amps( rule.pinRatingAmps );
+    }
+
+    for( const auto& [name, rule] : container.GetCrossBoardVoltageRules() )
+    {
+        auto* msg = rules->add_voltage_rules();
+        msg->set_net_name( name.ToStdString() );
+        msg->set_expected_amps( rule.expectedAmps );
+        msg->set_max_drop_mv( rule.maxDropMv );
+        msg->set_trace_width_um( rule.traceWidthUm );
+        msg->set_trace_sheet_r_milliohm_per_sq( rule.traceSheetRMOhmsPerSq );
+        msg->set_contact_r_per_pin_milliohm( rule.contactRPerPinMOhms );
+    }
+
+    return response;
+}
+
+
+HANDLER_RESULT<kiapi::schematic::commands::SetMbsRulesResponse>
+API_HANDLER_MBS_SCH::handleSetMbsRules(
+        const HANDLER_CONTEXT<kiapi::schematic::commands::SetMbsRules>& aCtx )
+{
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    if( !validateDocumentInternal( aCtx.Request.document() ) )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_UNHANDLED );
+        return tl::unexpected( e );
+    }
+
+    PROJECT_FILE& container = m_frame->Prj().GetProjectFile();
+
+    if( !container.IsMultiBoardContainer() )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "Active project is not a multi-board container." );
+        return tl::unexpected( e );
+    }
+
+    wxString containerDir = resolveContainerDir( m_frame, container );
+
+    wxLogMessage( "MBS_SET[%p]: containerDir='%s' container=%p file='%s'",
+                  this, containerDir, &container, container.GetFilename() );
+
+    // Reload first so we don't clobber out-of-band edits to other rule sets.
+    bool loadOk = container.LoadFromFile( containerDir );
+
+    wxLogMessage( "MBS_SET[%p]: LoadFromFile returned %s; pre-mutate map sizes: "
+                  "minPins=%zu maxLen=%zu diffPairs=%zu current=%zu voltage=%zu",
+                  this, loadOk ? "true" : "false",
+                  container.GetMinPowerPins().size(),
+                  container.GetMaxLengthNm().size(),
+                  container.GetCrossBoardDiffPairs().size(),
+                  container.GetCrossBoardCurrentRules().size(),
+                  container.GetCrossBoardVoltageRules().size() );
+
+    const auto& rules = aCtx.Request.rules();
+    bool anyChanged = false;
+
+    if( aCtx.Request.replace_min_power_pins() )
+    {
+        auto& dest = container.GetMinPowerPins();
+        dest.clear();
+
+        for( const auto& msg : rules.min_power_pins() )
+            dest[wxString::FromUTF8( msg.net_name() )] = msg.min_pins();
+
+        anyChanged = true;
+    }
+
+    if( aCtx.Request.replace_max_length_nm() )
+    {
+        auto& dest = container.GetMaxLengthNm();
+        dest.clear();
+
+        for( const auto& msg : rules.max_length_nm() )
+            dest[wxString::FromUTF8( msg.net_name() )] = msg.max_length_nm();
+
+        anyChanged = true;
+    }
+
+    if( aCtx.Request.replace_cross_board_diff_pairs() )
+    {
+        auto& dest = container.GetCrossBoardDiffPairs();
+        dest.clear();
+
+        for( const auto& msg : rules.cross_board_diff_pairs() )
+        {
+            dest.push_back( { wxString::FromUTF8( msg.p() ),
+                              wxString::FromUTF8( msg.n() ) } );
+        }
+
+        anyChanged = true;
+    }
+
+    if( aCtx.Request.replace_current_rules() )
+    {
+        auto& dest = container.GetCrossBoardCurrentRules();
+        dest.clear();
+
+        for( const auto& msg : rules.current_rules() )
+        {
+            PROJECT_FILE::MB_CURRENT_RULE rule;
+            rule.expectedAmps  = msg.expected_amps();
+            rule.pinRatingAmps = msg.pin_rating_amps();
+            dest[wxString::FromUTF8( msg.net_name() )] = rule;
+        }
+
+        anyChanged = true;
+    }
+
+    if( aCtx.Request.replace_voltage_rules() )
+    {
+        auto& dest = container.GetCrossBoardVoltageRules();
+        dest.clear();
+
+        for( const auto& msg : rules.voltage_rules() )
+        {
+            PROJECT_FILE::MB_VOLTAGE_RULE rule;
+            rule.expectedAmps          = msg.expected_amps();
+            rule.maxDropMv             = msg.max_drop_mv();
+            rule.traceWidthUm          = msg.trace_width_um();
+            rule.traceSheetRMOhmsPerSq = msg.trace_sheet_r_milliohm_per_sq();
+            rule.contactRPerPinMOhms   = msg.contact_r_per_pin_milliohm();
+            dest[wxString::FromUTF8( msg.net_name() )] = rule;
+        }
+
+        anyChanged = true;
+    }
+
+    wxLogMessage( "MBS_SET[%p]: post-mutate map sizes: minPins=%zu maxLen=%zu "
+                  "diffPairs=%zu current=%zu voltage=%zu  anyChanged=%s "
+                  "writeFile=%s readOnly=%s",
+                  this,
+                  container.GetMinPowerPins().size(),
+                  container.GetMaxLengthNm().size(),
+                  container.GetCrossBoardDiffPairs().size(),
+                  container.GetCrossBoardCurrentRules().size(),
+                  container.GetCrossBoardVoltageRules().size(),
+                  anyChanged ? "true" : "false",
+                  container.IsReadOnly() ? "false" : "true",
+                  container.IsReadOnly() ? "true" : "false" );
+
+    bool saveOk = false;
+
+    if( anyChanged )
+    {
+        // aForce=true is mandatory: the framework's "did anything change"
+        // bookkeeping watches its own PARAM Set() calls, but we mutate
+        // the underlying std::map members directly. Without force, the
+        // save is a silent no-op and the next get() returns whatever's
+        // still on disk (i.e. the pre-set values) — round-trip broken.
+        saveOk = container.SaveToFile( containerDir, /* aForce */ true );
+
+        wxLogMessage( "MBS_SET[%p]: SaveToFile('%s', aForce=true) returned %s",
+                      this, containerDir, saveOk ? "true" : "false" );
+    }
+
+    kiapi::schematic::commands::SetMbsRulesResponse response;
+    // Only report updated=true when the disk write actually succeeded.
+    // Otherwise the agent sees "updated:true" then a get() returns empty
+    // and the round-trip looks broken when really the save silently
+    // failed (read-only file, missing path, m_writeFile=false, etc.).
+    response.set_updated( anyChanged && saveOk );
     return response;
 }

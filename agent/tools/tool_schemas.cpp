@@ -30,24 +30,31 @@ static void AddGeneralTools( std::vector<LLM_TOOL>& tools )
     };
     tools.push_back( runTerminal );
 
-    // open_editor - Open schematic or PCB editor with user approval
+    // open_editor - Open or close schematic or PCB editor (open requires user approval)
     LLM_TOOL openEditor;
     openEditor.name = "open_editor";
-    openEditor.description = "Request to open the schematic or PCB editor. "
-                             "This will prompt the user for approval before opening. "
-                             "Use editor_type 'sch' for schematic editor or 'pcb' for PCB editor. "
-                             "Optionally specify file_path to open a specific file.";
+    openEditor.description = "Open or close the schematic or PCB editor. action='open' "
+                             "(default) opens the editor (prompts user for approval). "
+                             "action='close' tears down the editor frame so subsequent "
+                             "on-disk file edits (.kicad_pro JSON, etc.) won't be "
+                             "overwritten by the editor's autosave on close. "
+                             "editor_type='sch' for schematic, 'pcb' for PCB.";
     openEditor.input_schema = {
         { "type", "object" },
         { "properties", {
             { "editor_type", {
                 { "type", "string" },
                 { "enum", json::array( { "sch", "pcb" } ) },
-                { "description", "Editor to open: 'sch' for schematic, 'pcb' for PCB" }
+                { "description", "Editor to open or close: 'sch' for schematic, 'pcb' for PCB" }
+            }},
+            { "action", {
+                { "type", "string" },
+                { "enum", json::array( { "open", "close" } ) },
+                { "description", "'open' (default) opens the editor; 'close' tears it down without saving prompts." }
             }},
             { "file_path", {
                 { "type", "string" },
-                { "description", "Optional: path to file to open (must be within project directory)" }
+                { "description", "Optional (open only): path to file to open (must be within project directory)" }
             }}
         }},
         { "required", json::array( { "editor_type" } ) }

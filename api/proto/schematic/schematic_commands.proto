@@ -355,7 +355,7 @@ message ERCViolation
   // Unique marker ID
   kiapi.common.types.KIID id = 1;
 
-  // Error code string (e.g., "ERCE_PIN_TO_PIN_ERROR")
+  // Numeric ERCE_* code stringified (legacy; not stable across releases).
   string error_code = 2;
 
   // Human-readable description
@@ -372,6 +372,12 @@ message ERCViolation
 
   // IDs of items involved in the violation
   repeated kiapi.common.types.KIID item_ids = 7;
+
+  // Stable, machine-friendly identifier for the violation type
+  // (e.g. "pin_to_pin_error", "duplicate_reference"). Sourced from the
+  // RC item's settings key so the test runner can assert structurally
+  // without text matching. Mirrors DRCViolation.error_type_code.
+  string error_type_code = 8;
 }
 
 message RunERCResponse
@@ -1629,6 +1635,151 @@ message GetModuleBlocks
 message GetModuleBlocksResponse
 {
   repeated kiapi.schematic.types.ModuleBlock blocks = 1;
+}
+
+/// Update an existing MBS module pin's settable attributes (electrical
+/// type, label text, side, position). Only fields explicitly marked
+/// "set" via the has_* flag are applied — others are left untouched.
+message UpdateModulePin
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+
+  /// Pin UUID (from GetModuleBlocks -> blocks[].pins[].id).
+  kiapi.common.types.KIID pin_id = 2;
+
+  /// Optional new label text. Empty string means "no change".
+  optional string text = 3;
+
+  /// Optional new electrical type (PT_INPUT, PT_OUTPUT, PT_BIDI, etc.).
+  optional kiapi.common.types.ElectricalPinType electrical_type = 4;
+
+  /// Optional new side (LEFT/RIGHT/TOP/BOTTOM). Affects label alignment.
+  optional kiapi.schematic.types.SheetPinSide side = 5;
+
+  /// Optional new absolute position in nm. Message-typed: use has_position()
+  /// on the C++ side / HasField on the Python side.
+  kiapi.common.types.Vector2 position = 6;
+}
+
+message UpdateModulePinResponse
+{
+  bool updated = 1;
+}
+
+/// Delete a single MBS module pin (without affecting its parent block
+/// or other pins). Used to test orphan-pad / missing-endpoint DRC paths.
+message DeleteModulePin
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  kiapi.common.types.KIID pin_id = 2;
+}
+
+message DeleteModulePinResponse
+{
+  bool deleted = 1;
+}
+
+/// Move an existing MBS module block. Position is the block's new
+/// top-left in nm. Pin positions are recomputed relative to the block.
+message UpdateModuleBlock
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  kiapi.common.types.KIID block_id = 2;
+
+  /// Optional new absolute position in nm. Message-typed: use has_position().
+  kiapi.common.types.Vector2 position = 3;
+
+  /// Optional new mbs_reference (e.g. "B7"). Empty = no change.
+  optional string mbs_reference = 5;
+}
+
+message UpdateModuleBlockResponse
+{
+  bool updated = 1;
+}
+
+/// Multi-board container rule sets (PROJECT_FILE multi_board.* JSON block).
+/// Settable via mbs_setup tool. All rules are container-level metadata that
+/// the cross-board DRC checks consult.
+
+message MbsMinPowerPinRule
+{
+  string net_name = 1;   ///< Cross-board power net (e.g. "+5V")
+  int32  min_pins  = 2;  ///< Required minimum connector-pin count
+}
+
+message MbsMaxLengthRule
+{
+  string net_name      = 1;
+  int64  max_length_nm = 2;  ///< Total trace length budget summed across boards
+}
+
+message MbsDiffPair
+{
+  string p = 1;
+  string n = 2;
+}
+
+message MbsCurrentRule
+{
+  string net_name         = 1;
+  double expected_amps    = 2;  ///< Expected DC current draw on this net
+  double pin_rating_amps  = 3;  ///< Per-connector-pin current rating
+}
+
+message MbsVoltageRule
+{
+  string net_name                       = 1;
+  double expected_amps                  = 2;  ///< Expected DC current
+  double max_drop_mv                    = 3;  ///< Max acceptable total drop
+  double trace_width_um                 = 4;  ///< Default 250 if 0
+  double trace_sheet_r_milliohm_per_sq  = 5;  ///< Default 0.5 if 0
+  double contact_r_per_pin_milliohm     = 6;  ///< Default 20 if 0
+}
+
+message MbsRules
+{
+  repeated MbsMinPowerPinRule min_power_pins         = 1;
+  repeated MbsMaxLengthRule   max_length_nm          = 2;
+  repeated MbsDiffPair        cross_board_diff_pairs = 3;
+  repeated MbsCurrentRule     current_rules          = 4;
+  repeated MbsVoltageRule     voltage_rules          = 5;
+}
+
+/// Returns the full multi_board rule set on the container .kicad_pro.
+message GetMbsRules
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+}
+
+message GetMbsRulesResponse
+{
+  MbsRules rules = 1;
+}
+
+/// Replace specific rule sets on the container .kicad_pro.
+///
+/// Replace semantics: each rule set is independently controlled by its
+/// `replace_*` flag. When `replace_X = true`, the corresponding `rules.X`
+/// field overwrites the entire on-disk set (pass empty list to clear).
+/// When `replace_X = false`, that set is left untouched. This keeps the
+/// "leave alone" intent unambiguous (an empty list under a true flag is a
+/// real clear; an empty list under false is a no-op).
+message SetMbsRules
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  MbsRules rules = 2;
+
+  bool replace_min_power_pins         = 3;
+  bool replace_max_length_nm          = 4;
+  bool replace_cross_board_diff_pairs = 5;
+  bool replace_current_rules          = 6;
+  bool replace_voltage_rules          = 7;
+}
+
+message SetMbsRulesResponse
+{
+  bool updated = 1;
 }
 
 /// Lists all cross-board nets declared in the enclosing multi-board container.

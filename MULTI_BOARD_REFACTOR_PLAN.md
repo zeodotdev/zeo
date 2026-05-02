@@ -462,13 +462,118 @@ None currently open.
 - **M8.2 — PCB editor surfaces with confirmed gaps** (~2-3 sessions):
   - ~~`widgets/pcb_net_inspector_panel.cpp` — Cross-Board column~~ ✓
     (showing aggregation with sibling-board names is a v2 follow-up)
-  - `drc/drc_test_provider_matched_length.cpp` + router (length calc
-    doesn't account for cross-board connector segments)
-  - Differential-pair finder (same boundary issue)
   - Footprint editor cross-reference (no "this connector mates with X"
     info)
   - `exporters/place_file_exporter.cpp` (no cross-board de-dup)
   - `dialogs/dialog_pad_properties_base*` (no cross-board indicator)
+- **M8.2.L — Length / delay surfaces: cross-board path awareness**
+  (~3-4 sessions). For nets that bridge sub-projects via MBS-declared
+  cross-board connections, every length / delay surface in pcbnew
+  currently reports only the segment of the net that lives on *this*
+  board. The user-facing model needs two distinct numbers everywhere
+  a net length is shown or constrained: **this-board length** (the
+  current value) and **total cross-board length** (this board + all
+  sibling boards' contributions on the same MBS-bridged net,
+  optionally including a length budget for the connector itself).
+  Time-domain (delay) surfaces need the analogous split.
+
+  **Foundation** (do once, reuse everywhere):
+  - `length_delay_calculation/length_delay_calculation.{h,cpp}` —
+    the primitive every consumer goes through (see `LENGTH_DELAY_STATS`
+    + `BOARD::GetLengthCalculation` callers in `board.cpp`,
+    `pcb_track.cpp`, `pns_topology.cpp`, `pns_meander_placer.cpp`,
+    `drc_test_provider_matched_length.cpp`,
+    `widgets/pcb_net_inspector_panel.cpp`,
+    `dialogs/panel_setup_tuning_profile_info.cpp`,
+    `generators/pcb_tuning_pattern.cpp`). Add a "cross-board
+    contribution" lookup that, given a net on a `BOARD`, asks
+    `multi_board_scan` for the matching cross-board net's other
+    endpoints, loads each sibling board via
+    `sub_project_board_loader`, and sums their per-board
+    `LENGTH_DELAY_STATS`. Cache per-(container, net) so we don't
+    re-load sibling BOARDs on every paint. Existing helper:
+    `pcbnew/drc/drc_test_provider_cross_board_length.cpp` already
+    walks this graph for DRC and is the right place to extract the
+    sharable primitive.
+
+  **Surfaces that show a length value to the user** (display both
+  numbers; "this board" is the existing field, add "+ cross-board"
+  alongside):
+  - `pcbnew/generators/pcb_tuning_pattern.cpp:~1940-1965` — the live
+    "current length / target length / status" overlay rendered while
+    the user drags meanders. The user enters a single target; we
+    need to expose whether the target is "this-board only" or
+    "cross-board total" (radio in the tuning-pattern properties
+    dialog, see below) and the overlay must show both numbers so
+    the user can see how their tuning affects the cross-board total.
+  - `pcbnew/dialogs/dialog_tuning_pattern_properties.cpp` /
+    `dialog_tuning_pattern_properties_base.{fbp,cpp,h}` — add a
+    **target-scope** selector ("This board only" / "Cross-board
+    total") next to the target-length field. Default: this-board
+    only when the net has no cross-board endpoints; cross-board
+    total when it does.
+  - `pcbnew/pcb_track.cpp::GetMsgPanelInfo` (~line 2329) and
+    `GetMsgPanelInfoBase_Common` (~line 2462) — the bottom-bar
+    track info shows `Length` (segment) and `Net Length` (full net
+    on this board). Add a third line "Cross-board net length" when
+    applicable.
+  - `pcbnew/widgets/pcb_net_inspector_panel.cpp` — the existing
+    Length / Delay columns are this-board only. Add sibling
+    columns "Cross-Board Length" / "Cross-Board Delay" that the
+    new Cross-Board column already in place can drive.
+  - PCB Properties Manager (the live sidebar, driven through
+    `PROPERTY_MANAGER` reflection on `PCB_TRACK` / `NETINFO_ITEM`).
+    Wherever `Length` is registered, register a parallel read-only
+    `Cross-Board Length`.
+  - `pcbnew/dialogs/panel_setup_tuning_profile_info.cpp` — the
+    "expected delay/length" preview the tuning-profile editor
+    shows. If the net it's previewing crosses boards, show both
+    numbers.
+
+  **Surfaces that consume a length value as a constraint** (need the
+  same scope decision: which number does the rule apply to?):
+  - `pcbnew/drc/drc_test_provider_matched_length.cpp` — already
+    flagged. The existing per-board check should keep firing on the
+    this-board number; add a parallel cross-board-length matched
+    constraint that reads the target as a cross-board total. Most
+    natural as a new constraint kind in
+    `drc/rule_editor/drc_re_abs_length_two_constraint_data.h`'s
+    family (`length`, `length_diff`, `length_match`, …) — call it
+    `cross_board_length` / `cross_board_length_match`.
+  - `pcbnew/drc/drc_test_provider_diff_pair_coupling.cpp` and the
+    diff-pair length / skew checks — same boundary issue: a
+    differential pair routed across a connector pair has its skew
+    measured per-board today. Add cross-board skew that sums both
+    boards' contributions to each P/N leg.
+  - `pcbnew/router/pns_meander_placer.cpp`,
+    `pns_dp_meander_placer.cpp`, `pns_meander_skew_placer.cpp` —
+    the placers compute `curLength` from the trace under
+    construction (`pns_meander_placer.cpp:~149`,
+    `pns_dp_meander_placer.cpp:~637`). When the tuning target
+    is "cross-board total", `curLength` needs to be
+    `this-board length + cross-board contribution`, where
+    cross-board contribution is held constant during the drag (it's
+    sibling-board state, doesn't change while we tune this board).
+    The status returned by `TuningStatus()` (TOO_SHORT / TUNED /
+    TOO_LONG) compares against the same scope.
+  - `pcbnew/drc/drc_test_provider_cross_board_length.cpp` — already
+    walks the cross-board graph; its result should be the
+    authoritative "cross-board total" the other surfaces query (see
+    Foundation). Verify it's not duplicating work the matched-length
+    DRC will do via the new shared primitive.
+
+  **Where the scope choice is persisted.** The cross-board target
+  vs. this-board target lives on the `PCB_TUNING_PATTERN` generator
+  (so it round-trips with the pattern in the `.kicad_pcb`) and on
+  the matched-length DRC rule (in the rule's existing constraint
+  payload — add a `scope: this_board | cross_board` field).
+
+  **Why this is its own milestone, not a sub-bullet on M8.2.** Every
+  length surface above shares one prerequisite (the
+  cross-board-aware primitive in the length-delay calculation
+  module). Once that lands, the individual surface fixes are
+  largely independent and can land incrementally; without it,
+  every surface fix would re-implement the same sibling-board walk.
 ### P3 (deferred polish)
 
 - **M8.5 (icons) — Visual polish** (~1 session). New MBS file-format
@@ -515,6 +620,26 @@ None currently open.
   `IsMultiBoardContainer()`. Most launcher work landed; remaining
   scope unclear — verify against current launcher state before
   scoping further.
+- **M3.1 — MBSCH-side launcher auto-refresh**
+  (~half-session). When the user opens *Manage Multi-Board* from
+  the MBSCH toolbar (`SCH_EDITOR_CONTROL::MbsManageSubBoards`),
+  add/remove sub-projects mutates the `boards/` subtree on disk but
+  the launcher's project-tree pane doesn't notice — the user has to
+  press Cmd-R/F5 to see the new layout. The kicad-manager-launched
+  path (`KICAD_MANAGER_CONTROL::ManageSubBoards`) already calls
+  `m_frame->RefreshProjectTree()` after the dialog returns; the
+  MBSCH path can't do the same trivially because
+  `KICAD_MANAGER_FRAME` is not a `KIWAY_PLAYER` (it can't receive
+  `KIWAY::ExpressMail`) and its file-system-watcher event handler
+  keys on a specific modified path that we don't have a single one
+  for after a dialog session. Two viable mechanisms:
+  - Add a new event ID (e.g. `ID_PROJECT_TREE_REBUILD`) that
+    `KICAD_MANAGER_FRAME` binds to a handler invoking
+    `m_projectTreePane->ReCreateTreePrj()`. From MBSCH, look up
+    the launcher via `wxWindow::FindWindowByName(KICAD_MANAGER_FRAME_NAME)`
+    and `wxPostEvent` a `wxCommandEvent` carrying that ID.
+  - Or graduate `KICAD_MANAGER_FRAME` to a `KIWAY_PLAYER` (more
+    invasive, opens up other cross-frame patterns).
 
 ---
 

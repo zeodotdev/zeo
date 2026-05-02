@@ -178,9 +178,22 @@ void MATE_GIZMO::Render( const glm::mat4& aCameraView, const glm::mat4& aCameraP
     glDisable( GL_CULL_FACE );
 
     // Boxes first so the line gizmo entries draw on top — handy when
-    // a mate-pair line cuts through an overlap zone.
+    // a mate-pair line cuts through an overlap zone. Within the box
+    // pass, render filled (COLLISION/CONTACT) boxes BEFORE wireframe-
+    // only (BROAD) so the BROAD wireframe is the last thing painted —
+    // otherwise a board-level BROAD wireframe gets hidden under a
+    // confirmed-COLLISION fill at the same coordinates.
     for( const OVERLAP_BOX& b : m_overlapBoxes )
-        renderOverlapBox( b );
+    {
+        if( b.kind != OVERLAP_KIND::BROAD )
+            renderOverlapBox( b );
+    }
+
+    for( const OVERLAP_BOX& b : m_overlapBoxes )
+    {
+        if( b.kind == OVERLAP_KIND::BROAD )
+            renderOverlapBox( b );
+    }
 
     for( const ENTRY& e : m_entries )
         renderEntry( e );
@@ -262,24 +275,40 @@ void MATE_GIZMO::renderOverlapBox( const OVERLAP_BOX& aBox )
     glm::vec3 lineColor;
     float     fillAlpha;
     float     lineAlpha;
+    bool      drawFill = true;
 
-    if( aBox.kind == OVERLAP_KIND::COLLISION )
+    switch( aBox.kind )
     {
+    case OVERLAP_KIND::COLLISION:
         // Saturated red, ~35% fill so the underlying model still reads
         // through; brighter red wireframe so the silhouette pops.
         fillColor = glm::vec3( 1.0f, 0.18f, 0.18f );
         lineColor = glm::vec3( 1.0f, 0.55f, 0.55f );
         fillAlpha = 0.35f;
         lineAlpha = 0.95f;
-    }
-    else
-    {
+        break;
+
+    case OVERLAP_KIND::CONTACT:
         // Yellow proximity highlight — clearly distinct from the red
         // collision box and from the green/cyan mate-pair gizmos.
         fillColor = glm::vec3( 1.0f, 0.85f, 0.20f );
         lineColor = glm::vec3( 1.0f, 1.00f, 0.55f );
         fillAlpha = 0.22f;
         lineAlpha = 0.85f;
+        break;
+
+    case OVERLAP_KIND::BROAD:
+    default:
+        // Wireframe-only blue box for the broad-phase debug view.
+        // No fill so the user can see the model through it; thinner
+        // lines so it doesn't dominate when stacked under a real
+        // collision/contact box.
+        fillColor = glm::vec3( 0.20f, 0.55f, 1.00f );
+        lineColor = glm::vec3( 0.45f, 0.75f, 1.00f );
+        fillAlpha = 0.0f;
+        lineAlpha = 0.85f;
+        drawFill  = false;
+        break;
     }
 
     // 8 corners of the AABB.
@@ -290,28 +319,43 @@ void MATE_GIZMO::renderOverlapBox( const OVERLAP_BOX& aBox )
         { mx.x, mx.y, mx.z }, { mn.x, mx.y, mx.z }
     };
 
-    // Filled translucent faces — 6 quads.
-    glColor4f( fillColor.r, fillColor.g, fillColor.b, fillAlpha );
-    glBegin( GL_QUADS );
-    // -Z (bottom)
-    glVertex3fv( &c[0].x ); glVertex3fv( &c[3].x ); glVertex3fv( &c[2].x ); glVertex3fv( &c[1].x );
-    // +Z (top)
-    glVertex3fv( &c[4].x ); glVertex3fv( &c[5].x ); glVertex3fv( &c[6].x ); glVertex3fv( &c[7].x );
-    // -Y
-    glVertex3fv( &c[0].x ); glVertex3fv( &c[1].x ); glVertex3fv( &c[5].x ); glVertex3fv( &c[4].x );
-    // +Y
-    glVertex3fv( &c[3].x ); glVertex3fv( &c[7].x ); glVertex3fv( &c[6].x ); glVertex3fv( &c[2].x );
-    // -X
-    glVertex3fv( &c[0].x ); glVertex3fv( &c[4].x ); glVertex3fv( &c[7].x ); glVertex3fv( &c[3].x );
-    // +X
-    glVertex3fv( &c[1].x ); glVertex3fv( &c[2].x ); glVertex3fv( &c[6].x ); glVertex3fv( &c[5].x );
-    glEnd();
+    // Filled translucent faces — 6 quads. Skipped for BROAD-debug
+    // boxes so the user can see right through them.
+    if( drawFill )
+    {
+        glColor4f( fillColor.r, fillColor.g, fillColor.b, fillAlpha );
+        glBegin( GL_QUADS );
+        // -Z (bottom)
+        glVertex3fv( &c[0].x ); glVertex3fv( &c[3].x );
+        glVertex3fv( &c[2].x ); glVertex3fv( &c[1].x );
+        // +Z (top)
+        glVertex3fv( &c[4].x ); glVertex3fv( &c[5].x );
+        glVertex3fv( &c[6].x ); glVertex3fv( &c[7].x );
+        // -Y
+        glVertex3fv( &c[0].x ); glVertex3fv( &c[1].x );
+        glVertex3fv( &c[5].x ); glVertex3fv( &c[4].x );
+        // +Y
+        glVertex3fv( &c[3].x ); glVertex3fv( &c[7].x );
+        glVertex3fv( &c[6].x ); glVertex3fv( &c[2].x );
+        // -X
+        glVertex3fv( &c[0].x ); glVertex3fv( &c[4].x );
+        glVertex3fv( &c[7].x ); glVertex3fv( &c[3].x );
+        // +X
+        glVertex3fv( &c[1].x ); glVertex3fv( &c[2].x );
+        glVertex3fv( &c[6].x ); glVertex3fv( &c[5].x );
+        glEnd();
+    }
 
     // Wireframe — 12 edges, drawn as thin cylinders so it's visible
-    // even where glLineWidth caps at 1px.
+    // even where glLineWidth caps at 1px. BROAD boxes use a slightly
+    // thinner edge so they don't dominate stacked under a confirmed-
+    // COLLISION box at the same location, but thick enough to read
+    // when they cover a whole board substrate.
+    const float edgeRadius = ( aBox.kind == OVERLAP_KIND::BROAD ) ? 0.010f : 0.014f;
+
     auto edge = [&]( int a, int b )
     {
-        renderLineSegment( c[a], c[b], 0.012f, lineColor, lineAlpha );
+        renderLineSegment( c[a], c[b], edgeRadius, lineColor, lineAlpha );
     };
 
     // bottom rectangle

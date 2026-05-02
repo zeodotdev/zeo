@@ -17,9 +17,124 @@ if _has_position_update:
     # Use collect_placed_bboxes from bbox.py preamble
     placed_bboxes = collect_placed_bboxes(sch)
 
+# Electrical type / sheet-pin side enum maps shared with MBS module-pin targets.
+_PIN_TYPE_MAP = None
+_PIN_SIDE_MAP = None
+def _get_pin_type_map():
+    global _PIN_TYPE_MAP
+    if _PIN_TYPE_MAP is None:
+        # ElectricalPinType lives in base_types_pb2, not enums_pb2 — the
+        # latter doesn't define it and importing EPT_* from there fails
+        # with AttributeError.
+        from kipy.proto.common.types import base_types_pb2 as _bt
+        _PIN_TYPE_MAP = {
+            'input': _bt.EPT_INPUT,
+            'output': _bt.EPT_OUTPUT,
+            'bidirectional': _bt.EPT_BIDIRECTIONAL,
+            'bidi': _bt.EPT_BIDIRECTIONAL,
+            'tristate': _bt.EPT_TRISTATE,
+            'passive': _bt.EPT_PASSIVE,
+            'free': _bt.EPT_FREE,
+            'unspecified': _bt.EPT_UNSPECIFIED,
+            'power_input': _bt.EPT_POWER_INPUT,
+            'power_output': _bt.EPT_POWER_OUTPUT,
+            'open_collector': _bt.EPT_OPEN_COLLECTOR,
+            'open_emitter': _bt.EPT_OPEN_EMITTER,
+            'no_connect': _bt.EPT_NO_CONNECT,
+        }
+    return _PIN_TYPE_MAP
+
+def _get_pin_side_map():
+    global _PIN_SIDE_MAP
+    if _PIN_SIDE_MAP is None:
+        from kipy.proto.schematic import schematic_types_pb2
+        _PIN_SIDE_MAP = {
+            'left': schematic_types_pb2.SPS_LEFT,
+            'right': schematic_types_pb2.SPS_RIGHT,
+            'top': schematic_types_pb2.SPS_TOP,
+            'bottom': schematic_types_pb2.SPS_BOTTOM,
+        }
+    return _PIN_SIDE_MAP
+
+
 try:
     for i, update in enumerate(updates):
         target = update.get("target", "")
+        target_type = update.get("target_type", "")
+
+        # MBS module pin / block target. Routes via the multi_board edit IPC
+        # (UpdateModulePin / UpdateModuleBlock) instead of the symbol crud path.
+        if target_type in ("module_pin", "module_block"):
+            if not hasattr(sch, 'multi_board'):
+                results.append({'index': i, 'error': f'target_type={target_type} requires the MBS canvas (set target.doc_type:"mbs")'})
+                continue
+            try:
+                if target_type == "module_pin":
+                    pin_uuid = update.get("pin_uuid", "")
+                    block_uuid = update.get("block_uuid", "")
+                    pin_number = update.get("pin_number", "")
+
+                    if not pin_uuid and (block_uuid and pin_number):
+                        # Resolve (block_uuid + pin_number) -> pin_uuid by
+                        # iterating get_blocks() once.
+                        for _b in sch.multi_board.get_blocks():
+                            if str(_b.id.value) != block_uuid:
+                                continue
+                            for _p in _b.pins:
+                                if _p.pin_number == str(pin_number):
+                                    pin_uuid = str(_p.id.value)
+                                    break
+                            break
+
+                    if not pin_uuid:
+                        results.append({'index': i, 'error': 'module_pin target requires pin_uuid OR (block_uuid + pin_number)'})
+                        continue
+
+                    kw = {}
+                    if 'text' in update:
+                        kw['text'] = update['text']
+                    if 'electrical_type' in update:
+                        et = update['electrical_type']
+                        et_lower = str(et).strip().lower() if isinstance(et, str) else None
+                        kw['electrical_type'] = (
+                            _get_pin_type_map().get(et_lower, et_lower)
+                            if isinstance(et, str)
+                            else et
+                        )
+                    if 'side' in update:
+                        s = update['side']
+                        kw['side'] = _get_pin_side_map().get(str(s).lower(), s) if isinstance(s, str) else s
+                    if isinstance(update.get('position'), list) and len(update['position']) >= 2:
+                        kw['position'] = (
+                            int(round(update['position'][0] * 1_000_000)),
+                            int(round(update['position'][1] * 1_000_000))
+                        )
+
+                    ok = sch.multi_board.update_pin(pin_uuid, **kw)
+                    results.append({'index': i, 'target': pin_uuid, 'updated': bool(ok),
+                                    'target_type': 'module_pin'})
+
+                else:  # module_block
+                    block_uuid = update.get("block_uuid", "")
+                    if not block_uuid:
+                        results.append({'index': i, 'error': 'module_block target requires block_uuid'})
+                        continue
+                    kw = {}
+                    if isinstance(update.get('position'), list) and len(update['position']) >= 2:
+                        kw['position'] = (
+                            int(round(update['position'][0] * 1_000_000)),
+                            int(round(update['position'][1] * 1_000_000))
+                        )
+                    if 'mbs_reference' in update:
+                        kw['mbs_reference'] = update['mbs_reference']
+                    ok = sch.multi_board.update_block(block_uuid, **kw)
+                    results.append({'index': i, 'target': block_uuid, 'updated': bool(ok),
+                                    'target_type': 'module_block'})
+            except Exception as e:
+                results.append({'index': i, 'target': target or update.get('pin_uuid') or update.get('block_uuid'),
+                               'error': str(e)})
+            continue
+
         if not target:
             results.append({'index': i, 'error': 'target is required'})
             continue

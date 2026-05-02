@@ -96,10 +96,15 @@ public:
     /// configurable proximity margin of touching (yellow). Both render
     /// as translucent axis-aligned boxes on top of the depth stack so
     /// the user can spot the offending region without rotating around.
+    /// BROAD is a debug-only visualization showing the AABB-level
+    /// pre-filter result — wireframe blue so the user can compare
+    /// "broad phase says overlap" vs "narrow phase confirmed overlap"
+    /// at a glance when the mesh-level path is misbehaving.
     enum class OVERLAP_KIND
     {
         COLLISION,    ///< parts physically penetrate (penetration > threshold)
-        CONTACT       ///< parts are within proximity margin but not penetrating
+        CONTACT,      ///< parts are within proximity margin but not penetrating
+        BROAD         ///< AABB-level overlap, debug visualization only
     };
 
     struct OVERLAP_BOX

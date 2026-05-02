@@ -295,6 +295,26 @@ VIEW::VIEW() :
 VIEW::~VIEW()
 {
     Remove( m_preview.get() );
+
+    // Clear every still-attached item's back-pointer to this view. Without
+    // this, items outliving the view (the canonical case is shutdown:
+    // EDA_DRAW_FRAME::~EDA_DRAW_FRAME deletes m_canvas — which owns this
+    // VIEW — at line 185, then deletes m_currentScreen at line 187; the
+    // screen's destructor walks its draw list deleting each SCH_ITEM, and
+    // each ~VIEW_ITEM calls VIEW::OnDestroy(item) which dereferences the
+    // item's now-dangling m_view pointer and crashes in m_allItems->end()).
+    //
+    // OnDestroy null-checks m_viewPrivData->m_view, so zeroing the
+    // back-pointer here makes the chain safely a no-op. The viewPrivData
+    // itself is freed by ~VIEW_ITEM via OnDestroy in the normal teardown.
+    if( m_allItems )
+    {
+        for( VIEW_ITEM* item : *m_allItems )
+        {
+            if( item && item->m_viewPrivData )
+                item->m_viewPrivData->m_view = nullptr;
+        }
+    }
 }
 
 

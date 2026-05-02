@@ -148,6 +148,14 @@ public:
     virtual API_PLUGIN_MANAGER& GetPluginManager() const { return *m_plugin_manager; }
 
     KICAD_API_SERVER& GetApiServer() { return *m_api_server; }
+
+    /// True only when the API server is alive — false during shutdown
+    /// after OnPgmExit() has reset it. Frame destructors that ran past
+    /// shutdown (e.g. the wxApp::CleanUp DeleteAllTLWs path on macOS,
+    /// which fires AFTER PGM_KICAD::OnPgmExit) MUST consult this before
+    /// calling GetApiServer() — otherwise *m_api_server dereferences a
+    /// null unique_ptr and EXC_BAD_ACCESSes inside DeregisterHandler.
+    bool HasApiServer() const { return static_cast<bool>( m_api_server ); }
 #endif
 
     virtual void SetTextEditor( const wxString& aFileName );

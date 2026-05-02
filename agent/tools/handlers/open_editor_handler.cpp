@@ -57,6 +57,27 @@ OpenEditorResult OPEN_EDITOR_HANDLER::Evaluate( const nlohmann::json& aInput,
     result.editorLabel = ( editorType == "sch" ) ? "Schematic" : "PCB";
     result.isSch = ( editorType == "sch" );
 
+    // Lifecycle: action="close" tears down the editor frame so subsequent
+    // file-on-disk edits (e.g. .kicad_pro JSON mutations) don't get
+    // overwritten by the editor's autosave on close. Default action is
+    // "open" — preserves backward compatibility with existing callers.
+    std::string action = aInput.value( "action", "open" );
+
+    if( action == "close" )
+    {
+        if( aEditorShown )
+        {
+            result.action = OpenEditorResult::CLOSE_EDITOR;
+            result.resultMessage = result.editorLabel.ToStdString() + " editor closed";
+        }
+        else
+        {
+            result.action = OpenEditorResult::ALREADY_CLOSED;
+            result.resultMessage = result.editorLabel.ToStdString() + " editor was not open";
+        }
+        return result;
+    }
+
     std::string filePath = aInput.value( "file_path", "" );
     wxString resolvedFilePath;
 

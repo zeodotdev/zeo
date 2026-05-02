@@ -3379,6 +3379,7 @@ API_HANDLER_SCH::handleRunERC( const HANDLER_CONTEXT<kiapi::schematic::commands:
             auto* violation = response.add_violations();
             violation->mutable_id()->set_value( marker->m_Uuid.AsStdString() );
             violation->set_error_code( std::to_string( rcItem->GetErrorCode() ) );
+            violation->set_error_type_code( rcItem->GetSettingsKey().ToStdString() );
             violation->set_description( rcItem->GetErrorText( true ).ToStdString() );
 
             // Set severity
@@ -3480,6 +3481,7 @@ API_HANDLER_SCH::handleGetERCViolations(
             auto* violation = response.add_violations();
             violation->mutable_id()->set_value( marker->m_Uuid.AsStdString() );
             violation->set_error_code( std::to_string( rcItem->GetErrorCode() ) );
+            violation->set_error_type_code( rcItem->GetSettingsKey().ToStdString() );
             violation->set_description( rcItem->GetErrorText( true ).ToStdString() );
 
             switch( marker->GetSeverity() )

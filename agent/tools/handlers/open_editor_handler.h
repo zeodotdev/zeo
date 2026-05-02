@@ -37,6 +37,8 @@ struct OpenEditorResult
         FOCUS_EXISTING,     ///< Editor already open with correct file — just focus
         RELOAD_WITH_FILE,   ///< Editor open but needs a different file — close and reopen
         NEEDS_APPROVAL,     ///< Editor not open — show approval dialog
+        CLOSE_EDITOR,       ///< Caller asked to close the editor (action="close")
+        ALREADY_CLOSED,     ///< Caller asked to close but no editor was open — no-op
         ERRORED             ///< Validation error — return error to LLM
     };
 

@@ -5,7 +5,15 @@ section = TOOL_ARGS.get("section", "footprints")
 filter_pattern = TOOL_ARGS.get("filter", "")
 
 if section == "footprints":
-    # Read footprints
+    # Read footprints + optionally include per-pad info (with is_connector_pad).
+    include_pads = bool(TOOL_ARGS.get("include_pads", False))
+    connector_pad_set = set()
+    if include_pads:
+        try:
+            connector_pad_set = set(board.get_connector_pads())
+        except Exception:
+            pass
+
     footprints = board.get_footprints()
     result = []
     for fp in footprints:
@@ -16,7 +24,7 @@ if section == "footprints":
                 continue
         pos = fp.position
         angle = fp.orientation.degrees if hasattr(fp, 'orientation') and hasattr(fp.orientation, 'degrees') else 0
-        result.append({
+        entry = {
             'id': fp.id.value,
             'ref': ref,
             'value': fp.value_field.text.value if hasattr(fp, 'value_field') else '',
@@ -25,8 +33,31 @@ if section == "footprints":
             'angle': angle,
             'layer': 'B.Cu' if fp.layer == BoardLayer.BL_B_Cu else 'F.Cu',
             'locked': getattr(fp, 'locked', False)
-        })
+        }
+        if include_pads:
+            pads = []
+            for pad in fp.definition.pads:
+                puid = str(pad.id.value)
+                pads.append({
+                    'id': puid,
+                    'number': pad.number,
+                    'net': pad.net.name if hasattr(pad, 'net') else '',
+                    'position': [pad.position.x / 1000000, pad.position.y / 1000000],
+                    'is_connector_pad': puid in connector_pad_set,
+                })
+            entry['pads'] = pads
+        result.append(entry)
     print(json.dumps(result, indent=2))
+
+elif section == "connector_pads":
+    # Multi-board metadata: list every pad currently marked as a connector
+    # pad on this board (BOARD::m_connectorPads). Returns pad UUIDs only —
+    # use section="footprints" with include_pads:true for full pad context.
+    try:
+        uuids = board.get_connector_pads()
+        print(json.dumps({'count': len(uuids), 'pad_uuids': list(uuids)}, indent=2))
+    except Exception as e:
+        print(json.dumps({'error': str(e)}))
 
 elif section == "tracks":
     # Read tracks

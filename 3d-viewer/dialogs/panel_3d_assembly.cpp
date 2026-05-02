@@ -330,7 +330,20 @@ void PANEL_3D_ASSEMBLY::createControls()
     m_showContactsCheck->SetToolTip(
             _( "Overlay markers on components that are in expected contact (mated). "
                 "Currently aliases the mate-pair gizmo." ) );
-    viewBox->Add( m_showContactsCheck, 0 );
+    viewBox->Add( m_showContactsCheck, 0, wxBOTTOM, 3 );
+
+    // Debug: blue wireframe for every footprint pair that survives the
+    // broad-phase AABB pre-filter. Lets the user visually compare what
+    // the broad phase is finding vs what the mesh-level narrow phase
+    // confirms when collision boxes don't appear where expected.
+    m_showAabbDebugCheck = new wxCheckBox( m_scrolled, wxID_ANY,
+                                            _( "Show AABB debug (broad phase)" ) );
+    m_showAabbDebugCheck->SetValue( false );
+    m_showAabbDebugCheck->SetToolTip(
+            _( "DEBUG: blue wireframe for every footprint pair flagged by the AABB "
+                "pre-filter. Use to compare against confirmed collision/contact "
+                "boxes — when only blue shows, the narrow phase rejected the pair." ) );
+    viewBox->Add( m_showAabbDebugCheck, 0 );
 
     mainSizer->Add( viewBox, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 5 );
 
@@ -425,6 +438,8 @@ void PANEL_3D_ASSEMBLY::bindEvents()
                                   &PANEL_3D_ASSEMBLY::onShowCollisionsToggled, this );
     m_showContactsCheck->Bind( wxEVT_CHECKBOX,
                                 &PANEL_3D_ASSEMBLY::onShowContactsToggled, this );
+    m_showAabbDebugCheck->Bind( wxEVT_CHECKBOX,
+                                &PANEL_3D_ASSEMBLY::onShowAabbDebugToggled, this );
 }
 
 
@@ -682,6 +697,16 @@ void PANEL_3D_ASSEMBLY::onShowContactsToggled( wxCommandEvent& aEvent )
         return;
 
     m_manager->SetShowContactHighlights( m_showContactsCheck->GetValue() );
+    refresh3DView();
+}
+
+
+void PANEL_3D_ASSEMBLY::onShowAabbDebugToggled( wxCommandEvent& aEvent )
+{
+    if( !m_manager )
+        return;
+
+    m_manager->SetShowBroadAabbDebug( m_showAabbDebugCheck->GetValue() );
     refresh3DView();
 }
 

@@ -20,12 +20,39 @@ public:
 
     wxWindow* CreateKiWindow( wxWindow* aParent, int aClassId, KIWAY* aKiway, int aCtlBits = 0 ) override
     {
+        wxLogInfo( "KIFACE_TERMINAL::CreateKiWindow aClassId=%d aParent=%p", aClassId, aParent );
+
         switch( aClassId )
         {
         case FRAME_TERMINAL:
         {
-            TERMINAL_FRAME* frame = new TERMINAL_FRAME( aKiway, aParent );
-            return frame;
+            try
+            {
+                TERMINAL_FRAME* frame = new TERMINAL_FRAME( aKiway, aParent );
+                wxLogInfo( "KIFACE_TERMINAL::CreateKiWindow constructed frame=%p", frame );
+                return frame;
+            }
+            catch( const std::exception& e )
+            {
+                wxLogError( "KIFACE_TERMINAL::CreateKiWindow std::exception type=%s what=%s",
+                            typeid( e ).name(), e.what() );
+                throw;
+            }
+            catch( const wxString& s )
+            {
+                wxLogError( "KIFACE_TERMINAL::CreateKiWindow wxString thrown: %s", s );
+                throw;
+            }
+            catch( const char* s )
+            {
+                wxLogError( "KIFACE_TERMINAL::CreateKiWindow c-string thrown: %s", s );
+                throw;
+            }
+            catch( ... )
+            {
+                wxLogError( "KIFACE_TERMINAL::CreateKiWindow caught unknown non-std exception" );
+                throw;
+            }
         }
         default: return nullptr;
         }

@@ -979,6 +979,12 @@ int KICAD_MANAGER_CONTROL::ManageSubBoards( const TOOL_EVENT& aEvent )
     // basename for a live PROJECT_FILE.
     multi->SaveToFile( multiFile.GetPath() );
 
+    // The dialog may have added or removed sub-projects (which changes
+    // the on-disk `boards/` subtree); the project-tree pane otherwise
+    // doesn't notice until the user manually refreshes. Reload the
+    // tree so the sidebar matches reality immediately.
+    m_frame->RefreshProjectTree();
+
     return 0;
 }
 

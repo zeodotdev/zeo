@@ -1663,12 +1663,29 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
     };
 
     // Per-footprint Z extent in board-local mm (top of board → top of
-    // tallest 3D model on it). Same logic as the M6.D Z-gap helper but
-    // returning min/max instead of a single value.
+    // tallest 3D model on it). Returns three signals:
+    //   • aZMin/aZMax    — Z extent in board-local mm
+    //   • aDeclared (out) — footprint references at least one 3D model
+    //                       (whether or not the cache could load it)
+    //   • aLoaded   (out) — at least one model actually returned a mesh
+    //
+    // The caller uses (declared && !loaded) to recognize "this footprint
+    // is a real component whose mesh just hasn't been resolved yet" —
+    // typical with virtual STEP files behind a path the S3D_CACHE
+    // hasn't resolved (same first-open pattern as task #52). Such
+    // footprints get the 8 mm "assume connector / tall component"
+    // fallback so they still trigger collisions on first-open. A
+    // footprint with no declared models gets 0 mm Z and won't generate
+    // phantom OBB-fallback boxes — silk/fab markers don't have volume.
     auto computeFpZExtent = [this]( const BOARD_3D_INSTANCE& aInst, const FOOTPRINT* aFp,
-                                    float& aZMin, float& aZMax )
+                                    float& aZMin, float& aZMax,
+                                    bool& aDeclared, bool& aLoaded )
     {
-        float modelHeight = 0.5f;
+        constexpr float kUnknownModelFallbackMm = 8.0f;
+        float           modelHeight             = 0.0f;
+        bool            anyModelLoaded          = false;
+        bool            anyModelDeclared        = false;
+
         PROJECT* prj = aInst.subProject ? aInst.subProject : aInst.board->GetProject();
 
         if( prj )
@@ -1679,6 +1696,8 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
                 {
                     if( !fp_model.m_Show || fp_model.m_Filename.empty() )
                         continue;
+
+                    anyModelDeclared = true;
 
                     std::vector<const EMBEDDED_FILES*> stack;
                     stack.push_back( aFp->GetEmbeddedFiles() );
@@ -1714,11 +1733,24 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
                     maxZ *= static_cast<float>( fp_model.m_Scale.z );
                     maxZ += static_cast<float>( fp_model.m_Offset.z );
 
+                    anyModelLoaded = true;
+
                     if( maxZ > modelHeight )
                         modelHeight = maxZ;
                 }
             }
         }
+
+        if( !anyModelLoaded )
+        {
+            // Declared a model but the cache couldn't resolve it →
+            // assume tall component (connector). No declaration →
+            // zero Z (silk/fab marker).
+            modelHeight = anyModelDeclared ? kUnknownModelFallbackMm : 0.0f;
+        }
+
+        aDeclared = anyModelDeclared;
+        aLoaded   = anyModelLoaded;
 
         const float boardThicknessMm = GetBoardThickness( aInst.board.get() );
 
@@ -1760,6 +1792,13 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
         std::vector<WorldTri> meshTris;     ///< world-mm triangles
         SFVEC3F               meshAabbMin;
         SFVEC3F               meshAabbMax;
+        /// Footprint references at least one 3D-model file. Used to
+        /// discriminate "real component whose mesh just hasn't loaded
+        /// yet" (declared but no triangles → use OBB fallback) from
+        /// "silk-only / fab-marker / unmodelled" (no declaration →
+        /// no Z volume → never produces fallback boxes).
+        bool                  hasDeclaredModels;
+        bool                  hasLoadedModels;
     };
 
     // Build the world-mm triangle list for one footprint by walking
@@ -1948,7 +1987,8 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
         aOut.centerXY = glm::vec2( c * lcx - s * lcy + aInst.position.x,
                                    s * lcx + c * lcy + aInst.position.y );
 
-        computeFpZExtent( aInst, aFp, aOut.zMin, aOut.zMax );
+        computeFpZExtent( aInst, aFp, aOut.zMin, aOut.zMax,
+                          aOut.hasDeclaredModels, aOut.hasLoadedModels );
 
         // Broad-phase AABB = axis-aligned envelope of the rotated rect.
         const glm::vec2 dx = aOut.axisX * lhx;
@@ -1965,25 +2005,25 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
         buildFpMeshTris( aInst, aFp, aOut.meshTris,
                           aOut.meshAabbMin, aOut.meshAabbMax, haveMeshAabb );
 
-        if( !haveMeshAabb )
+        if( haveMeshAabb )
         {
-            aOut.meshAabbMin = aOut.worldMin;
-            aOut.meshAabbMax = aOut.worldMax;
+            // Mesh is loaded — replace the pad/silk bbox-derived
+            // worldMin/Max with the actual mesh AABB. The pad/silk
+            // bbox tends to be looser than the physical mesh extent
+            // (pads carry no Z volume, silk can extend past the part
+            // body for documentation), so unioning inflated the
+            // broad-phase AABB and caused false-positive pair-tests
+            // that the mesh narrow phase then had to reject.
+            aOut.worldMin = aOut.meshAabbMin;
+            aOut.worldMax = aOut.meshAabbMax;
         }
         else
         {
-            // Expand the broad-phase AABB to enclose the mesh too —
-            // a connector's 3D model can extend past the pad/silk
-            // bounding box (think a header's plastic shell extending
-            // beyond the pin matrix). Without this, the OBB broad
-            // phase rejects pairs that the mesh narrow phase would
-            // catch.
-            aOut.worldMin.x = std::min( aOut.worldMin.x, aOut.meshAabbMin.x );
-            aOut.worldMin.y = std::min( aOut.worldMin.y, aOut.meshAabbMin.y );
-            aOut.worldMin.z = std::min( aOut.worldMin.z, aOut.meshAabbMin.z );
-            aOut.worldMax.x = std::max( aOut.worldMax.x, aOut.meshAabbMax.x );
-            aOut.worldMax.y = std::max( aOut.worldMax.y, aOut.meshAabbMax.y );
-            aOut.worldMax.z = std::max( aOut.worldMax.z, aOut.meshAabbMax.z );
+            // No mesh — keep the pad/silk OBB envelope + Z fallback
+            // already computed above, and use it as the mesh-AABB
+            // proxy too.
+            aOut.meshAabbMin = aOut.worldMin;
+            aOut.meshAabbMax = aOut.worldMax;
         }
 
         return true;
@@ -2025,12 +2065,53 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
         {
             FPCollisionShape s;
 
-            if( buildShape( inst, fp, s ) )
+            if( !buildShape( inst, fp, s ) )
+                continue;
+
+            diagFpsTotal++;
+
+            if( !s.meshTris.empty() )
+                diagFpsWithMesh++;
+
+            // Skip silk-only / reference-marker / fab-only footprints
+            // entirely. They have no declared 3D model, so no physical
+            // volume to collide with — their AABB collapses to a zero-
+            // thickness slab at the board top face, which can register
+            // as "overlapping" with anything whose Z range crosses
+            // that exact height (the AE1 / REF** false-positive case
+            // from the diagnostic log).
+            if( !s.hasDeclaredModels )
+                continue;
+
+            perInstance[i].push_back( std::move( s ) );
+        }
+    }
+
+    // Debug: emit a BROAD entry for every per-fp AABB the broad phase
+    // will use. With AABB debug toggled on, you see a thin blue
+    // wireframe around each footprint's actual collision envelope —
+    // useful for verifying that a footprint we expect to register an
+    // overlap actually has the AABB extent we think it has. If two
+    // wireframes that should obviously intersect don't, the issue is
+    // in `buildShape` / `computeFpZExtent` / mesh-AABB union, not in
+    // the pair test.
+    if( m_showBroadAabbDebug )
+    {
+        for( size_t i = 0; i < perInstance.size(); i++ )
+        {
+            const KIID instUuid = m_boardInstances[i].uuid;
+
+            for( const FPCollisionShape& fp : perInstance[i] )
             {
-                diagFpsTotal++;
-                if( !s.meshTris.empty() )
-                    diagFpsWithMesh++;
-                perInstance[i].push_back( std::move( s ) );
+                OverlapBox dbg;
+                dbg.minMm     = fp.worldMin;
+                dbg.maxMm     = fp.worldMax;
+                dbg.kind      = OVERLAP_KIND::BROAD;
+                dbg.instanceA = instUuid;
+                dbg.instanceB = instUuid;   // same instance — this is a per-fp box
+                dbg.refA      = fp.ref;
+                dbg.refB      = wxT( "<self>" );
+                m_lastOverlapBoxes.push_back( dbg );
             }
         }
     }
@@ -2131,6 +2212,62 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
                     if( mated )
                         continue;
 
+                    // Skip pairs where BOTH footprints are purely
+                    // mechanical (no electrical pads — mounting holes,
+                    // fiducials, fab markers, edge cuts annotations).
+                    // When boards stack, the mounting hole on top
+                    // aligns with the one underneath BY DESIGN; that's
+                    // not a collision the user wants to see flagged.
+                    auto isMechanicalOnly = []( const FOOTPRINT* aFp ) -> bool
+                    {
+                        return aFp
+                               && aFp->GetPadCount( DO_NOT_INCLUDE_NPTH ) == 0;
+                    };
+
+                    if( isMechanicalOnly( a.fp ) && isMechanicalOnly( b.fp ) )
+                        continue;
+
+                    // Debug visualization: blue wireframe AABB for
+                    // every pair that survives the broad-phase pre-
+                    // filter AND the post-filter (mated/mech-only).
+                    // Lets the user visually verify the actual set of
+                    // candidate pairs the narrow phase will run on —
+                    // emitting BROAD before the filters meant the
+                    // debug viz showed mounting-hole-vs-mounting-hole
+                    // and other already-skipped pairs.
+                    {
+                        OverlapBox dbg;
+                        dbg.minMm     = SFVEC3F(
+                                std::max( a.worldMin.x, b.worldMin.x ),
+                                std::max( a.worldMin.y, b.worldMin.y ),
+                                std::max( a.worldMin.z, b.worldMin.z ) );
+                        dbg.maxMm     = SFVEC3F(
+                                std::min( a.worldMax.x, b.worldMax.x ),
+                                std::min( a.worldMax.y, b.worldMax.y ),
+                                std::min( a.worldMax.z, b.worldMax.z ) );
+                        dbg.kind      = OVERLAP_KIND::BROAD;
+                        dbg.instanceA = inst1.uuid;
+                        dbg.instanceB = inst2.uuid;
+                        dbg.refA      = a.ref;
+                        dbg.refB      = b.ref;
+                        m_lastOverlapBoxes.push_back( dbg );
+                    }
+
+                    // Per-pair diag — only logged for the first few
+                    // candidate pairs so the log stays digestible.
+                    if( diagPairsBroad <= 8 )
+                    {
+                        wxLogMessage( wxT( "[COLLIDE] candidate %s↔%s "
+                                           "minPen=%.3f mm  "
+                                           "a.mesh=%zu b.mesh=%zu  "
+                                           "a.declared=%d b.declared=%d" ),
+                                       a.ref, b.ref,
+                                       minPen,
+                                       a.meshTris.size(), b.meshTris.size(),
+                                       a.hasDeclaredModels ? 1 : 0,
+                                       b.hasDeclaredModels ? 1 : 0 );
+                    }
+
                     // M6.E phase-3 mesh-level narrow phase. The OBB
                     // SAT above only knows about footprint pad/silk
                     // bboxes × model height, which doesn't tell a
@@ -2138,52 +2275,74 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
                     // that deeply overlap. Walk the actual 3D-model
                     // triangles to discriminate.
                     //
-                    // Fallback: if EITHER footprint has no triangles
-                    // (model not in cache yet — same first-open case
-                    // the virtual-model bug exposes), tag the pair
-                    // using the OBB result so the user sees something
-                    // until the cache warms.
+                    // OBB fallback for one-sided no-mesh: if EITHER
+                    // footprint has no mesh triangles, we can't run
+                    // the proper narrow phase. Two cases:
+                    //
+                    //   • Both footprints are silk-only / no model
+                    //     declared → no Z volume → skip; nothing to
+                    //     collide.
+                    //   • At least one footprint declared a model
+                    //     that just hasn't loaded (virtual STEP file)
+                    //     → fall back to OBB-only with a stricter
+                    //     threshold (require real penetration, not
+                    //     proximity) so we still flag connector-class
+                    //     overlaps until the cache warms. CONTACT is
+                    //     skipped in this path because the OBB
+                    //     approximation is too coarse for proximity
+                    //     calls.
                     if( a.meshTris.empty() || b.meshTris.empty() )
                     {
                         diagPairsFallback++;
-                        OVERLAP_KIND fbKind = ( minPen >= kMinPenetrationMm )
-                                              ? OVERLAP_KIND::COLLISION
-                                              : OVERLAP_KIND::CONTACT;
+
+                        const bool eitherDeclared = a.hasDeclaredModels
+                                                    || b.hasDeclaredModels;
+
+                        if( !eitherDeclared )
+                            continue;   // pure silk vs anything → no volume
+
+                        // Only flag substantial OBB penetration as
+                        // COLLISION; small overlaps stay invisible
+                        // because the OBB envelope is approximate.
+                        if( minPen < kMinPenetrationMm )
+                            continue;
 
                         const float fbM = kContactMarginMm;
-                        SFVEC3F     bMin( std::max( a.worldMin.x, b.worldMin.x ) - fbM * 0.5f,
-                                          std::max( a.worldMin.y, b.worldMin.y ) - fbM * 0.5f,
-                                          std::max( a.worldMin.z, b.worldMin.z ) - fbM * 0.5f );
-                        SFVEC3F     bMax( std::min( a.worldMax.x, b.worldMax.x ) + fbM * 0.5f,
-                                          std::min( a.worldMax.y, b.worldMax.y ) + fbM * 0.5f,
-                                          std::min( a.worldMax.z, b.worldMax.z ) + fbM * 0.5f );
+                        SFVEC3F     bMin( std::max( a.worldMin.x, b.worldMin.x ),
+                                          std::max( a.worldMin.y, b.worldMin.y ),
+                                          std::max( a.worldMin.z, b.worldMin.z ) );
+                        SFVEC3F     bMax( std::min( a.worldMax.x, b.worldMax.x ),
+                                          std::min( a.worldMax.y, b.worldMax.y ),
+                                          std::min( a.worldMax.z, b.worldMax.z ) );
 
                         OverlapBox box;
                         box.minMm     = bMin;
                         box.maxMm     = bMax;
-                        box.kind      = fbKind;
+                        box.kind      = OVERLAP_KIND::COLLISION;
                         box.instanceA = inst1.uuid;
                         box.instanceB = inst2.uuid;
                         box.refA      = a.ref;
                         box.refB      = b.ref;
                         m_lastOverlapBoxes.push_back( box );
 
-                        if( fbKind == OVERLAP_KIND::COLLISION )
-                        {
-                            COLLISION_RESULT result;
-                            result.board1Uuid     = inst1.uuid;
-                            result.board2Uuid     = inst2.uuid;
-                            result.item1Desc      = wxString::Format(
-                                    wxT( "%s:%s" ), inst1.displayName, a.ref );
-                            result.item2Desc      = wxString::Format(
-                                    wxT( "%s:%s" ), inst2.displayName, b.ref );
-                            glm::vec2 midXY = ( a.centerXY + b.centerXY ) * 0.5f;
-                            float midZ = ( std::max( a.worldMin.z, b.worldMin.z )
-                                           + std::min( a.worldMax.z, b.worldMax.z ) ) * 0.5f;
-                            result.collisionPoint = SFVEC3F( midXY.x, midXY.y, midZ );
-                            result.penetrationMm  = minPen;
-                            m_lastCollisions.push_back( result );
-                        }
+                        COLLISION_RESULT result;
+                        result.board1Uuid = inst1.uuid;
+                        result.board2Uuid = inst2.uuid;
+                        result.item1Desc  = wxString::Format(
+                                wxT( "%s:%s" ), inst1.displayName, a.ref );
+                        result.item2Desc  = wxString::Format(
+                                wxT( "%s:%s" ), inst2.displayName, b.ref );
+
+                        glm::vec2 midXY = ( a.centerXY + b.centerXY ) * 0.5f;
+                        float     midZ  = ( std::max( a.worldMin.z, b.worldMin.z )
+                                            + std::min( a.worldMax.z, b.worldMax.z ) ) * 0.5f;
+                        result.collisionPoint = SFVEC3F( midXY.x, midXY.y, midZ );
+                        result.penetrationMm  = minPen;
+                        m_lastCollisions.push_back( result );
+
+                        // Suppress the unused variable warning for fbM
+                        // — kept for future symmetric-margin tweaks.
+                        (void) fbM;
 
                         continue;
                     }
@@ -2344,12 +2503,189 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
         }
     }
 
+    // ===== Board-substrate vs board-substrate collision =====
+    //
+    // Per-footprint pairs only fire when two components happen to sit
+    // at matching XY positions across boards (mounting holes mostly).
+    // The PCB substrate itself is not a footprint — it never enters
+    // the per-fp loop above — so two boards completely overlapping in
+    // 3D produced almost no boxes. That's the "embedded board, only
+    // the corners flagged" case.
+    //
+    // This pass treats each visible board's edge-cuts bounding box ×
+    // thickness as an OBB at the instance pose, and runs the same
+    // AABB broad / OBB SAT narrow logic on every pair of visible
+    // boards. Result: a single COLLISION box covering the substrate
+    // intersection volume — exactly what the user expects when one
+    // board is sitting inside another.
+    struct BoardSubstrateShape
+    {
+        KIID      uuid;
+        wxString  display;
+        glm::vec2 centerXY;
+        glm::vec2 axisX;
+        glm::vec2 axisY;
+        float     halfX;
+        float     halfY;
+        float     zMin;
+        float     zMax;
+        SFVEC3F   worldMin;
+        SFVEC3F   worldMax;
+    };
+
+    std::vector<BoardSubstrateShape> boardShapes;
+
+    for( const BOARD_3D_INSTANCE& inst : m_boardInstances )
+    {
+        if( !inst.visible || !inst.board )
+            continue;
+
+        BOX2I bbox = inst.board->GetBoardEdgesBoundingBox();
+
+        if( bbox.GetWidth() <= 0 || bbox.GetHeight() <= 0 )
+            continue;   // placeholder / no outline
+
+        const float lcx = bbox.GetCenter().x / 1e6f;
+        const float lcy = bbox.GetCenter().y / 1e6f;
+        const float lhx = ( bbox.GetWidth()  / 2.0f ) / 1e6f;
+        const float lhy = ( bbox.GetHeight() / 2.0f ) / 1e6f;
+
+        const float thetaRad = inst.rotation.z * static_cast<float>( M_PI ) / 180.0f;
+        const float c = std::cos( thetaRad );
+        const float s = std::sin( thetaRad );
+
+        BoardSubstrateShape sh;
+        sh.uuid     = inst.uuid;
+        sh.display  = inst.displayName;
+        sh.axisX    = glm::vec2( c, s );
+        sh.axisY    = glm::vec2( -s, c );
+        sh.halfX    = lhx;
+        sh.halfY    = lhy;
+        sh.centerXY = glm::vec2( c * lcx - s * lcy + inst.position.x,
+                                 s * lcx + c * lcy + inst.position.y );
+
+        const float boardThickness = GetBoardThickness( inst.board.get() );
+
+        sh.zMin = inst.position.z;
+        sh.zMax = inst.position.z + boardThickness;
+
+        const glm::vec2 dx    = sh.axisX * lhx;
+        const glm::vec2 dy    = sh.axisY * lhy;
+        const float     spanX = std::abs( dx.x ) + std::abs( dy.x );
+        const float     spanY = std::abs( dx.y ) + std::abs( dy.y );
+        sh.worldMin = SFVEC3F( sh.centerXY.x - spanX, sh.centerXY.y - spanY, sh.zMin );
+        sh.worldMax = SFVEC3F( sh.centerXY.x + spanX, sh.centerXY.y + spanY, sh.zMax );
+
+        boardShapes.push_back( sh );
+    }
+
+    int diagBoardPairsBroad   = 0;
+    int diagBoardPairsCollide = 0;
+
+    for( size_t i = 0; i < boardShapes.size(); i++ )
+    {
+        for( size_t j = i + 1; j < boardShapes.size(); j++ )
+        {
+            const BoardSubstrateShape& a = boardShapes[i];
+            const BoardSubstrateShape& b = boardShapes[j];
+
+            // AABB broad phase, NOT inflated — board substrates within
+            // 0.5 mm of touching but not overlapping is normal mating
+            // and shouldn't flag as collision.
+            if( a.worldMax.x <= b.worldMin.x || b.worldMax.x <= a.worldMin.x )
+                continue;
+            if( a.worldMax.y <= b.worldMin.y || b.worldMax.y <= a.worldMin.y )
+                continue;
+            if( a.worldMax.z <= b.worldMin.z || b.worldMax.z <= a.worldMin.z )
+                continue;
+
+            // OBB SAT (4 XY axes + Z interval).
+            auto axisPen = [&]( const glm::vec2& L ) -> float
+            {
+                float radA = std::abs( glm::dot( a.axisX, L ) ) * a.halfX
+                             + std::abs( glm::dot( a.axisY, L ) ) * a.halfY;
+                float radB = std::abs( glm::dot( b.axisX, L ) ) * b.halfX
+                             + std::abs( glm::dot( b.axisY, L ) ) * b.halfY;
+                float dist = std::abs( glm::dot( b.centerXY - a.centerXY, L ) );
+                return ( radA + radB ) - dist;
+            };
+
+            float xyPen = std::min( { axisPen( a.axisX ), axisPen( a.axisY ),
+                                       axisPen( b.axisX ), axisPen( b.axisY ) } );
+            float zPen  = std::min( a.worldMax.z - b.worldMin.z,
+                                     b.worldMax.z - a.worldMin.z );
+            float minPen = std::min( xyPen, zPen );
+
+            if( minPen <= 0.0f )
+                continue;   // separated — boards aren't actually overlapping
+
+            diagBoardPairsBroad++;
+
+            // Debug AABB box (blue wireframe) — every overlapping
+            // substrate pair, regardless of how thin the overlap.
+            {
+                OverlapBox dbg;
+                dbg.minMm     = SFVEC3F(
+                        std::max( a.worldMin.x, b.worldMin.x ),
+                        std::max( a.worldMin.y, b.worldMin.y ),
+                        std::max( a.worldMin.z, b.worldMin.z ) );
+                dbg.maxMm     = SFVEC3F(
+                        std::min( a.worldMax.x, b.worldMax.x ),
+                        std::min( a.worldMax.y, b.worldMax.y ),
+                        std::min( a.worldMax.z, b.worldMax.z ) );
+                dbg.kind      = OVERLAP_KIND::BROAD;
+                dbg.instanceA = a.uuid;
+                dbg.instanceB = b.uuid;
+                dbg.refA      = wxT( "<board>" );
+                dbg.refB      = wxT( "<board>" );
+                m_lastOverlapBoxes.push_back( dbg );
+            }
+
+            // Confirmed COLLISION when penetration is substantial.
+            if( minPen < kMinPenetrationMm )
+                continue;
+
+            diagBoardPairsCollide++;
+
+            OverlapBox box;
+            box.minMm     = SFVEC3F(
+                    std::max( a.worldMin.x, b.worldMin.x ),
+                    std::max( a.worldMin.y, b.worldMin.y ),
+                    std::max( a.worldMin.z, b.worldMin.z ) );
+            box.maxMm     = SFVEC3F(
+                    std::min( a.worldMax.x, b.worldMax.x ),
+                    std::min( a.worldMax.y, b.worldMax.y ),
+                    std::min( a.worldMax.z, b.worldMax.z ) );
+            box.kind      = OVERLAP_KIND::COLLISION;
+            box.instanceA = a.uuid;
+            box.instanceB = b.uuid;
+            box.refA      = wxT( "<board>" );
+            box.refB      = wxT( "<board>" );
+            m_lastOverlapBoxes.push_back( box );
+
+            COLLISION_RESULT result;
+            result.board1Uuid = a.uuid;
+            result.board2Uuid = b.uuid;
+            result.item1Desc  = wxString::Format( wxT( "%s:<board>" ), a.display );
+            result.item2Desc  = wxString::Format( wxT( "%s:<board>" ), b.display );
+
+            glm::vec2 midXY = ( a.centerXY + b.centerXY ) * 0.5f;
+            float     midZ  = ( std::max( a.worldMin.z, b.worldMin.z )
+                                + std::min( a.worldMax.z, b.worldMax.z ) ) * 0.5f;
+            result.collisionPoint = SFVEC3F( midXY.x, midXY.y, midZ );
+            result.penetrationMm  = minPen;
+            m_lastCollisions.push_back( result );
+        }
+    }
+
     wxLogMessage( wxT( "[COLLIDE] fps=%d (mesh=%d) broad=%d fallback=%d "
-                       "→ collide=%d contact=%d cleared=%d boxes=%zu" ),
+                       "→ collide=%d contact=%d cleared=%d boxes=%zu  "
+                       "boards: broad=%d collide=%d" ),
                   diagFpsTotal, diagFpsWithMesh,
                   diagPairsBroad, diagPairsFallback,
                   diagPairsCollide, diagPairsContact, diagPairsCleared,
-                  m_lastOverlapBoxes.size() );
+                  m_lastOverlapBoxes.size(),
+                  diagBoardPairsBroad, diagBoardPairsCollide );
 
     return m_lastCollisions;
 }
@@ -2876,7 +3212,8 @@ bool ASSEMBLY_3D_MANAGER::RedrawAll( bool aIsMoving, REPORTER* aStatusReporter,
     // when the user has hidden mate gizmos.
     const bool anyOverlayOn = m_showMateGizmos
                               || m_showCollisionHighlights
-                              || m_showContactHighlights;
+                              || m_showContactHighlights
+                              || m_showBroadAabbDebug;
 
     if( anyOverlayOn && !firstPass && m_camera )
     {
@@ -3092,16 +3429,15 @@ void ASSEMBLY_3D_MANAGER::rebuildMateGizmoEntries()
 
     const bool anySelected = !m_selectedMatePairId.IsEmpty();
 
-    // Mate-pair entries draw when EITHER "Show mate gizmos" or "Show
-    // contact highlights" is on. They share the same geometry (the
-    // line connecting two mating connectors) — semantically "mate
-    // gizmo" describes the abstract relation while "contact highlight"
-    // describes that the parts are touching. Either toggle should
-    // surface them; neither one off should hide them as long as the
-    // other is on.
-    const bool drawMatePairs = m_showMateGizmos || m_showContactHighlights;
-
-    if( drawMatePairs )
+    // Mate-pair line gizmos render strictly under m_showMateGizmos.
+    // Earlier round had this OR'd with m_showContactHighlights (since
+    // mate connections are a form of "contact"), but that meant
+    // unchecking "Show mate gizmos" with contacts still on left the
+    // lines drawn — confusing because the user's mental model is
+    // "this checkbox = these lines." Each toggle now controls one
+    // visual concept: mate gizmos = lines, contact highlights = on-
+    // model yellow boxes, collision highlights = on-model red boxes.
+    if( m_showMateGizmos )
     for( const MATE_EDGE& edge : edges )
     {
         const MATE_PAIR* primary = PickPrimaryPair( edge );
@@ -3176,7 +3512,7 @@ void ASSEMBLY_3D_MANAGER::rebuildMateGizmoEntries()
     // gizmos between centroids.
     std::vector<MATE_GIZMO::OVERLAP_BOX> boxes;
 
-    if( m_showCollisionHighlights || m_showContactHighlights )
+    if( m_showCollisionHighlights || m_showContactHighlights || m_showBroadAabbDebug )
     {
         constexpr float biuPerMm = 1e6f;
         const float     sharedF  = static_cast<float>( m_sharedBiuTo3Dunits );
@@ -3197,13 +3533,24 @@ void ASSEMBLY_3D_MANAGER::rebuildMateGizmoEntries()
 
         for( const OverlapBox& ob : m_lastOverlapBoxes )
         {
-            const bool isCollision = ( ob.kind == OVERLAP_KIND::COLLISION );
+            // Per-kind toggle gating.
+            switch( ob.kind )
+            {
+            case OVERLAP_KIND::COLLISION:
+                if( !m_showCollisionHighlights )
+                    continue;
+                break;
 
-            if( isCollision && !m_showCollisionHighlights )
-                continue;
+            case OVERLAP_KIND::CONTACT:
+                if( !m_showContactHighlights )
+                    continue;
+                break;
 
-            if( !isCollision && !m_showContactHighlights )
-                continue;
+            case OVERLAP_KIND::BROAD:
+                if( !m_showBroadAabbDebug )
+                    continue;
+                break;
+            }
 
             // Y is negated in the world conversion, so the AABB's
             // post-conversion min/max can swap on the Y axis. Build
@@ -3222,8 +3569,17 @@ void ASSEMBLY_3D_MANAGER::rebuildMateGizmoEntries()
             MATE_GIZMO::OVERLAP_BOX b;
             b.minWorld = actualMin;
             b.maxWorld = actualMax;
-            b.kind     = isCollision ? MATE_GIZMO::OVERLAP_KIND::COLLISION
-                                     : MATE_GIZMO::OVERLAP_KIND::CONTACT;
+
+            switch( ob.kind )
+            {
+            case OVERLAP_KIND::COLLISION:
+                b.kind = MATE_GIZMO::OVERLAP_KIND::COLLISION; break;
+            case OVERLAP_KIND::CONTACT:
+                b.kind = MATE_GIZMO::OVERLAP_KIND::CONTACT;   break;
+            case OVERLAP_KIND::BROAD:
+                b.kind = MATE_GIZMO::OVERLAP_KIND::BROAD;     break;
+            }
+
             boxes.push_back( b );
         }
     }

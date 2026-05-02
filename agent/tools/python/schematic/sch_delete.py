@@ -6,6 +6,50 @@ targets = TOOL_ARGS.get("targets", [])
 file_path = TOOL_ARGS.get("file_path", "")
 delete_net = TOOL_ARGS.get("delete_net", False)
 
+# Module-pin targets route through the multi_board edit IPC instead of the
+# generic crud path. Pull them out first so the rest of the loop only sees
+# regular schematic items.
+module_pin_targets = []
+remaining_targets = []
+for _t in targets:
+    if isinstance(_t, dict) and _t.get('target_type') == 'module_pin':
+        module_pin_targets.append(_t)
+    else:
+        remaining_targets.append(_t)
+
+module_pin_results = []
+if module_pin_targets:
+    if not hasattr(sch, 'multi_board'):
+        for _mp in module_pin_targets:
+            module_pin_results.append({'target': _mp,
+                                       'error': 'module_pin target requires the MBS canvas (set target.doc_type:"mbs")'})
+    else:
+        # Build (block_uuid, pin_number) -> pin_uuid index lazily.
+        _pin_index_built = False
+        _pin_index = {}
+        for _mp in module_pin_targets:
+            pin_uuid = _mp.get('pin_uuid', '')
+            block_uuid = _mp.get('block_uuid', '')
+            pin_number = _mp.get('pin_number', '')
+            if not pin_uuid and block_uuid and pin_number:
+                if not _pin_index_built:
+                    for _b in sch.multi_board.get_blocks():
+                        for _p in _b.pins:
+                            _pin_index[(str(_b.id.value), str(_p.pin_number))] = str(_p.id.value)
+                    _pin_index_built = True
+                pin_uuid = _pin_index.get((str(block_uuid), str(pin_number)), '')
+            if not pin_uuid:
+                module_pin_results.append({'target': _mp,
+                                           'error': 'module_pin target requires pin_uuid OR (block_uuid + pin_number)'})
+                continue
+            try:
+                ok = sch.multi_board.delete_pin(pin_uuid)
+                module_pin_results.append({'pin_uuid': pin_uuid, 'deleted': bool(ok)})
+            except Exception as _e:
+                module_pin_results.append({'pin_uuid': pin_uuid, 'error': str(_e)})
+
+targets = remaining_targets
+
 # Separate string targets from query targets
 string_targets = [t for t in targets if isinstance(t, str)]
 query_targets = [t for t in targets if isinstance(t, dict)]
@@ -384,6 +428,8 @@ try:
         result['queries_not_matched'] = query_not_found
     if net_deleted_count:
         result['net_deleted_extra'] = net_deleted_count
+    if module_pin_results:
+        result['module_pins'] = module_pin_results
 
 except Exception as ipc_error:
     use_ipc = False

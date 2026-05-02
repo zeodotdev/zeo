@@ -222,6 +222,63 @@ void MBSCH_EDIT_FRAME::onSchematicSaved()
     if( !rootScreen )
         return;
 
+    // Backfill empty mbs_reference values. Blocks added via the legacy code
+    // path (or imported from a project that pre-dates the auto-assign in
+    // mbs_refresh's ADD_BLOCK case) can carry empty mbs_references, which
+    // makes them indistinguishable from sibling blocks that share the same
+    // component_ref (e.g. CN1 in two sub-projects). With no unique handle,
+    // the agent's sch_label silently retargets the wrong block. Assign the
+    // next free B<N> to any empty ref. The schematic is marked modified so
+    // the next save persists; we don't re-save here to avoid recursing into
+    // onSchematicSaved.
+    {
+        std::set<int>                  usedRefs;
+        std::vector<SCH_MODULE_BLOCK*> needsBackfill;
+
+        for( SCH_ITEM* item : rootScreen->Items().OfType( SCH_MODULE_BLOCK_T ) )
+        {
+            SCH_MODULE_BLOCK* b   = static_cast<SCH_MODULE_BLOCK*>( item );
+            const wxString&   ref = b->GetMbsReference();
+
+            if( ref.IsEmpty() )
+            {
+                needsBackfill.push_back( b );
+                continue;
+            }
+
+            if( !ref.StartsWith( wxT( "B" ) ) )
+                continue;
+
+            long n = 0;
+
+            if( ref.Mid( 1 ).ToLong( &n ) && n > 0 )
+                usedRefs.insert( (int) n );
+        }
+
+        if( !needsBackfill.empty() )
+        {
+            int candidate = 1;
+
+            for( SCH_MODULE_BLOCK* b : needsBackfill )
+            {
+                while( usedRefs.count( candidate ) )
+                    candidate++;
+
+                b->SetMbsReference( wxString::Format( wxT( "B%d" ), candidate ) );
+                usedRefs.insert( candidate );
+            }
+
+            OnModify();
+
+            wxString msg = wxString::Format(
+                    _( "Multi-board: backfilled %zu empty block reference(s); "
+                       "save again to persist." ),
+                    needsBackfill.size() );
+            SetStatusText( msg, 0 );
+            wxLogInfo( wxT( "MBSCH: %s" ), msg );
+        }
+    }
+
     wxFileName schFn( rootScreen->GetFileName() );
 
     if( !schFn.IsAbsolute() )
@@ -277,7 +334,10 @@ void MBSCH_EDIT_FRAME::onSchematicSaved()
 
     std::vector<MB_CROSS_BOARD_NET> nets = ExtractCrossBoardNets( Schematic(), multi );
     multi.SetCrossBoardNets( nets );
-    multi.SaveToFile();
+    // aForce=true: SetCrossBoardNets is a plain member assignment that bypasses
+    // the JSON_SETTINGS modified-tracking, so SaveToFile would otherwise be a
+    // silent no-op and the cross-board net list would never persist.
+    multi.SaveToFile( wxString(), /* aForce */ true );
 
     // Surface extraction outcomes in the status bar so a user wiring the
     // MBS can immediately tell whether Sync will have anything to do —

@@ -330,20 +330,28 @@ void PANEL_3D_ASSEMBLY::createControls()
     m_showContactsCheck->SetToolTip(
             _( "Overlay markers on components that are in expected contact (mated). "
                 "Currently aliases the mate-pair gizmo." ) );
-    viewBox->Add( m_showContactsCheck, 0, wxBOTTOM, 3 );
+    viewBox->Add( m_showContactsCheck, 0, wxBOTTOM, 6 );
 
-    // Debug: blue wireframe for every footprint pair that survives the
-    // broad-phase AABB pre-filter. Lets the user visually compare what
-    // the broad phase is finding vs what the mesh-level narrow phase
-    // confirms when collision boxes don't appear where expected.
-    m_showAabbDebugCheck = new wxCheckBox( m_scrolled, wxID_ANY,
-                                            _( "Show AABB debug (broad phase)" ) );
-    m_showAabbDebugCheck->SetValue( false );
-    m_showAabbDebugCheck->SetToolTip(
-            _( "DEBUG: blue wireframe for every footprint pair flagged by the AABB "
-                "pre-filter. Use to compare against confirmed collision/contact "
-                "boxes — when only blue shows, the narrow phase rejected the pair." ) );
-    viewBox->Add( m_showAabbDebugCheck, 0 );
+    // Tolerance for the COLLISION-vs-CONTACT verdict on mated mesh
+    // interpenetration: how thick the mesh-overlap can be before
+    // flagging as a real collision. Different connector classes mate
+    // at different depths (FFC ~0.5 mm, headers ~1-2 mm), so let the
+    // user tune it per project.
+    wxBoxSizer* thresholdRow = new wxBoxSizer( wxHORIZONTAL );
+    thresholdRow->Add( new wxStaticText( m_scrolled, wxID_ANY,
+                                          _( "Collision tolerance (mm):" ) ),
+                       0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 5 );
+    m_collisionThresholdCtrl = new wxTextCtrl( m_scrolled, wxID_ANY, "0.5",
+                                                wxDefaultPosition, wxDefaultSize,
+                                                wxTE_PROCESS_ENTER );
+    m_collisionThresholdCtrl->SetMinSize( wxSize( FromDIP( 50 ), -1 ) );
+    m_collisionThresholdCtrl->SetToolTip(
+            _( "Mesh-overlap thickness above which a mated pair is flagged as "
+                "COLLISION (red). Below this, mated mesh interpenetration shows "
+                "as CONTACT (yellow). Raise for connectors with deeper natural "
+                "mating depth." ) );
+    thresholdRow->Add( m_collisionThresholdCtrl, 1 );
+    viewBox->Add( thresholdRow, 0, wxEXPAND );
 
     mainSizer->Add( viewBox, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 5 );
 
@@ -438,8 +446,15 @@ void PANEL_3D_ASSEMBLY::bindEvents()
                                   &PANEL_3D_ASSEMBLY::onShowCollisionsToggled, this );
     m_showContactsCheck->Bind( wxEVT_CHECKBOX,
                                 &PANEL_3D_ASSEMBLY::onShowContactsToggled, this );
-    m_showAabbDebugCheck->Bind( wxEVT_CHECKBOX,
-                                &PANEL_3D_ASSEMBLY::onShowAabbDebugToggled, this );
+    m_collisionThresholdCtrl->Bind( wxEVT_TEXT_ENTER,
+                                     &PANEL_3D_ASSEMBLY::onCollisionThresholdChanged, this );
+    m_collisionThresholdCtrl->Bind( wxEVT_KILL_FOCUS,
+                                     [this]( wxFocusEvent& aEvent )
+                                     {
+                                         wxCommandEvent dummy;
+                                         onCollisionThresholdChanged( dummy );
+                                         aEvent.Skip();
+                                     } );
 }
 
 
@@ -701,12 +716,25 @@ void PANEL_3D_ASSEMBLY::onShowContactsToggled( wxCommandEvent& aEvent )
 }
 
 
-void PANEL_3D_ASSEMBLY::onShowAabbDebugToggled( wxCommandEvent& aEvent )
+void PANEL_3D_ASSEMBLY::onCollisionThresholdChanged( wxCommandEvent& aEvent )
 {
+    (void) aEvent;
+
     if( !m_manager )
         return;
 
-    m_manager->SetShowBroadAabbDebug( m_showAabbDebugCheck->GetValue() );
+    double v = 0.0;
+
+    if( !m_collisionThresholdCtrl->GetValue().ToDouble( &v ) || v < 0.0 )
+    {
+        // Bad input — restore the manager's current value.
+        m_collisionThresholdCtrl->SetValue(
+                wxString::Format( "%.2f", m_manager->GetCollisionThresholdMm() ) );
+        return;
+    }
+
+    m_manager->SetCollisionThresholdMm( static_cast<float>( v ) );
+    autoRunCollisionCheck();
     refresh3DView();
 }
 

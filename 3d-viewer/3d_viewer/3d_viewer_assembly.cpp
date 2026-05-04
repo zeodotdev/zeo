@@ -1896,15 +1896,57 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
 
         const float fpz_mm = aInst.position.z + fpZLocalMm;
 
+        // Inst rotation pivot is the board's GEOMETRIC CENTER (matches
+        // the renderer's per-instance assembly pose, which shifts to
+        // localCenterShared, rotates, then shifts back). Without this,
+        // a non-zero board rotation rotates fps around the world
+        // origin, putting them in wildly wrong positions and breaking
+        // the AABBs.
+        // BOARD_ADAPTER::GetBoardCenter() returns the centroid in the
+        // renderer's CAD-frame (Y inverted from PCB-frame Y). Our
+        // collision math works in PCB-frame Y (positive Y matches
+        // FOOTPRINT::GetPosition() and BOARD_3D_INSTANCE::position) so
+        // negate Y when reading. Without this the rotation pivot lands
+        // at -boardCenter.y in PCB frame, swinging rotated footprints
+        // ~2*|boardCenter.y| away from where the renderer puts them.
+        glm::vec3 boardCenterMm( 0.0f );
+
+        if( aAdapter )
+        {
+            const double biuTo3d = aAdapter->BiuTo3dUnits();
+
+            if( biuTo3d != 0.0 )
+            {
+                const SFVEC3F bc = aAdapter->GetBoardCenter();
+                boardCenterMm = glm::vec3(
+                        static_cast<float>(  bc.x / biuTo3d / 1e6 ),
+                        static_cast<float>( -bc.y / biuTo3d / 1e6 ),
+                        static_cast<float>(  bc.z / biuTo3d / 1e6 ) );
+            }
+        }
+
         glm::mat4 instMat( 1.0f );
         instMat = glm::translate( instMat, glm::vec3( aInst.position.x,
                                                        aInst.position.y, 0.0f ) );
-        instMat = glm::rotate( instMat, glm::radians( aInst.rotation.z ),
+        // Pivot to board center for the rotation, then back. Matrix-
+        // application order: -boardCenter → rotate → +boardCenter →
+        // T(inst.xy).
+        //
+        // Rotation angles for axes that involve Y (Z and X) are
+        // negated to match the renderer's CAD-frame rotation. Identity
+        // F·R(θ)·F = R(-θ) for Z and X axis rotations under a Y-flip
+        // (F = scale(1,-1,1)); Y-axis rotation is unaffected. Since
+        // our chain Y-flips the model verts to PCB-Y but the renderer
+        // keeps them in CAD-Y while applying the same panel rotation,
+        // we negate Z and X to get the same final vertex position.
+        instMat = glm::translate( instMat, boardCenterMm );
+        instMat = glm::rotate( instMat, glm::radians( -aInst.rotation.z ),
                                glm::vec3( 0, 0, 1 ) );
-        instMat = glm::rotate( instMat, glm::radians( aInst.rotation.y ),
+        instMat = glm::rotate( instMat, glm::radians(  aInst.rotation.y ),
                                glm::vec3( 0, 1, 0 ) );
-        instMat = glm::rotate( instMat, glm::radians( aInst.rotation.x ),
+        instMat = glm::rotate( instMat, glm::radians( -aInst.rotation.x ),
                                glm::vec3( 1, 0, 0 ) );
+        instMat = glm::translate( instMat, -boardCenterMm );
 
         glm::mat4 fpMat = instMat;
         fpMat = glm::translate( fpMat, glm::vec3( fpx_mm, fpy_mm, fpz_mm ) );
@@ -2044,7 +2086,12 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
         const float lhx = ( bbox.GetWidth()  / 2.0f ) / 1e6f;
         const float lhy = ( bbox.GetHeight() / 2.0f ) / 1e6f;
 
-        const float thetaRad = aInst.rotation.z * static_cast<float>( M_PI ) / 180.0f;
+        // Negate the Z rotation angle: the renderer rotates in CAD-Y
+        // (Y-inverted from our PCB-Y collision frame). Identity
+        // F·R_z(θ)·F = R_z(-θ) under a Y-flip — to land at the same
+        // world position as the renderer, we apply -θ in PCB-Y. See
+        // the matching comment in buildFpMeshTris.
+        const float thetaRad = -aInst.rotation.z * static_cast<float>( M_PI ) / 180.0f;
         const float c = std::cos( thetaRad );
         const float s = std::sin( thetaRad );
 
@@ -2054,8 +2101,37 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
         aOut.axisY    = glm::vec2( -s, c );
         aOut.halfX    = lhx;
         aOut.halfY    = lhy;
-        aOut.centerXY = glm::vec2( c * lcx - s * lcy + aInst.position.x,
-                                   s * lcx + c * lcy + aInst.position.y );
+
+        // Inst rotation pivots around the BOARD'S geometric center —
+        // matching the renderer's per-instance assembly pose. Without
+        // this, footprints rotate around the world origin and end up
+        // at wildly wrong world XYs once the user sets a non-zero
+        // board rotation.
+        //
+        // GetBoardCenter() is in CAD-Y; negate to bring into PCB-Y so
+        // the pivot lands at the actual board centroid in our frame.
+        float bcx_mm = 0.0f;
+        float bcy_mm = 0.0f;
+
+        if( aAdapter )
+        {
+            const double biuTo3d = aAdapter->BiuTo3dUnits();
+
+            if( biuTo3d != 0.0 )
+            {
+                const SFVEC3F bc = aAdapter->GetBoardCenter();
+                bcx_mm = static_cast<float>(  bc.x / biuTo3d / 1e6 );
+                bcy_mm = static_cast<float>( -bc.y / biuTo3d / 1e6 );
+            }
+        }
+
+        // Rotate (lcx, lcy) around (bcx_mm, bcy_mm), then translate
+        // by inst.position.xy.
+        const float dxLocal = lcx - bcx_mm;
+        const float dyLocal = lcy - bcy_mm;
+        aOut.centerXY = glm::vec2(
+                ( c * dxLocal - s * dyLocal ) + bcx_mm + aInst.position.x,
+                ( s * dxLocal + c * dyLocal ) + bcy_mm + aInst.position.y );
 
         computeFpZExtent( aInst, aAdapter, aFp, aOut.zMin, aOut.zMax,
                           aOut.hasDeclaredModels, aOut.hasLoadedModels );
@@ -2316,9 +2392,12 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
                         // socket" — a real engineering concern even
                         // for intentionally mated pairs.
                         constexpr size_t kMaxTriVerts = 6 * 256;
-                        constexpr float  kCollisionPenThresholdMm = 0.5f;
+                        // Per-project user-tunable threshold. Default
+                        // 0.5 mm; the user can raise it for connectors
+                        // with larger mating depth via the panel's
+                        // "Collision threshold" field.
+                        const float kCollisionPenThresholdMm = m_collisionThresholdMm;
                         std::vector<SFVEC3F> hitTriVertsM;
-                        float                maxPenDepthM = 0.0f;
 
                         // Best closest tri pair when meshes don't
                         // actually intersect — used for "almost
@@ -2353,42 +2432,6 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
                                                 ta.v0, ta.v1, ta.v2,
                                                 tb.v0, tb.v1, tb.v2 ) )
                                     {
-                                        // Penetration depth: max
-                                        // signed distance of any
-                                        // vertex of one triangle from
-                                        // the opposite triangle's
-                                        // plane. Larger = deeper
-                                        // mesh interpenetration.
-                                        glm::vec3 nB = glm::cross(
-                                                tb.v1 - tb.v0, tb.v2 - tb.v0 );
-                                        float lenB = glm::length( nB );
-
-                                        if( lenB > 1e-9f )
-                                        {
-                                            nB /= lenB;
-                                            float dB = -glm::dot( nB, tb.v0 );
-                                            float d0 = std::abs( glm::dot( nB, ta.v0 ) + dB );
-                                            float d1 = std::abs( glm::dot( nB, ta.v1 ) + dB );
-                                            float d2 = std::abs( glm::dot( nB, ta.v2 ) + dB );
-                                            maxPenDepthM = std::max( maxPenDepthM,
-                                                                     std::max( { d0, d1, d2 } ) );
-                                        }
-
-                                        glm::vec3 nA = glm::cross(
-                                                ta.v1 - ta.v0, ta.v2 - ta.v0 );
-                                        float lenA = glm::length( nA );
-
-                                        if( lenA > 1e-9f )
-                                        {
-                                            nA /= lenA;
-                                            float dA = -glm::dot( nA, ta.v0 );
-                                            float u0 = std::abs( glm::dot( nA, tb.v0 ) + dA );
-                                            float u1 = std::abs( glm::dot( nA, tb.v1 ) + dA );
-                                            float u2 = std::abs( glm::dot( nA, tb.v2 ) + dA );
-                                            maxPenDepthM = std::max( maxPenDepthM,
-                                                                     std::max( { u0, u1, u2 } ) );
-                                        }
-
                                         if( hitTriVertsM.size() < kMaxTriVerts )
                                         {
                                             hitTriVertsM.push_back(
@@ -2438,19 +2481,46 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
                         std::vector<SFVEC3F>* tris = nullptr;
                         const wxChar*         desc = nullptr;
                         OVERLAP_KIND          kindM;
+                        float                 overlapThicknessM = 0.0f;
 
                         if( !hitTriVertsM.empty() )
                         {
                             tris = &hitTriVertsM;
 
-                            // Penetration depth drives the verdict.
-                            // > threshold mm = real over-mating
-                            // (connector pushed deeper than its
-                            // mating depth allows) → COLLISION.
-                            // ≤ threshold mm = thin housing-wall
-                            // tangent contact, normal mating fit →
-                            // CONTACT.
-                            if( maxPenDepthM > kCollisionPenThresholdMm )
+                            // "Overlap thickness" = minimum extent of
+                            // the AABB containing all intersecting
+                            // triangle vertices, across the X/Y/Z
+                            // axes. This is the THINNEST dimension of
+                            // the volume where the meshes interpene-
+                            // trate. Tangent housing-wall contact
+                            // produces a thin slab (small min extent);
+                            // a connector pushed past its mating
+                            // depth produces a chunky volume (large
+                            // min extent). Threshold says "how much
+                            // mesh-overlap thickness is acceptable
+                            // before it's a real over-mate"; default
+                            // is 0.5 mm, which gives normal connector
+                            // mating fit room while flagging genuine
+                            // over-penetration.
+                            SFVEC3F tMin = ( *tris )[0];
+                            SFVEC3F tMax = ( *tris )[0];
+
+                            for( const SFVEC3F& v : *tris )
+                            {
+                                tMin.x = std::min( tMin.x, v.x );
+                                tMin.y = std::min( tMin.y, v.y );
+                                tMin.z = std::min( tMin.z, v.z );
+                                tMax.x = std::max( tMax.x, v.x );
+                                tMax.y = std::max( tMax.y, v.y );
+                                tMax.z = std::max( tMax.z, v.z );
+                            }
+
+                            overlapThicknessM = std::min(
+                                    { tMax.x - tMin.x,
+                                      tMax.y - tMin.y,
+                                      tMax.z - tMin.z } );
+
+                            if( overlapThicknessM > kCollisionPenThresholdMm )
                             {
                                 kindM = OVERLAP_KIND::COLLISION;
                                 desc  = wxT( "over-penetrating" );
@@ -2519,7 +2589,7 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
                                     ( bMin.y + bMax.y ) * 0.5f,
                                     ( bMin.z + bMax.z ) * 0.5f );
                             result.collisionPoint = SFVEC3F( mid.x, mid.y, mid.z );
-                            result.penetrationMm  = maxPenDepthM;
+                            result.penetrationMm  = overlapThicknessM;
                             m_lastCollisions.push_back( result );
                         }
                         else
@@ -2530,13 +2600,13 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
                         if( diagPairsBroad <= 16 )
                         {
                             wxLogMessage( wxT( "[COLLIDE] mated    %s↔%s "
-                                               "→ %s (%s, depth=%.3f mm)" ),
+                                               "→ %s (%s, thickness=%.3f mm)" ),
                                           a.ref, b.ref,
                                           kindM == OVERLAP_KIND::COLLISION
                                               ? wxT( "COLLISION" )
                                               : wxT( "CONTACT" ),
                                           desc,
-                                          maxPenDepthM );
+                                          overlapThicknessM );
                         }
 
                         continue;
@@ -2628,57 +2698,15 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
                     //     calls.
                     if( a.meshTris.empty() || b.meshTris.empty() )
                     {
+                        // Mesh not loaded for at least one side. We
+                        // used to fall back to an OBB-rectangle
+                        // highlight here, but the rectangle visibly
+                        // diverges from the actual mesh shape and gave
+                        // the impression that collision detection was
+                        // approximate. Skip until the mesh cache is
+                        // ready — auto-run will retry on the next
+                        // refresh once the model has finished loading.
                         diagPairsFallback++;
-
-                        const bool eitherDeclared = a.hasDeclaredModels
-                                                    || b.hasDeclaredModels;
-
-                        if( !eitherDeclared )
-                            continue;   // pure silk vs anything → no volume
-
-                        // Only flag substantial OBB penetration as
-                        // COLLISION; small overlaps stay invisible
-                        // because the OBB envelope is approximate.
-                        if( minPen < kMinPenetrationMm )
-                            continue;
-
-                        const float fbM = kContactMarginMm;
-                        SFVEC3F     bMin( std::max( a.worldMin.x, b.worldMin.x ),
-                                          std::max( a.worldMin.y, b.worldMin.y ),
-                                          std::max( a.worldMin.z, b.worldMin.z ) );
-                        SFVEC3F     bMax( std::min( a.worldMax.x, b.worldMax.x ),
-                                          std::min( a.worldMax.y, b.worldMax.y ),
-                                          std::min( a.worldMax.z, b.worldMax.z ) );
-
-                        OverlapBox box;
-                        box.minMm     = bMin;
-                        box.maxMm     = bMax;
-                        box.kind      = OVERLAP_KIND::COLLISION;
-                        box.instanceA = inst1.uuid;
-                        box.instanceB = inst2.uuid;
-                        box.refA      = a.ref;
-                        box.refB      = b.ref;
-                        m_lastOverlapBoxes.push_back( box );
-
-                        COLLISION_RESULT result;
-                        result.board1Uuid = inst1.uuid;
-                        result.board2Uuid = inst2.uuid;
-                        result.item1Desc  = wxString::Format(
-                                wxT( "%s:%s" ), inst1.displayName, a.ref );
-                        result.item2Desc  = wxString::Format(
-                                wxT( "%s:%s" ), inst2.displayName, b.ref );
-
-                        glm::vec2 midXY = ( a.centerXY + b.centerXY ) * 0.5f;
-                        float     midZ  = ( std::max( a.worldMin.z, b.worldMin.z )
-                                            + std::min( a.worldMax.z, b.worldMax.z ) ) * 0.5f;
-                        result.collisionPoint = SFVEC3F( midXY.x, midXY.y, midZ );
-                        result.penetrationMm  = minPen;
-                        m_lastCollisions.push_back( result );
-
-                        // Suppress the unused variable warning for fbM
-                        // — kept for future symmetric-margin tweaks.
-                        (void) fbM;
-
                         continue;
                     }
 
@@ -2695,8 +2723,14 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
 
                     // Triangle vertices participating in the
                     // intersection. Capped to keep memory bounded.
+                    // hitTriVerts: actually-intersecting tri pairs
+                    // (used for COLLISION render). nearTriVerts:
+                    // tri pairs within kContactMarginMm but not
+                    // intersecting (used for CONTACT render — same
+                    // mesh-tri visualization, just yellow not red).
                     constexpr size_t     kMaxTriVerts = 6 * 256;
                     std::vector<SFVEC3F> hitTriVerts;
+                    std::vector<SFVEC3F> nearTriVerts;
 
                     // Per-pair counters so we can tell how the mesh
                     // narrow phase is performing for each candidate —
@@ -2804,6 +2838,30 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
                                 growBox( nearMin, nearMax, tb.v0, haveNear );
                                 growBox( nearMin, nearMax, tb.v1, haveNear );
                                 growBox( nearMin, nearMax, tb.v2, haveNear );
+
+                                // Capture the actual tri verts so
+                                // CONTACT can render as filled mesh
+                                // tris (yellow), matching how
+                                // COLLISION renders. Without this the
+                                // CONTACT highlight falls back to the
+                                // AABB rectangle, which looks
+                                // inconsistent with the COLLISION
+                                // mesh-tri render.
+                                if( nearTriVerts.size() < kMaxTriVerts )
+                                {
+                                    nearTriVerts.push_back(
+                                            SFVEC3F( ta.v0.x, ta.v0.y, ta.v0.z ) );
+                                    nearTriVerts.push_back(
+                                            SFVEC3F( ta.v1.x, ta.v1.y, ta.v1.z ) );
+                                    nearTriVerts.push_back(
+                                            SFVEC3F( ta.v2.x, ta.v2.y, ta.v2.z ) );
+                                    nearTriVerts.push_back(
+                                            SFVEC3F( tb.v0.x, tb.v0.y, tb.v0.z ) );
+                                    nearTriVerts.push_back(
+                                            SFVEC3F( tb.v1.x, tb.v1.y, tb.v1.z ) );
+                                    nearTriVerts.push_back(
+                                            SFVEC3F( tb.v2.x, tb.v2.y, tb.v2.z ) );
+                                }
                             }
                         }
                     }
@@ -2859,6 +2917,8 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
 
                     if( kind == OVERLAP_KIND::COLLISION )
                         box.triVertsMm = std::move( hitTriVerts );
+                    else if( kind == OVERLAP_KIND::CONTACT )
+                        box.triVertsMm = std::move( nearTriVerts );
 
                     m_lastOverlapBoxes.push_back( box );
 
@@ -2944,8 +3004,14 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
         sh.axisY    = glm::vec2( -s, c );
         sh.halfX    = lhx;
         sh.halfY    = lhy;
-        sh.centerXY = glm::vec2( c * lcx - s * lcy + inst.position.x,
-                                 s * lcx + c * lcy + inst.position.y );
+        // Inst rotation pivots around the board's geometric center
+        // (which IS lcx, lcy here). With the pivot at the bbox
+        // centre, the centre itself doesn't move during rotation —
+        // only the rect's local axes rotate (already captured in
+        // axisX/axisY above). The substrate centre is just translated
+        // by inst.position.
+        sh.centerXY = glm::vec2( lcx + inst.position.x,
+                                 lcy + inst.position.y );
 
         const float boardThickness = GetBoardThickness( inst.board.get() );
 
@@ -3191,6 +3257,130 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
                               std::min( fp.worldMax.y, sub.worldMax.y ),
                               std::min( fp.worldMax.z, sub.worldMax.z ) );
 
+                // Collect only the portion of each fp tri that's
+                // physically inside the substrate slab. Sutherland-
+                // Hodgman clip against the 6 substrate AABB planes
+                // produces a convex polygon (≤9 verts from a tri); we
+                // fan-triangulate that polygon and emit the resulting
+                // tris as triVertsMm. The user sees a tight highlight
+                // hugging the actual intrusion — no over-large tris
+                // hanging out of the parent board, no false positives
+                // from tris that just brushed the AABB.
+                constexpr size_t     kMaxFpSubTriVerts = 6 * 256;
+                std::vector<SFVEC3F> intrudeTriVerts;
+
+                // axis = 0/1/2 (X/Y/Z), keepGreater controls which
+                // half-space survives: true keeps coord >= bound
+                // (used for the worldMin face), false keeps
+                // coord <= bound (used for the worldMax face).
+                auto clipAxis = []( std::vector<glm::vec3>& aIn,
+                                     std::vector<glm::vec3>& aOut,
+                                     int aAxis, float aBound,
+                                     bool aKeepGreater )
+                {
+                    aOut.clear();
+
+                    if( aIn.empty() )
+                        return;
+
+                    auto inside = [&]( const glm::vec3& aP ) -> bool
+                    {
+                        const float c = aP[aAxis];
+                        return aKeepGreater ? ( c >= aBound ) : ( c <= aBound );
+                    };
+
+                    auto cross = [&]( const glm::vec3& aA,
+                                       const glm::vec3& aB ) -> glm::vec3
+                    {
+                        const float da = aA[aAxis] - aBound;
+                        const float db = aB[aAxis] - aBound;
+                        const float denom = ( da - db );
+
+                        // Degenerate: both verts on the plane (denom 0)
+                        // — fall back to midpoint to avoid div-by-zero.
+                        const float t = ( std::abs( denom ) > 1e-9f )
+                                            ? ( da / denom )
+                                            : 0.5f;
+                        return aA + t * ( aB - aA );
+                    };
+
+                    glm::vec3 prev       = aIn.back();
+                    bool      prevInside = inside( prev );
+
+                    for( const glm::vec3& curr : aIn )
+                    {
+                        bool currInside = inside( curr );
+
+                        if( currInside )
+                        {
+                            if( !prevInside )
+                                aOut.push_back( cross( prev, curr ) );
+                            aOut.push_back( curr );
+                        }
+                        else if( prevInside )
+                        {
+                            aOut.push_back( cross( prev, curr ) );
+                        }
+
+                        prev       = curr;
+                        prevInside = currInside;
+                    }
+                };
+
+                std::vector<glm::vec3> bufA, bufB;
+
+                for( const WorldTri& t : fp.meshTris )
+                {
+                    if( intrudeTriVerts.size() >= kMaxFpSubTriVerts )
+                        break;
+
+                    // Cheap reject: tri AABB fully outside substrate
+                    // AABB → no intrusion.
+                    if( t.aabbMax.x < sub.worldMin.x
+                        || t.aabbMin.x > sub.worldMax.x
+                        || t.aabbMax.y < sub.worldMin.y
+                        || t.aabbMin.y > sub.worldMax.y
+                        || t.aabbMax.z < sub.worldMin.z
+                        || t.aabbMin.z > sub.worldMax.z )
+                        continue;
+
+                    bufA = { t.v0, t.v1, t.v2 };
+
+                    clipAxis( bufA, bufB, 0, sub.worldMin.x, true  );
+                    clipAxis( bufB, bufA, 0, sub.worldMax.x, false );
+                    clipAxis( bufA, bufB, 1, sub.worldMin.y, true  );
+                    clipAxis( bufB, bufA, 1, sub.worldMax.y, false );
+                    clipAxis( bufA, bufB, 2, sub.worldMin.z, true  );
+                    clipAxis( bufB, bufA, 2, sub.worldMax.z, false );
+
+                    // bufA holds the final clipped polygon. Fan-
+                    // triangulate (verts[0] + i + i+1) into the output.
+                    if( bufA.size() < 3 )
+                        continue;
+
+                    for( size_t k = 1; k + 1 < bufA.size(); k++ )
+                    {
+                        if( intrudeTriVerts.size() + 3 > kMaxFpSubTriVerts )
+                            break;
+
+                        intrudeTriVerts.push_back(
+                                SFVEC3F( bufA[0].x, bufA[0].y, bufA[0].z ) );
+                        intrudeTriVerts.push_back(
+                                SFVEC3F( bufA[k].x, bufA[k].y, bufA[k].z ) );
+                        intrudeTriVerts.push_back(
+                                SFVEC3F( bufA[k + 1].x,
+                                          bufA[k + 1].y,
+                                          bufA[k + 1].z ) );
+                    }
+                }
+
+                // No tri actually inside the substrate volume — pure
+                // AABB false positive (fp's bbox brushes the sub
+                // bbox but the geometry doesn't actually intrude).
+                // Skip; don't push a misleading box.
+                if( intrudeTriVerts.empty() )
+                    continue;
+
                 OverlapBox box;
                 box.minMm     = bMin;
                 box.maxMm     = bMax;
@@ -3199,6 +3389,7 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
                 box.instanceB = sub.uuid;
                 box.refA      = fp.ref;
                 box.refB      = wxT( "<board>" );
+                box.triVertsMm = std::move( intrudeTriVerts );
                 m_lastOverlapBoxes.push_back( box );
 
                 COLLISION_RESULT result;
@@ -3227,6 +3418,54 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
                   m_lastOverlapBoxes.size(),
                   diagBoardPairsBroad, diagBoardPairsCollide,
                   diagFpSubBroad, diagFpSubCollide );
+
+    // Rotation-debug dump: when any instance is rotated AND fp-vs-fp
+    // broad found nothing, emit per-fp world AABBs so we can see where
+    // each footprint is actually positioned in world space. Lets the
+    // user verify visually-overlapping connectors really are landing at
+    // overlapping AABBs (or not) under non-trivial board rotations.
+    bool anyRotated = false;
+
+    for( const BOARD_3D_INSTANCE& inst : m_boardInstances )
+    {
+        if( !inst.visible )
+            continue;
+
+        if( std::abs( inst.rotation.x ) > 0.01f
+            || std::abs( inst.rotation.y ) > 0.01f
+            || std::abs( inst.rotation.z ) > 0.01f )
+        {
+            anyRotated = true;
+            break;
+        }
+    }
+
+    if( anyRotated && diagPairsBroad == 0 && m_boardInstances.size() >= 2 )
+    {
+        wxLogMessage( wxT( "[BROAD-DUMP] rotated boards but broad=0 — per-fp AABBs:" ) );
+
+        for( size_t i = 0; i < perInstance.size(); i++ )
+        {
+            const BOARD_3D_INSTANCE& inst = m_boardInstances[i];
+
+            wxLogMessage( wxT( "[BROAD-DUMP]   inst[%zu] '%s' pos=(%.2f,%.2f,%.2f) "
+                               "rot=(%.1f,%.1f,%.1f) fps=%zu" ),
+                          i, inst.displayName,
+                          inst.position.x, inst.position.y, inst.position.z,
+                          inst.rotation.x, inst.rotation.y, inst.rotation.z,
+                          perInstance[i].size() );
+
+            for( const FPCollisionShape& fp : perInstance[i] )
+            {
+                wxLogMessage( wxT( "[BROAD-DUMP]     %s aabb=[%.2f,%.2f,%.2f]→"
+                                   "[%.2f,%.2f,%.2f] mesh=%zu" ),
+                              fp.ref,
+                              fp.worldMin.x, fp.worldMin.y, fp.worldMin.z,
+                              fp.worldMax.x, fp.worldMax.y, fp.worldMax.z,
+                              fp.meshTris.size() );
+            }
+        }
+    }
 
     return m_lastCollisions;
 }

@@ -148,10 +148,38 @@ wxString DIALOG_MULTI_BOARD_NET_CLASS_CONFLICT::formatNetclassDescription(
     if( aNc->HasDiffPairViaGap() )
         addMm( _( "Diff pair via gap" ), aNc->GetDiffPairViaGap() );
 
+    if( aNc->HasWireWidth() )
+        out += wxString::Format( _( "Wire width: %d mils\n" ),
+                                 schIUScale.IUToMils( aNc->GetWireWidth() ) );
+    if( aNc->HasBusWidth() )
+        out += wxString::Format( _( "Bus width: %d mils\n" ),
+                                 schIUScale.IUToMils( aNc->GetBusWidth() ) );
+    if( aNc->HasLineStyle() )
+        out += wxString::Format( _( "Line style: %d\n" ), aNc->GetLineStyle() );
+
     if( !aNc->GetTuningProfile().IsEmpty() )
         out += wxString::Format( _( "Tuning profile: %s\n" ), aNc->GetTuningProfile() );
 
-    out += wxString::Format( _( "Priority: %d" ), aNc->GetPriority() );
+    // Always render colors. Differences here are the most common silent
+    // conflict driver — the equivalence check looks at both colors but
+    // earlier this dialog only printed numeric fields, leaving the user
+    // staring at "different settings" with two identical-looking panes.
+    auto colorLabel = [&]( const KIGFX::COLOR4D& c ) -> wxString
+    {
+        if( c == KIGFX::COLOR4D::UNSPECIFIED )
+            return _( "(unset)" );
+        return c.ToCSSString();
+    };
+
+    out += wxString::Format( _( "PCB color: %s\n" ),
+                             colorLabel( aNc->GetPcbColor( true ) ) );
+    out += wxString::Format( _( "Schematic color: %s\n" ),
+                             colorLabel( aNc->GetSchematicColor( true ) ) );
+
+    // Priority is intentionally NOT compared by MultiBoardNetclassesEquivalent
+    // (it's per-board grid-row metadata), so it's never the cause of a
+    // conflict — but we still display it for diagnostic context.
+    out += wxString::Format( _( "Priority: %d (info only)" ), aNc->GetPriority() );
 
     return out;
 }

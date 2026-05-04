@@ -1188,13 +1188,34 @@ bool SETTINGS_MANAGER::SaveProject( const wxString& aFullPath, PROJECT* aProject
 
     // TODO: refactor for MDI
     if( aProject->IsReadOnly() )
+    {
+        wxLogWarning( wxT( "[SM-SAVE] aborted: project is read-only (path='%s')" ), path );
         return false;
+    }
 
     if( !m_project_files.count( path ) )
+    {
+        wxLogWarning( wxT( "[SM-SAVE] aborted: path '%s' not in m_project_files. "
+                           "Known keys: { %s }" ),
+                      path,
+                      [&]() {
+                          wxString joined;
+                          for( const auto& [k, v] : m_project_files )
+                          {
+                              if( !joined.IsEmpty() ) joined << wxT( ", " );
+                              joined << wxT( "'" ) << k << wxT( "'" );
+                          }
+                          return joined;
+                      }() );
         return false;
+    }
 
     PROJECT_FILE* project     = m_project_files.at( path );
     wxString      projectPath = aProject->GetProjectPath();
+
+    wxLogMessage( wxT( "[SM-SAVE] writing path='%s' projectPath='%s' "
+                       "fileGetFilename='%s'" ),
+                  path, projectPath, project->GetFilename() );
 
     project->SaveToFile( projectPath );
     aProject->GetLocalSettings().SaveToFile( projectPath );

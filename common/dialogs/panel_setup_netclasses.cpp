@@ -675,8 +675,18 @@ bool PANEL_SETUP_NETCLASSES::TransferDataFromWindow()
         // pre-OK snapshot. The container's project file is the
         // SETTINGS_MANAGER-loaded one; SaveProject writes both .kicad_pro
         // and the local-settings sidecar.
-        Pgm().GetSettingsManager().SaveProject( m_frame->Prj().GetProjectFullName(),
-                                                 &m_frame->Prj() );
+        wxLogMessage( wxT( "[M7.2-PANEL-SAVE] container path='%s' projPath='%s' "
+                           "isReadOnly=%d nClasses=%zu" ),
+                      m_frame->Prj().GetProjectFullName(),
+                      m_frame->Prj().GetProjectPath(),
+                      m_frame->Prj().IsReadOnly() ? 1 : 0,
+                      m_netSettings ? m_netSettings->GetNetclasses().size() : 0u );
+
+        bool ok = Pgm().GetSettingsManager().SaveProject( m_frame->Prj().GetProjectFullName(),
+                                                           &m_frame->Prj() );
+
+        wxLogMessage( wxT( "[M7.2-PANEL-SAVE] SettingsManager::SaveProject returned %d" ),
+                      ok ? 1 : 0 );
 
         MULTI_BOARD_PROPAGATE_RESULT propResult =
                 MultiBoardPropagateNetSettingsWithDialog( m_frame->Prj(),

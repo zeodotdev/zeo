@@ -455,6 +455,16 @@ public:
     bool GetShowBroadAabbDebug() const { return m_showBroadAabbDebug; }
 
     /**
+     * Mesh-overlap thickness threshold (mm). Mated mesh interpene-
+     * trations thicker than this register as COLLISION; thinner ones
+     * register as CONTACT. Default 0.5 mm. Tunable per project from
+     * the panel (different connector classes have different natural
+     * mating depths).
+     */
+    void  SetCollisionThresholdMm( float aMm ) { m_collisionThresholdMm = aMm; }
+    float GetCollisionThresholdMm() const      { return m_collisionThresholdMm; }
+
+    /**
      * Highlight one mate pair in the gizmo render. The matching pair
      * draws bright + larger; all other pairs fade. Pass an empty
      * string to clear the selection.
@@ -806,6 +816,13 @@ private:
     /// can compare what the AABB pre-filter is finding vs what the
     /// mesh-level narrow phase confirms. Default off.
     bool                            m_showBroadAabbDebug      = false;
+
+    /// User-tunable mesh-overlap thickness (in mm) above which a
+    /// mated mesh interpenetration is flagged as a COLLISION rather
+    /// than CONTACT. Different connectors have different "natural"
+    /// mating depth — board-to-board headers may need 1-2 mm,
+    /// FFC sleeves only ~0.5 mm. Settable per project.
+    float                           m_collisionThresholdMm    = 0.5f;
 
     /// Currently-selected mate pair identifier (canonical encoded
     /// string from `MakeMatePairId`). Empty string = no selection

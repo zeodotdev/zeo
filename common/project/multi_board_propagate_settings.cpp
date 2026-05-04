@@ -54,11 +54,18 @@ static bool absPathsEqual( const wxString& a, const wxString& b )
 // won't compile. Mirror the field set serialised by NET_SETTINGS's local
 // `saveNetclass` lambda (common/project/net_settings.cpp) so a clone holds
 // every field that ever round-trips through the .kicad_pro JSON.
+//
+// EXCEPT priority: PANEL_SETUP_NETCLASSES::TransferDataFromWindow assigns
+// priority from the grid row index every time the user clicks OK, which
+// means each board's priorities only make sense in that board's own grid.
+// Propagating the container's priority would either fight the user's
+// intentional sub-board ordering or trigger spurious "Conflict" status on
+// every settings-panel open. Sub-projects keep their own priority order;
+// the propagator only carries the actual netclass parameters.
 static std::shared_ptr<NETCLASS> cloneNetclass( const NETCLASS& aSrc )
 {
     auto dst = std::make_shared<NETCLASS>( aSrc.GetName(), false );
 
-    dst->SetPriority( aSrc.GetPriority() );
     dst->SetTuningProfile( aSrc.GetTuningProfile() );
     dst->SetPcbColor( aSrc.GetPcbColor( true ) );
     dst->SetSchematicColor( aSrc.GetSchematicColor( true ) );
@@ -89,7 +96,14 @@ static std::shared_ptr<NETCLASS> cloneNetclass( const NETCLASS& aSrc )
 bool MultiBoardNetclassesEquivalent( const NETCLASS& a, const NETCLASS& b )
 {
     if( a.GetName() != b.GetName() )                       return false;
-    if( a.GetPriority() != b.GetPriority() )               return false;
+
+    // Priority deliberately NOT compared. PANEL_SETUP_NETCLASSES rewrites
+    // priority from grid row index on every OK, so a sub-board's priority
+    // for a given class is whatever row the user has it at — completely
+    // unrelated to the container's row. Comparing priority would surface
+    // every cross-board class as "Conflict" the moment either panel was
+    // OK'd, even when the actual netclass parameters are identical. See
+    // also `cloneNetclass()` above for the matching omission.
     if( a.GetTuningProfile() != b.GetTuningProfile() )     return false;
 
     // Optional fields: equivalent when both are absent OR both are present

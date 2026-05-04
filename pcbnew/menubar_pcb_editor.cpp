@@ -373,6 +373,7 @@ void PCB_EDIT_FRAME::doReCreateMenuBar()
 
     inspectMenu->AppendSeparator();
     inspectMenu->Add( PCB_ACTIONS::runDRC );
+    inspectMenu->Add( PCB_ACTIONS::runCrossBoardValidation );
     inspectMenu->Add( ACTIONS::prevMarker );
     inspectMenu->Add( ACTIONS::nextMarker );
     inspectMenu->Add( ACTIONS::excludeMarker );

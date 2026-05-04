@@ -909,6 +909,17 @@ void DRC_ENGINE::RunTests( EDA_UNITS aUnits, bool aReportAllTrackErrors, bool aT
         if( m_logReporter )
             m_logReporter->Report( wxString::Format( wxT( "Run DRC provider: '%s'" ), provider->GetName() ) );
 
+        // Test providers are PROCESS-WIDE SINGLETONS held by
+        // DRC_TEST_PROVIDER_REGISTRY (drc_test_provider.h:40). On a multi-board
+        // project several DRC_ENGINE instances coexist (one per peer PCB
+        // editor) and each engine's InitEngine clobbers the providers'
+        // m_drcEngine pointer to "this". Without re-binding here, providers
+        // would end up pointing at whichever engine InitEngine'd last —
+        // their Run() would then see the wrong board, route reportViolation
+        // through a sibling engine's commit, and the requesting frame's
+        // markers would be silently lost. (MOON-1325 follow-up)
+        provider->SetDRCEngine( this );
+
         PROF_TIMER providerTimer;
 
         if( !provider->RunTests( aUnits ) )

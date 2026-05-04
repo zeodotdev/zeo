@@ -2672,8 +2672,18 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
 
         const float boardThickness = GetBoardThickness( inst.board.get() );
 
-        sh.zMin = inst.position.z;
-        sh.zMax = inst.position.z + boardThickness;
+        // Substrate Z uses the renderer's centered convention — the
+        // board body spans ±boardThickness/2 around inst.position.z
+        // (board CENTER), not inst.z to inst.z+thk (board BOTTOM).
+        // This matches the same fix applied to fp Z via
+        // BOARD_ADAPTER::GetFootprintZPos. Without it, the substrate
+        // AABB sat ~boardThickness/2 above where it should, and fps
+        // on the OTHER board's top face fell INSIDE the (wrongly-
+        // positioned) substrate volume, producing 26 phantom fpSub
+        // collisions even when the boards weren't actually
+        // interpenetrating.
+        sh.zMin = inst.position.z - boardThickness * 0.5f;
+        sh.zMax = inst.position.z + boardThickness * 0.5f;
 
         const glm::vec2 dx    = sh.axisX * lhx;
         const glm::vec2 dy    = sh.axisY * lhy;
@@ -2784,14 +2794,153 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
         }
     }
 
+    // ===== Footprint vs OTHER board's substrate =====
+    //
+    // The most common "boards interpenetrating" case isn't fp-vs-fp
+    // overlap — it's a component on board A poking through board B's
+    // PCB substrate. Two board layouts with components scattered at
+    // different XYs rarely produce fp-vs-fp AABB overlaps even when
+    // their substrates clearly intersect. So an fp on board A whose
+    // mesh AABB extends into board B's substrate volume is a real
+    // collision the user expects to see flagged.
+    //
+    // Implementation: AABB intersection test between each fp's
+    // worldMin/Max (already computed above, mesh-tightened) and each
+    // OTHER instance's substrate AABB. No mesh-tri test against the
+    // substrate (the substrate is just a slab, no real mesh data
+    // we'd want to test against per-tri), so this is broad-phase
+    // only — but it correctly catches the "tall component clears the
+    // other board" case.
+    //
+    // Skipped when:
+    // - The fp belongs to the same instance as the substrate (a fp
+    //   intersects its own substrate by definition; that's normal).
+    // - The fp is mated to anything on the other instance (mating
+    //   connectors poke through pads, that's intentional).
+    int diagFpSubBroad   = 0;
+    int diagFpSubCollide = 0;
+
+    for( size_t i = 0; i < m_boardInstances.size(); i++ )
+    {
+        if( perInstance[i].empty() )
+            continue;
+
+        for( const BoardSubstrateShape& sub : boardShapes )
+        {
+            if( sub.uuid == m_boardInstances[i].uuid )
+                continue;   // same instance — fp on its own board
+
+            for( const FPCollisionShape& fp : perInstance[i] )
+            {
+                // AABB overlap test against the other board's
+                // substrate volume.
+                if( fp.worldMax.x <= sub.worldMin.x
+                    || sub.worldMax.x <= fp.worldMin.x )
+                    continue;
+                if( fp.worldMax.y <= sub.worldMin.y
+                    || sub.worldMax.y <= fp.worldMin.y )
+                    continue;
+                if( fp.worldMax.z <= sub.worldMin.z
+                    || sub.worldMax.z <= fp.worldMin.z )
+                    continue;
+
+                diagFpSubBroad++;
+
+                // Skip if this fp is mated to ANY footprint on the
+                // other instance — connector pins legitimately pass
+                // through pads/holes on the mating board.
+                bool fpMated = false;
+
+                for( const MATE_EDGE& edge : mateEdges )
+                {
+                    for( const MATE_PAIR& p : edge.pairs )
+                    {
+                        if( p.alignmentOnly )
+                            continue;
+
+                        const KIID& fpInst = m_boardInstances[i].uuid;
+
+                        bool dirA = p.instanceA == fpInst
+                                    && p.footprintRefA == fp.ref
+                                    && p.instanceB == sub.uuid;
+                        bool dirB = p.instanceB == fpInst
+                                    && p.footprintRefB == fp.ref
+                                    && p.instanceA == sub.uuid;
+
+                        if( dirA || dirB )
+                        {
+                            fpMated = true;
+                            break;
+                        }
+                    }
+
+                    if( fpMated )
+                        break;
+                }
+
+                if( fpMated )
+                    continue;
+
+                // Mech-only fp going into the other board's substrate
+                // is usually a mounting hole on a board sandwiched
+                // between two layers — flag it; the user can decide
+                // whether the alignment is intentional.
+
+                diagFpSubCollide++;
+
+                if( diagFpSubCollide <= 16 )
+                {
+                    wxLogMessage(
+                            wxT( "[COLLIDE] fpSub %s on %s ↔ %s body  "
+                                 "fp.z=[%.2f, %.2f] sub.z=[%.2f, %.2f]" ),
+                            fp.ref, m_boardInstances[i].displayName, sub.display,
+                            fp.worldMin.z, fp.worldMax.z,
+                            sub.worldMin.z, sub.worldMax.z );
+                }
+
+                SFVEC3F bMin( std::max( fp.worldMin.x, sub.worldMin.x ),
+                              std::max( fp.worldMin.y, sub.worldMin.y ),
+                              std::max( fp.worldMin.z, sub.worldMin.z ) );
+                SFVEC3F bMax( std::min( fp.worldMax.x, sub.worldMax.x ),
+                              std::min( fp.worldMax.y, sub.worldMax.y ),
+                              std::min( fp.worldMax.z, sub.worldMax.z ) );
+
+                OverlapBox box;
+                box.minMm     = bMin;
+                box.maxMm     = bMax;
+                box.kind      = OVERLAP_KIND::COLLISION;
+                box.instanceA = m_boardInstances[i].uuid;
+                box.instanceB = sub.uuid;
+                box.refA      = fp.ref;
+                box.refB      = wxT( "<board>" );
+                m_lastOverlapBoxes.push_back( box );
+
+                COLLISION_RESULT result;
+                result.board1Uuid = m_boardInstances[i].uuid;
+                result.board2Uuid = sub.uuid;
+                result.item1Desc  = wxString::Format(
+                        wxT( "%s:%s" ), m_boardInstances[i].displayName, fp.ref );
+                result.item2Desc  = wxString::Format(
+                        wxT( "%s:<board>" ), sub.display );
+
+                glm::vec3 mid = ( glm::vec3( bMin.x, bMin.y, bMin.z )
+                                  + glm::vec3( bMax.x, bMax.y, bMax.z ) ) * 0.5f;
+                result.collisionPoint = SFVEC3F( mid.x, mid.y, mid.z );
+                result.penetrationMm  = kMinPenetrationMm;
+                m_lastCollisions.push_back( result );
+            }
+        }
+    }
+
     wxLogMessage( wxT( "[COLLIDE] fps=%d (mesh=%d) broad=%d fallback=%d "
                        "→ collide=%d contact=%d cleared=%d boxes=%zu  "
-                       "boards: broad=%d collide=%d" ),
+                       "boards: broad=%d collide=%d  fpSub: broad=%d collide=%d" ),
                   diagFpsTotal, diagFpsWithMesh,
                   diagPairsBroad, diagPairsFallback,
                   diagPairsCollide, diagPairsContact, diagPairsCleared,
                   m_lastOverlapBoxes.size(),
-                  diagBoardPairsBroad, diagBoardPairsCollide );
+                  diagBoardPairsBroad, diagBoardPairsCollide,
+                  diagFpSubBroad, diagFpSubCollide );
 
     return m_lastCollisions;
 }

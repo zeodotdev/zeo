@@ -85,6 +85,7 @@ public:
     int MbsOpenSubProjectSchematic( const TOOL_EVENT& aEvent );
     int MbsOpenSubProjectPcb( const TOOL_EVENT& aEvent );
     int MbsOpen3DAssembly( const TOOL_EVENT& aEvent );
+    int MbsCrossBoardRules( const TOOL_EVENT& aEvent );
 
     bool RescueLegacyProject( bool aRunningOnDemand );
     bool RescueSymbolLibTableProject( bool aRunningOnDemand );

@@ -464,6 +464,16 @@ TOOL_ACTION PCB_ACTIONS::runDRC( TOOL_ACTION_ARGS()
         .Tooltip( _( "Show the design rules checker window" ) )
         .Icon( BITMAPS::erc ) );
 
+TOOL_ACTION PCB_ACTIONS::runCrossBoardValidation( TOOL_ACTION_ARGS()
+        .Name( "pcbnew.InspectionTool.runCrossBoardValidation" )
+        .Scope( AS_GLOBAL )
+        .FriendlyName( _( "Validate Multi-Board Project..." ) )
+        .Tooltip( _( "Run cross-board ERC/DRC checks across every sub-project of the "
+                     "enclosing multi-board container — connector matching, net "
+                     "completeness, power distribution. Available only when this PCB "
+                     "is a member of a multi-board container project." ) )
+        .Icon( BITMAPS::erc ) );
+
 // PCB_DESIGN_BLOCK_CONTROL
 TOOL_ACTION PCB_ACTIONS::placeDesignBlock( TOOL_ACTION_ARGS()
         .Name( "pcbnew.InteractiveDrawing.placeDesignBlock" )

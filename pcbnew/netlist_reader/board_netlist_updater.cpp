@@ -1173,8 +1173,9 @@ bool BOARD_NETLIST_UPDATER::updateComponentPadConnections( FOOTPRINT* aFootprint
         if( !net.IsValid() || !pad->IsOnCopperLayer() )
         {
             // Cross-board preservation: if this pad is registered as a
-            // cross-board endpoint in the enclosing .kicad_multi, keep its
-            // net assignment — the multi-board layer owns that pad's net.
+            // cross-board endpoint in the enclosing multi-board container
+            // (`.kicad_pro` with multi_board.container=true), keep its net
+            // assignment — the multi-board layer owns that pad's net.
             wxString crossBoardNet = lookupCrossBoardNet( aFootprint->GetReference(),
                                                           pad->GetNumber() );
 

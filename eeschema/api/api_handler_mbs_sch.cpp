@@ -264,15 +264,25 @@ bool API_HANDLER_MBS_SCH::validateDocumentInternal(
 #endif
     }
 
-    // Refuse to claim the request if our MBSCH schematic isn't fully
-    // bound to a project. Same crash class as API_HANDLER_SCH —
-    // SCHEMATIC::m_project nulls during project unload and on PROJECT
-    // destroy-hook fire; downstream methods (ErcSettings(), Settings(),
-    // etc.) dereference it unconditionally and segfault. AS_UNHANDLED
-    // here lets the API server fall through to a peer handler (see
-    // common/api/api_server.cpp:501); if none is ready the agent gets
-    // a clean "no handler available" error rather than a process kill.
-    if( !m_frame || !m_frame->Schematic().IsValid() )
+    // Refuse to claim the request if the frame isn't ready to serve.
+    //
+    // We deliberately do NOT mirror API_HANDLER_SCH's stricter
+    // `Schematic().IsValid()` (m_project && m_rootSheet) check here.
+    // The MBS handlers in this file all read through `m_frame->Prj()`
+    // (the FRAME's bound project), not through `Schematic().m_project`;
+    // the latter can null transiently via the SETTINGS_MANAGER project
+    // destroy hook (`m_project = nullptr`) under multi-project sessions
+    // — sub-project PCB editors, peer windows, etc. — even when the
+    // frame's own Prj() is fine. Gating on `Schematic().IsValid()`
+    // there made the MBSCH frame go silent ("no handler available")
+    // mid-session as soon as anything nudged the schematic's project
+    // pointer, blocking the agent's verification campaign. The minimum
+    // we actually need is: the frame is alive and its current sheet has
+    // a screen. The one handler that touches `Schematic().RootScreen()`
+    // (`handleRefreshMbsFromSubProjects`) null-checks the screen at the
+    // call site, so the segfault class API_HANDLER_SCH worries about
+    // (`Schematic().ErcSettings()` etc.) doesn't apply here.
+    if( !m_frame || !m_frame->GetCurrentSheet().LastScreen() )
         return false;
 
     return true;
@@ -1054,76 +1064,90 @@ API_HANDLER_MBS_SCH::handleSetMbsRules(
     const auto& rules = aCtx.Request.rules();
     bool anyChanged = false;
 
-    if( aCtx.Request.replace_min_power_pins() )
+    // T3: route every mutation through the new PROJECT_FILE setters so
+    // observer fan-out fires for every peer (other windows, dialogs,
+    // cached views). Coalesce into one event per field via the
+    // SUSPEND_NOTIFY guard — without it, "replace 50 entries" would
+    // emit 50 events per field.
     {
-        auto& dest = container.GetMinPowerPins();
-        dest.clear();
+        PROJECT_FILE_SUSPEND_NOTIFY notifyGuard( container );
 
-        for( const auto& msg : rules.min_power_pins() )
-            dest[wxString::FromUTF8( msg.net_name() )] = msg.min_pins();
-
-        anyChanged = true;
-    }
-
-    if( aCtx.Request.replace_max_length_nm() )
-    {
-        auto& dest = container.GetMaxLengthNm();
-        dest.clear();
-
-        for( const auto& msg : rules.max_length_nm() )
-            dest[wxString::FromUTF8( msg.net_name() )] = msg.max_length_nm();
-
-        anyChanged = true;
-    }
-
-    if( aCtx.Request.replace_cross_board_diff_pairs() )
-    {
-        auto& dest = container.GetCrossBoardDiffPairs();
-        dest.clear();
-
-        for( const auto& msg : rules.cross_board_diff_pairs() )
+        if( aCtx.Request.replace_min_power_pins() )
         {
-            dest.push_back( { wxString::FromUTF8( msg.p() ),
-                              wxString::FromUTF8( msg.n() ) } );
+            container.ClearMinPowerPins();
+
+            for( const auto& msg : rules.min_power_pins() )
+            {
+                container.SetMinPowerPin( wxString::FromUTF8( msg.net_name() ),
+                                          msg.min_pins() );
+            }
+
+            anyChanged = true;
         }
 
-        anyChanged = true;
-    }
-
-    if( aCtx.Request.replace_current_rules() )
-    {
-        auto& dest = container.GetCrossBoardCurrentRules();
-        dest.clear();
-
-        for( const auto& msg : rules.current_rules() )
+        if( aCtx.Request.replace_max_length_nm() )
         {
-            PROJECT_FILE::MB_CURRENT_RULE rule;
-            rule.expectedAmps  = msg.expected_amps();
-            rule.pinRatingAmps = msg.pin_rating_amps();
-            dest[wxString::FromUTF8( msg.net_name() )] = rule;
+            container.ClearMaxLengthNm();
+
+            for( const auto& msg : rules.max_length_nm() )
+            {
+                container.SetMaxLengthNm( wxString::FromUTF8( msg.net_name() ),
+                                          msg.max_length_nm() );
+            }
+
+            anyChanged = true;
         }
 
-        anyChanged = true;
-    }
-
-    if( aCtx.Request.replace_voltage_rules() )
-    {
-        auto& dest = container.GetCrossBoardVoltageRules();
-        dest.clear();
-
-        for( const auto& msg : rules.voltage_rules() )
+        if( aCtx.Request.replace_cross_board_diff_pairs() )
         {
-            PROJECT_FILE::MB_VOLTAGE_RULE rule;
-            rule.expectedAmps          = msg.expected_amps();
-            rule.maxDropMv             = msg.max_drop_mv();
-            rule.traceWidthUm          = msg.trace_width_um();
-            rule.traceSheetRMOhmsPerSq = msg.trace_sheet_r_milliohm_per_sq();
-            rule.contactRPerPinMOhms   = msg.contact_r_per_pin_milliohm();
-            dest[wxString::FromUTF8( msg.net_name() )] = rule;
+            container.ClearCrossBoardDiffPairs();
+
+            for( const auto& msg : rules.cross_board_diff_pairs() )
+            {
+                container.AddCrossBoardDiffPair( wxString::FromUTF8( msg.p() ),
+                                                 wxString::FromUTF8( msg.n() ) );
+            }
+
+            anyChanged = true;
         }
 
-        anyChanged = true;
-    }
+        if( aCtx.Request.replace_current_rules() )
+        {
+            container.ClearCrossBoardCurrentRules();
+
+            for( const auto& msg : rules.current_rules() )
+            {
+                PROJECT_FILE::MB_CURRENT_RULE rule;
+                rule.expectedAmps  = msg.expected_amps();
+                rule.pinRatingAmps = msg.pin_rating_amps();
+
+                container.SetCrossBoardCurrentRule(
+                        wxString::FromUTF8( msg.net_name() ), rule );
+            }
+
+            anyChanged = true;
+        }
+
+        if( aCtx.Request.replace_voltage_rules() )
+        {
+            container.ClearCrossBoardVoltageRules();
+
+            for( const auto& msg : rules.voltage_rules() )
+            {
+                PROJECT_FILE::MB_VOLTAGE_RULE rule;
+                rule.expectedAmps          = msg.expected_amps();
+                rule.maxDropMv             = msg.max_drop_mv();
+                rule.traceWidthUm          = msg.trace_width_um();
+                rule.traceSheetRMOhmsPerSq = msg.trace_sheet_r_milliohm_per_sq();
+                rule.contactRPerPinMOhms   = msg.contact_r_per_pin_milliohm();
+
+                container.SetCrossBoardVoltageRule(
+                        wxString::FromUTF8( msg.net_name() ), rule );
+            }
+
+            anyChanged = true;
+        }
+    }   // SUSPEND_NOTIFY guard drains here — one coalesced event per affected field
 
     wxLogMessage( "MBS_SET[%p]: post-mutate map sizes: minPins=%zu maxLen=%zu "
                   "diffPairs=%zu current=%zu voltage=%zu  anyChanged=%s "
@@ -1142,11 +1166,19 @@ API_HANDLER_MBS_SCH::handleSetMbsRules(
 
     if( anyChanged )
     {
-        // aForce=true is mandatory: the framework's "did anything change"
-        // bookkeeping watches its own PARAM Set() calls, but we mutate
-        // the underlying std::map members directly. Without force, the
-        // save is a silent no-op and the next get() returns whatever's
-        // still on disk (i.e. the pre-set values) — round-trip broken.
+        // aForce=true was historically required because the legacy code
+        // mutated `std::map` members directly, bypassing the PARAM-level
+        // "did anything change" tracking. T3 setters now mark the file
+        // dirty correctly so aForce is no longer mandatory — but we
+        // keep it for defensive belt-and-braces: if the agent caller
+        // sent a "replace" with the same payload that's already on
+        // disk, the round-trip should still produce a fresh write so
+        // the agent's get() reads back exactly what it sent.
+        //
+        // SaveToFile internally stamps the self-write filter (Phase 3)
+        // so MBSCH's file watcher (Phase 4) won't rebound on this write.
+        // Observers in any peer have already fired during the SUSPEND_NOTIFY
+        // drain above.
         saveOk = container.SaveToFile( containerDir, /* aForce */ true );
 
         wxLogMessage( "MBS_SET[%p]: SaveToFile('%s', aForce=true) returned %s",

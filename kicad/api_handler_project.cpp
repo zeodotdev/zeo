@@ -207,12 +207,32 @@ HANDLER_RESULT<LaunchEditorResponse> API_HANDLER_PROJECT::handleLaunchEditor(
     wxLogMessage( "API_HANDLER_PROJECT: LaunchEditor type=%d, file=%s",
                   (int) aCtx.Request.doc_type(), filepath );
 
-    // Check if already open
+    // Check if already open. On multi-board container projects every
+    // sub-project editor opens as a peer (Kiway().Player(_, false)
+    // returns the primary slot only), so a peer-only fleet looks like
+    // "no editor" to that call. Walk all peer frames too — if any are
+    // visible, treat it as already-open and raise the first. Without
+    // this guard the fall-through tries to create a primary using the
+    // container's PcbFileName (e.g. "test_board_74.kicad_pcb"), which
+    // doesn't exist on disk for a container, and LaunchEditor errors
+    // with "Failed to open project file".
     KIWAY_PLAYER* player = m_frame->Kiway().Player( frameType, false );
+
+    if( !player || !player->IsVisible() )
+    {
+        for( KIWAY_PLAYER* peer : m_frame->Kiway().GetAllPlayerFrames( frameType ) )
+        {
+            if( peer && peer->IsVisible() )
+            {
+                player = peer;
+                break;
+            }
+        }
+    }
 
     if( player && player->IsVisible() )
     {
-        wxLogMessage( "API_HANDLER_PROJECT: Editor already open, raising" );
+        wxLogMessage( "API_HANDLER_PROJECT: Editor already open (or peer exists), raising" );
         player->Raise();
     }
     else

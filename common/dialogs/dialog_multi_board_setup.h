@@ -42,24 +42,25 @@ class wxListEvent;
  *   multi-board's `boards/<name>/` directory)
  * - Create a new board from the "default" project template
  * - Remove a sub-project from the list (files on disk are not deleted)
- * - Click Done to persist changes to the `.kicad_multi` container
+ * - Click Done to persist changes to the container `.kicad_pro`
  *
- * The dialog mutates the passed-in `MULTI_BOARD_PROJECT` in place and
- * writes it to disk when the user clicks Done. The caller can then
- * decide what to do with the updated container (e.g. load the first
- * sub-project in the project manager).
+ * The dialog mutates the passed-in container `PROJECT_FILE` in place
+ * (whose `IsMultiBoardContainer()` is true) and writes it to disk when
+ * the user clicks Done. The caller can then decide what to do with the
+ * updated container (e.g. load the first sub-project in the project
+ * manager).
  */
 class DIALOG_MULTI_BOARD_SETUP : public DIALOG_SHIM
 {
 public:
     /**
      * @param aParent parent window (pass the KICAD_MANAGER_FRAME)
-     * @param aProject the in-memory container to edit; must already have its
-     *                 root directory set (LoadFromFile or SetRootDir + SaveToFile).
-     *                 The dialog will persist changes to `aProject->GetRootDir()`
-     *                 using `aMultiProjectPath`.
-     * @param aMultiProjectPath absolute path to the `.kicad_multi` file this
-     *                          dialog should write back to when Done is clicked.
+     * @param aProject the in-memory container `PROJECT_FILE` to edit; must
+     *                 already be loaded (LoadFromFile, with the
+     *                 multi_board.container flag set).
+     * @param aMultiProjectPath absolute path to the container `.kicad_pro`
+     *                          this dialog should write back to when Done
+     *                          is clicked.
      */
     DIALOG_MULTI_BOARD_SETUP( wxWindow* aParent, PROJECT_FILE* aProject,
                               const wxFileName& aMultiProjectPath );

@@ -1207,6 +1207,15 @@ TOOL_ACTION SCH_ACTIONS::mbsOpen3DAssembly( TOOL_ACTION_ARGS()
         .Tooltip( _( "Open the multi-board 3D assembly viewer alongside this MBSCH session" ) )
         .Icon( BITMAPS::three_d ) );
 
+TOOL_ACTION SCH_ACTIONS::mbsCrossBoardRules( TOOL_ACTION_ARGS()
+        .Name( "eeschema.EditorControl.mbsCrossBoardRules" )
+        .Scope( AS_GLOBAL )
+        .FriendlyName( _( "Cross-Board Rules..." ) )
+        .Tooltip( _( "Edit the cross-board ERC/DRC rules (min power pins, max trace length, "
+                     "diff pairs, current capacity, voltage drop) persisted on the multi-board "
+                     "container project" ) )
+        .Icon( BITMAPS::tools ) );
+
 TOOL_ACTION SCH_ACTIONS::nextNetItem( TOOL_ACTION_ARGS()
         .Name( "eeschema.EditorControl.nextNetItem" )
         .Scope( AS_GLOBAL )

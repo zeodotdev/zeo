@@ -1282,7 +1282,19 @@ bool SETTINGS_MANAGER::loadProjectFile( PROJECT& aProject )
 
     wxString path( fullFn.GetPath() );
 
-    return file->LoadFromFile( path );
+    bool result = file->LoadFromFile( path );
+
+    // T3 Phase 4: start the file watcher on the loaded `.kicad_pro`.
+    // Best-effort — degrades to "no live updates" on platforms /
+    // builds without `wxUSE_FSWATCHER`. The watcher fires
+    // EXTERNAL_RELOAD / EXTERNAL_RELOAD_DIRTY on `PROJECT_FILE`
+    // observers when the file is modified externally (e.g. another
+    // KiCad window saving the same container, agent IPC writing
+    // through a peer, text editor edit, git pull).
+    if( result )
+        file->EnableFileWatcher( aProject.GetProjectFullName() );
+
+    return result;
 }
 
 
@@ -1297,6 +1309,11 @@ bool SETTINGS_MANAGER::unloadProjectFile( PROJECT* aProject, bool aSave )
         return false;
 
     PROJECT_FILE* file = m_project_files[name];
+
+    // T3 Phase 4: stop the watcher BEFORE we may save below. Otherwise
+    // an unrelated external change between save and unload would fire
+    // an event onto a project we're tearing down.
+    file->DisableFileWatcher();
 
     if( !file->ShouldAutoSave() )
         aSave = false;

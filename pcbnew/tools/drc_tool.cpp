@@ -32,9 +32,18 @@
 #include <dialog_drc.h>
 #include <board_commit.h>
 #include <board_design_settings.h>
+#include <pgm_base.h>
 #include <progress_reporter.h>
+#include <project.h>
+#include <project/multi_board_scan.h>
+#include <reporter.h>
+#include <settings/settings_manager.h>
 #include <drc/drc_engine.h>
+#include <drc/drc_engine_cross_board.h>
 #include <drc/drc_item.h>
+#include <wx/filename.h>
+#include <wx/log.h>
+#include <wx/msgdlg.h>
 #include <netlist_reader/pcb_netlist.h>
 #include <macros.h>
 #include <dialog_exchange_footprints.h>
@@ -448,9 +457,151 @@ void DRC_TOOL::DestroyDesignRuleEditorDialog()
 }
 
 
+int DRC_TOOL::RunCrossBoardValidation( const TOOL_EVENT& aEvent )
+{
+    BOARD* board = m_editFrame ? m_editFrame->GetBoard() : nullptr;
+
+    if( !board )
+        return 0;
+
+    PROJECT* prj = board->GetProject();
+
+    if( !prj )
+    {
+        wxMessageBox( _( "No project loaded." ),
+                      _( "Cross-Board Validation" ), wxOK | wxICON_INFORMATION,
+                      m_editFrame );
+        return 0;
+    }
+
+    // Resolve the enclosing multi-board container. The engine takes a
+    // PROJECT* (the container's PROJECT). When the active board is a
+    // sub-project, that's not the same as `prj` — we need the container.
+    // Look it up via the existing helper, then find / load the container's
+    // PROJECT through SETTINGS_MANAGER (must already be loaded for any of
+    // the multi_board.* fields to be addressable through observers).
+    wxFileName containerPro =
+            MultiBoardResolveContainerForSubProject( wxFileName( prj->GetProjectFullName() ) );
+
+    if( !containerPro.IsOk() || !containerPro.FileExists() )
+    {
+        // Active project might itself BE the container.
+        if( prj->GetProjectFile().IsMultiBoardContainer() )
+        {
+            containerPro = wxFileName( prj->GetProjectFullName() );
+        }
+        else
+        {
+            wxMessageBox( _( "This board is not part of a multi-board container project." ),
+                          _( "Not a Multi-Board Sub-Project" ),
+                          wxOK | wxICON_INFORMATION, m_editFrame );
+            return 0;
+        }
+    }
+
+    // Find the container PROJECT in SETTINGS_MANAGER. If it's not loaded,
+    // engine ops would do disk I/O via the path-based fallback, but the
+    // engine API takes a PROJECT*. For this v1 we require the container
+    // to be loaded — typically true when the user is in a sub-project's
+    // PCB while MBSCH is also open.
+    SETTINGS_MANAGER& sm = Pgm().GetSettingsManager();
+    PROJECT*          containerProject = nullptr;
+
+    for( const wxString& proPath : sm.GetOpenProjects() )
+    {
+        if( wxFileName( proPath ).GetFullPath() == containerPro.GetFullPath() )
+        {
+            containerProject = sm.GetProject( proPath );
+            break;
+        }
+    }
+
+    if( !containerProject )
+    {
+        wxMessageBox(
+                wxString::Format(
+                        _( "The multi-board container project '%s' is not currently loaded.\n\n"
+                           "Open it (or its MBSCH editor) before running cross-board "
+                           "validation, so the engine can resolve all sibling sub-projects." ),
+                        containerPro.GetFullPath() ),
+                _( "Container Not Loaded" ), wxOK | wxICON_INFORMATION, m_editFrame );
+        return 0;
+    }
+
+    // Stream progress via wxLogMessage so the user has feedback during
+    // the (potentially slow) sibling-board loads. Crude but functional;
+    // a streaming-progress dialog is a v2 polish.
+    WX_STRING_REPORTER reporter;
+    DRC_ENGINE_CROSS_BOARD engine( containerProject );
+    engine.SetReporter( &reporter );
+
+    // Pre-seed the engine cache with the active in-memory BOARD if it
+    // belongs to one of the container's sub-projects. Without this the
+    // engine re-reads the .kicad_pcb from disk and silently misses any
+    // unsaved edits in the active window — common during interactive
+    // testing where the user edits a pad net then immediately runs DRC.
+    {
+        const PROJECT_FILE& cf = containerProject->GetProjectFile();
+        const wxString activeProPath = wxFileName( prj->GetProjectFullName() ).GetFullPath();
+
+        for( const SUB_PROJECT_INFO& sp : cf.GetSubProjects() )
+        {
+            if( cf.ResolveSubProjectPath( sp ).GetFullPath() == activeProPath )
+            {
+                engine.RegisterInMemoryBoard( sp.uuid, board );
+                break;
+            }
+        }
+    }
+
+    engine.RunAllChecks();
+
+    const auto& violations = engine.GetViolations();
+    int errors    = engine.GetErrorCount();
+    int warnings  = engine.GetWarningCount();
+    int infos     = static_cast<int>( violations.size() ) - errors - warnings;
+
+    // Summary in a wxMessageBox; full per-violation list logged via
+    // wxLogMessage (visible in the active wxLog target — terminal stderr
+    // when launched with WXTRACE, or wxLogWindow if registered).
+    wxString summary = wxString::Format(
+            _( "Cross-board validation complete.\n\n"
+               "Errors:   %d\nWarnings: %d\nInfo:     %d\n\n%s" ),
+            errors, warnings, infos,
+            violations.empty() ? _( "No issues found." )
+                                : _( "See log for per-violation details." ) );
+
+    for( const auto& v : violations )
+    {
+        wxLogMessage( wxT( "[%s] %s — %s%s%s" ),
+                      v.GetSeverityString(),
+                      v.GetTypeString(),
+                      v.message,
+                      v.board1Name.IsEmpty() ? wxString( wxEmptyString )
+                                              : wxString::Format( wxT( "  (board: %s" ),
+                                                                  v.board1Name ),
+                      v.board1Name.IsEmpty() ? wxString( wxEmptyString )
+                                              : ( v.board2Name.IsEmpty()
+                                                          ? wxString( wxT( ")" ) )
+                                                          : wxString::Format(
+                                                                  wxT( " ↔ %s)" ),
+                                                                  v.board2Name ) ) );
+    }
+
+    wxMessageBox( summary, _( "Multi-Board Validation Results" ),
+                  wxOK | ( errors > 0 ? wxICON_ERROR
+                                       : warnings > 0 ? wxICON_WARNING
+                                                       : wxICON_INFORMATION ),
+                  m_editFrame );
+
+    return 0;
+}
+
+
 void DRC_TOOL::setTransitions()
 {
     Go( &DRC_TOOL::ShowDRCDialog,              PCB_ACTIONS::runDRC.MakeEvent() );
+    Go( &DRC_TOOL::RunCrossBoardValidation,    PCB_ACTIONS::runCrossBoardValidation.MakeEvent() );
     Go( &DRC_TOOL::PrevMarker,                 ACTIONS::prevMarker.MakeEvent() );
     Go( &DRC_TOOL::NextMarker,                 ACTIONS::nextMarker.MakeEvent() );
     Go( &DRC_TOOL::ExcludeMarker,              ACTIONS::excludeMarker.MakeEvent() );

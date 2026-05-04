@@ -3793,7 +3793,20 @@ int BOARD::GetPadWithCastellatedAttrCount()
 
 void BOARD::SaveToHistory( const wxString& aProjectPath, std::vector<wxString>& aFiles )
 {
-    wxString projPath = GetProject()->GetProjectPath();
+    // GetProject() can be nullptr after the project's destroy hook fires —
+    // BOARD outlives its PROJECT during sub-project unload, peer-window
+    // teardown, and project-switch transitions. The autosave timer
+    // (EDA_BASE_FRAME::doAutoSave → LOCAL_HISTORY::RunRegisteredSaversAndCommit)
+    // can fire on a board whose project is mid-tear-down; without this guard
+    // the unconditional GetProject()->GetProjectPath() segfaults
+    // (EXC_BAD_ACCESS on null deref). The empty-projPath check below was
+    // never reached because the crash beat it to it.
+    PROJECT* project = GetProject();
+
+    if( !project )
+        return;
+
+    wxString projPath = project->GetProjectPath();
 
     if( projPath.IsEmpty() )
         return;

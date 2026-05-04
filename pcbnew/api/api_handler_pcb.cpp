@@ -2676,6 +2676,16 @@ HANDLER_RESULT<RunDRCResponse> API_HANDLER_PCB::handleRunDRC(
 
     BOARD* board = frame()->GetBoard();
 
+    auto engine = drcTool->GetDRCEngine();
+
+    wxLogMessage( "[RUN_DRC] handler=%p frame=%p frame_filename='%s' "
+                  "board=%p board_proj='%s' req_proj='%s' "
+                  "drcTool=%p engine=%p engine_board=%p",
+                  this, frame(), frame()->GetCurrentFileName(),
+                  board, board->GetProject() ? board->GetProject()->GetProjectFullName() : "(null)",
+                  aCtx.Request.board().project().path(),
+                  drcTool, engine.get(), engine ? engine->GetBoard() : nullptr );
+
     // Clear existing markers before running DRC
     board->DeleteMARKERs( true, false );
 

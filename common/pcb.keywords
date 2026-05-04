@@ -82,6 +82,7 @@ component_class
 component_classes
 connect
 connect_pads
+connector_pads
 copperpour
 copper_finish
 crossbar

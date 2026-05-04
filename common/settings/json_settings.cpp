@@ -921,7 +921,7 @@ void JSON_SETTINGS::AddNestedSettings( NESTED_SETTINGS* aSettings )
 
 void JSON_SETTINGS::ReleaseNestedSettings( NESTED_SETTINGS* aSettings )
 {
-    if( !aSettings || !m_manager )
+    if( !aSettings )
         return;
 
     auto it = std::find_if( m_nested_settings.begin(), m_nested_settings.end(),
@@ -932,8 +932,31 @@ void JSON_SETTINGS::ReleaseNestedSettings( NESTED_SETTINGS* aSettings )
 
     if( it != m_nested_settings.end() )
     {
-        wxLogTrace( traceSettings, wxT( "Flush and release %s" ), ( *it )->GetFilename() );
-        m_modified |= ( *it )->SaveToFile();
+        // Skip the flush-on-release SaveToFile when this JSON_SETTINGS
+        // isn't tracked by a SETTINGS_MANAGER — there's no project on
+        // disk to save into and the call would no-op or worse, race with
+        // teardown. But ALWAYS erase the pointer from the registry: if
+        // we leave it, the destroyed NESTED_SETTINGS becomes a dangling
+        // pointer in m_nested_settings, and the next SaveToFile / load
+        // iteration calls a virtual method on freed memory and crashes
+        // (EXC_BAD_ACCESS on a garbage vtable). Hit during sub-project
+        // PCB editor close — `canCloseWindow → SaveBoard → SavePcbFile
+        // → SETTINGS_MANAGER::SaveProject → PROJECT_FILE::SaveToFile`
+        // iterated `m_nested_settings` and called SaveToFile() on a
+        // freed NESTED_SETTINGS whose ~dtor had returned here without
+        // erasing because m_manager was null at that moment.
+        if( m_manager )
+        {
+            wxLogTrace( traceSettings, wxT( "Flush and release %s" ),
+                        ( *it )->GetFilename() );
+            m_modified |= ( *it )->SaveToFile();
+        }
+        else
+        {
+            wxLogTrace( traceSettings, wxT( "Release (no flush, manager-less) %s" ),
+                        ( *it )->GetFilename() );
+        }
+
         m_nested_settings.erase( it );
     }
 

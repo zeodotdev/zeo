@@ -461,6 +461,7 @@ public:
 
     static TOOL_ACTION runDRC;
     static TOOL_ACTION drcRuleEditor;
+    static TOOL_ACTION runCrossBoardValidation;
 
     static TOOL_ACTION editFpInFpEditor;
     static TOOL_ACTION editLibFpInFpEditor;

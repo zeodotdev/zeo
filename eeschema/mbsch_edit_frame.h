@@ -22,6 +22,9 @@
 #define MBSCH_EDIT_FRAME_H
 
 #include <sch_edit_frame.h>
+#include <project/project_file_observer.h>
+
+#include <memory>
 
 
 /**
@@ -33,11 +36,17 @@
  * eeschema one. Shares parser, writer, painter, and connectivity with
  * eeschema — the on-disk format is identical to `.kicad_sch`.
  */
-class MBSCH_EDIT_FRAME : public SCH_EDIT_FRAME
+class MBSCH_EDIT_FRAME : public SCH_EDIT_FRAME, public PROJECT_FILE_OBSERVER
 {
 public:
     MBSCH_EDIT_FRAME( KIWAY* aKiway, wxWindow* aParent );
     ~MBSCH_EDIT_FRAME() override;
+
+    /// T3: invoked when our container PROJECT_FILE's `multi_board.*`
+    /// state changes (locally, from a peer window, from agent IPC, or
+    /// from an external file edit picked up by the watcher). Refresh
+    /// canvas / ERC markers / status bar appropriately.
+    void OnMultiBoardFieldChanged( MULTI_BOARD_FIELD aField ) override;
 
 protected:
     /**
@@ -85,6 +94,10 @@ private:
      * clears any active highlight.
      */
     void crossProbeHighlightNet( const wxString& aNetName );
+
+    /// T3: keeps us subscribed to the container PROJECT_FILE for the
+    /// frame's lifetime. RAII unregisters in the dtor.
+    std::unique_ptr<SCOPED_PROJECT_FILE_OBSERVER> m_projectFileObserver;
 };
 
 #endif // MBSCH_EDIT_FRAME_H

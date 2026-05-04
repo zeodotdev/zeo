@@ -840,6 +840,22 @@ void PCB_IO_KICAD_SEXPR::format( const BOARD* aBoard ) const
     for( BOARD_ITEM* gen : sorted_generators )
         Format( gen );
 
+    // Save the cross-board connector-pad markers (multi-board feature).
+    // These are pad UUIDs marked by the user as connecting to other
+    // sub-projects via the multi-board schematic; persisted so
+    // mbs_sync_to_pcb / cross-board DRC see the same set across
+    // load/save cycles. Sorted for deterministic file diffs.
+    if( !aBoard->GetConnectorPads().empty() )
+    {
+        m_out->Print( "(connector_pads" );
+
+        // Set already iterates in sorted order (KIID has operator<).
+        for( const KIID& uuid : aBoard->GetConnectorPads() )
+            m_out->Print( "(uuid %s)", m_out->Quotew( uuid.AsString() ).c_str() );
+
+        m_out->Print( ")" );
+    }
+
     // Save any embedded files
     // Consolidate the embedded models in footprints into a single map
     // to avoid duplicating the same model in the board file.

@@ -39,7 +39,8 @@ namespace
 {
 
 // Layout knobs — mirror the initial-generation numbers in
-// MULTI_BOARD_PROJECT::EnsureMbsFile so regenerated blocks look the same.
+// `EnsureMbsFile` (multi_board_scan.cpp) so regenerated blocks look
+// the same.
 static constexpr double GRID_MM          = 1.27;
 static constexpr int    MM_TO_IU         = 10000;
 

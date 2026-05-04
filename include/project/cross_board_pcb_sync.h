@@ -53,8 +53,9 @@ struct KICOMMON_API MB_CROSS_BOARD_SYNC_RESULT
 
 
 /**
- * Apply the cross-board nets declared in a MULTI_BOARD_PROJECT to every
- * sub-project's .kicad_pcb. For each MB_CROSS_BOARD_NET endpoint we locate
+ * Apply the cross-board nets declared in a multi-board container `.kicad_pro`
+ * (`PROJECT_FILE::IsMultiBoardContainer() == true`) to every sub-project's
+ * `.kicad_pcb`. For each `MB_CROSS_BOARD_NET` endpoint we locate
  * `footprint(componentRef).pad(pinNumber)` in the matching sub-project's PCB
  * and set its net name to the cross-board net name. Footprints / pads that
  * can't be found are counted and reported but don't abort the operation.

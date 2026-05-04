@@ -157,6 +157,7 @@ std::optional<TOOLBAR_CONFIGURATION> MBSCH_EDIT_TOOLBAR_SETTINGS::DefaultToolbar
               .AppendAction( SCH_ACTIONS::refreshMbsFromSubProjects )
               .AppendAction( SCH_ACTIONS::mbsSyncCrossBoardNets )
               .AppendAction( SCH_ACTIONS::mbsManageSubBoards )
+              .AppendAction( SCH_ACTIONS::mbsCrossBoardRules )
               .AppendAction( SCH_ACTIONS::mbsOpenSubProjectSchematic )
               .AppendAction( SCH_ACTIONS::mbsOpenSubProjectPcb )
               .AppendAction( SCH_ACTIONS::mbsOpen3DAssembly );

@@ -25,7 +25,9 @@
 #include <project/tuning_profiles.h>
 #include <settings/json_settings_internals.h>
 #include <project/project_file.h>
+#include <project/project_file_self_write_filter.h>
 #include <project/board_project_settings_params.h>
+#include "project_file_watcher.h"
 #include <settings/common_settings.h>
 #include <settings/parameters.h>
 #include <wildcards_and_files_ext.h>
@@ -37,6 +39,11 @@
 
 ///! Update the schema version whenever a migration is required
 const int projectFileSchemaVersion = 3;
+
+
+// Out-of-line so the unique_ptr<PROJECT_FILE_WATCHER> destructor sees
+// the complete watcher type (header forward-declares it).
+PROJECT_FILE::~PROJECT_FILE() = default;
 
 
 PROJECT_FILE::PROJECT_FILE( const wxString& aFullPath ) :
@@ -1058,6 +1065,25 @@ bool PROJECT_FILE::LoadFromFile( const wxString& aDirectory )
 
 bool PROJECT_FILE::SaveToFile( const wxString& aDirectory, bool aForce )
 {
+    // T3 Phase 3 — reentrancy guard.
+    //
+    // A save can be triggered recursively if any code reachable from
+    // JSON serialisation (PARAM_LAMBDA getters, observers, event
+    // handlers fired by Set/Store) calls SaveToFile again. Without
+    // a guard the on-disk file ends up half-written. We coalesce: the
+    // outermost call does the actual write, recursive calls just set
+    // the "save again when done" flag and return success.
+    //
+    // Note: this is single-threaded reentrancy, not cross-thread —
+    // KiCad's main thread does all I/O. No std::atomic needed.
+    if( m_saveInProgress )
+    {
+        m_saveAgainPending = true;
+        return true;
+    }
+
+    m_saveInProgress = true;
+
     // Standalone edit/save paths (e.g. the MBSCH save hook writing
     // cross_board_nets into a sibling container) construct a
     // PROJECT_FILE without routing through SETTINGS_MANAGER, so
@@ -1072,14 +1098,70 @@ bool PROJECT_FILE::SaveToFile( const wxString& aDirectory, bool aForce )
 
     Set( "meta.filename", projectName + "." + FILEEXT::ProjectFileExtension );
 
-    // Even if parameters were not modified, we should resave after migration
-    bool force = aForce || m_wasMigrated;
+    // Loop on m_saveAgainPending so a recursive save during the parent
+    // serialisation gets reflected without a new external call. Bound
+    // to a small iteration limit to defend against pathological
+    // setter/observer feedback.
+    bool result = false;
+    int  attempts = 0;
 
-    // If we're actually going ahead and doing the save, the flag that keeps code from doing the
-    // save should be cleared at this.
-    m_wasMigrated = false;
+    do
+    {
+        m_saveAgainPending = false;
 
-    return JSON_SETTINGS::SaveToFile( aDirectory, force );
+        // Even if parameters were not modified, we should resave after
+        // migration. Captured here so a re-entered save inside the loop
+        // doesn't lose the migration flag.
+        bool force = aForce || m_wasMigrated;
+
+        // If we're actually going ahead and doing the save, the flag
+        // that keeps code from doing the save should be cleared.
+        m_wasMigrated = false;
+
+        result = JSON_SETTINGS::SaveToFile( aDirectory, force );
+
+        if( !result )
+            break;
+
+        // Stamp the self-write filter so Phase 4's file watcher
+        // ignores the modification event we just generated. Use the
+        // canonical absolute path the JSON_SETTINGS layer wrote to —
+        // we reconstruct it the same way SaveToFile does internally
+        // (aDirectory + GetFilename() + extension).
+        wxFileName written;
+
+        if( aDirectory.IsEmpty() )
+            written.Assign( GetFilename() );
+        else
+            written.Assign( aDirectory, GetFilename() );
+
+        // SaveToFile appends the project file extension if missing.
+        if( written.GetExt().IsEmpty() )
+            written.SetExt( wxString::FromUTF8( FILEEXT::ProjectFileExtension ) );
+
+        if( written.IsOk() )
+            PROJECT_FILE_SELF_WRITE_FILTER::Mark( written.GetFullPath() );
+
+        // T3 Phase 4: in-memory state matches disk again. Cleared
+        // after each successful inner save so a re-entered SaveToFile
+        // sees a fresh-clean state.
+        m_multiBoardDirty = false;
+    }
+    while( m_saveAgainPending && ++attempts < 4 );
+
+    if( m_saveAgainPending )
+    {
+        // Pathological feedback — give up the loop, log a hint. The
+        // pending flag is cleared so the next external SaveToFile
+        // starts fresh.
+        wxLogTrace( wxT( "PROJECT_FILE" ),
+                    wxT( "SaveToFile gave up reentrant retry after %d attempts" ),
+                    attempts );
+        m_saveAgainPending = false;
+    }
+
+    m_saveInProgress = false;
+    return result;
 }
 
 
@@ -1443,6 +1525,7 @@ const SUB_PROJECT_INFO* PROJECT_FILE::GetSubProject( const KIID& aUuid ) const
 void PROJECT_FILE::AddSubProject( const SUB_PROJECT_INFO& aInfo )
 {
     m_subProjects.push_back( aInfo );
+    NotifyMultiBoardChanged( MULTI_BOARD_FIELD::SUB_PROJECTS );
 }
 
 
@@ -1531,6 +1614,504 @@ bool PROJECT_FILE::RemoveSubProject( const KIID& aUuid )
                             { return net.endpoints.size() < 2; } ),
             m_crossBoardNets.end() );
 
+    // We mutated two fields. Coalesce so observers see one event per
+    // affected field, not the bookkeeping order.
+    {
+        PROJECT_FILE_SUSPEND_NOTIFY notifyGuard( *this );
+        NotifyMultiBoardChanged( MULTI_BOARD_FIELD::SUB_PROJECTS );
+        NotifyMultiBoardChanged( MULTI_BOARD_FIELD::CROSS_BOARD_NETS );
+    }
+
+    return true;
+}
+
+
+// =============================================================================
+// T3 — Observable accessor layer for multi_board.* fields
+// =============================================================================
+
+void PROJECT_FILE::RegisterObserver( PROJECT_FILE_OBSERVER* aObserver )
+{
+    if( !aObserver )
+        return;
+
+    // Idempotent: don't double-register. Observers are typically held
+    // via SCOPED_PROJECT_FILE_OBSERVER which guarantees pairing, but a
+    // belt-and-braces check here avoids subtle duplicate-event bugs.
+    if( std::find( m_observers.begin(), m_observers.end(), aObserver ) != m_observers.end() )
+        return;
+
+    m_observers.push_back( aObserver );
+}
+
+
+void PROJECT_FILE::UnregisterObserver( PROJECT_FILE_OBSERVER* aObserver )
+{
+    m_observers.erase( std::remove( m_observers.begin(), m_observers.end(), aObserver ),
+                       m_observers.end() );
+}
+
+
+void PROJECT_FILE::NotifyMultiBoardChanged( MULTI_BOARD_FIELD aField )
+{
+    // Mark the project dirty for any *real* mutation event. The two
+    // synthetic file-watcher events don't represent in-memory edits,
+    // so they don't flip the flag.
+    if( aField != MULTI_BOARD_FIELD::EXTERNAL_RELOAD
+        && aField != MULTI_BOARD_FIELD::EXTERNAL_RELOAD_DIRTY )
+    {
+        m_multiBoardDirty = true;
+    }
+
+    if( m_notifySuspendDepth > 0 )
+    {
+        m_pendingNotifications.insert( aField );
+        return;
+    }
+
+    // Snapshot before dispatch — observers may unregister themselves
+    // during the call (e.g. a dialog close handler), and we don't want
+    // to skip subsequent observers or dereference an erased entry.
+    std::vector<PROJECT_FILE_OBSERVER*> snapshot = m_observers;
+
+    for( PROJECT_FILE_OBSERVER* obs : snapshot )
+    {
+        // Re-check membership so that an earlier observer's destructor
+        // can't trigger a use-after-free on a later observer in this
+        // same fan-out.
+        if( std::find( m_observers.begin(), m_observers.end(), obs ) == m_observers.end() )
+            continue;
+
+        obs->OnMultiBoardFieldChanged( aField );
+    }
+}
+
+
+// ----- Min power pins -----
+
+void PROJECT_FILE::SetMinPowerPin( const wxString& aNet, int aMinPins )
+{
+    auto& slot = m_minPowerPins[aNet];
+
+    if( slot == aMinPins )
+        return;
+
+    slot = aMinPins;
+    NotifyMultiBoardChanged( MULTI_BOARD_FIELD::MIN_POWER_PINS );
+}
+
+
+void PROJECT_FILE::RemoveMinPowerPin( const wxString& aNet )
+{
+    if( m_minPowerPins.erase( aNet ) > 0 )
+        NotifyMultiBoardChanged( MULTI_BOARD_FIELD::MIN_POWER_PINS );
+}
+
+
+void PROJECT_FILE::ClearMinPowerPins()
+{
+    if( m_minPowerPins.empty() )
+        return;
+
+    m_minPowerPins.clear();
+    NotifyMultiBoardChanged( MULTI_BOARD_FIELD::MIN_POWER_PINS );
+}
+
+
+// ----- Max length per cross-board net -----
+
+void PROJECT_FILE::SetMaxLengthNm( const wxString& aNet, int64_t aMaxNm )
+{
+    auto& slot = m_maxLengthNm[aNet];
+
+    if( slot == aMaxNm )
+        return;
+
+    slot = aMaxNm;
+    NotifyMultiBoardChanged( MULTI_BOARD_FIELD::MAX_LENGTH_NM );
+}
+
+
+void PROJECT_FILE::RemoveMaxLengthNm( const wxString& aNet )
+{
+    if( m_maxLengthNm.erase( aNet ) > 0 )
+        NotifyMultiBoardChanged( MULTI_BOARD_FIELD::MAX_LENGTH_NM );
+}
+
+
+void PROJECT_FILE::ClearMaxLengthNm()
+{
+    if( m_maxLengthNm.empty() )
+        return;
+
+    m_maxLengthNm.clear();
+    NotifyMultiBoardChanged( MULTI_BOARD_FIELD::MAX_LENGTH_NM );
+}
+
+
+// ----- Cross-board diff pairs -----
+
+void PROJECT_FILE::AddCrossBoardDiffPair( const wxString& aNetA, const wxString& aNetB )
+{
+    // Skip if the (a,b) or (b,a) pair already exists. Order in storage
+    // is preserved for round-trip cleanliness, but matching ignores it.
+    auto matches = [&]( const std::pair<wxString, wxString>& p )
+    {
+        return ( p.first == aNetA && p.second == aNetB )
+               || ( p.first == aNetB && p.second == aNetA );
+    };
+
+    if( std::any_of( m_crossBoardDiffPairs.begin(), m_crossBoardDiffPairs.end(), matches ) )
+        return;
+
+    m_crossBoardDiffPairs.emplace_back( aNetA, aNetB );
+    NotifyMultiBoardChanged( MULTI_BOARD_FIELD::CROSS_BOARD_DIFF_PAIRS );
+}
+
+
+void PROJECT_FILE::RemoveCrossBoardDiffPair( const wxString& aNetA, const wxString& aNetB )
+{
+    auto matches = [&]( const std::pair<wxString, wxString>& p )
+    {
+        return ( p.first == aNetA && p.second == aNetB )
+               || ( p.first == aNetB && p.second == aNetA );
+    };
+
+    auto it = std::remove_if( m_crossBoardDiffPairs.begin(), m_crossBoardDiffPairs.end(),
+                              matches );
+
+    if( it == m_crossBoardDiffPairs.end() )
+        return;
+
+    m_crossBoardDiffPairs.erase( it, m_crossBoardDiffPairs.end() );
+    NotifyMultiBoardChanged( MULTI_BOARD_FIELD::CROSS_BOARD_DIFF_PAIRS );
+}
+
+
+void PROJECT_FILE::ClearCrossBoardDiffPairs()
+{
+    if( m_crossBoardDiffPairs.empty() )
+        return;
+
+    m_crossBoardDiffPairs.clear();
+    NotifyMultiBoardChanged( MULTI_BOARD_FIELD::CROSS_BOARD_DIFF_PAIRS );
+}
+
+
+// ----- Per-net current rule -----
+
+void PROJECT_FILE::SetCrossBoardCurrentRule( const wxString& aNet, const MB_CURRENT_RULE& aRule )
+{
+    auto it = m_currentRules.find( aNet );
+
+    if( it != m_currentRules.end() && it->second.expectedAmps == aRule.expectedAmps
+        && it->second.pinRatingAmps == aRule.pinRatingAmps )
+    {
+        return;
+    }
+
+    m_currentRules[aNet] = aRule;
+    NotifyMultiBoardChanged( MULTI_BOARD_FIELD::CURRENT_RULES );
+}
+
+
+void PROJECT_FILE::RemoveCrossBoardCurrentRule( const wxString& aNet )
+{
+    if( m_currentRules.erase( aNet ) > 0 )
+        NotifyMultiBoardChanged( MULTI_BOARD_FIELD::CURRENT_RULES );
+}
+
+
+void PROJECT_FILE::ClearCrossBoardCurrentRules()
+{
+    if( m_currentRules.empty() )
+        return;
+
+    m_currentRules.clear();
+    NotifyMultiBoardChanged( MULTI_BOARD_FIELD::CURRENT_RULES );
+}
+
+
+// ----- Per-net voltage-drop rule -----
+
+void PROJECT_FILE::SetCrossBoardVoltageRule( const wxString& aNet, const MB_VOLTAGE_RULE& aRule )
+{
+    auto it = m_voltageRules.find( aNet );
+
+    if( it != m_voltageRules.end() && it->second.expectedAmps == aRule.expectedAmps
+        && it->second.maxDropMv == aRule.maxDropMv
+        && it->second.traceWidthUm == aRule.traceWidthUm
+        && it->second.traceSheetRMOhmsPerSq == aRule.traceSheetRMOhmsPerSq
+        && it->second.contactRPerPinMOhms == aRule.contactRPerPinMOhms )
+    {
+        return;
+    }
+
+    m_voltageRules[aNet] = aRule;
+    NotifyMultiBoardChanged( MULTI_BOARD_FIELD::VOLTAGE_RULES );
+}
+
+
+void PROJECT_FILE::RemoveCrossBoardVoltageRule( const wxString& aNet )
+{
+    if( m_voltageRules.erase( aNet ) > 0 )
+        NotifyMultiBoardChanged( MULTI_BOARD_FIELD::VOLTAGE_RULES );
+}
+
+
+void PROJECT_FILE::ClearCrossBoardVoltageRules()
+{
+    if( m_voltageRules.empty() )
+        return;
+
+    m_voltageRules.clear();
+    NotifyMultiBoardChanged( MULTI_BOARD_FIELD::VOLTAGE_RULES );
+}
+
+
+// ----- Existing setters, now wired to notify -----
+
+void PROJECT_FILE::SetCrossBoardNets( std::vector<MB_CROSS_BOARD_NET> aNets )
+{
+    m_crossBoardNets = std::move( aNets );
+    NotifyMultiBoardChanged( MULTI_BOARD_FIELD::CROSS_BOARD_NETS );
+}
+
+
+void PROJECT_FILE::SetCustomMates( std::vector<CUSTOM_MATE> aMates )
+{
+    m_customMates = std::move( aMates );
+    NotifyMultiBoardChanged( MULTI_BOARD_FIELD::CUSTOM_MATES );
+}
+
+
+void PROJECT_FILE::SetAssemblyInstances( std::vector<ASSEMBLY_INSTANCE_STATE> aStates )
+{
+    m_assemblyInstances = std::move( aStates );
+    NotifyMultiBoardChanged( MULTI_BOARD_FIELD::ASSEMBLY_INSTANCES );
+}
+
+
+void PROJECT_FILE::SetMbsFileName( const wxString& aName )
+{
+    if( m_mbsFileName == aName )
+        return;
+
+    m_mbsFileName = aName;
+    NotifyMultiBoardChanged( MULTI_BOARD_FIELD::MBS_FILE_NAME );
+}
+
+
+void PROJECT_FILE::SetInheritNetSettingsFromContainer( bool aInherit )
+{
+    if( m_inheritNetSettingsFromContainer == aInherit )
+        return;
+
+    m_inheritNetSettingsFromContainer = aInherit;
+    NotifyMultiBoardChanged( MULTI_BOARD_FIELD::INHERIT_NET_SETTINGS );
+}
+
+
+void PROJECT_FILE::SetContainerProjectRelativePath( const wxString& aPath )
+{
+    if( m_containerProjectRelativePath == aPath )
+        return;
+
+    m_containerProjectRelativePath = aPath;
+    NotifyMultiBoardChanged( MULTI_BOARD_FIELD::CONTAINER_PROJECT_PATH );
+}
+
+
+// =============================================================================
+// T3 — Subscription RAII helpers (declared in project_file_observer.h)
+// =============================================================================
+
+SCOPED_PROJECT_FILE_OBSERVER::SCOPED_PROJECT_FILE_OBSERVER( PROJECT_FILE&          aProjectFile,
+                                                            PROJECT_FILE_OBSERVER* aObserver ) :
+        m_projectFile( &aProjectFile ),
+        m_observer( aObserver )
+{
+    if( m_observer )
+        m_projectFile->RegisterObserver( m_observer );
+}
+
+
+SCOPED_PROJECT_FILE_OBSERVER::~SCOPED_PROJECT_FILE_OBSERVER()
+{
+    if( m_projectFile && m_observer )
+        m_projectFile->UnregisterObserver( m_observer );
+}
+
+
+SCOPED_PROJECT_FILE_OBSERVER::SCOPED_PROJECT_FILE_OBSERVER(
+        SCOPED_PROJECT_FILE_OBSERVER&& aOther ) noexcept :
+        m_projectFile( aOther.m_projectFile ),
+        m_observer( aOther.m_observer )
+{
+    aOther.m_projectFile = nullptr;
+    aOther.m_observer    = nullptr;
+}
+
+
+SCOPED_PROJECT_FILE_OBSERVER& SCOPED_PROJECT_FILE_OBSERVER::operator=(
+        SCOPED_PROJECT_FILE_OBSERVER&& aOther ) noexcept
+{
+    if( this == &aOther )
+        return *this;
+
+    if( m_projectFile && m_observer )
+        m_projectFile->UnregisterObserver( m_observer );
+
+    m_projectFile        = aOther.m_projectFile;
+    m_observer           = aOther.m_observer;
+    aOther.m_projectFile = nullptr;
+    aOther.m_observer    = nullptr;
+
+    return *this;
+}
+
+
+PROJECT_FILE_SUSPEND_NOTIFY::PROJECT_FILE_SUSPEND_NOTIFY( PROJECT_FILE& aProjectFile ) :
+        m_projectFile( aProjectFile )
+{
+    ++m_projectFile.m_notifySuspendDepth;
+}
+
+
+PROJECT_FILE_SUSPEND_NOTIFY::~PROJECT_FILE_SUSPEND_NOTIFY()
+{
+    if( --m_projectFile.m_notifySuspendDepth > 0 )
+        return;
+
+    // Outermost guard exits — drain pending. Move into a local so any
+    // re-entrant edits during dispatch (which now go straight through
+    // because depth is 0) don't get tangled with the drain.
+    std::set<MULTI_BOARD_FIELD> pending;
+    pending.swap( m_projectFile.m_pendingNotifications );
+
+    for( MULTI_BOARD_FIELD field : pending )
+        m_projectFile.NotifyMultiBoardChanged( field );
+}
+
+
+// =============================================================================
+// T3 Phase 4 — file watcher API + external-change reload
+// =============================================================================
+
+bool PROJECT_FILE::EnableFileWatcher( const wxString& aAbsPath )
+{
+    if( aAbsPath.IsEmpty() )
+    {
+        DisableFileWatcher();
+        return false;
+    }
+
+    if( !m_watcher )
+        m_watcher = std::make_unique<PROJECT_FILE_WATCHER>( *this );
+
+    return m_watcher->Start( aAbsPath );
+}
+
+
+void PROJECT_FILE::DisableFileWatcher()
+{
+    if( !m_watcher )
+        return;
+
+    m_watcher->Stop();
+    // Keep the instance alive so re-enable doesn't allocate again.
+    // The watcher itself is cheap; the OS resources (kqueue / inotify
+    // FD) are released by Stop.
+}
+
+
+void PROJECT_FILE::OnExternalFileChange()
+{
+    // Dirty in-memory state means the user is mid-edit. We don't
+    // overwrite their work — we surface the conflict to subscribers
+    // (typically dialogs) and let them decide. Phase 6 will add the
+    // banner UX; until then, observers can listen for this code and
+    // log / prompt as desired.
+    if( m_multiBoardDirty )
+    {
+        wxLogTrace( wxT( "PROJECT_FILE" ),
+                    wxT( "OnExternalFileChange: dirty in-memory state, surfacing "
+                         "EXTERNAL_RELOAD_DIRTY for '%s'" ),
+                    m_watcher ? m_watcher->WatchedPath() : wxString( wxEmptyString ) );
+
+        NotifyMultiBoardChanged( MULTI_BOARD_FIELD::EXTERNAL_RELOAD_DIRTY );
+        return;
+    }
+
+    // Clean state — safe to blanket-reload from disk. Re-running
+    // LoadFromFile through JSON_SETTINGS overwrites every PARAM-bound
+    // member from the on-disk JSON. We hold the watcher steady through
+    // the reload — wxFileSystemWatcher events post to the main loop
+    // and are processed serially, so a second event mid-reload would
+    // queue and arrive after we return.
+    //
+    // Suppress per-field notifications during the reload — JSON_SETTINGS
+    // doesn't go through our setters anyway, but in case any future
+    // override does, we collapse the noise into a single synthetic
+    // EXTERNAL_RELOAD event below.
+    {
+        PROJECT_FILE_SUSPEND_NOTIFY guard( *this );
+
+        // LoadFromFile returns false if the file doesn't exist or
+        // can't be parsed. Either way, we don't blanket-reload — log
+        // and bail. The watcher will re-fire if/when the file
+        // reappears in a parseable state.
+        if( !LoadFromFile() )
+        {
+            wxLogTrace( wxT( "PROJECT_FILE" ),
+                        wxT( "OnExternalFileChange: reload failed for '%s'" ),
+                        m_watcher ? m_watcher->WatchedPath() : wxString( wxEmptyString ) );
+
+            // Drop any per-field events the failed load might have
+            // queued so we don't fire bogus notifications on the
+            // way out.
+            m_pendingNotifications.clear();
+            return;
+        }
+
+        // Squash any per-field events the reload may have queued.
+        m_pendingNotifications.clear();
+    }
+
+    // Reload populated fields from disk; in-memory now matches disk.
+    m_multiBoardDirty = false;
+
+    wxLogTrace( wxT( "PROJECT_FILE" ),
+                wxT( "OnExternalFileChange: clean reload from '%s'" ),
+                m_watcher ? m_watcher->WatchedPath() : wxString( wxEmptyString ) );
+
+    NotifyMultiBoardChanged( MULTI_BOARD_FIELD::EXTERNAL_RELOAD );
+}
+
+
+bool PROJECT_FILE::ReloadFromDiskDiscardingChanges()
+{
+    // Same shape as the clean-state branch of OnExternalFileChange,
+    // but unconditional — the caller has explicitly opted to discard
+    // any in-memory edits.
+    {
+        PROJECT_FILE_SUSPEND_NOTIFY guard( *this );
+
+        if( !LoadFromFile() )
+        {
+            wxLogTrace( wxT( "PROJECT_FILE" ),
+                        wxT( "ReloadFromDiskDiscardingChanges: reload failed for '%s'" ),
+                        m_watcher ? m_watcher->WatchedPath() : wxString( wxEmptyString ) );
+
+            m_pendingNotifications.clear();
+            return false;
+        }
+
+        m_pendingNotifications.clear();
+    }
+
+    m_multiBoardDirty = false;
+    NotifyMultiBoardChanged( MULTI_BOARD_FIELD::EXTERNAL_RELOAD );
     return true;
 }
 

@@ -48,6 +48,7 @@
 
 #include <wx/dir.h>
 #include <wx/filename.h>
+#include <wx/msgdlg.h>
 #include <wx/tokenzr.h>
 
 
@@ -91,11 +92,84 @@ MBSCH_EDIT_FRAME::MBSCH_EDIT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     m_apiHandler = std::make_unique<API_HANDLER_MBS_SCH>( this );
     Pgm().GetApiServer().RegisterHandler( m_apiHandler.get() );
 #endif
+
+    // T3: subscribe to our container PROJECT_FILE so we react to
+    // multi_board.* changes from any source — peer windows, agent IPC,
+    // file watcher reload. Lives for the frame's lifetime via RAII.
+    m_projectFileObserver = std::make_unique<SCOPED_PROJECT_FILE_OBSERVER>(
+            Prj().GetProjectFile(), this );
 }
 
 
 MBSCH_EDIT_FRAME::~MBSCH_EDIT_FRAME()
 {
+    // m_projectFileObserver dtor unregisters us before the base class
+    // tears down anything else; explicit reset to make the order
+    // unambiguous and survive future member additions.
+    m_projectFileObserver.reset();
+}
+
+
+void MBSCH_EDIT_FRAME::OnMultiBoardFieldChanged( MULTI_BOARD_FIELD aField )
+{
+    // The MBSCH canvas mostly visualises sub_projects + cross_board_nets
+    // (via SCH_MODULE_BLOCK / SCH_MODULE_PIN), so changes to those
+    // require a redraw. Rule-only changes (min_power_pins, max_length_nm,
+    // diff_pairs, current/voltage rules) don't affect what's drawn —
+    // they only feed DRC — so the canvas doesn't need to repaint for
+    // them.
+    switch( aField )
+    {
+    case MULTI_BOARD_FIELD::SUB_PROJECTS:
+    case MULTI_BOARD_FIELD::CROSS_BOARD_NETS:
+    case MULTI_BOARD_FIELD::MBS_FILE_NAME:
+    case MULTI_BOARD_FIELD::EXTERNAL_RELOAD:
+        // External or peer-driven topology change. Redraw and refresh
+        // any open ERC dialog so existing markers don't lie.
+        if( GetCanvas() )
+            GetCanvas()->Refresh();
+
+        UpdateNetHighlightStatus();
+        break;
+
+    case MULTI_BOARD_FIELD::EXTERNAL_RELOAD_DIRTY:
+    {
+        // Conflict UX foundation (Phase 6). Frames don't have a
+        // DIALOG_SHIM banner — the banner API is for dialogs (the
+        // rules dialog in MOON-1302 is the first consumer). For
+        // frames, surface the conflict via an explicit prompt so the
+        // user can choose to reload-and-discard or keep their edits.
+        //
+        // Modal here is acceptable because the alternative — silently
+        // ignoring the external change — would mean the next save
+        // overwrites the peer's edits. Users hate both, but they
+        // hate silent data loss more.
+        int answer = wxMessageBox(
+                _( "The multi-board container project was modified outside this "
+                   "window (another KiCad window, the agent, or an external editor) "
+                   "while you have unsaved changes here.\n\n"
+                   "Reload from disk and discard your changes?" ),
+                _( "External Change Detected" ),
+                wxYES_NO | wxICON_WARNING, this );
+
+        if( answer == wxYES )
+        {
+            if( Prj().GetProjectFile().ReloadFromDiskDiscardingChanges() )
+            {
+                if( GetCanvas() )
+                    GetCanvas()->Refresh();
+
+                UpdateNetHighlightStatus();
+            }
+        }
+        break;
+    }
+
+    default:
+        // Rule changes — no canvas effect. DRC re-runs read fresh on
+        // each invocation so they pick up the new rules automatically.
+        break;
+    }
 }
 
 
@@ -186,6 +260,7 @@ void MBSCH_EDIT_FRAME::doReCreateMenuBar()
     // -- Tools menu -- (MBS-specific)
     ACTION_MENU* toolsMenu = new ACTION_MENU( false, selTool );
     toolsMenu->Add( SCH_ACTIONS::refreshMbsFromSubProjects );
+    toolsMenu->Add( SCH_ACTIONS::mbsCrossBoardRules );
 
     // -- Preferences menu --
     ACTION_MENU* prefsMenu = new ACTION_MENU( false, selTool );

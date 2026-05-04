@@ -172,6 +172,8 @@ set( KICOMMON_SRCS
     project/net_settings.cpp
     project/project_archiver.cpp
     project/project_file.cpp
+    project/project_file_self_write_filter.cpp
+    project/project_file_watcher.cpp
     project/project_local_settings.cpp
     project/multi_board_scan.cpp
     project/cross_board_pcb_sync.cpp
@@ -488,6 +490,7 @@ set( COMMON_DLG_SRCS
     dialogs/dialog_import_choose_project.cpp
     dialogs/dialog_import_choose_project_base.cpp
     dialogs/dialog_multi_board_setup.cpp
+    dialogs/dialog_multi_board_rules.cpp
     dialogs/dialog_multi_unit_entry.cpp
     dialogs/dialog_page_settings_base.cpp
     dialogs/dialog_paste_special.cpp

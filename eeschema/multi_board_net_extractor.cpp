@@ -37,8 +37,9 @@ namespace
 
 /**
  * Look up a sub-project uuid by matching the block's sub_project_path
- * against the MULTI_BOARD_PROJECT's registered sub-projects. Returns a
- * nil KIID when no match is found (caller surfaces as a diagnostic).
+ * against the container `PROJECT_FILE`'s registered sub_projects.
+ * Returns a nil KIID when no match is found (caller surfaces as a
+ * diagnostic).
  */
 KIID subProjectUuidForBlock( const SCH_MODULE_BLOCK& aBlock,
                              const PROJECT_FILE& aMultiBoard )

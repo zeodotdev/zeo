@@ -165,8 +165,9 @@ public:
     bool LoadProject( const wxFileName& aProjectFileName );
 
     /**
-     * Load a multi-board project (`.kicad_multi` container) and switch the
-     * launcher into multi-board mode.
+     * Load a multi-board container project (`.kicad_pro` with
+     * `multi_board.container = true`) and switch the launcher into
+     * multi-board mode.
      *
      * Loads the container, stores it on the frame so subsequent UI queries
      * can detect multi-board state, and then calls LoadProject() on the
@@ -174,7 +175,7 @@ public:
      * context. If the container has no sub-projects, the Setup dialog is
      * shown and the first sub-project added there is loaded afterwards.
      *
-     * @param aMultiProjectFile path to the `.kicad_multi` container
+     * @param aMultiProjectFile path to the container `.kicad_pro`
      * @return true on success
      */
     bool LoadMultiBoardProject( const wxFileName& aMultiProjectFile );

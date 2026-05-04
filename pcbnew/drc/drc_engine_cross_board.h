@@ -245,6 +245,18 @@ public:
      */
     int GetWarningCount() const;
 
+    /**
+     * Pre-seed the board cache with an in-memory BOARD so the engine
+     * uses the live, possibly-unsaved state for that sub-project rather
+     * than re-reading the .kicad_pcb file from disk. The engine does
+     * not take ownership.
+     */
+    void RegisterInMemoryBoard( const KIID& aSubProjectUuid, BOARD* aBoard )
+    {
+        if( aBoard )
+            m_boardCache[aSubProjectUuid] = aBoard;
+    }
+
 private:
     /**
      * Load a board by UUID from the project.

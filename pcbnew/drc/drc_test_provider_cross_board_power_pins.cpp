@@ -65,23 +65,45 @@ bool DRC_TEST_PROVIDER_CROSS_BOARD_POWER_PINS::Run()
 {
     BOARD* board = m_drcEngine->GetBoard();
 
+    wxLogMessage( "[DRC_CB_POWER] Run() entry, board=%p", board );
+
     if( !board )
         return true;
 
     PROJECT* prj = board->GetProject();
+
+    wxLogMessage( "[DRC_CB_POWER] prj=%p", prj );
 
     if( !prj )
         return true;
 
     wxString proPath = prj->GetProjectFullName();
 
+    wxLogMessage( "[DRC_CB_POWER] proPath='%s'", proPath );
+
     if( proPath.IsEmpty() )
         return true;
 
     MULTI_BOARD_CONTAINER_VIEW view = MultiBoardBuildContainerView( wxFileName( proPath ) );
 
+    wxLogMessage( "[DRC_CB_POWER] view: containerProAbsPath='%s' minPowerPins.size=%zu "
+                  "crossBoardNets.size=%zu mySubProjectUuid='%s'",
+                  view.containerProAbsPath, view.minPowerPins.size(),
+                  view.crossBoardNets.size(), view.mySubProjectUuid.AsString() );
+
+    for( const auto& [netName, minPins] : view.minPowerPins )
+        wxLogMessage( "[DRC_CB_POWER]   rule: %s -> %d", netName, minPins );
+
+    for( const MULTI_BOARD_CROSS_BOARD_NET_VIEW& nv : view.crossBoardNets )
+        wxLogMessage( "[DRC_CB_POWER]   net: %s myEndpoints=%zu siblings=%zu",
+                      nv.netName, nv.myEndpoints.size(), nv.siblingEndpoints.size() );
+
     if( view.containerProAbsPath.IsEmpty() || view.minPowerPins.empty() )
+    {
+        wxLogMessage( "[DRC_CB_POWER] EARLY RETURN: containerEmpty=%d minPowerPinsEmpty=%d",
+                      view.containerProAbsPath.IsEmpty(), view.minPowerPins.empty() );
         return true;   // not a multi-board sub-project, or no rules declared
+    }
 
     if( !reportPhase( _( "Checking cross-board power-pin counts..." ) ) )
         return false;
@@ -109,26 +131,50 @@ bool DRC_TEST_PROVIDER_CROSS_BOARD_POWER_PINS::Run()
     for( const auto& [netName, minPins] : view.minPowerPins )
     {
         if( m_drcEngine->IsErrorLimitExceeded( DRCE_CROSS_BOARD_POWER_PINS ) )
+        {
+            wxLogMessage( "[DRC_CB_POWER]   '%s': error limit exceeded, bailing", netName );
             return true;
+        }
 
         auto it = pinsPerNet.find( netName );
         int  count = ( it != pinsPerNet.end() ) ? static_cast<int>( it->second.size() ) : 0;
 
+        wxLogMessage( "[DRC_CB_POWER]   evaluate '%s': count=%d minPins=%d", netName, count, minPins );
+
         // Skip nets that don't touch this board at all — that's an
         // "unrelated board" case, not a violation.
         if( count == 0 )
+        {
+            wxLogMessage( "[DRC_CB_POWER]   '%s': SKIP (count==0, unrelated board)", netName );
             continue;
+        }
 
         if( count >= minPins )
+        {
+            wxLogMessage( "[DRC_CB_POWER]   '%s': SKIP (count>=minPins, satisfied)", netName );
             continue;
+        }
+
+        wxLogMessage( "[DRC_CB_POWER]   '%s': FIRING violation (count=%d < minPins=%d)",
+                      netName, count, minPins );
 
         std::shared_ptr<DRC_ITEM> drcItem = DRC_ITEM::Create( DRCE_CROSS_BOARD_POWER_PINS );
+
+        if( !drcItem )
+        {
+            wxLogMessage( "[DRC_CB_POWER]   '%s': DRC_ITEM::Create returned NULL!", netName );
+            continue;
+        }
+
         drcItem->SetErrorMessage( wxString::Format(
                 _( "Cross-board power net '%s' has %d connector pin(s) on this board "
                    "(rule requires at least %d). Add more connector pads carrying this "
                    "net or relax the rule on the multi-board container." ),
                 netName, count, minPins ) );
+
+        wxLogMessage( "[DRC_CB_POWER]   '%s': calling reportViolation", netName );
         reportViolation( drcItem, board->GetBoundingBox().GetCenter(), UNDEFINED_LAYER );
+        wxLogMessage( "[DRC_CB_POWER]   '%s': reportViolation returned", netName );
     }
 
     return !m_drcEngine->IsCancelled();

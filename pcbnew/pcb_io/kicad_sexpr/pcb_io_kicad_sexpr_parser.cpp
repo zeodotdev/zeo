@@ -1358,6 +1358,30 @@ BOARD* PCB_IO_KICAD_SEXPR_PARSER::parseBOARD_unchecked()
             break;
         }
 
+        case T_connector_pads:
+        {
+            // Multi-board connector-pad markers: list of pad UUIDs the
+            // user has tagged as cross-board endpoints. Persisted so
+            // mbs_sync_to_pcb / cross-board DRC see the same set across
+            // load/save cycles. Format: (connector_pads (uuid "...") ...)
+            for( token = NextTok(); token != T_RIGHT; token = NextTok() )
+            {
+                if( token != T_LEFT )
+                    Expecting( T_LEFT );
+
+                token = NextTok();
+
+                if( token != T_uuid )
+                    Expecting( T_uuid );
+
+                NeedSYMBOLorNUMBER();
+                m_board->MarkAsConnectorPad( KIID( FromUTF8() ) );
+                NeedRIGHT();
+            }
+
+            break;
+        }
+
         default:
             wxString err;
             err.Printf( _( "Unknown token '%s'" ), FromUTF8() );

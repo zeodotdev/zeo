@@ -147,7 +147,7 @@ private:
 
     /**
      * Lazily-populated lookup of (componentRef, padNumber) -> cross-board
-     * net name pulled from the enclosing .kicad_multi container (if any).
+     * net name pulled from the enclosing multi-board container (if any).
      * Used to preserve cross-board net assignments on pads that have no
      * matching schematic pin (which would otherwise trip the
      * "No net found..." warning and clear the pad's net).
@@ -157,8 +157,8 @@ private:
 
     /**
      * Return the cross-board net name for (ref, padNumber) if present, else
-     * an empty string. Loads and caches the enclosing .kicad_multi on first
-     * call.
+     * an empty string. Loads and caches the enclosing container `.kicad_pro`
+     * on first call.
      */
     wxString lookupCrossBoardNet( const wxString& aRef, const wxString& aPadNumber );
     std::map<PAD*, wxString>           m_padPinFunctions;

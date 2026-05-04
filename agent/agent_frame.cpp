@@ -4650,6 +4650,39 @@ bool AGENT_FRAME::DoOpenEditor( FRAME_T aFrameType )
             break;
     }
 
+    // Multi-board container preservation: if the active project is a
+    // multi-board container and we're being asked to open a file that
+    // belongs to a different project (typically a sub-project's PCB or
+    // schematic), force the peer-spawn path even when no existing frame
+    // of this type is open. Strategy 2's primary creation calls
+    // OpenProjectFiles → SETTINGS_MANAGER::LoadProject(aSetActive=true),
+    // which UNLOADS the container — orphaning every MBSCH frame
+    // (their Prj() flips to the sub-project) and breaking subsequent
+    // mbs_* IPC calls with "Active project is not a multi-board
+    // container". Strategy 3 uses SetPrjOverride + LoadProject(false)
+    // so the container stays put. (MOON-1325)
+    if( !anyExistingFrame && !filePath.IsEmpty() )
+    {
+        PROJECT& activePrj = Kiway().Prj();
+
+        if( activePrj.GetProjectFile().IsMultiBoardContainer() )
+        {
+            wxString docProPath = resolveProjectFileForDocument( filePath );
+            wxString activePro  = activePrj.GetProjectFullName();
+
+            if( !docProPath.IsEmpty()
+                && wxFileName( docProPath ).GetFullPath()
+                           != wxFileName( activePro ).GetFullPath() )
+            {
+                wxLogInfo( "DoOpenEditor: active project is multi-board container "
+                           "'%s'; forcing peer-spawn for '%s' to preserve container "
+                           "as active",
+                           activePro, filePath );
+                anyExistingFrame = true;  // bypass Strategy 2 → fall to Strategy 3
+            }
+        }
+    }
+
     if( !anyExistingFrame )
     {
         KIWAY_PLAYER* player = Kiway().Player( aFrameType, true );

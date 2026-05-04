@@ -33,6 +33,7 @@
 #include <settings/settings_manager.h>
 #include <kiface_base.h>
 #include <dialogs/dialog_multi_board_setup.h>
+#include <dialogs/dialog_multi_board_rules.h>
 #include <wx/dir.h>
 #include <wx/display.h>
 #include <clipboard.h>
@@ -625,8 +626,10 @@ int SCH_EDITOR_CONTROL::RemapSymbols( const TOOL_EVENT& aEvent )
 
 int SCH_EDITOR_CONTROL::RefreshMbsFromSubProjects( const TOOL_EVENT& aEvent )
 {
-    // Locate the enclosing .kicad_multi by walking up from the schematic's
-    // directory — same logic as syncCrossBoardNetsIfMbs.
+    // Locate the enclosing multi-board container `.kicad_pro` by walking
+    // up from the schematic's directory — same logic as
+    // syncCrossBoardNetsIfMbs (the explicit back-ref from M5.2 is preferred
+    // when set; the dir walk is the legacy fallback).
     SCH_SCREEN* rootScreen = m_frame->Schematic().RootScreen();
 
     if( !rootScreen )
@@ -800,6 +803,24 @@ int SCH_EDITOR_CONTROL::MbsManageSubBoards( const TOOL_EVENT& aEvent )
     // `RefreshProjectTree()` directly; that's the user-visible
     // launcher case. From MBSCH the auto-refresh is a follow-up.
 
+    return 0;
+}
+
+
+int SCH_EDITOR_CONTROL::MbsCrossBoardRules( const TOOL_EVENT& aEvent )
+{
+    PROJECT_FILE& container = m_frame->Prj().GetProjectFile();
+
+    if( !container.IsMultiBoardContainer() )
+    {
+        wxMessageBox( _( "This session is not a multi-board project." ),
+                      _( "No Multi-Board Project" ), wxOK | wxICON_INFORMATION,
+                      m_frame );
+        return 0;
+    }
+
+    DIALOG_MULTI_BOARD_RULES dlg( m_frame, &container );
+    dlg.ShowModal();
     return 0;
 }
 
@@ -4208,6 +4229,8 @@ void SCH_EDITOR_CONTROL::setTransitions()
         SCH_ACTIONS::mbsOpen3DAssembly.MakeEvent() );
     Go( &SCH_EDITOR_CONTROL::MbsOpenSubProjectPcb,
         SCH_ACTIONS::mbsOpenSubProjectPcb.MakeEvent() );
+    Go( &SCH_EDITOR_CONTROL::MbsCrossBoardRules,
+        SCH_ACTIONS::mbsCrossBoardRules.MakeEvent() );
 
     Go( &SCH_EDITOR_CONTROL::CrossProbeToPcb, EVENTS::PointSelectedEvent );
     Go( &SCH_EDITOR_CONTROL::CrossProbeToPcb, EVENTS::SelectedEvent );

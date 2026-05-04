@@ -158,6 +158,27 @@ void DRC_ENGINE_CROSS_BOARD::CheckConnectorMatching()
     const auto& crossBoardNets = projectFile.GetCrossBoardNets();
     const auto& subProjects = projectFile.GetSubProjects();
 
+    // Surface the likeliest silent-pass cause: nothing to check. If
+    // cross_board_nets is empty the user almost certainly hasn't run
+    // MBSCH refresh yet, so make that visible rather than reporting
+    // "0 violations" with no explanation.
+    if( m_reporter )
+    {
+        m_reporter->Report(
+                wxString::Format( _( "Connector matching: %zu cross-board net(s), "
+                                     "%zu sub-project(s)" ),
+                                  crossBoardNets.size(), subProjects.size() ),
+                RPT_SEVERITY_INFO );
+
+        if( crossBoardNets.empty() )
+        {
+            m_reporter->Report(
+                    _( "No cross-board nets are defined on the container. "
+                       "Run 'Refresh Multi-Board' from the MBSCH editor first." ),
+                    RPT_SEVERITY_WARNING );
+        }
+    }
+
     // Build sub-project name map for violation messages.
     std::map<KIID, wxString> subProjectNames;
 

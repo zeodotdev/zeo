@@ -82,6 +82,22 @@ public:
 
     int ShowDesignRuleEditorDialog( const TOOL_EVENT& aEvent );
 
+    /**
+     * Run cross-board project-wide validation via `DRC_ENGINE_CROSS_BOARD`
+     * against the active board's enclosing multi-board container. No-op
+     * with a status message when the active project isn't a multi-board
+     * sub-project. Renders results in a modal dialog with one row per
+     * violation (severity, type, sub-project, connector, message).
+     *
+     * Distinct from the per-board `runDRC` action: that one runs DRC on
+     * just this board (which already auto-fires the cross-board test
+     * providers). This action runs the project-wide engine, which today
+     * largely overlaps with per-board providers but is the natural home
+     * for future analog checks (signal integrity, voltage drop) that
+     * require N-board context.
+     */
+    int RunCrossBoardValidation( const TOOL_EVENT& aEvent );
+
     void DestroyDesignRuleEditorDialog();
 
     std::shared_ptr<DRC_ENGINE> GetDRCEngine() { return m_drcEngine; }

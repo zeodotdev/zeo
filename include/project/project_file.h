@@ -26,8 +26,12 @@
 #include <kiid.h>
 #include <math/vector3.h>
 #include <project/board_project_settings.h>
+#include <project/project_file_observer.h>   // T3: MULTI_BOARD_FIELD enum + observer interface
 #include <settings/json_settings.h>
 #include <settings/nested_settings.h>
+
+#include <memory>
+#include <set>
 
 class BOARD_DESIGN_SETTINGS;
 class ERC_SETTINGS;
@@ -374,7 +378,12 @@ public:
      */
     PROJECT_FILE( const wxString& aFullPath );
 
-    virtual ~PROJECT_FILE() = default;
+    /// Out-of-line so the unique_ptr<PROJECT_FILE_WATCHER> destructor
+    /// can run against the complete watcher type, which is only
+    /// available in `project_file.cpp`. Otherwise the implicit-default
+    /// destructor here would require the watcher's declaration in
+    /// every translation unit including this header.
+    virtual ~PROJECT_FILE();
 
     virtual bool MigrateFromLegacy( wxConfigBase* aCfg ) override;
 
@@ -553,10 +562,7 @@ public:
         return m_containerProjectRelativePath;
     }
 
-    void SetContainerProjectRelativePath( const wxString& aPath )
-    {
-        m_containerProjectRelativePath = aPath;
-    }
+    void SetContainerProjectRelativePath( const wxString& aPath );
 
     std::vector<SUB_PROJECT_INFO>& GetSubProjects() { return m_subProjects; }
 
@@ -575,10 +581,7 @@ public:
         return m_crossBoardNets;
     }
 
-    void SetCrossBoardNets( std::vector<MB_CROSS_BOARD_NET> aNets )
-    {
-        m_crossBoardNets = std::move( aNets );
-    }
+    void SetCrossBoardNets( std::vector<MB_CROSS_BOARD_NET> aNets );
 
     /// Container-level rule: minimum number of pins each named power
     /// net must have on each sub-project (e.g. `{"GND": 4, "VCC": 2}`).
@@ -651,10 +654,7 @@ public:
 
     const std::vector<CUSTOM_MATE>& GetCustomMates() const { return m_customMates; }
 
-    void SetCustomMates( std::vector<CUSTOM_MATE> aMates )
-    {
-        m_customMates = std::move( aMates );
-    }
+    void SetCustomMates( std::vector<CUSTOM_MATE> aMates );
 
     /**
      * Persisted per-instance assembly state (M6.G). One entry per
@@ -671,16 +671,13 @@ public:
         return m_assemblyInstances;
     }
 
-    void SetAssemblyInstances( std::vector<ASSEMBLY_INSTANCE_STATE> aStates )
-    {
-        m_assemblyInstances = std::move( aStates );
-    }
+    void SetAssemblyInstances( std::vector<ASSEMBLY_INSTANCE_STATE> aStates );
 
     /// Convenience accessor for the MBS schematic filename referenced by
     /// this container project. Empty when the MBS hasn't been created yet.
     const wxString& GetMbsFileName() const { return m_mbsFileName; }
 
-    void SetMbsFileName( const wxString& aName ) { m_mbsFileName = aName; }
+    void SetMbsFileName( const wxString& aName );
 
     /// M7.2: when set on a sub-project, `NetSettings()` returns the
     /// container's net classes / DRC rules at runtime if the container
@@ -689,10 +686,106 @@ public:
     /// as `multi_board.inherit_net_settings`.
     bool InheritNetSettingsFromContainer() const { return m_inheritNetSettingsFromContainer; }
 
-    void SetInheritNetSettingsFromContainer( bool aInherit )
-    {
-        m_inheritNetSettingsFromContainer = aInherit;
-    }
+    void SetInheritNetSettingsFromContainer( bool aInherit );
+
+    // ------------------------------------------------------------------
+    // T3 — Observable mutators for `multi_board.*` state.
+    //
+    // Direct read access stays via the `Get…()` accessors above. To
+    // mutate, use the setters below — they fan out the change to
+    // registered `PROJECT_FILE_OBSERVER`s so every window holding this
+    // PROJECT_FILE picks up the edit. The legacy mutable-ref `Get…()`
+    // overloads above remain temporarily so existing call sites build
+    // until the Phase 5 sweep migrates them. New code MUST use the
+    // setters; mutating through the legacy refs bypasses notification.
+    // ------------------------------------------------------------------
+
+    void RegisterObserver( PROJECT_FILE_OBSERVER* aObserver );
+    void UnregisterObserver( PROJECT_FILE_OBSERVER* aObserver );
+
+    // Sub-projects (vector). AddSubProject / RemoveSubProject defined
+    // earlier already maintain `m_subProjects`; T3 makes them notify.
+
+    // Cross-board nets. SetCrossBoardNets defined earlier; T3 makes it
+    // notify. Direct mutation of the vector via the non-const Get…()
+    // does not notify and will be removed in Phase 5.
+
+    // Custom mates. SetCustomMates defined earlier; T3 makes it notify.
+
+    // Assembly instances. SetAssemblyInstances defined earlier; T3
+    // makes it notify.
+
+    // MBS file name. SetMbsFileName defined earlier; T3 makes it notify.
+
+    // Min power pins.
+    void SetMinPowerPin( const wxString& aNet, int aMinPins );
+    void RemoveMinPowerPin( const wxString& aNet );
+    void ClearMinPowerPins();
+
+    // Max length per cross-board net (nm).
+    void SetMaxLengthNm( const wxString& aNet, int64_t aMaxNm );
+    void RemoveMaxLengthNm( const wxString& aNet );
+    void ClearMaxLengthNm();
+
+    // Cross-board diff pairs. Order within (a,b) is irrelevant to
+    // matching, but the stored pair preserves whatever the caller
+    // provided so authoring round-trips cleanly.
+    void AddCrossBoardDiffPair( const wxString& aNetA, const wxString& aNetB );
+    void RemoveCrossBoardDiffPair( const wxString& aNetA, const wxString& aNetB );
+    void ClearCrossBoardDiffPairs();
+
+    // Per-net current rule.
+    void SetCrossBoardCurrentRule( const wxString& aNet, const MB_CURRENT_RULE& aRule );
+    void RemoveCrossBoardCurrentRule( const wxString& aNet );
+    void ClearCrossBoardCurrentRules();
+
+    // Per-net voltage-drop rule.
+    void SetCrossBoardVoltageRule( const wxString& aNet, const MB_VOLTAGE_RULE& aRule );
+    void RemoveCrossBoardVoltageRule( const wxString& aNet );
+    void ClearCrossBoardVoltageRules();
+
+    /// Internal: dispatch a change notification. Public so internal
+    /// helpers (file watcher in Phase 4, save guard in Phase 3) can
+    /// fan out without going through a setter. Honours the suspend
+    /// guard — if any `PROJECT_FILE_SUSPEND_NOTIFY` is active, the
+    /// notification is queued and emitted on the guard's destruction.
+    void NotifyMultiBoardChanged( MULTI_BOARD_FIELD aField );
+
+    /// T3 Phase 4: start watching `aAbsPath` for external modifications.
+    /// Idempotent — subsequent calls re-target the watcher. Pass empty
+    /// string to disable.
+    ///
+    /// On a successful watcher event (after the self-write filter), the
+    /// PROJECT_FILE blanket-reloads from disk and fires
+    /// `MULTI_BOARD_FIELD::EXTERNAL_RELOAD` if the in-memory state was
+    /// clean, or `EXTERNAL_RELOAD_DIRTY` if there were unsaved edits
+    /// (no auto-overwrite — Phase 6's UX banner asks the user).
+    ///
+    /// Safe to call when `wxUSE_FSWATCHER` is unavailable; degrades to
+    /// a no-op with a trace log.
+    bool EnableFileWatcher( const wxString& aAbsPath );
+
+    /// Stop watching, if active. Idempotent.
+    void DisableFileWatcher();
+
+    /// Internal: callback invoked by `PROJECT_FILE_WATCHER` when an
+    /// external modification has been detected and confirmed not to be
+    /// our own write. Public so the watcher class can call into us
+    /// without friending — it's invoked only by the watcher.
+    void OnExternalFileChange();
+
+    /// T3 Phase 6: force a blanket reload of the in-memory state from
+    /// disk, regardless of pending unsaved edits. Called by the
+    /// "Reload" action on a conflict UX banner — the user has
+    /// explicitly chosen to discard their in-memory changes in favour
+    /// of the on-disk state.
+    ///
+    /// Fires `MULTI_BOARD_FIELD::EXTERNAL_RELOAD` after the reload so
+    /// any other observer (e.g. peer windows on the same project)
+    /// re-renders. Returns true on a successful reload, false if the
+    /// file can't be parsed (in which case the in-memory state is
+    /// left untouched and dirty).
+    bool ReloadFromDiskDiscardingChanges();
 
     /// Resolve a sub-project's relativePath to an absolute `.kicad_pro`
     /// path, relative to this container project's directory.
@@ -942,6 +1035,57 @@ private:
     /// container-aware code skip the legacy 6-level directory walk.
     /// Persisted as `multi_board.container_project_relative_path`.
     wxString m_containerProjectRelativePath;
+
+    /// `PROJECT_FILE_SUSPEND_NOTIFY` reaches in to bump `m_notifySuspendDepth`
+    /// and drain `m_pendingNotifications` directly. We don't expose these
+    /// as public state because the only legitimate mutator is the RAII
+    /// guard — exposing them invites callers to mismatch begin/end.
+    friend class PROJECT_FILE_SUSPEND_NOTIFY;
+
+    /// T3: registered `PROJECT_FILE_OBSERVER`s. Order matters — observers
+    /// are dispatched in registration order, mirroring how Kiway peers
+    /// expect deterministic ordering. Pointers, not unique_ptr — observers
+    /// own their lifetime and de-register before destruction (typically
+    /// via the `SCOPED_PROJECT_FILE_OBSERVER` RAII helper).
+    std::vector<PROJECT_FILE_OBSERVER*> m_observers;
+
+    /// T3: depth counter for `PROJECT_FILE_SUSPEND_NOTIFY`. While > 0,
+    /// `NotifyMultiBoardChanged` queues into `m_pendingNotifications`
+    /// instead of dispatching immediately. The outermost guard drains
+    /// the set on destruction. Re-entrancy is fine; depth is bumped /
+    /// decremented in lockstep.
+    int m_notifySuspendDepth = 0;
+
+    /// T3: coalesced pending notifications. A `std::set` so repeated
+    /// edits to the same field collapse to one event.
+    std::set<MULTI_BOARD_FIELD> m_pendingNotifications;
+
+    /// T3 Phase 3: reentrancy guard for `SaveToFile`. While true, a
+    /// recursive `SaveToFile` (e.g. triggered from a wxEvent fired
+    /// during JSON serialisation) just sets `m_saveAgainPending` and
+    /// returns; the in-flight save loops once more before returning.
+    bool m_saveInProgress = false;
+
+    /// T3 Phase 3: "save was requested while another save was in
+    /// flight" flag. Drained at the end of `SaveToFile` to coalesce
+    /// rapid back-to-back saves into one disk write.
+    bool m_saveAgainPending = false;
+
+    /// T3 Phase 4: tracks whether the in-memory state has been mutated
+    /// since the last successful save. Set by `NotifyMultiBoardChanged`,
+    /// cleared by `SaveToFile`. Read by `OnExternalFileChange` to decide
+    /// between blanket-reload and EXTERNAL_RELOAD_DIRTY signalling.
+    /// Coarse-grained — flips on any multi_board.* mutation rather than
+    /// per-field. Good enough for the conflict UX: if the user edited
+    /// anything we should ask before overwriting their work.
+    bool m_multiBoardDirty = false;
+
+    /// T3 Phase 4: file watcher, owned via opaque pointer because
+    /// `wxFileSystemWatcher` is `#if wxUSE_FSWATCHER`-guarded and we
+    /// don't want to leak that conditional into every translation unit
+    /// that includes `project_file.h`. nullptr when watching is
+    /// disabled or the platform lacks an event loop.
+    std::unique_ptr<class PROJECT_FILE_WATCHER> m_watcher;
 
     /// A link to the owning PROJECT
     PROJECT* m_project;

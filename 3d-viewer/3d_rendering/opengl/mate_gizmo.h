@@ -115,6 +115,14 @@ public:
         glm::vec3    minWorld;
         glm::vec3    maxWorld;
         OVERLAP_KIND kind;
+
+        /// Optional: actual intersecting triangles, in shared-world
+        /// units. Stored as flat groups of 3 vertices per triangle.
+        /// When non-empty, the renderer draws these as filled red
+        /// surfaces showing exactly where the meshes penetrate, and
+        /// the AABB box becomes a faint backstop. When empty, only
+        /// the AABB box renders.
+        std::vector<glm::vec3> triVerts;
     };
 
     MATE_GIZMO();

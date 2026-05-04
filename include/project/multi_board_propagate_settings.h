@@ -107,6 +107,25 @@ using MULTI_BOARD_NET_CLASS_CONFLICT_RESOLVER =
         std::function<MULTI_BOARD_NET_CLASS_RESOLUTION( const MULTI_BOARD_NET_CLASS_CONFLICT& )>;
 
 
+/**
+ * Field-by-field equivalence test for two NETCLASS instances.
+ *
+ * `NETCLASS::operator==` is unsuitable for cross-instance comparison
+ * (it only inspects `m_constituents`, which always contains `this`, so
+ * two distinct instances are NEVER equal regardless of their actual
+ * settings). This helper compares the user-meaningful fields that
+ * round-trip through the `.kicad_pro` JSON: name, priority, tuning
+ * profile, every optional clearance / track / via / diff-pair / wire /
+ * bus, line style, and both colors.
+ *
+ * Use this anywhere you'd be tempted to write `*a == *b` for two
+ * NETCLASSes — the propagator and the net-class panel's Status column
+ * both rely on it to decide Shared vs Conflict.
+ */
+KICOMMON_API bool MultiBoardNetclassesEquivalent( const class NETCLASS& aA,
+                                                   const class NETCLASS& aB );
+
+
 /// Aggregated outcome of one propagation pass.
 struct KICOMMON_API MULTI_BOARD_PROPAGATE_RESULT
 {
@@ -132,6 +151,15 @@ struct KICOMMON_API MULTI_BOARD_PROPAGATE_RESULT
     /// Sub-project paths whose `.kicad_pro` was mutated. Caller should
     /// SaveToFile each of these (ideally inside a SUSPEND_NOTIFY guard).
     std::vector<wxString> mutatedSubProjectPaths;
+
+    /// Sub-project paths the propagator loaded into SETTINGS_MANAGER
+    /// itself (because they weren't already open) so it could mutate them.
+    /// Caller MUST `UnloadProject` each of these after handling
+    /// `mutatedSubProjectPaths` — otherwise they leak as phantom open
+    /// projects and confuse downstream Prj()/active-project semantics.
+    /// Always a strict subset of the propagator's iteration set; never
+    /// includes a sub-project that was already open before the call.
+    std::vector<wxString> ephemerallyLoadedSubProjectPaths;
 };
 
 

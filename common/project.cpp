@@ -188,6 +188,21 @@ void PROJECT::setProjectFullName( const wxString& aFullPathAndName )
 
         m_project_name = aFullPathAndName;
 
+        // Defensive surfacing: callers MUST pass an absolute path.
+        // We don't refuse here (would break LoadProject's name-then-path
+        // sequencing) and we don't recover via cwd-join (the active cwd
+        // is often the container's directory, which fabricates a wrong
+        // path that points into the wrong sub-project's tree). Just log;
+        // the actual write-site guard lives in PROJECT_FILE::SaveToFile.
+        if( !m_project_name.IsAbsolute() )
+        {
+            wxLogWarning( wxT( "PROJECT::setProjectFullName called with non-absolute "
+                               "path '%s'. Trace stack to find the source — write "
+                               "guard in PROJECT_FILE::SaveToFile will refuse to "
+                               "save until the caller is fixed." ),
+                          aFullPathAndName );
+        }
+
         wxASSERT( m_project_name.IsAbsolute() );
         wxString ext = m_project_name.GetExt();
 

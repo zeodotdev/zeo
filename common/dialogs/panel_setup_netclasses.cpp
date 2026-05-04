@@ -28,6 +28,9 @@
 #include <thread>
 #include <wx/wupdlock.h>
 #include <pgm_base.h>
+#include <project/multi_board_propagate_settings.h>
+#include <project/project_file.h>
+#include <settings/settings_manager.h>
 #include <eda_draw_frame.h>
 #include <bitmaps.h>
 #include <netclass.h>
@@ -168,6 +171,68 @@ PANEL_SETUP_NETCLASSES::PANEL_SETUP_NETCLASSES( wxWindow* aParentWindow, EDA_DRA
     else
         m_netclassGrid->ShowHideColumns( "0 1 2 3 4 5 6 7 8 9 10" );
 
+    // M7.2 — multi-board context. Append a read-only "Status" column when
+    // this project is part of a multi-board container so the user sees
+    // each row's relationship to the container at a glance:
+    //   - Container   → "Source"
+    //   - Sub-project → "Shared" / "Conflict" / "Local"
+    //
+    // Must run inside BeginBatch / EndBatch (the batch is open from
+    // line 138 to ~line 259) so the new column actually renders on
+    // dialog show. Append-after-EndBatch leaves the column invisible.
+    PROJECT& project = m_frame->Prj();
+
+    wxLogMessage( wxT( "[NETCLASS_PANEL] ctor: project='%s' isNull=%d isMBContainer=%d "
+                       "containerPath='%s'" ),
+                  project.GetProjectFullName(),
+                  project.IsNullProject() ? 1 : 0,
+                  project.IsNullProject() ? 0 :
+                          ( project.GetProjectFile().IsMultiBoardContainer() ? 1 : 0 ),
+                  project.IsNullProject() ? wxString() : project.GetContainerProjectPath() );
+
+    if( !project.IsNullProject()
+        && ( project.GetProjectFile().IsMultiBoardContainer()
+             || !project.GetContainerProjectPath().IsEmpty() ) )
+    {
+        wxLogMessage( wxT( "[NETCLASS_PANEL] ctor: ENTERING multi-board branch, "
+                           "appending Status column" ) );
+
+        m_netclassGrid->AppendCols( 1 );
+        m_statusCol = m_netclassGrid->GetNumberCols() - 1;
+        m_netclassGrid->SetColLabelValue( m_statusCol, _( "Status" ) );
+
+        wxGridCellAttr* statusAttr = new wxGridCellAttr;
+        statusAttr->SetReadOnly();
+        statusAttr->SetAlignment( wxALIGN_CENTER, wxALIGN_CENTER );
+        m_netclassGrid->SetColAttr( m_statusCol, statusAttr );
+
+        int statusColWidth = m_netclassGrid->GetTextExtent( "Conflict" ).x + 24;
+        m_netclassGrid->SetColSize( m_statusCol, statusColWidth );
+
+        // Register the column's preferred width so AdjustNetclassGridColumns
+        // (which resets every column's size from m_originalColWidths on
+        // every panel resize) doesn't squash this one to 0. The earlier
+        // loop only populates indices 0..GRID_END-1; the appended col is
+        // outside that range.
+        m_originalColWidths[ m_statusCol ] = statusColWidth;
+
+        // Pre-load container's net classes (sub-project case) so
+        // loadNetclasses() can label rows without re-loading the
+        // container's PROJECT_FILE per row.
+        if( !project.GetProjectFile().IsMultiBoardContainer() )
+        {
+            wxString containerProPath = project.GetContainerProjectPath();
+
+            if( !containerProPath.IsEmpty() )
+            {
+                PROJECT_FILE containerFile( containerProPath );
+
+                if( containerFile.LoadFromFile() && containerFile.NetSettings() )
+                    m_containerNetclassesByName = containerFile.NetSettings()->GetNetclasses();
+            }
+        }
+    }
+
     m_shownColumns = m_netclassGrid->GetShownColumns();
 
     wxGridCellAttr* attr = new wxGridCellAttr;
@@ -272,11 +337,6 @@ PANEL_SETUP_NETCLASSES::PANEL_SETUP_NETCLASSES( wxWindow* aParentWindow, EDA_DRA
           } );
 
     m_matchingNets->SetFont( KIUI::GetInfoFont( this ) );
-
-    // M7.2 follow-up: cross-board rule consistency is handled by physical
-    // replication (container → sub-projects on save), not a runtime
-    // overlay. No opt-in checkbox needed — see
-    // MultiBoardPropagateNetSettings().
 }
 
 
@@ -351,6 +411,34 @@ void PANEL_SETUP_NETCLASSES::loadNetclasses()
                 }
 
                 setNetclassRowNullableEditors( aRow, nc->IsDefault() );
+
+                // M7.2 — populate the multi-board Status column when present.
+                // Container side: every row is "Source". Sub-project side:
+                // compare against the container's same-named class to decide
+                // Shared / Conflict / Local.
+                if( m_statusCol >= 0 )
+                {
+                    wxString status;
+
+                    if( m_frame->Prj().GetProjectFile().IsMultiBoardContainer() )
+                    {
+                        status = _( "Source" );
+                    }
+                    else
+                    {
+                        auto it = m_containerNetclassesByName.find( nc->GetName() );
+
+                        if( it == m_containerNetclassesByName.end() )
+                            status = _( "Local" );
+                        else if( it->second
+                                 && MultiBoardNetclassesEquivalent( *it->second, *nc ) )
+                            status = _( "Shared" );
+                        else
+                            status = _( "Conflict" );
+                    }
+
+                    m_netclassGrid->SetCellValue( aRow, m_statusCol, status );
+                }
             };
 
     // Get the netclasses sorted by priority
@@ -570,6 +658,39 @@ bool PANEL_SETUP_NETCLASSES::TransferDataFromWindow()
         wxString netclass = m_assignmentGrid->GetCellValue( row, 1 );
 
         m_netSettings->SetNetclassPatternAssignment( pattern, netclass );
+    }
+
+    // M7.2 — when this panel just edited the multi-board container's net
+    // classes, fan the changes out to every loaded sub-project. Schematic
+    // Setup → Net Classes → OK fires PANEL_SETUP_NETCLASSES::TransferDataFromWindow
+    // (this method); the prior MBSCH-save-only hook missed this entry
+    // path because Schematic Setup writes the project file, not the
+    // schematic. Sub-projects that aren't open in the same session pick
+    // up the new state on their next session via the same trigger.
+    if( m_frame && !m_frame->Prj().IsNullProject()
+        && m_frame->Prj().GetProjectFile().IsMultiBoardContainer() )
+    {
+        // Persist this panel's edits to disk first so the propagator
+        // reads the just-edited net_settings rather than a stale
+        // pre-OK snapshot. The container's project file is the
+        // SETTINGS_MANAGER-loaded one; SaveProject writes both .kicad_pro
+        // and the local-settings sidecar.
+        Pgm().GetSettingsManager().SaveProject( m_frame->Prj().GetProjectFullName(),
+                                                 &m_frame->Prj() );
+
+        MULTI_BOARD_PROPAGATE_RESULT propResult =
+                MultiBoardPropagateNetSettingsWithDialog( m_frame->Prj(),
+                                                           wxGetTopLevelParent( this ) );
+
+        if( propResult.subProjectsTouched > 0 )
+        {
+            wxLogInfo( wxT( "M7.2: propagated net classes from container to %d "
+                            "sub-project(s) (+%d new, %d unchanged, %d overwritten, "
+                            "%d kept, %d skipped)" ),
+                       propResult.subProjectsTouched, propResult.classesAdded,
+                       propResult.classesUnchanged, propResult.classesOverwritten,
+                       propResult.classesKept, propResult.classesSkipped );
+        }
     }
 
     return true;

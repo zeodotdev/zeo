@@ -2279,14 +2279,266 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
 
                     bool mated = isMated( inst1.uuid, a.ref, inst2.uuid, b.ref );
 
-                    // Skip ALL mated pairs from the highlight pass —
-                    // intentional contact / mating overshoot is what
-                    // the green/cyan mate gizmo communicates already.
+                    // Helper used by both the mated and non-mated
+                    // branches to grow a box around triangle vertices.
+                    auto growBoxLocal = []( glm::vec3& aMin, glm::vec3& aMax,
+                                            const glm::vec3& aP, bool& aHave )
+                    {
+                        if( !aHave )
+                        {
+                            aMin  = aMax = aP;
+                            aHave = true;
+                        }
+                        else
+                        {
+                            aMin = glm::min( aMin, aP );
+                            aMax = glm::max( aMax, aP );
+                        }
+                    };
+
+                    // Mated pairs are EXPECTED to touch (that's mating)
+                    // but the mesh-tri test still tells us whether
+                    // they're at "proper contact" (parts fit as
+                    // designed — meshes don't actually intersect, the
+                    // pin sits in the socket's air space) vs. "over-
+                    // penetration" (parts pushed too deep — meshes
+                    // physically intersect, design issue).
                     if( mated )
                     {
+                        // Mated pairs run the same mesh-level analysis
+                        // as non-mated pairs. The COLLISION-vs-CONTACT
+                        // verdict is driven by actual penetration
+                        // depth (max signed distance of any
+                        // intersecting triangle's vertex from the
+                        // opposite triangle's plane), not by whether
+                        // the pair is mated in the schematic. This
+                        // catches "connector pushed too deep into the
+                        // socket" — a real engineering concern even
+                        // for intentionally mated pairs.
+                        constexpr size_t kMaxTriVerts = 6 * 256;
+                        constexpr float  kCollisionPenThresholdMm = 0.5f;
+                        std::vector<SFVEC3F> hitTriVertsM;
+                        float                maxPenDepthM = 0.0f;
+
+                        // Best closest tri pair when meshes don't
+                        // actually intersect — used for "almost
+                        // touching" visualization.
+                        float                bestDistSqM = std::numeric_limits<float>::infinity();
+                        std::vector<SFVEC3F> nearTriVertsM;
+
+                        if( !a.meshTris.empty() && !b.meshTris.empty() )
+                        {
+                            const float marginM   = kContactMarginMm;
+                            const float marginSqM = marginM * marginM;
+
+                            for( const WorldTri& ta : a.meshTris )
+                            {
+                                for( const WorldTri& tb : b.meshTris )
+                                {
+                                    // Per-tri AABB broad phase — with
+                                    // margin so the closest-pair
+                                    // tracking covers near-touching
+                                    // tris.
+                                    if( ta.aabbMax.x + marginM < tb.aabbMin.x
+                                        || tb.aabbMax.x + marginM < ta.aabbMin.x )
+                                        continue;
+                                    if( ta.aabbMax.y + marginM < tb.aabbMin.y
+                                        || tb.aabbMax.y + marginM < ta.aabbMin.y )
+                                        continue;
+                                    if( ta.aabbMax.z + marginM < tb.aabbMin.z
+                                        || tb.aabbMax.z + marginM < ta.aabbMin.z )
+                                        continue;
+
+                                    if( trianglesIntersect(
+                                                ta.v0, ta.v1, ta.v2,
+                                                tb.v0, tb.v1, tb.v2 ) )
+                                    {
+                                        // Penetration depth: max
+                                        // signed distance of any
+                                        // vertex of one triangle from
+                                        // the opposite triangle's
+                                        // plane. Larger = deeper
+                                        // mesh interpenetration.
+                                        glm::vec3 nB = glm::cross(
+                                                tb.v1 - tb.v0, tb.v2 - tb.v0 );
+                                        float lenB = glm::length( nB );
+
+                                        if( lenB > 1e-9f )
+                                        {
+                                            nB /= lenB;
+                                            float dB = -glm::dot( nB, tb.v0 );
+                                            float d0 = std::abs( glm::dot( nB, ta.v0 ) + dB );
+                                            float d1 = std::abs( glm::dot( nB, ta.v1 ) + dB );
+                                            float d2 = std::abs( glm::dot( nB, ta.v2 ) + dB );
+                                            maxPenDepthM = std::max( maxPenDepthM,
+                                                                     std::max( { d0, d1, d2 } ) );
+                                        }
+
+                                        glm::vec3 nA = glm::cross(
+                                                ta.v1 - ta.v0, ta.v2 - ta.v0 );
+                                        float lenA = glm::length( nA );
+
+                                        if( lenA > 1e-9f )
+                                        {
+                                            nA /= lenA;
+                                            float dA = -glm::dot( nA, ta.v0 );
+                                            float u0 = std::abs( glm::dot( nA, tb.v0 ) + dA );
+                                            float u1 = std::abs( glm::dot( nA, tb.v1 ) + dA );
+                                            float u2 = std::abs( glm::dot( nA, tb.v2 ) + dA );
+                                            maxPenDepthM = std::max( maxPenDepthM,
+                                                                     std::max( { u0, u1, u2 } ) );
+                                        }
+
+                                        if( hitTriVertsM.size() < kMaxTriVerts )
+                                        {
+                                            hitTriVertsM.push_back(
+                                                    SFVEC3F( ta.v0.x, ta.v0.y, ta.v0.z ) );
+                                            hitTriVertsM.push_back(
+                                                    SFVEC3F( ta.v1.x, ta.v1.y, ta.v1.z ) );
+                                            hitTriVertsM.push_back(
+                                                    SFVEC3F( ta.v2.x, ta.v2.y, ta.v2.z ) );
+                                            hitTriVertsM.push_back(
+                                                    SFVEC3F( tb.v0.x, tb.v0.y, tb.v0.z ) );
+                                            hitTriVertsM.push_back(
+                                                    SFVEC3F( tb.v1.x, tb.v1.y, tb.v1.z ) );
+                                            hitTriVertsM.push_back(
+                                                    SFVEC3F( tb.v2.x, tb.v2.y, tb.v2.z ) );
+                                        }
+                                    }
+                                    else if( hitTriVertsM.empty() )
+                                    {
+                                        // Only track closest pair when
+                                        // we haven't found any actual
+                                        // intersection yet.
+                                        float d2;
+                                        d2 = pointTriangleDistSq( ta.v0, tb.v0, tb.v1, tb.v2 );
+                                        d2 = std::min( d2, pointTriangleDistSq( ta.v1, tb.v0, tb.v1, tb.v2 ) );
+                                        d2 = std::min( d2, pointTriangleDistSq( ta.v2, tb.v0, tb.v1, tb.v2 ) );
+                                        d2 = std::min( d2, pointTriangleDistSq( tb.v0, ta.v0, ta.v1, ta.v2 ) );
+                                        d2 = std::min( d2, pointTriangleDistSq( tb.v1, ta.v0, ta.v1, ta.v2 ) );
+                                        d2 = std::min( d2, pointTriangleDistSq( tb.v2, ta.v0, ta.v1, ta.v2 ) );
+
+                                        if( d2 < bestDistSqM && d2 <= marginSqM )
+                                        {
+                                            bestDistSqM = d2;
+                                            nearTriVertsM = {
+                                                SFVEC3F( ta.v0.x, ta.v0.y, ta.v0.z ),
+                                                SFVEC3F( ta.v1.x, ta.v1.y, ta.v1.z ),
+                                                SFVEC3F( ta.v2.x, ta.v2.y, ta.v2.z ),
+                                                SFVEC3F( tb.v0.x, tb.v0.y, tb.v0.z ),
+                                                SFVEC3F( tb.v1.x, tb.v1.y, tb.v1.z ),
+                                                SFVEC3F( tb.v2.x, tb.v2.y, tb.v2.z )
+                                            };
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        std::vector<SFVEC3F>* tris = nullptr;
+                        const wxChar*         desc = nullptr;
+                        OVERLAP_KIND          kindM;
+
+                        if( !hitTriVertsM.empty() )
+                        {
+                            tris = &hitTriVertsM;
+
+                            // Penetration depth drives the verdict.
+                            // > threshold mm = real over-mating
+                            // (connector pushed deeper than its
+                            // mating depth allows) → COLLISION.
+                            // ≤ threshold mm = thin housing-wall
+                            // tangent contact, normal mating fit →
+                            // CONTACT.
+                            if( maxPenDepthM > kCollisionPenThresholdMm )
+                            {
+                                kindM = OVERLAP_KIND::COLLISION;
+                                desc  = wxT( "over-penetrating" );
+                            }
+                            else
+                            {
+                                kindM = OVERLAP_KIND::CONTACT;
+                                desc  = wxT( "interlocking" );
+                            }
+                        }
+                        else if( !nearTriVertsM.empty() )
+                        {
+                            tris  = &nearTriVertsM;
+                            kindM = OVERLAP_KIND::CONTACT;
+                            desc  = wxT( "near-touching" );
+                        }
+
+                        if( !tris )
+                        {
+                            if( diagPairsBroad <= 16 )
+                                wxLogMessage( wxT( "[COLLIDE] mated    %s↔%s "
+                                                   "→ skip (gap > %.2f mm)" ),
+                                              a.ref, b.ref, kContactMarginMm );
+                            continue;
+                        }
+
+                        // Compute AABB of the participating triangles
+                        // for the box backstop.
+                        SFVEC3F bMin = ( *tris )[0];
+                        SFVEC3F bMax = ( *tris )[0];
+
+                        for( const SFVEC3F& v : *tris )
+                        {
+                            bMin.x = std::min( bMin.x, v.x );
+                            bMin.y = std::min( bMin.y, v.y );
+                            bMin.z = std::min( bMin.z, v.z );
+                            bMax.x = std::max( bMax.x, v.x );
+                            bMax.y = std::max( bMax.y, v.y );
+                            bMax.z = std::max( bMax.z, v.z );
+                        }
+
+                        OverlapBox box;
+                        box.instanceA  = inst1.uuid;
+                        box.instanceB  = inst2.uuid;
+                        box.refA       = a.ref;
+                        box.refB       = b.ref;
+                        box.kind       = kindM;
+                        box.minMm      = bMin;
+                        box.maxMm      = bMax;
+                        box.triVertsMm = std::move( *tris );
+                        m_lastOverlapBoxes.push_back( box );
+
+                        if( kindM == OVERLAP_KIND::COLLISION )
+                        {
+                            diagPairsCollide++;
+
+                            COLLISION_RESULT result;
+                            result.board1Uuid = inst1.uuid;
+                            result.board2Uuid = inst2.uuid;
+                            result.item1Desc  = wxString::Format(
+                                    wxT( "%s:%s" ), inst1.displayName, a.ref );
+                            result.item2Desc  = wxString::Format(
+                                    wxT( "%s:%s" ), inst2.displayName, b.ref );
+                            glm::vec3 mid(
+                                    ( bMin.x + bMax.x ) * 0.5f,
+                                    ( bMin.y + bMax.y ) * 0.5f,
+                                    ( bMin.z + bMax.z ) * 0.5f );
+                            result.collisionPoint = SFVEC3F( mid.x, mid.y, mid.z );
+                            result.penetrationMm  = maxPenDepthM;
+                            m_lastCollisions.push_back( result );
+                        }
+                        else
+                        {
+                            diagPairsContact++;
+                        }
+
                         if( diagPairsBroad <= 16 )
-                            wxLogMessage( wxT( "[COLLIDE] skip(mated)    %s↔%s" ),
-                                          a.ref, b.ref );
+                        {
+                            wxLogMessage( wxT( "[COLLIDE] mated    %s↔%s "
+                                               "→ %s (%s, depth=%.3f mm)" ),
+                                          a.ref, b.ref,
+                                          kindM == OVERLAP_KIND::COLLISION
+                                              ? wxT( "COLLISION" )
+                                              : wxT( "CONTACT" ),
+                                          desc,
+                                          maxPenDepthM );
+                        }
+
                         continue;
                     }
 
@@ -2441,6 +2693,11 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
                     glm::vec3         nearMax( 0.0f );
                     bool              haveNear = false;
 
+                    // Triangle vertices participating in the
+                    // intersection. Capped to keep memory bounded.
+                    constexpr size_t     kMaxTriVerts = 6 * 256;
+                    std::vector<SFVEC3F> hitTriVerts;
+
                     // Per-pair counters so we can tell how the mesh
                     // narrow phase is performing for each candidate —
                     // tri-AABB-overlap reaches the Möller test, hits
@@ -2494,6 +2751,22 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
                                 growBox( hitMin, hitMax, tb.v0, haveHit );
                                 growBox( hitMin, hitMax, tb.v1, haveHit );
                                 growBox( hitMin, hitMax, tb.v2, haveHit );
+
+                                if( hitTriVerts.size() < kMaxTriVerts )
+                                {
+                                    hitTriVerts.push_back(
+                                            SFVEC3F( ta.v0.x, ta.v0.y, ta.v0.z ) );
+                                    hitTriVerts.push_back(
+                                            SFVEC3F( ta.v1.x, ta.v1.y, ta.v1.z ) );
+                                    hitTriVerts.push_back(
+                                            SFVEC3F( ta.v2.x, ta.v2.y, ta.v2.z ) );
+                                    hitTriVerts.push_back(
+                                            SFVEC3F( tb.v0.x, tb.v0.y, tb.v0.z ) );
+                                    hitTriVerts.push_back(
+                                            SFVEC3F( tb.v1.x, tb.v1.y, tb.v1.z ) );
+                                    hitTriVerts.push_back(
+                                            SFVEC3F( tb.v2.x, tb.v2.y, tb.v2.z ) );
+                                }
                                 continue;
                             }
 
@@ -2583,6 +2856,10 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
                     box.instanceB = inst2.uuid;
                     box.refA      = a.ref;
                     box.refB      = b.ref;
+
+                    if( kind == OVERLAP_KIND::COLLISION )
+                        box.triVertsMm = std::move( hitTriVerts );
+
                     m_lastOverlapBoxes.push_back( box );
 
                     // Only true collisions populate m_lastCollisions
@@ -2879,7 +3156,16 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
                 }
 
                 if( fpMated )
+                {
+                    // Mated fp's relationship with the other board is
+                    // already represented by the fp-vs-fp pair test
+                    // (which runs the mesh-tri test and tags
+                    // CONTACT or COLLISION depending on whether the
+                    // mate is over-penetrating). Don't ALSO emit a
+                    // substrate-level box — that would double up the
+                    // visualization at the same location.
                     continue;
+                }
 
                 // Mech-only fp going into the other board's substrate
                 // is usually a mounting hole on a board sandwiched
@@ -3833,6 +4119,17 @@ void ASSEMBLY_3D_MANAGER::rebuildMateGizmoEntries()
                 b.kind = MATE_GIZMO::OVERLAP_KIND::CONTACT;   break;
             case OVERLAP_KIND::BROAD:
                 b.kind = MATE_GIZMO::OVERLAP_KIND::BROAD;     break;
+            }
+
+            // Convert intersecting-triangle vertices into shared-
+            // world coordinates so the gizmo can draw the actual
+            // overlap surface, not just the AABB envelope.
+            if( !ob.triVertsMm.empty() )
+            {
+                b.triVerts.reserve( ob.triVertsMm.size() );
+
+                for( const SFVEC3F& v : ob.triVertsMm )
+                    b.triVerts.push_back( mmToShared( v ) );
             }
 
             boxes.push_back( b );

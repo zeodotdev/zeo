@@ -80,6 +80,46 @@ static std::shared_ptr<NETCLASS> cloneNetclass( const NETCLASS& aSrc )
 }
 
 
+// NETCLASS::operator== only compares m_constituents — every NETCLASS
+// instance pushes `this` into m_constituents in its constructor, so two
+// distinct NETCLASS instances are NEVER equal regardless of their actual
+// settings. That's useless for "did container's Heavy diverge from
+// sub-project's Heavy?". Compare the user-meaningful fields directly —
+// the same set we round-trip through JSON in cloneNetclass.
+bool MultiBoardNetclassesEquivalent( const NETCLASS& a, const NETCLASS& b )
+{
+    if( a.GetName() != b.GetName() )                       return false;
+    if( a.GetPriority() != b.GetPriority() )               return false;
+    if( a.GetTuningProfile() != b.GetTuningProfile() )     return false;
+
+    // Optional fields: equivalent when both are absent OR both are present
+    // with the same value.
+    auto sameOpt = [&]( const std::optional<int>& x, const std::optional<int>& y )
+    { return x == y; };
+
+    if( !sameOpt( a.GetClearanceOpt(),     b.GetClearanceOpt() ) )     return false;
+    if( !sameOpt( a.GetTrackWidthOpt(),    b.GetTrackWidthOpt() ) )    return false;
+    if( !sameOpt( a.GetViaDiameterOpt(),   b.GetViaDiameterOpt() ) )   return false;
+    if( !sameOpt( a.GetViaDrillOpt(),      b.GetViaDrillOpt() ) )      return false;
+    if( !sameOpt( a.GetuViaDiameterOpt(),  b.GetuViaDiameterOpt() ) )  return false;
+    if( !sameOpt( a.GetuViaDrillOpt(),     b.GetuViaDrillOpt() ) )     return false;
+    if( !sameOpt( a.GetDiffPairWidthOpt(), b.GetDiffPairWidthOpt() ) ) return false;
+    if( !sameOpt( a.GetDiffPairGapOpt(),   b.GetDiffPairGapOpt() ) )   return false;
+    if( !sameOpt( a.GetDiffPairViaGapOpt(), b.GetDiffPairViaGapOpt() ) ) return false;
+    if( !sameOpt( a.GetWireWidthOpt(),     b.GetWireWidthOpt() ) )     return false;
+    if( !sameOpt( a.GetBusWidthOpt(),      b.GetBusWidthOpt() ) )      return false;
+
+    if( a.HasLineStyle() != b.HasLineStyle() )              return false;
+    if( a.HasLineStyle() && a.GetLineStyle() != b.GetLineStyle() )
+        return false;
+
+    if( a.GetPcbColor( true ) != b.GetPcbColor( true ) )            return false;
+    if( a.GetSchematicColor( true ) != b.GetSchematicColor( true ) ) return false;
+
+    return true;
+}
+
+
 MULTI_BOARD_PROPAGATE_RESULT MultiBoardPropagateNetSettings(
         PROJECT&                                       aContainer,
         const MULTI_BOARD_NET_CLASS_CONFLICT_RESOLVER& aResolver )
@@ -119,33 +159,59 @@ MULTI_BOARD_PROPAGATE_RESULT MultiBoardPropagateNetSettings(
 
     SETTINGS_MANAGER& sm = Pgm().GetSettingsManager();
 
+    // Build a normalized lookup of currently-open projects so we can
+    // distinguish "already loaded" (mutate in place) from "disk-only"
+    // (load ephemerally, mutate, caller must unload after save). Earlier
+    // versions of this propagator only iterated open projects, which
+    // meant saving the container with only MBSCH open silently skipped
+    // every disk-only sub-project — and the new netclass never landed on
+    // disk for them. Now we drive the iteration off the container's
+    // sub-project list directly and load any that aren't already open.
+    std::set<wxString> openAbsPaths;
+
     for( const wxString& openProPath : sm.GetOpenProjects() )
     {
         wxFileName fn( openProPath );
         fn.Normalize( wxPATH_NORM_ABSOLUTE | wxPATH_NORM_DOTS );
-        wxString openAbs = fn.GetFullPath();
+        openAbsPaths.insert( fn.GetFullPath() );
+    }
 
-        // Find this project among container's sub-projects.
-        wxString displayName;
-        bool     matched = false;
+    auto isOpen = [&]( const wxString& aAbs ) -> bool
+    {
+        for( const wxString& p : openAbsPaths )
+            if( absPathsEqual( p, aAbs ) )
+                return true;
+        return false;
+    };
 
-        for( const auto& [subAbs, subDisplay] : subProjAbsByPath )
+    for( const auto& [openAbs, displayName] : subProjAbsByPath )
+    {
+        bool wasOpen = isOpen( openAbs );
+
+        if( !wasOpen )
         {
-            if( absPathsEqual( subAbs, openAbs ) )
+            // Load read-only into SETTINGS_MANAGER without changing the
+            // active project (aSetActive=false skips cwd/env mutation,
+            // library manager notifications, and active-project eviction).
+            // We track it in ephemerallyLoadedSubProjectPaths so the
+            // wrapper can save+unload after propagation.
+            if( !sm.LoadProject( openAbs, /* aSetActive */ false ) )
             {
-                displayName = subDisplay;
-                matched     = true;
-                break;
+                wxLogWarning( wxT( "[M7.2-PROPAGATE] sm.LoadProject('%s') failed — "
+                                   "skipping disk-only sub-project; container's "
+                                   "net classes will NOT propagate to it on this save" ),
+                              openAbs );
+                continue;
             }
         }
 
-        if( !matched )
-            continue;
-
-        PROJECT* subProject = sm.GetProject( openProPath );
+        PROJECT* subProject = sm.GetProject( openAbs );
 
         if( !subProject )
             continue;
+
+        if( !wasOpen )
+            result.ephemerallyLoadedSubProjectPaths.push_back( openAbs );
 
         PROJECT_FILE&                  subFile = subProject->GetProjectFile();
         std::shared_ptr<NET_SETTINGS>& subNS   = subFile.NetSettings();
@@ -176,7 +242,8 @@ MULTI_BOARD_PROPAGATE_RESULT MultiBoardPropagateNetSettings(
 
             const std::shared_ptr<NETCLASS>& existing = existingIt->second;
 
-            if( containerClass && existing && *containerClass == *existing )
+            if( containerClass && existing
+                && MultiBoardNetclassesEquivalent( *containerClass, *existing ) )
             {
                 // Identical settings — no-op silently.
                 result.classesUnchanged++;

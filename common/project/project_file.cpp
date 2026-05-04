@@ -43,7 +43,28 @@ const int projectFileSchemaVersion = 3;
 
 // Out-of-line so the unique_ptr<PROJECT_FILE_WATCHER> destructor sees
 // the complete watcher type (header forward-declares it).
-PROJECT_FILE::~PROJECT_FILE() = default;
+PROJECT_FILE::~PROJECT_FILE()
+{
+    // Defensive: any SCOPED_PROJECT_FILE_OBSERVERs still alive when we
+    // disappear would otherwise dangle on m_projectFile and crash on
+    // ~SCOPED_PROJECT_FILE_OBSERVER → UnregisterObserver(). Lifetime
+    // ordering can flip on us in the multi-board flow: the MBSCH editor
+    // frame is wxWidgets-pending-delete and disposed at idle, which can
+    // run AFTER SETTINGS_MANAGER has unloaded a project (e.g. propagator
+    // ephemeral load/unload of sibling sub-projects). Null each scoped's
+    // back-pointer here so its own dtor takes the no-op branch.
+    //
+    // Iterate over a snapshot — SCOPED's dtor mutates m_scopedObservers,
+    // but here we're going down anyway, so direct write is safe and
+    // doesn't invalidate the loop.
+    for( SCOPED_PROJECT_FILE_OBSERVER* scoped : m_scopedObservers )
+    {
+        scoped->m_projectFile = nullptr;
+        scoped->m_observer    = nullptr;
+    }
+
+    m_scopedObservers.clear();
+}
 
 
 PROJECT_FILE::PROJECT_FILE( const wxString& aFullPath ) :
@@ -1079,6 +1100,30 @@ bool PROJECT_FILE::SaveToFile( const wxString& aDirectory, bool aForce )
 
     m_saveInProgress = true;
 
+    // Defensive write-site guard: if aDirectory is empty AND m_filename
+    // is also a bare basename (no directory), JSON_SETTINGS::SaveToFile
+    // would write to the current working directory — which during a
+    // multi-board peer-load sequence is the CONTAINER's directory, not
+    // the sub-project's. Result is a stray <sub-project>.kicad_pro at
+    // the container root. Refuse the save and log so the upstream caller
+    // is identifiable.
+    {
+        wxFileName fn( GetFilename() );
+
+        if( aDirectory.IsEmpty() && fn.GetPath().IsEmpty() )
+        {
+            wxLogWarning( wxT( "PROJECT_FILE::SaveToFile REFUSED — both aDirectory "
+                               "and m_filename ('%s') lack a directory component. "
+                               "Saving would write to cwd and produce a stray "
+                               "%s.%s. Caller must pass an absolute aDirectory." ),
+                          GetFilename(),
+                          wxFileName( GetFilename() ).GetName(),
+                          FILEEXT::ProjectFileExtension );
+            m_saveInProgress = false;
+            return false;
+        }
+    }
+
     // Standalone edit/save paths (e.g. the MBSCH save hook writing
     // cross_board_nets into a sibling container) construct a
     // PROJECT_FILE without routing through SETTINGS_MANAGER, so
@@ -1904,6 +1949,11 @@ SCOPED_PROJECT_FILE_OBSERVER::SCOPED_PROJECT_FILE_OBSERVER( PROJECT_FILE&       
         m_projectFile( &aProjectFile ),
         m_observer( aObserver )
 {
+    // Register in the back-pointer table BEFORE the observer registration —
+    // PROJECT_FILE's dtor walks that table to null us out, so we need to
+    // be in it for the entire window we hold a raw m_projectFile pointer.
+    m_projectFile->m_scopedObservers.push_back( this );
+
     if( m_observer )
         m_projectFile->RegisterObserver( m_observer );
 }
@@ -1911,8 +1961,18 @@ SCOPED_PROJECT_FILE_OBSERVER::SCOPED_PROJECT_FILE_OBSERVER( PROJECT_FILE&       
 
 SCOPED_PROJECT_FILE_OBSERVER::~SCOPED_PROJECT_FILE_OBSERVER()
 {
-    if( m_projectFile && m_observer )
+    // m_projectFile is nulled by PROJECT_FILE's dtor when the file dies
+    // first — in that case there's nothing to unregister and no back-pointer
+    // entry to clean up. This is the ordering-safety branch the whole
+    // back-pointer table exists for.
+    if( !m_projectFile )
+        return;
+
+    if( m_observer )
         m_projectFile->UnregisterObserver( m_observer );
+
+    auto& list = m_projectFile->m_scopedObservers;
+    list.erase( std::remove( list.begin(), list.end(), this ), list.end() );
 }
 
 
@@ -1921,6 +1981,22 @@ SCOPED_PROJECT_FILE_OBSERVER::SCOPED_PROJECT_FILE_OBSERVER(
         m_projectFile( aOther.m_projectFile ),
         m_observer( aOther.m_observer )
 {
+    if( m_projectFile )
+    {
+        // Replace aOther's slot in the back-pointer table with us. In-place
+        // edit (no erase + push_back) preserves order and avoids
+        // reallocation hazards if PROJECT_FILE dtor is iterating in parallel
+        // (it isn't on the same thread, but cheaper to just swap anyway).
+        for( SCOPED_PROJECT_FILE_OBSERVER*& slot : m_projectFile->m_scopedObservers )
+        {
+            if( slot == &aOther )
+            {
+                slot = this;
+                break;
+            }
+        }
+    }
+
     aOther.m_projectFile = nullptr;
     aOther.m_observer    = nullptr;
 }
@@ -1932,11 +2008,31 @@ SCOPED_PROJECT_FILE_OBSERVER& SCOPED_PROJECT_FILE_OBSERVER::operator=(
     if( this == &aOther )
         return *this;
 
-    if( m_projectFile && m_observer )
-        m_projectFile->UnregisterObserver( m_observer );
+    // Tear down our existing subscription (if any), mirroring dtor.
+    if( m_projectFile )
+    {
+        if( m_observer )
+            m_projectFile->UnregisterObserver( m_observer );
 
-    m_projectFile        = aOther.m_projectFile;
-    m_observer           = aOther.m_observer;
+        auto& list = m_projectFile->m_scopedObservers;
+        list.erase( std::remove( list.begin(), list.end(), this ), list.end() );
+    }
+
+    m_projectFile = aOther.m_projectFile;
+    m_observer    = aOther.m_observer;
+
+    if( m_projectFile )
+    {
+        for( SCOPED_PROJECT_FILE_OBSERVER*& slot : m_projectFile->m_scopedObservers )
+        {
+            if( slot == &aOther )
+            {
+                slot = this;
+                break;
+            }
+        }
+    }
+
     aOther.m_projectFile = nullptr;
     aOther.m_observer    = nullptr;
 

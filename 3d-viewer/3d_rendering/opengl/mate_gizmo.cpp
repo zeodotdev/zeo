@@ -319,6 +319,43 @@ void MATE_GIZMO::renderOverlapBox( const OVERLAP_BOX& aBox )
         { mx.x, mx.y, mx.z }, { mn.x, mx.y, mx.z }
     };
 
+    // If the box carries actual intersecting triangles (populated
+    // from the mesh-tri test for confirmed COLLISIONs / CONTACTs),
+    // render those triangles as a filled coloured surface — that's
+    // the "actual overlap" visualization. The AABB box is suppressed
+    // entirely when tris are present so the user's eye is drawn to
+    // the real intersection geometry instead of a rectangular box
+    // that would extend far beyond the actual contact zone.
+    const bool drawTris = !aBox.triVerts.empty()
+                          && ( aBox.kind == OVERLAP_KIND::COLLISION
+                               || aBox.kind == OVERLAP_KIND::CONTACT );
+
+    if( drawTris )
+    {
+        // Bright red fill for collisions, yellow for contacts.
+        glm::vec3 triFill = ( aBox.kind == OVERLAP_KIND::COLLISION )
+                              ? glm::vec3( 1.0f, 0.18f, 0.18f )
+                              : glm::vec3( 1.0f, 0.82f, 0.20f );
+
+        glColor4f( triFill.r, triFill.g, triFill.b, 0.65f );
+        glBegin( GL_TRIANGLES );
+
+        for( size_t i = 0; i + 2 < aBox.triVerts.size(); i += 3 )
+        {
+            glVertex3fv( &aBox.triVerts[i].x );
+            glVertex3fv( &aBox.triVerts[i + 1].x );
+            glVertex3fv( &aBox.triVerts[i + 2].x );
+        }
+
+        glEnd();
+
+        // Skip the AABB box entirely — the triangle render IS the
+        // visualization. Drawing a wireframe AABB on top of the
+        // tris gave the impression we were "still using bounding
+        // boxes", which we explicitly are not in this mode.
+        return;
+    }
+
     // Filled translucent faces — 6 quads. Skipped for BROAD-debug
     // boxes so the user can see right through them.
     if( drawFill )

@@ -82,10 +82,55 @@ MULTI_BOARD_PROPAGATE_RESULT MultiBoardPropagateNetSettingsWithDialog(
         PROJECT* sub = sm.GetProject( subPath );
 
         if( !sub )
+        {
+            wxLogWarning( wxT( "[M7.2-PROPAGATE] sm.GetProject('%s') returned null — "
+                               "skipping save for this sub-project" ), subPath );
+            continue;
+        }
+
+        // Derive the save directory from the PROJECT itself, then sanity-check
+        // it's absolute. If the project's full name was set with a basename
+        // (a known legacy gotcha — see PROJECT::setProjectFullName defensive
+        // recovery), the derived path can come back relative or empty, which
+        // makes JSON_SETTINGS::SaveToFile write to the current working
+        // directory — typically the container's directory, producing stray
+        // <sub-project>.kicad_pro files at the project root. Refuse to save
+        // in that case.
+        wxFileName subDirFn( sub->GetProjectFullName() );
+        subDirFn.MakeAbsolute();
+        wxString subDir = subDirFn.GetPath();
+
+        wxLogMessage( wxT( "[M7.2-PROPAGATE] saving sub-project: subPath='%s' "
+                           "projGetFullName='%s' projGetPath='%s' resolvedDir='%s' "
+                           "fileGetFilename='%s'" ),
+                      subPath, sub->GetProjectFullName(), sub->GetProjectPath(),
+                      subDir, sub->GetProjectFile().GetFilename() );
+
+        if( subDir.IsEmpty() || !wxFileName::DirExists( subDir ) )
+        {
+            wxLogWarning( wxT( "[M7.2-PROPAGATE] derived subDir='%s' is empty or "
+                               "doesn't exist — refusing to save '%s' (would create "
+                               "stray file at cwd)" ), subDir, subPath );
+            continue;
+        }
+
+        sub->GetProjectFile().SaveToFile( subDir, /* aForce */ true );
+    }
+
+    // Unload sub-projects the propagator loaded itself. We pass aSave=false
+    // because the explicit loop above already wrote any mutated state — and
+    // un-mutated ephemerals shouldn't write anything (they were just opened
+    // for inspection). Failing to unload would leave them lingering as
+    // phantom open projects in SETTINGS_MANAGER, which messes up Prj() and
+    // the active-project switch on the next user-driven open.
+    for( const wxString& ephemeralPath : result.ephemerallyLoadedSubProjectPaths )
+    {
+        PROJECT* ephemeral = sm.GetProject( ephemeralPath );
+
+        if( !ephemeral )
             continue;
 
-        wxString containerDir = wxFileName( subPath ).GetPath();
-        sub->GetProjectFile().SaveToFile( containerDir, /* aForce */ true );
+        sm.UnloadProject( ephemeral, /* aSave */ false );
     }
 
     return result;

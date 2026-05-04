@@ -737,13 +737,21 @@ private:
 
     struct OverlapBox
     {
-        SFVEC3F      minMm;
-        SFVEC3F      maxMm;
-        OVERLAP_KIND kind;
-        KIID         instanceA;
-        KIID         instanceB;
-        wxString     refA;
-        wxString     refB;
+        SFVEC3F                      minMm;
+        SFVEC3F                      maxMm;
+        OVERLAP_KIND                 kind;
+        KIID                         instanceA;
+        KIID                         instanceB;
+        wxString                     refA;
+        wxString                     refB;
+        /// Optional: intersecting triangle vertices in board-mm
+        /// space. Stored as flat groups of three vertices per
+        /// triangle, populated only by COLLISION boxes that came
+        /// from a mesh-tri test (vs. AABB fallback / mated CONTACT).
+        /// Renderer draws these as filled red triangles so the user
+        /// sees the actual surface of penetration instead of just
+        /// the AABB bounding the intersection vertices.
+        std::vector<SFVEC3F>         triVertsMm;
     };
 
     std::vector<BOARD_3D_INSTANCE>  m_boardInstances;

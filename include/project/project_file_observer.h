@@ -115,6 +115,11 @@ public:
     SCOPED_PROJECT_FILE_OBSERVER& operator=( SCOPED_PROJECT_FILE_OBSERVER&& aOther ) noexcept;
 
 private:
+    // PROJECT_FILE's dtor walks its back-pointer table and writes
+    // nullptr into our m_projectFile / m_observer when the file dies
+    // first, so its own dtor can leave us with a no-op cleanup branch.
+    friend class PROJECT_FILE;
+
     PROJECT_FILE*          m_projectFile;
     PROJECT_FILE_OBSERVER* m_observer;
 };

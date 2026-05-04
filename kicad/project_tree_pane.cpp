@@ -1120,6 +1120,29 @@ void PROJECT_TREE_PANE::ReCreateTreePrj()
     wxLogMessage( wxS( "PROJECT_TREE_PANE::ReCreateTreePrj: pro_dir='%s' (resolved from %s)" ),
                   pro_dir, proSource );
 
+    // Defensive guard: if the resolved project path lacks a directory
+    // component (basename-only), the directory walk below will fail and
+    // wipe the tree to a single root node. Surface the underlying
+    // SETTINGS_MANAGER state issue but leave the existing tree intact —
+    // a stale pro_dir is recoverable on the next refresh, but a wiped
+    // tree forces the user to reload the project.
+    //
+    // Symptom triggered when Prj() returns a PROJECT whose
+    // setProjectFullName was called with a basename instead of an
+    // absolute path; root cause lives elsewhere (see MOON-tbd).
+    if( !pro_dir.IsEmpty() )
+    {
+        wxFileName proCheck( pro_dir );
+
+        if( proCheck.IsOk() && proCheck.GetPath().IsEmpty() )
+        {
+            wxLogWarning( wxS( "PROJECT_TREE_PANE::ReCreateTreePrj: refusing to rebuild "
+                               "from basename-only pro_dir '%s' — leaving existing tree "
+                               "intact" ), pro_dir );
+            return;
+        }
+    }
+
     if( !m_TreeProject )
         m_TreeProject = new PROJECT_TREE( this );
     else

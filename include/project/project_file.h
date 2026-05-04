@@ -1032,6 +1032,18 @@ private:
     /// via the `SCOPED_PROJECT_FILE_OBSERVER` RAII helper).
     std::vector<PROJECT_FILE_OBSERVER*> m_observers;
 
+    /// Defensive back-pointer table for `SCOPED_PROJECT_FILE_OBSERVER`s
+    /// holding a raw `m_projectFile` pointer at us. We can outlive their
+    /// owning frames (wx pending-delete + idle-time disposal can fire
+    /// AFTER a project unload from SETTINGS_MANAGER), and a SCOPED dtor
+    /// touching a freed `PROJECT_FILE` would crash on
+    /// `UnregisterObserver`. Our dtor walks this list and nulls each
+    /// scoped's `m_projectFile` so its own dtor skips the deref.
+    /// `friend SCOPED_PROJECT_FILE_OBSERVER` keeps this internal — only
+    /// the SCOPED helper edits it.
+    friend class SCOPED_PROJECT_FILE_OBSERVER;
+    std::vector<SCOPED_PROJECT_FILE_OBSERVER*> m_scopedObservers;
+
     /// T3: depth counter for `PROJECT_FILE_SUSPEND_NOTIFY`. While > 0,
     /// `NotifyMultiBoardChanged` queues into `m_pendingNotifications`
     /// instead of dispatching immediately. The outermost guard drains

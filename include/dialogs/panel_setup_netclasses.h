@@ -128,6 +128,18 @@ private:
     std::string                            m_editorType;
     std::function<nlohmann::json()>        m_getDesignContextFn;
     std::shared_ptr<std::atomic<bool>>     m_autoGenerateCancelled;
+
+    // M7.2 — multi-board context. The "Status" column is appended after
+    // the wxFormBuilder-generated columns when this panel is editing a
+    // project that's part of a multi-board container. -1 when the panel
+    // isn't in a multi-board context (column not appended).
+    int                                    m_statusCol = -1;
+
+    // Per-class lookup of the container's same-named NETCLASS, if any.
+    // Used by loadNetclasses() to label each row Shared / Local / Conflict
+    // without re-loading the container's PROJECT_FILE per row. Empty when
+    // m_statusCol == -1 (single-project) or when this IS the container.
+    std::map<wxString, std::shared_ptr<NETCLASS>> m_containerNetclassesByName;
 };
 
 #endif //PANEL_SETUP_NETCLASSES_H

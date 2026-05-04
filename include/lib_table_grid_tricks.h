@@ -57,7 +57,15 @@ public:
     void doPopupSelection( wxCommandEvent& event ) override;
 
     static void AppendRowHandler( WX_GRID* aGrid );
-    static void DeleteRowHandler( WX_GRID* aGrid );
+
+    /// @param aProject the PROJECT whose lib-table the grid is editing.
+    /// Used by M7.1 to route deletion of `shared` rows through the
+    /// replication API: container scope cascades via
+    /// `LIBRARY_MANAGER::RemoveSharedLibrary`, sub-project scope
+    /// converts the row to a non-shared local entry via
+    /// `UnshareLibraryRow`. Pass nullptr to fall back to
+    /// `SETTINGS_MANAGER::Prj()` — single-project use cases.
+    static void DeleteRowHandler( WX_GRID* aGrid, PROJECT* aProject = nullptr );
 
     static void MoveUpHandler( WX_GRID* aGrid );
     static void MoveDownHandler( WX_GRID* aGrid );

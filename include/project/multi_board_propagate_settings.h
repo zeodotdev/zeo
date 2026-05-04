@@ -1,0 +1,177 @@
+/*
+ * This program source code file is part of KiCad, a free EDA CAD application.
+ *
+ * Copyright The KiCad Developers, see AUTHORS.txt for contributors.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version 2
+ * of the License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, you may find one here:
+ * http://www.gnu.org/licenses/old-licenses/gpl-2.0.html
+ */
+
+#ifndef MULTI_BOARD_PROPAGATE_SETTINGS_H
+#define MULTI_BOARD_PROPAGATE_SETTINGS_H
+
+#include <kicommon.h>
+
+#include <functional>
+#include <memory>
+#include <vector>
+#include <wx/string.h>
+
+class NETCLASS;
+class PROJECT;
+class PROJECT_FILE;
+
+
+/*
+    M7.2 — net_settings replication from container to sub-projects.
+
+    Each sub-project's `.kicad_pro` carries a complete `net_settings`
+    block — same shape as today, no flags. When the container project
+    is saved, this propagator pushes the container's net classes into
+    every loaded sub-project. Per-class merge policy:
+
+        - Sub-project has no entry with that name  → copy in silently
+        - Same name + identical settings           → no-op silently
+        - Same name + different settings           → CONFLICT — caller
+                                                     resolves via the
+                                                     supplied callback
+        - Sub-project has a class not in container → leave untouched
+                                                     (local-only, kept)
+
+    Sub-projects that are NOT loaded in SETTINGS_MANAGER are skipped
+    (we don't write to their `.kicad_pro` from disk in v1; they pick up
+    the new container state next time they're opened, where the same
+    propagation runs again on the next container save).
+
+    The propagator does NOT save sub-projects automatically. Caller
+    decides whether to flush each sub-project's `.kicad_pro` after
+    propagation completes — typically via the existing T3 SUSPEND_NOTIFY
+    + SaveToFile path so observers fire once per affected sub-project.
+*/
+
+
+/// One per-class conflict surfaced to the caller for resolution.
+struct KICOMMON_API MULTI_BOARD_NET_CLASS_CONFLICT
+{
+    /// Sub-project owning the conflicting entry. Display string for the
+    /// dialog (uses display name if set, else internal name).
+    wxString subProjectDisplayName;
+
+    /// Absolute path to the sub-project's `.kicad_pro` (so callers can
+    /// route a save back to the right file).
+    wxString subProjectAbsPath;
+
+    /// Class name (same on both sides — that's what makes it a conflict).
+    wxString netClassName;
+
+    /// Snapshot of the container's net class (what would be written if
+    /// the user picks "Use container value").
+    std::shared_ptr<NETCLASS> containerNetClass;
+
+    /// Snapshot of the sub-project's current net class (what would be
+    /// preserved if the user picks "Keep sub-project value").
+    std::shared_ptr<NETCLASS> subProjectNetClass;
+};
+
+
+/// User's resolution choice per conflict.
+enum class MULTI_BOARD_NET_CLASS_RESOLUTION
+{
+    USE_CONTAINER,    ///< Overwrite the sub-project's class with the container's.
+    KEEP_SUB_PROJECT, ///< Leave the sub-project's class alone.
+    SKIP              ///< Don't apply this class on this sub-project at all.
+};
+
+
+/**
+ * Callback the propagator invokes once per conflict. Returns the user's
+ * resolution. Called synchronously from the propagator — typically the
+ * caller pumps a modal dialog and returns the chosen value.
+ *
+ * To suppress conflict handling entirely (test paths, headless saves
+ * where the policy is "always use container"), pass a callback that
+ * always returns USE_CONTAINER.
+ */
+using MULTI_BOARD_NET_CLASS_CONFLICT_RESOLVER =
+        std::function<MULTI_BOARD_NET_CLASS_RESOLUTION( const MULTI_BOARD_NET_CLASS_CONFLICT& )>;
+
+
+/// Aggregated outcome of one propagation pass.
+struct KICOMMON_API MULTI_BOARD_PROPAGATE_RESULT
+{
+    /// Sub-projects iterated (loaded + currently in SETTINGS_MANAGER).
+    int subProjectsTouched = 0;
+
+    /// Net classes copied into a sub-project that previously had no
+    /// entry with that name.
+    int classesAdded = 0;
+
+    /// Net classes that already matched — no write performed.
+    int classesUnchanged = 0;
+
+    /// Net classes overwritten via USE_CONTAINER resolution.
+    int classesOverwritten = 0;
+
+    /// Net classes the user chose to keep on the sub-project (KEEP_SUB_PROJECT).
+    int classesKept = 0;
+
+    /// Conflicts the user explicitly skipped (SKIP).
+    int classesSkipped = 0;
+
+    /// Sub-project paths whose `.kicad_pro` was mutated. Caller should
+    /// SaveToFile each of these (ideally inside a SUSPEND_NOTIFY guard).
+    std::vector<wxString> mutatedSubProjectPaths;
+};
+
+
+/**
+ * Propagate net classes from a multi-board container to every loaded
+ * sub-project. Returns aggregated stats + the list of sub-project paths
+ * that were mutated and need a SaveToFile.
+ *
+ * No-op when `aContainer` is not a multi-board container.
+ *
+ * The propagator handles per-class merge policy in-process; the
+ * resolver callback is only invoked for the "same name, different
+ * settings" case. On conflict-free runs, no callback fires and the
+ * caller can pass `nullptr` (which is treated as USE_CONTAINER for any
+ * conflicts that surface — defensive fallback).
+ */
+KICOMMON_API MULTI_BOARD_PROPAGATE_RESULT MultiBoardPropagateNetSettings(
+        PROJECT& aContainer,
+        const MULTI_BOARD_NET_CLASS_CONFLICT_RESOLVER& aResolver = nullptr );
+
+
+/**
+ * UI-aware wrapper around `MultiBoardPropagateNetSettings`. Builds a
+ * resolver that pops a modal `DIALOG_MULTI_BOARD_NET_CLASS_CONFLICT`
+ * for each conflict, honouring the dialog's "Apply choice to all
+ * remaining conflicts" checkbox so the user only sees subsequent
+ * conflicts when they ask to.
+ *
+ * After propagation, calls `SaveToFile` on each mutated sub-project
+ * (the propagator only mutates in-memory `NET_SETTINGS`; it doesn't
+ * touch disk on its own — that's the caller's job here). Saves are
+ * wrapped in `PROJECT_FILE_SUSPEND_NOTIFY` so observers fire once
+ * per affected sub-project rather than per-class.
+ *
+ * Returns the same result struct as the underlying propagator. The
+ * mutatedSubProjectPaths field reflects what was actually written to
+ * disk (KEEP_SUB_PROJECT / SKIP entries don't appear).
+ */
+MULTI_BOARD_PROPAGATE_RESULT MultiBoardPropagateNetSettingsWithDialog(
+        class PROJECT& aContainer, class wxWindow* aDialogParent );
+
+
+#endif // MULTI_BOARD_PROPAGATE_SETTINGS_H

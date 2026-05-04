@@ -99,11 +99,6 @@ PROJECT_FILE::PROJECT_FILE( const wxString& aFullPath ) :
     m_params.emplace_back( new PARAM_LIST<ASSEMBLY_INSTANCE_STATE>(
             "multi_board.assembly_3d.instances", &m_assemblyInstances, {} ) );
 
-    // M7.2: sub-project opt-in to inherit container's net classes / DRC
-    // rules at runtime. Default false for back-compat.
-    m_params.emplace_back( new PARAM<bool>( "multi_board.inherit_net_settings",
-            &m_inheritNetSettingsFromContainer, false ) );
-
     // M5.2: sub-project back-reference to the enclosing container
     // .kicad_pro (relative path). Empty for standalone or container
     // projects. Container-aware code prefers this O(1) ref over the
@@ -1562,28 +1557,16 @@ wxFileName PROJECT_FILE::ResolveSubProjectPath( const SUB_PROJECT_INFO& aInfo ) 
 
 
 // =============================================================================
-// M7.2: NET_SETTINGS overlay from multi-board container
+// M7.2: NET_SETTINGS replication
 // =============================================================================
-
-std::shared_ptr<NET_SETTINGS>& PROJECT_FILE::NetSettings()
-{
-    // Inheritance only applies on a sub-project; a container is its own
-    // source of truth.
-    if( !m_inheritNetSettingsFromContainer || m_isMultiBoardContainer || !m_project )
-        return m_NetSettings;
-
-    // Peek the container PROJECT — pure lookup, never auto-loads
-    // (locked-in decision #8). When the container isn't loaded
-    // (e.g. standalone open of a sub-project), fall back to the
-    // sub-project's own net_settings so the editor still has rules to
-    // work with.
-    PROJECT* container = m_project->GetContainerProject();
-
-    if( !container )
-        return m_NetSettings;
-
-    return container->GetProjectFile().m_NetSettings;
-}
+//
+// Each project (container + sub-projects) carries its own net_settings, so
+// every project remains fully usable when opened standalone. The container
+// pushes its net classes to sub-projects on save; conflict resolution lives
+// in `MultiBoardPropagateNetSettings()` (common/project/multi_board_propagate_settings.cpp).
+//
+// `NetSettings()` is now a pure inline accessor (declared in the header),
+// no overlay logic at the runtime call site.
 
 
 bool PROJECT_FILE::RemoveSubProject( const KIID& aUuid )
@@ -1899,16 +1882,6 @@ void PROJECT_FILE::SetMbsFileName( const wxString& aName )
 
     m_mbsFileName = aName;
     NotifyMultiBoardChanged( MULTI_BOARD_FIELD::MBS_FILE_NAME );
-}
-
-
-void PROJECT_FILE::SetInheritNetSettingsFromContainer( bool aInherit )
-{
-    if( m_inheritNetSettingsFromContainer == aInherit )
-        return;
-
-    m_inheritNetSettingsFromContainer = aInherit;
-    NotifyMultiBoardChanged( MULTI_BOARD_FIELD::INHERIT_NET_SETTINGS );
 }
 
 

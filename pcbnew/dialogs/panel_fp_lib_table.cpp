@@ -554,7 +554,7 @@ void PANEL_FP_LIB_TABLE::appendRowHandler( wxCommandEvent& event )
 
 void PANEL_FP_LIB_TABLE::deleteRowHandler( wxCommandEvent& event )
 {
-    LIB_TABLE_GRID_TRICKS::DeleteRowHandler( cur_grid() );
+    LIB_TABLE_GRID_TRICKS::DeleteRowHandler( cur_grid(), m_project );
 }
 
 

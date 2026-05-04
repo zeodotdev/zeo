@@ -273,30 +273,10 @@ PANEL_SETUP_NETCLASSES::PANEL_SETUP_NETCLASSES( wxWindow* aParentWindow, EDA_DRA
 
     m_matchingNets->SetFont( KIUI::GetInfoFont( this ) );
 
-    // M7.2: when the active project is a sub-project of a multi-board
-    // container, expose an opt-in checkbox to inherit the container's
-    // net classes / DRC rules at runtime. Hidden in standalone projects
-    // and on the container itself (where rules are the source).
-    PROJECT& project = m_frame->Prj();
-
-    if( !project.IsNullProject()
-        && !project.GetProjectFile().IsMultiBoardContainer()
-        && !project.GetContainerProjectPath().IsEmpty() )
-    {
-        m_inheritFromContainerCheckbox = new wxCheckBox( this, wxID_ANY,
-                _( "Inherit net classes and rules from multi-board container" ) );
-        m_inheritFromContainerCheckbox->SetToolTip(
-                _( "When checked, this board uses the container project's net "
-                   "classes and DRC rules instead of its own. The container's "
-                   "rules apply to every sub-board with this option enabled, "
-                   "keeping cross-board nets consistent. Falls back to the "
-                   "local rules when the container isn't loaded." ) );
-
-        if( wxSizer* mainSizer = GetSizer() )
-            mainSizer->Insert( 0, m_inheritFromContainerCheckbox, 0, wxALL | wxEXPAND, 8 );
-
-        Layout();
-    }
+    // M7.2 follow-up: cross-board rule consistency is handled by physical
+    // replication (container → sub-projects on save), not a runtime
+    // overlay. No opt-in checkbox needed — see
+    // MultiBoardPropagateNetSettings().
 }
 
 
@@ -488,12 +468,6 @@ bool PANEL_SETUP_NETCLASSES::TransferDataToWindow()
     loadNetclasses();
     AdjustAssignmentGridColumns( GetSize().x * 3 / 5 );
 
-    if( m_inheritFromContainerCheckbox )
-    {
-        m_inheritFromContainerCheckbox->SetValue(
-                m_frame->Prj().GetProjectFile().InheritNetSettingsFromContainer() );
-    }
-
     return true;
 }
 
@@ -596,14 +570,6 @@ bool PANEL_SETUP_NETCLASSES::TransferDataFromWindow()
         wxString netclass = m_assignmentGrid->GetCellValue( row, 1 );
 
         m_netSettings->SetNetclassPatternAssignment( pattern, netclass );
-    }
-
-    // M7.2: persist the inherit toggle. The runtime overlay in
-    // PROJECT_FILE::NetSettings() reads this on every access.
-    if( m_inheritFromContainerCheckbox )
-    {
-        m_frame->Prj().GetProjectFile().SetInheritNetSettingsFromContainer(
-                m_inheritFromContainerCheckbox->GetValue() );
     }
 
     return true;

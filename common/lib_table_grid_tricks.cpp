@@ -429,7 +429,7 @@ void LIB_TABLE_GRID_TRICKS::AppendRowHandler( WX_GRID* aGrid )
 }
 
 
-void LIB_TABLE_GRID_TRICKS::DeleteRowHandler( WX_GRID* aGrid )
+void LIB_TABLE_GRID_TRICKS::DeleteRowHandler( WX_GRID* aGrid, PROJECT* aProject )
 {
     if( !aGrid->CommitPendingChanges() )
         return;
@@ -472,6 +472,21 @@ void LIB_TABLE_GRID_TRICKS::DeleteRowHandler( WX_GRID* aGrid )
 
     std::sort( selectedRows.begin(), selectedRows.end() );
 
+    // M7.1: deletion of `shared` rows must route through the replication
+    // API so the change reaches every peer table. Resolve the project
+    // context once: container vs. sub-project tells us whether to
+    // cascade the removal (container → all sub-projects via
+    // RemoveSharedLibrary) or to merely unshare-locally (sub-project
+    // editing its own table → UnshareLibraryRow, row stays as a
+    // non-shared local entry per ticket spec).
+    LIB_TABLE_GRID_DATA_MODEL* tbl =
+            static_cast<LIB_TABLE_GRID_DATA_MODEL*>( aGrid->GetTable() );
+    PROJECT&           project    = aProject ? *aProject
+                                              : Pgm().GetSettingsManager().Prj();
+    LIBRARY_TABLE_TYPE tableType  = tbl->Table().Type();
+    bool               isContainer = !project.IsNullProject()
+                                     && project.GetProjectFile().IsMultiBoardContainer();
+
     // Remove selected rows (note: a row can be stored more than once in list)
     int last_row = -1;
 
@@ -483,10 +498,60 @@ void LIB_TABLE_GRID_TRICKS::DeleteRowHandler( WX_GRID* aGrid )
     {
         int row = selectedRows[ii];
 
-        if( row != last_row )
+        if( row == last_row )
+            continue;
+
+        last_row = row;
+
+        // Snapshot before any mutation — DeleteRows() / RemoveSharedLibrary
+        // / UnshareLibraryRow can invalidate references.
+        LIBRARY_TABLE_ROW& rowRef  = tbl->At( row );
+        bool               shared  = rowRef.Shared();
+        wxString           nick    = rowRef.Nickname();
+
+        if( !shared )
         {
-            last_row = row;
+            // Plain local row — nothing to fan out.
             aGrid->DeleteRows( row, 1 );
+            continue;
+        }
+
+        if( isContainer )
+        {
+            // Container scope, shared row → cascade removal to every
+            // sub-project's lib-table, then drop locally.
+            LIBRARY_RESULT<void> result =
+                    Pgm().GetLibraryManager().RemoveSharedLibrary( tableType,
+                                                                    nick, project );
+
+            if( !result.has_value() )
+            {
+                DisplayError( aGrid, result.error().message );
+                continue;   // leave the local row visible so user can retry
+            }
+
+            aGrid->DeleteRows( row, 1 );
+        }
+        else
+        {
+            // Sub-project scope, shared row → unshare-locally per ticket
+            // semantics. The row stays in the sub-project's lib-table as
+            // a non-shared local entry. To remove from every peer the
+            // user must edit the container's lib-table.
+            LIBRARY_RESULT<void> result =
+                    Pgm().GetLibraryManager().UnshareLibraryRow( tableType,
+                                                                  nick, project );
+
+            if( !result.has_value() )
+            {
+                DisplayError( aGrid, result.error().message );
+                continue;
+            }
+
+            // Reflect the cleared shared flag in the grid; do NOT delete.
+            rowRef.SetShared( false );
+            rowRef.SetConflict( false );
+            aGrid->ForceRefresh();
         }
     }
 

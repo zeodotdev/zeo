@@ -57,7 +57,6 @@ enum class MULTI_BOARD_FIELD
     VOLTAGE_RULES,
 
     // Sub-project fields
-    INHERIT_NET_SETTINGS,
     CONTAINER_PROJECT_PATH,
 
     // Synthetic — emitted by the file watcher (Phase 4)

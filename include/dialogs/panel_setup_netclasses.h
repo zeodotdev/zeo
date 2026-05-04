@@ -128,12 +128,6 @@ private:
     std::string                            m_editorType;
     std::function<nlohmann::json()>        m_getDesignContextFn;
     std::shared_ptr<std::atomic<bool>>     m_autoGenerateCancelled;
-
-    /// M7.2: optional checkbox shown only on a sub-project of a
-    /// multi-board container. When checked, this sub-project's
-    /// `NetSettings()` returns the container's overlay at runtime.
-    /// nullptr in non-multi-board contexts.
-    wxCheckBox*                            m_inheritFromContainerCheckbox = nullptr;
 };
 
 #endif //PANEL_SETUP_NETCLASSES_H

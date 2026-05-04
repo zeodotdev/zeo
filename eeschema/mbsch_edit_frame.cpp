@@ -37,6 +37,7 @@
 #include <sch_screen.h>
 #include <kiface_base.h>
 #include <pgm_base.h>
+#include <project/multi_board_propagate_settings.h>
 #include <settings/settings_manager.h>
 #include <tool/action_menu.h>
 #include <tool/tool_manager.h>
@@ -421,6 +422,32 @@ void MBSCH_EDIT_FRAME::onSchematicSaved()
                                      nets.size() );
     SetStatusText( msg, 0 );
     wxLogTrace( wxT( "MULTI_BOARD" ), wxS( "%s → %s" ), msg, multiFile.GetFullPath() );
+
+    // M7.2 propagation: push the container's net classes into every loaded
+    // sub-project. The transient `multi` PROJECT_FILE above doesn't have a
+    // PROJECT* (it's a JSON-only loader), so we look the container PROJECT
+    // up in SETTINGS_MANAGER. When the container isn't loaded as an
+    // active project, propagation is skipped — the sub-projects will pick
+    // up the new state on their next session via the same hook.
+    SETTINGS_MANAGER& sm = Pgm().GetSettingsManager();
+
+    if( PROJECT* containerProject = sm.GetProject( multiFile.GetFullPath() ) )
+    {
+        MULTI_BOARD_PROPAGATE_RESULT propResult =
+                MultiBoardPropagateNetSettingsWithDialog( *containerProject, this );
+
+        if( propResult.subProjectsTouched > 0 )
+        {
+            wxString summary = wxString::Format(
+                    _( "Multi-board: propagated net classes to %d sub-project(s) "
+                       "(+%d new, %d unchanged, %d overwritten, %d kept, %d skipped)" ),
+                    propResult.subProjectsTouched, propResult.classesAdded,
+                    propResult.classesUnchanged, propResult.classesOverwritten,
+                    propResult.classesKept, propResult.classesSkipped );
+            SetStatusText( summary, 0 );
+            wxLogInfo( wxT( "MULTI_BOARD: %s" ), summary );
+        }
+    }
 }
 
 

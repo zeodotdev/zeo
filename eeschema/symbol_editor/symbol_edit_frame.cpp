@@ -41,6 +41,7 @@
 #include <symbol_editor/symbol_editor_settings.h>
 #include <paths.h>
 #include <pgm_base.h>
+#include <project/project_file.h>
 #include <project_sch.h>
 #include <sch_painter.h>
 #include <sch_view.h>
@@ -1140,9 +1141,30 @@ bool SYMBOL_EDIT_FRAME::SynchronizePins()
 
 wxString SYMBOL_EDIT_FRAME::AddLibraryFile( bool aCreateNew )
 {
-    wxFileName               fn = m_libMgr->GetUniqueLibraryName();
-    bool                     useGlobalTable = true;
-    FILEDLG_HOOK_NEW_LIBRARY tableChooser( useGlobalTable );
+    wxFileName fn = m_libMgr->GetUniqueLibraryName();
+
+    // M7.1: when this editor is operating against a multi-board container or
+    // one of its sub-projects, surface the third "Container" radio so the
+    // user can fan a new library out to every sub-project in one step. The
+    // detection mirrors SCH_BASE_FRAME::installLibraryActions
+    // (sch_base_frame.cpp:748-760).
+    LIBRARY_SAVE_TARGET defaultTarget = LIBRARY_SAVE_TARGET::GLOBAL;
+    bool                showContainer = false;
+
+    if( Pgm().GetSettingsManager().IsProjectOpenNotDummy() && !Prj().IsNullProject() )
+    {
+        if( Prj().GetProjectFile().IsMultiBoardContainer() )
+        {
+            defaultTarget = LIBRARY_SAVE_TARGET::CONTAINER;
+            showContainer = true;
+        }
+        else if( !Prj().GetContainerProjectPath().IsEmpty() )
+        {
+            showContainer = true;
+        }
+    }
+
+    FILEDLG_HOOK_NEW_LIBRARY tableChooser( defaultTarget, showContainer );
 
     if( !LibraryFileBrowser( aCreateNew ? _( "New Symbol Library" ) : _( "Add Symbol Library" ),
                              !aCreateNew, fn, FILEEXT::KiCadSymbolLibFileWildcard(),
@@ -1152,14 +1174,7 @@ wxString SYMBOL_EDIT_FRAME::AddLibraryFile( bool aCreateNew )
         return wxEmptyString;
     }
 
-    LIBRARY_TABLE_SCOPE scope = tableChooser.GetUseGlobalTable() ? LIBRARY_TABLE_SCOPE::GLOBAL
-                                                                 : LIBRARY_TABLE_SCOPE::PROJECT;
-
-    LIBRARY_MANAGER&              manager = Pgm().GetLibraryManager();
-    std::optional<LIBRARY_TABLE*> optTable = manager.Table( LIBRARY_TABLE_TYPE::SYMBOL, scope );
-
-    wxCHECK( optTable.has_value(), wxEmptyString );
-    LIBRARY_TABLE* table = optTable.value();
+    LIBRARY_SAVE_TARGET selectedTarget = tableChooser.GetSaveTarget();
 
     wxString libName = fn.GetName();
 
@@ -1174,7 +1189,27 @@ wxString SYMBOL_EDIT_FRAME::AddLibraryFile( bool aCreateNew )
         return wxEmptyString;
     }
 
-    if( aCreateNew )
+    LIBRARY_TABLE_SCOPE scope =
+            ( selectedTarget == LIBRARY_SAVE_TARGET::GLOBAL ) ? LIBRARY_TABLE_SCOPE::GLOBAL
+                                                              : LIBRARY_TABLE_SCOPE::PROJECT;
+
+    if( selectedTarget == LIBRARY_SAVE_TARGET::CONTAINER )
+    {
+        // Container scope: fan out to container + every sub-project's
+        // sym-lib-table with shared=true rows. The helper handles both
+        // create-new (file doesn't exist) and add-existing cases.
+        bool ok = aCreateNew ? m_libMgr->CreateSharedLibrary( fn.GetFullPath() )
+                             : m_libMgr->AddSharedLibrary( fn.GetFullPath() );
+
+        if( !ok )
+        {
+            DisplayError( this, wxString::Format(
+                                  _( "Could not add library '%s' to multi-board container." ),
+                                  libName ) );
+            return wxEmptyString;
+        }
+    }
+    else if( aCreateNew )
     {
         if( !m_libMgr->CreateLibrary( fn.GetFullPath(), scope ) )
         {
@@ -1195,21 +1230,28 @@ wxString SYMBOL_EDIT_FRAME::AddLibraryFile( bool aCreateNew )
 
     bool success = true;
 
-    // Tables are reinitialized by m_libMgr->AddLibrary(). So reinit table reference.
-    optTable = manager.Table( LIBRARY_TABLE_TYPE::SYMBOL, scope );
-    wxCHECK( optTable.has_value(), wxEmptyString );
-    table = optTable.value();
+    // CONTAINER scope already saves every affected lib-table inside
+    // CreateSharedLibrary / AddSharedLibrary. For GLOBAL / PROJECT we
+    // still need to flush the chosen table here.
+    if( selectedTarget != LIBRARY_SAVE_TARGET::CONTAINER )
+    {
+        LIBRARY_MANAGER&              manager  = Pgm().GetLibraryManager();
+        std::optional<LIBRARY_TABLE*> optTable =
+                manager.Table( LIBRARY_TABLE_TYPE::SYMBOL, scope );
+        wxCHECK( optTable.has_value(), wxEmptyString );
+        LIBRARY_TABLE* table = optTable.value();
 
-    table->Save().map_error(
-            [&]( const LIBRARY_ERROR& aError )
-            {
-                KICAD_MESSAGE_DIALOG dlg( this, _( "Error saving library table." ), _( "File Save Error" ),
-                                          wxOK | wxICON_ERROR );
-                dlg.SetExtendedMessage( aError.message );
-                dlg.ShowModal();
+        table->Save().map_error(
+                [&]( const LIBRARY_ERROR& aError )
+                {
+                    KICAD_MESSAGE_DIALOG dlg( this, _( "Error saving library table." ),
+                                              _( "File Save Error" ), wxOK | wxICON_ERROR );
+                    dlg.SetExtendedMessage( aError.message );
+                    dlg.ShowModal();
 
-                success = false;
-            } );
+                    success = false;
+                } );
+    }
 
     if( success )
         adapter->LoadOne( fn.GetName() );

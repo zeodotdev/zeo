@@ -679,15 +679,6 @@ public:
 
     void SetMbsFileName( const wxString& aName );
 
-    /// M7.2: when set on a sub-project, `NetSettings()` returns the
-    /// container's net classes / DRC rules at runtime if the container
-    /// is loaded. Falls back to this project's own `m_NetSettings` when
-    /// the container isn't reachable (e.g. standalone open). Persisted
-    /// as `multi_board.inherit_net_settings`.
-    bool InheritNetSettingsFromContainer() const { return m_inheritNetSettingsFromContainer; }
-
-    void SetInheritNetSettingsFromContainer( bool aInherit );
-
     // ------------------------------------------------------------------
     // T3 — Observable mutators for `multi_board.*` state.
     //
@@ -805,15 +796,12 @@ public:
         return m_topLevelSheets;
     }
 
-    /// M7.2 overlay: when this sub-project has
-    /// `multi_board.inherit_net_settings = true` AND its container
-    /// project is loaded in the SETTINGS_MANAGER (e.g. user is in MBSCH
-    /// peer-player mode), this returns the container's NET_SETTINGS so
-    /// every sub-board sees the same net classes / DRC rules. In all
-    /// other cases (container not loaded, standalone open, flag off,
-    /// container project itself) it returns this project's own
-    /// `m_NetSettings`. Implementation in project_file.cpp.
-    std::shared_ptr<NET_SETTINGS>& NetSettings();
+    /// Returns this project's own NET_SETTINGS. M7.2 cross-board rule
+    /// consistency uses physical replication (container → sub-projects
+    /// on save) rather than a runtime overlay — see
+    /// `MultiBoardPropagateNetSettings()` — so every project always
+    /// returns its own copy.
+    std::shared_ptr<NET_SETTINGS>& NetSettings() { return m_NetSettings; }
 
     std::shared_ptr<COMPONENT_CLASS_SETTINGS>& ComponentClassSettings()
     {
@@ -1023,11 +1011,6 @@ private:
     /// For container projects: per-net voltage-drop rules. Persisted as
     /// `multi_board.voltage_rules`.
     std::map<wxString, MB_VOLTAGE_RULE> m_voltageRules;
-
-    /// M7.2: sub-project flag — when true and container is reachable,
-    /// NetSettings() returns the container's overlay instead of this
-    /// project's own. Persisted as `multi_board.inherit_net_settings`.
-    bool m_inheritNetSettingsFromContainer = false;
 
     /// M5.2: sub-project back-reference — relative path from this
     /// `.kicad_pro` to the enclosing container `.kicad_pro`. Empty

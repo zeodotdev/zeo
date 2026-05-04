@@ -2974,6 +2974,16 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
         float     zMax;
         SFVEC3F   worldMin;
         SFVEC3F   worldMax;
+
+        // 3D pose for the rotated slab — used by the substrate-vs-
+        // substrate mesh-tri visualization. The 6 OBB face planes
+        // are derived as (axisXYZWorld, worldCenter ± halfXYZ); the
+        // 12 surface tris are built from the 8 world corners.
+        glm::vec3 worldCenter;
+        glm::vec3 axisXWorld;
+        glm::vec3 axisYWorld;
+        glm::vec3 axisZWorld;
+        float     halfZ = 0.0f;
     };
 
     std::vector<BoardSubstrateShape> boardShapes;
@@ -2993,7 +3003,13 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
         const float lhx = ( bbox.GetWidth()  / 2.0f ) / 1e6f;
         const float lhy = ( bbox.GetHeight() / 2.0f ) / 1e6f;
 
-        const float thetaRad = inst.rotation.z * static_cast<float>( M_PI ) / 180.0f;
+        // OBB axes use Z-only rotation. Z-rotation angle is negated
+        // for the same CAD-Y/PCB-Y reason buildShape negates it (see
+        // identity F·R_z(θ)·F = R_z(-θ) under Y-flip). The X/Y tilt
+        // rotations DON'T change the projection of the substrate onto
+        // the XY plane — they're handled in the world-AABB derivation
+        // below.
+        const float thetaRad = -inst.rotation.z * static_cast<float>( M_PI ) / 180.0f;
         const float c = std::cos( thetaRad );
         const float s = std::sin( thetaRad );
 
@@ -3005,11 +3021,12 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
         sh.halfX    = lhx;
         sh.halfY    = lhy;
         // Inst rotation pivots around the board's geometric center
-        // (which IS lcx, lcy here). With the pivot at the bbox
-        // centre, the centre itself doesn't move during rotation —
-        // only the rect's local axes rotate (already captured in
-        // axisX/axisY above). The substrate centre is just translated
-        // by inst.position.
+        // (which IS lcx, lcy here). For the XY centre this is fine —
+        // pure Z rotation around the bbox center keeps the centre at
+        // (lcx, lcy). For the broad-phase world AABB though, X/Y
+        // tilt swings the substrate corners up/down in world space,
+        // so we derive worldMin/Max from the rotated 8 corners
+        // below.
         sh.centerXY = glm::vec2( lcx + inst.position.x,
                                  lcy + inst.position.y );
 
@@ -3028,12 +3045,77 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
         sh.zMin = inst.position.z - boardThickness * 0.5f;
         sh.zMax = inst.position.z + boardThickness * 0.5f;
 
-        const glm::vec2 dx    = sh.axisX * lhx;
-        const glm::vec2 dy    = sh.axisY * lhy;
-        const float     spanX = std::abs( dx.x ) + std::abs( dy.x );
-        const float     spanY = std::abs( dx.y ) + std::abs( dy.y );
-        sh.worldMin = SFVEC3F( sh.centerXY.x - spanX, sh.centerXY.y - spanY, sh.zMin );
-        sh.worldMax = SFVEC3F( sh.centerXY.x + spanX, sh.centerXY.y + spanY, sh.zMax );
+        // Build world AABB from the substrate's 8 corners under the
+        // FULL 3D rotation (X, Y, Z). Without this, a tilted board's
+        // substrate broad-phase Z range stays at the un-tilted
+        // ±thk/2, missing obvious substrate-vs-substrate overlaps
+        // when the tilt sweeps the board through the other board's
+        // Z range. Same negate-Z-and-X convention as buildShape
+        // (matches the renderer's CAD-Y rotation in our PCB-Y
+        // collision frame).
+        glm::mat4 rotMat( 1.0f );
+        rotMat = glm::rotate( rotMat, glm::radians( -inst.rotation.z ),
+                              glm::vec3( 0, 0, 1 ) );
+        rotMat = glm::rotate( rotMat, glm::radians(  inst.rotation.y ),
+                              glm::vec3( 0, 1, 0 ) );
+        rotMat = glm::rotate( rotMat, glm::radians( -inst.rotation.x ),
+                              glm::vec3( 1, 0, 0 ) );
+
+        const glm::vec3 pivot( lcx, lcy, inst.position.z );
+        const glm::vec3 instTrans( inst.position.x, inst.position.y, 0.0f );
+        const float     thkHalf = boardThickness * 0.5f;
+
+        float wmnX = std::numeric_limits<float>::infinity();
+        float wmnY = wmnX;
+        float wmnZ = wmnX;
+        float wmxX = -wmnX;
+        float wmxY = -wmnX;
+        float wmxZ = -wmnX;
+
+        for( int sx = -1; sx <= 1; sx += 2 )
+        {
+            for( int sy = -1; sy <= 1; sy += 2 )
+            {
+                for( int sz = -1; sz <= 1; sz += 2 )
+                {
+                    glm::vec3 cornerLocal( lcx + sx * lhx,
+                                            lcy + sy * lhy,
+                                            inst.position.z + sz * thkHalf );
+                    glm::vec4 rel( cornerLocal - pivot, 1.0f );
+                    glm::vec3 rotated = glm::vec3( rotMat * rel );
+                    glm::vec3 world   = pivot + rotated + instTrans;
+
+                    wmnX = std::min( wmnX, world.x );
+                    wmnY = std::min( wmnY, world.y );
+                    wmnZ = std::min( wmnZ, world.z );
+                    wmxX = std::max( wmxX, world.x );
+                    wmxY = std::max( wmxY, world.y );
+                    wmxZ = std::max( wmxZ, world.z );
+                }
+            }
+        }
+
+        sh.worldMin = SFVEC3F( wmnX, wmnY, wmnZ );
+        sh.worldMax = SFVEC3F( wmxX, wmxY, wmxZ );
+
+        // Replace zMin/zMax with the rotated-corner extents so the
+        // narrow-phase Z interval test matches the broad-phase AABB.
+        // Without this the OBB SAT's Z-axis penetration term keeps
+        // using the un-tilted thin slab and rejects pairs that the
+        // broad phase admits.
+        sh.zMin = wmnZ;
+        sh.zMax = wmxZ;
+
+        // World-space slab axes. Used by the mesh-tri clip pass that
+        // visualizes substrate-vs-substrate intersections as filled
+        // tris (instead of the conservative AABB box). Apply rotMat
+        // to the local OBB axes — for axis-aligned (un-rotated) input
+        // these reduce to (1,0,0)/(0,1,0)/(0,0,1) in world.
+        sh.axisXWorld = glm::vec3( rotMat * glm::vec4( 1, 0, 0, 0 ) );
+        sh.axisYWorld = glm::vec3( rotMat * glm::vec4( 0, 1, 0, 0 ) );
+        sh.axisZWorld = glm::vec3( rotMat * glm::vec4( 0, 0, 1, 0 ) );
+        sh.worldCenter = pivot + instTrans;
+        sh.halfZ      = thkHalf;
 
         boardShapes.push_back( sh );
     }
@@ -3106,6 +3188,177 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
 
             diagBoardPairsCollide++;
 
+            // Build the 12 surface tris of a substrate slab in world
+            // space. 8 corners → 6 faces × 2 tris. Returned vector is
+            // 12 triangles; each triangle is 3 consecutive verts.
+            auto buildSlabTris =
+                    []( const BoardSubstrateShape& aSh ) -> std::vector<glm::vec3>
+            {
+                const glm::vec3& C  = aSh.worldCenter;
+                const glm::vec3  ex = aSh.axisXWorld * aSh.halfX;
+                const glm::vec3  ey = aSh.axisYWorld * aSh.halfY;
+                const glm::vec3  ez = aSh.axisZWorld * aSh.halfZ;
+
+                // 8 corners: signs for (x, y, z) extents.
+                glm::vec3 c[8] = {
+                    C - ex - ey - ez, // 0  -X-Y-Z
+                    C + ex - ey - ez, // 1  +X-Y-Z
+                    C + ex + ey - ez, // 2  +X+Y-Z
+                    C - ex + ey - ez, // 3  -X+Y-Z
+                    C - ex - ey + ez, // 4  -X-Y+Z
+                    C + ex - ey + ez, // 5  +X-Y+Z
+                    C + ex + ey + ez, // 6  +X+Y+Z
+                    C - ex + ey + ez, // 7  -X+Y+Z
+                };
+
+                // 6 quads, each split into 2 tris. Wind so the normal
+                // points outward (not strictly required for the clip
+                // pass — Sutherland-Hodgman is winding-agnostic — but
+                // keeps the triangulation tidy).
+                auto quad = []( std::vector<glm::vec3>& aOut,
+                                 const glm::vec3& aA, const glm::vec3& aB,
+                                 const glm::vec3& aC, const glm::vec3& aD )
+                {
+                    aOut.push_back( aA ); aOut.push_back( aB ); aOut.push_back( aC );
+                    aOut.push_back( aA ); aOut.push_back( aC ); aOut.push_back( aD );
+                };
+
+                std::vector<glm::vec3> tris;
+                tris.reserve( 36 );
+                quad( tris, c[0], c[1], c[2], c[3] );  // -Z (bottom)
+                quad( tris, c[4], c[7], c[6], c[5] );  // +Z (top)
+                quad( tris, c[0], c[3], c[7], c[4] );  // -X
+                quad( tris, c[1], c[5], c[6], c[2] );  // +X
+                quad( tris, c[0], c[4], c[5], c[1] );  // -Y
+                quad( tris, c[2], c[6], c[7], c[3] );  // +Y
+                return tris;
+            };
+
+            // Sutherland-Hodgman clip of a polygon against one OBB
+            // plane. The "inside" half-space is dot(p - faceCenter,
+            // faceNormal) <= 0 (faceNormal points outward). Same
+            // structure as the axis-aligned clipAxis lambda used in
+            // fpSub, just on an arbitrary plane.
+            auto clipPlane =
+                    []( const std::vector<glm::vec3>& aIn,
+                        std::vector<glm::vec3>&        aOut,
+                        const glm::vec3&               aFaceCenter,
+                        const glm::vec3&               aFaceNormal )
+            {
+                aOut.clear();
+
+                if( aIn.empty() )
+                    return;
+
+                auto signedDist = [&]( const glm::vec3& aP ) -> float
+                {
+                    return glm::dot( aP - aFaceCenter, aFaceNormal );
+                };
+
+                glm::vec3 prev    = aIn.back();
+                float     prevD   = signedDist( prev );
+                bool      prevIn  = ( prevD <= 0.0f );
+
+                for( const glm::vec3& curr : aIn )
+                {
+                    float currD  = signedDist( curr );
+                    bool  currIn = ( currD <= 0.0f );
+
+                    if( currIn )
+                    {
+                        if( !prevIn )
+                        {
+                            float denom = prevD - currD;
+                            float t     = ( std::abs( denom ) > 1e-9f )
+                                              ? ( prevD / denom ) : 0.5f;
+                            aOut.push_back( prev + t * ( curr - prev ) );
+                        }
+                        aOut.push_back( curr );
+                    }
+                    else if( prevIn )
+                    {
+                        float denom = prevD - currD;
+                        float t     = ( std::abs( denom ) > 1e-9f )
+                                          ? ( prevD / denom ) : 0.5f;
+                        aOut.push_back( prev + t * ( curr - prev ) );
+                    }
+
+                    prev   = curr;
+                    prevD  = currD;
+                    prevIn = currIn;
+                }
+            };
+
+            // Clip every tri in `aSourceTris` against `aClipper`'s 6
+            // OBB faces. Append the inside polygon (fan-triangulated)
+            // to aOut. This is the symmetric mesh-tri visualization
+            // for substrate-vs-substrate collisions: the user sees
+            // the actual surface of one board that sits inside the
+            // other's volume, instead of an AABB box hovering over
+            // both.
+            auto clipSlabTris =
+                    [&]( const std::vector<glm::vec3>&  aSourceTris,
+                         const BoardSubstrateShape&     aClipper,
+                         std::vector<SFVEC3F>&          aOut )
+            {
+                const glm::vec3 faces[6][2] = {
+                    { aClipper.worldCenter + aClipper.axisXWorld * aClipper.halfX,
+                       aClipper.axisXWorld },
+                    { aClipper.worldCenter - aClipper.axisXWorld * aClipper.halfX,
+                      -aClipper.axisXWorld },
+                    { aClipper.worldCenter + aClipper.axisYWorld * aClipper.halfY,
+                       aClipper.axisYWorld },
+                    { aClipper.worldCenter - aClipper.axisYWorld * aClipper.halfY,
+                      -aClipper.axisYWorld },
+                    { aClipper.worldCenter + aClipper.axisZWorld * aClipper.halfZ,
+                       aClipper.axisZWorld },
+                    { aClipper.worldCenter - aClipper.axisZWorld * aClipper.halfZ,
+                      -aClipper.axisZWorld },
+                };
+
+                std::vector<glm::vec3> bufA, bufB;
+
+                constexpr size_t kMaxBoardTriVerts = 6 * 256;
+
+                for( size_t i = 0; i + 2 < aSourceTris.size(); i += 3 )
+                {
+                    if( aOut.size() >= kMaxBoardTriVerts )
+                        break;
+
+                    bufA = { aSourceTris[i], aSourceTris[i + 1],
+                             aSourceTris[i + 2] };
+
+                    for( int f = 0; f < 6; f++ )
+                    {
+                        clipPlane( bufA, bufB, faces[f][0], faces[f][1] );
+                        std::swap( bufA, bufB );
+                        if( bufA.empty() ) break;
+                    }
+
+                    if( bufA.size() < 3 )
+                        continue;
+
+                    for( size_t k = 1; k + 1 < bufA.size(); k++ )
+                    {
+                        if( aOut.size() + 3 > kMaxBoardTriVerts )
+                            break;
+
+                        aOut.push_back( SFVEC3F( bufA[0].x, bufA[0].y, bufA[0].z ) );
+                        aOut.push_back( SFVEC3F( bufA[k].x, bufA[k].y, bufA[k].z ) );
+                        aOut.push_back( SFVEC3F( bufA[k + 1].x,
+                                                  bufA[k + 1].y,
+                                                  bufA[k + 1].z ) );
+                    }
+                }
+            };
+
+            std::vector<glm::vec3> aSlabTris = buildSlabTris( a );
+            std::vector<glm::vec3> bSlabTris = buildSlabTris( b );
+            std::vector<SFVEC3F>   triVerts;
+
+            clipSlabTris( aSlabTris, b, triVerts );  // a's surface inside b
+            clipSlabTris( bSlabTris, a, triVerts );  // b's surface inside a
+
             OverlapBox box;
             box.minMm     = SFVEC3F(
                     std::max( a.worldMin.x, b.worldMin.x ),
@@ -3120,6 +3373,7 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
             box.instanceB = b.uuid;
             box.refA      = wxT( "<board>" );
             box.refB      = wxT( "<board>" );
+            box.triVertsMm = std::move( triVerts );
             m_lastOverlapBoxes.push_back( box );
 
             COLLISION_RESULT result;

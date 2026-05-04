@@ -26,6 +26,11 @@
 #include <wx/stdpaths.h>                // required on Mac
 #include <kiplatform/environment.h>
 
+#if defined( __APPLE__ )
+#include <execinfo.h>                   // backtrace() for setProjectFullName diag
+#include <stdlib.h>
+#endif
+
 #include <algorithm>
 #include <fstream>
 #include <nlohmann/json.hpp>
@@ -192,15 +197,31 @@ void PROJECT::setProjectFullName( const wxString& aFullPathAndName )
         // We don't refuse here (would break LoadProject's name-then-path
         // sequencing) and we don't recover via cwd-join (the active cwd
         // is often the container's directory, which fabricates a wrong
-        // path that points into the wrong sub-project's tree). Just log;
-        // the actual write-site guard lives in PROJECT_FILE::SaveToFile.
+        // path that points into the wrong sub-project's tree). Just log
+        // with a backtrace so the offending caller is identifiable.
         if( !m_project_name.IsAbsolute() )
         {
+            wxString backtrace;
+
+#if defined( __APPLE__ )
+            // macOS: dump frames via execinfo. Symbols include the
+            // mangled C++ name; piping the warning through `c++filt`
+            // turns them human-readable.
+            void* frames[24];
+            int   nframes = ::backtrace( frames, 24 );
+            char** syms = ::backtrace_symbols( frames, nframes );
+            if( syms )
+            {
+                for( int i = 0; i < nframes; ++i )
+                    backtrace << wxT( "\n  " ) << wxString::FromUTF8( syms[i] );
+                free( syms );
+            }
+#endif
+
             wxLogWarning( wxT( "PROJECT::setProjectFullName called with non-absolute "
-                               "path '%s'. Trace stack to find the source — write "
-                               "guard in PROJECT_FILE::SaveToFile will refuse to "
-                               "save until the caller is fixed." ),
-                          aFullPathAndName );
+                               "path '%s'. Write guard in PROJECT_FILE::SaveToFile "
+                               "will refuse to save until the caller is fixed.%s" ),
+                          aFullPathAndName, backtrace );
         }
 
         wxASSERT( m_project_name.IsAbsolute() );

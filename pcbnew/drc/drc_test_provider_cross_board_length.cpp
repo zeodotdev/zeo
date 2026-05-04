@@ -19,12 +19,7 @@
  */
 
 #include <board.h>
-#include <footprint.h>
-#include <length_delay_calculation/length_delay_calculation.h>
-#include <netinfo.h>
-#include <pad.h>
-#include <pcb_io/kicad_sexpr/pcb_io_kicad_sexpr.h>
-#include <pcb_track.h>
+#include <length_delay_calculation/multi_board_length.h>
 #include <project.h>
 #include <project/multi_board_scan.h>
 
@@ -33,8 +28,6 @@
 
 #include <wx/filename.h>
 
-#include <map>
-#include <memory>
 #include <set>
 
 
@@ -75,66 +68,6 @@ public:
 };
 
 
-// Sum trace length for the named net on aBoard. Walks tracks + pads and
-// feeds them through the board's LENGTH_DELAY_CALCULATION (same engine
-// the matched-length DRC uses). Returns 0 if the net doesn't exist on
-// this board.
-static int64_t computeNetLengthOnBoard( BOARD& aBoard, const wxString& aNetName )
-{
-    NETINFO_ITEM* net = aBoard.GetNetInfo().GetNetItem( aNetName );
-
-    if( !net )
-        return 0;
-
-    int netCode = net->GetNetCode();
-
-    if( netCode <= 0 )
-        return 0;
-
-    LENGTH_DELAY_CALCULATION* calc = aBoard.GetLengthCalculation();
-
-    if( !calc )
-        return 0;
-
-    std::vector<LENGTH_DELAY_CALCULATION_ITEM> items;
-
-    for( PCB_TRACK* track : aBoard.Tracks() )
-    {
-        if( track->GetNetCode() != netCode )
-            continue;
-
-        LENGTH_DELAY_CALCULATION_ITEM li = calc->GetLengthCalculationItem( track );
-
-        if( li.Type() != LENGTH_DELAY_CALCULATION_ITEM::TYPE::UNKNOWN )
-            items.push_back( li );
-    }
-
-    for( FOOTPRINT* fp : aBoard.Footprints() )
-    {
-        for( PAD* pad : fp->Pads() )
-        {
-            if( pad->GetNetCode() != netCode )
-                continue;
-
-            LENGTH_DELAY_CALCULATION_ITEM li = calc->GetLengthCalculationItem( pad );
-
-            if( li.Type() != LENGTH_DELAY_CALCULATION_ITEM::TYPE::UNKNOWN )
-                items.push_back( li );
-        }
-    }
-
-    if( items.empty() )
-        return 0;
-
-    constexpr PATH_OPTIMISATIONS opts = { .OptimiseViaLayers     = true,
-                                          .MergeTracks           = true,
-                                          .OptimiseTracesInPads  = true,
-                                          .InferViaInPad         = false };
-
-    return calc->CalculateLength( items, opts );
-}
-
-
 bool DRC_TEST_PROVIDER_CROSS_BOARD_LENGTH::Run()
 {
     BOARD* board = m_drcEngine->GetBoard();
@@ -160,51 +93,15 @@ bool DRC_TEST_PROVIDER_CROSS_BOARD_LENGTH::Run()
     if( !reportPhase( _( "Checking cross-board total trace length..." ) ) )
         return false;
 
-    // Index nets by name so we can look up which sibling sub-projects
-    // each rule's net touches without re-scanning.
-    std::map<wxString, const MULTI_BOARD_CROSS_BOARD_NET_VIEW*> netByName;
+    // Index cross-board net names this sub-project participates in. The
+    // ComputeCrossBoardNetLength() primitive does the actual graph walk
+    // + sibling-board load + summation; we just need to know which of
+    // the rules' nets actually touch this board (rules whose net has no
+    // local endpoint are checked by the sibling board's own DRC run).
+    std::set<wxString> netsTouchingThisBoard;
 
     for( const MULTI_BOARD_CROSS_BOARD_NET_VIEW& netView : view.crossBoardNets )
-        netByName[netView.netName] = &netView;
-
-    // Lazy sibling-board cache. Each load is expensive (parse .kicad_pcb)
-    // so the same sibling shouldn't be re-loaded for each rule.
-    std::map<wxString, std::unique_ptr<BOARD>> siblingBoards;
-
-    auto loadSibling = [&]( const wxString& aSubProAbsPath ) -> BOARD*
-    {
-        if( aSubProAbsPath.IsEmpty() )
-            return nullptr;
-
-        auto it = siblingBoards.find( aSubProAbsPath );
-
-        if( it != siblingBoards.end() )
-            return it->second.get();
-
-        wxFileName pcbFile = MultiBoardMainPcb( wxFileName( aSubProAbsPath ) );
-
-        if( !pcbFile.FileExists() )
-            return nullptr;
-
-        PCB_IO_KICAD_SEXPR pi;
-        BOARD*             rawBoard = nullptr;
-
-        try
-        {
-            rawBoard = pi.LoadBoard( pcbFile.GetFullPath(), nullptr, nullptr, nullptr );
-        }
-        catch( const IO_ERROR& )
-        {
-            return nullptr;
-        }
-
-        if( !rawBoard )
-            return nullptr;
-
-        siblingBoards[aSubProAbsPath] = std::unique_ptr<BOARD>( rawBoard );
-
-        return siblingBoards[aSubProAbsPath].get();
-    };
+        netsTouchingThisBoard.insert( netView.netName );
 
     int progressDelta = 50;
     int ii = 0;
@@ -218,45 +115,21 @@ bool DRC_TEST_PROVIDER_CROSS_BOARD_LENGTH::Run()
         if( !reportProgress( ii++, total, progressDelta ) )
             return false;
 
-        auto netIt = netByName.find( netName );
-
-        // Net is in the rule but doesn't touch this board's
-        // sub-project — skip; the sibling board's DRC run will check it.
-        if( netIt == netByName.end() )
+        if( netsTouchingThisBoard.count( netName ) == 0 )
             continue;
 
-        const MULTI_BOARD_CROSS_BOARD_NET_VIEW* netView = netIt->second;
+        // Foundation primitive: returns this-board contribution + sibling
+        // sum + isCrossBoard flag. Hides the sibling-board lazy-load from
+        // every consumer.
+        CROSS_BOARD_NET_LENGTH r = ComputeCrossBoardNetLength( *board, netName );
 
-        // Local contribution. Same calc the standard matched-length
-        // DRC uses, just on a per-net basis.
-        int64_t total_nm = computeNetLengthOnBoard( *board, netName );
-
-        // Sibling contributions. Track which siblings contributed so
-        // the violation message can be detailed.
-        std::set<wxString> siblingsTouched;
-
-        for( const MULTI_BOARD_NET_ENDPOINT_VIEW& sibEp : netView->siblingEndpoints )
-        {
-            BOARD* sibBoard = loadSibling( sibEp.subProjectAbsPath );
-
-            if( !sibBoard )
-                continue;
-
-            // Guard against double-counting if the same sub-project
-            // appears as multiple endpoints on the same net.
-            if( !siblingsTouched.insert( sibEp.subProjectAbsPath ).second )
-                continue;
-
-            total_nm += computeNetLengthOnBoard( *sibBoard, netName );
-        }
-
-        if( total_nm <= maxNm )
+        if( r.totalNm <= maxNm )
             continue;
 
         std::shared_ptr<DRC_ITEM> drcItem = DRC_ITEM::Create( DRCE_CROSS_BOARD_LENGTH );
 
         // Render in mm for readability — IU is nanometers internally.
-        double total_mm = static_cast<double>( total_nm ) / 1e6;
+        double total_mm = static_cast<double>( r.totalNm ) / 1e6;
         double max_mm   = static_cast<double>( maxNm ) / 1e6;
 
         drcItem->SetErrorMessage( wxString::Format(

@@ -35,6 +35,7 @@
 #include <base_units.h>
 #include <layer_range.h>
 #include <length_delay_calculation/length_delay_calculation.h>
+#include <length_delay_calculation/multi_board_length.h>
 #include <lset.h>
 #include <cstdlib>
 #include <string_utils.h>
@@ -2397,6 +2398,39 @@ void PCB_TRACK::GetMsgPanelInfo( EDA_DRAW_FRAME* aFrame, std::vector<MSG_PANEL_I
 
                 msg = aFrame->MessageTextFromValue( trackDelay + delayPadToDie, true, EDA_DATA_TYPE::TIME );
                 aList.emplace_back( _( "Full Delay" ), msg );
+            }
+        }
+
+        // Cross-board total: when this net is declared as a cross-board
+        // net in the multi-board container, also surface the sum of
+        // trace length on this board PLUS sibling boards. The standalone
+        // "Routed/Full Length" above stays as the per-board number;
+        // length-tuning + matched-length DRC scope live here.
+        // (MOON-1299 — Foundation surface)
+        if( NETINFO_ITEM* net = GetNet() )
+        {
+            CROSS_BOARD_NET_LENGTH cb = ComputeCrossBoardNetLength( *board, net );
+
+            if( cb.isCrossBoard )
+            {
+                wxString cbLine = aFrame->MessageTextFromValue(
+                        static_cast<double>( cb.totalNm ) );
+
+                if( !cb.siblingNames.empty() )
+                {
+                    wxString siblings;
+
+                    for( const wxString& s : cb.siblingNames )
+                    {
+                        if( !siblings.IsEmpty() )
+                            siblings += wxT( ", " );
+                        siblings += s;
+                    }
+
+                    cbLine += wxString::Format( wxT( "  (incl. %s)" ), siblings );
+                }
+
+                aList.emplace_back( _( "Cross-Board Total Length" ), cbLine );
             }
         }
     }

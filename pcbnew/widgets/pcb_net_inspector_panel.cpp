@@ -220,7 +220,12 @@ void PCB_NET_INSPECTOR_PANEL::buildColumns()
 
     if( m_boardLoaded )
     {
-        PROJECT_LOCAL_SETTINGS& localSettings = Pgm().GetSettingsManager().Prj().GetLocalSettings();
+        // m_frame->Prj() respects KIWAY_HOLDER::SetPrjOverride; falling back
+        // to SETTINGS_MANAGER::Prj() reads the FIRST project in the manager's
+        // list, which on multi-board peer sessions is whichever sub-project
+        // SETTINGS_MANAGER happens to consider active rather than the project
+        // bound to this frame. (MOON-1289)
+        PROJECT_LOCAL_SETTINGS& localSettings = m_frame->Prj().GetLocalSettings();
         cfg = &localSettings.m_NetInspectorPanel;
     }
     else
@@ -461,7 +466,7 @@ void PCB_NET_INSPECTOR_PANEL::buildNetsList( const bool rebuildColumns )
 
     m_dataModel->SetIsTimeDomain( m_showTimeDomainDetails );
 
-    PROJECT_LOCAL_SETTINGS& localSettings = Pgm().GetSettingsManager().Prj().GetLocalSettings();
+    PROJECT_LOCAL_SETTINGS& localSettings = m_frame->Prj().GetLocalSettings();
     PANEL_NET_INSPECTOR_SETTINGS* cfg = &localSettings.m_NetInspectorPanel;
 
     // Refresh all filtering / grouping settings
@@ -663,7 +668,7 @@ bool PCB_NET_INSPECTOR_PANEL::netFilterMatches( NETINFO_ITEM*                 aN
 {
     if( cfg == nullptr )
     {
-        PROJECT_LOCAL_SETTINGS& localSettings = Pgm().GetSettingsManager().Prj().GetLocalSettings();
+        PROJECT_LOCAL_SETTINGS& localSettings = m_frame->Prj().GetLocalSettings();
         cfg = &localSettings.m_NetInspectorPanel;
     }
 
@@ -908,7 +913,7 @@ void PCB_NET_INSPECTOR_PANEL::OnBoardChanged()
     m_boardLoaded = true;
     m_boardLoading = true;
 
-    const PROJECT_LOCAL_SETTINGS& localSettings = Pgm().GetSettingsManager().Prj().GetLocalSettings();
+    const PROJECT_LOCAL_SETTINGS& localSettings = m_frame->Prj().GetLocalSettings();
     auto&                   cfg = localSettings.m_NetInspectorPanel;
     m_searchCtrl->SetValue( cfg.filter_text );
 
@@ -1301,7 +1306,7 @@ void PCB_NET_INSPECTOR_PANEL::OnHeaderContextMenu( wxDataViewEvent& event )
 
 void PCB_NET_INSPECTOR_PANEL::OnConfigButton( wxCommandEvent& event )
 {
-    PROJECT_LOCAL_SETTINGS& localSettings = Pgm().GetSettingsManager().Prj().GetLocalSettings();
+    PROJECT_LOCAL_SETTINGS& localSettings = m_frame->Prj().GetLocalSettings();
     auto&                   cfg = localSettings.m_NetInspectorPanel;
 
     const LIST_ITEM* selItem = nullptr;
@@ -1931,7 +1936,7 @@ void PCB_NET_INSPECTOR_PANEL::SaveSettings()
     if( !displayed || !m_boardLoaded || m_boardLoading )
         return;
 
-    PROJECT_LOCAL_SETTINGS& localSettings = Pgm().GetSettingsManager().Prj().GetLocalSettings();
+    PROJECT_LOCAL_SETTINGS& localSettings = m_frame->Prj().GetLocalSettings();
     auto&                   cfg = localSettings.m_NetInspectorPanel;
 
     // User-defined filters / grouping

@@ -970,8 +970,12 @@ bool PANEL_REMOTE_SYMBOL::ensureDestinationRoot( wxFileName& aOutDir, wxString& 
     if( destination.IsEmpty() )
         destination = EESCHEMA_SETTINGS::REMOTE_SYMBOL_CONFIG::DefaultDestinationDir();
 
-    destination = ExpandEnvVarSubstitutions( destination,
-        &Pgm().GetSettingsManager().Prj() );
+    // m_frame->Prj() respects KIWAY_HOLDER::SetPrjOverride; the global
+    // SETTINGS_MANAGER::Prj() returns the FIRST project in the manager's
+    // list, which on multi-board peer sessions is whichever sub-project
+    // happens to sort first rather than the project bound to this frame.
+    // (MOON-1289)
+    destination = ExpandEnvVarSubstitutions( destination, &m_frame->Prj() );
     destination.Trim( true ).Trim( false );
 
     if( destination.IsEmpty() )

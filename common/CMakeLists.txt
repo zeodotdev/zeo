@@ -1038,6 +1038,7 @@ set( PCB_COMMON_SRCS
 
     ${CMAKE_SOURCE_DIR}/pcbnew/length_delay_calculation/length_delay_calculation.cpp
     ${CMAKE_SOURCE_DIR}/pcbnew/length_delay_calculation/length_delay_calculation_item.cpp
+    ${CMAKE_SOURCE_DIR}/pcbnew/length_delay_calculation/multi_board_length.cpp
     ${CMAKE_SOURCE_DIR}/pcbnew/length_delay_calculation/tuning_profile_parameters_user_defined.cpp
 
     widgets/net_selector.cpp

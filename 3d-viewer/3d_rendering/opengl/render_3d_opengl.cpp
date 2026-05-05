@@ -1101,6 +1101,13 @@ void RENDER_3D_OPENGL::get3dModelsSelected( std::list<MODELTORENDER> &aDstRender
             if( cfg.highlight_on_rollover && fp == m_currentRollOverItem )
                 highlight = true;
 
+            // M6 selection (MOON-1331) and cross-probe (MOON-1293) —
+            // sticky highlight from canvas left-click or KIWAY mail.
+            // Renders unconditionally (not gated on highlight_on_rollover)
+            // since the user explicitly selected this footprint.
+            if( fp == m_currentSelectedItem )
+                highlight = true;
+
             if( aRenderSelectedOnly != highlight )
                 continue;
         }

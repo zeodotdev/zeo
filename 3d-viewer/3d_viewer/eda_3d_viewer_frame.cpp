@@ -385,9 +385,22 @@ void EDA_3D_VIEWER_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& aEvent )
         if( !inst.board )
             continue;
 
-        if( inst.board->FindFootprintByReference( ref ) )
+        FOOTPRINT* fp = inst.board->FindFootprintByReference( ref );
+
+        if( fp )
         {
             SetActiveAssemblyInstance( inst.uuid );
+
+            // MOON-1293: also highlight the matched footprint in the
+            // assembly view. SetActiveAssemblyInstance only switches
+            // GetBoard() / single-board fallback context — without
+            // this the user sees no visual indication of which fp the
+            // peer SCH/PCB cross-probe selected.
+            m_assemblyManager->SetSelectedItem( fp );
+
+            if( m_canvas )
+                m_canvas->Refresh();
+
             return;
         }
     }

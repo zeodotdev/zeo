@@ -34,6 +34,7 @@
 
 class BOARD;
 class BOARD_ADAPTER;
+class BOARD_ITEM;
 class CAMERA;
 class EDA_3D_CANVAS;
 class MATE_GIZMO;
@@ -657,6 +658,25 @@ public:
 
     /// True iff at least one instance has a live renderer built.
     bool HasRenderers() const { return !m_instanceRenderers.empty(); }
+
+    /**
+     * Set the user's "sticky" selection (MOON-1331 click selection /
+     * MOON-1293 cross-probe highlight). aItem must be a BOARD_ITEM*
+     * whose owning BOARD matches one of the instance adapters'
+     * BOARD pointers. Routes the call to that instance's
+     * RENDER_3D_OPENGL::SetCurrentSelectedItem and clears any
+     * previously-selected item on the other instance renderers so
+     * only one footprint is highlighted at a time.
+     *
+     * Pass nullptr to clear the selection on every instance
+     * (e.g. click on empty canvas).
+     */
+    void SetSelectedItem( BOARD_ITEM* aItem );
+
+    /// Find the BOARD_3D_INSTANCE whose `board` pointer owns aItem.
+    /// Returns nullptr when the item is not from any sub-board (e.g.
+    /// a sibling-ITEM raycast hit on the floor / ceiling decoration).
+    const BOARD_3D_INSTANCE* FindInstanceForItem( const BOARD_ITEM* aItem ) const;
 
 private:
     /**

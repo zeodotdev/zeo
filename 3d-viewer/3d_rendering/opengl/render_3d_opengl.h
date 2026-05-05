@@ -72,6 +72,19 @@ public:
     }
 
     /**
+     * Set the user's "sticky" selection (set by left-click, persists
+     * across mouse move). Distinct from m_currentRollOverItem which
+     * tracks hover and gets reset every frame. Both are highlighted
+     * by render_3d_opengl when set; their styles match for now but
+     * could diverge (e.g. brighter outline for selection vs glow for
+     * hover) in a follow-up.
+     */
+    void SetCurrentSelectedItem( BOARD_ITEM* aSelectedItem )
+    {
+        m_currentSelectedItem = aSelectedItem;
+    }
+
+    /**
      * Set a per-instance world transform applied between the camera view
      * matrix and the layer/model draw passes. Used by the multi-board
      * assembly orchestrator (M6.C) so one renderer can be drawn at
@@ -315,6 +328,7 @@ private:
     std::map<std::vector<float>, glm::mat4> m_3dModelMatrixMap;
 
     BOARD_ITEM*         m_currentRollOverItem;
+    BOARD_ITEM*         m_currentSelectedItem = nullptr;
 
     SHAPE_POLY_SET m_antiBoardPolys; ///< The negative polygon representation of the board
                                      ///< outline.

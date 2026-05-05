@@ -563,7 +563,15 @@ void EDA_3D_CANVAS::DoRePaint()
             const bool assemblyComposite   = inAssembly && engineIsOpenGL;
             const bool assemblyRaytraced   = inAssembly && !engineIsOpenGL;
 
-            if( assemblyRaytraced && m_3d_render_raytracing )
+            // Stage multi-instance descriptors on the raytracer whenever
+            // MBS is active, regardless of which engine is rendering.
+            // OpenGL-composite mode never uses the raytracer to draw,
+            // but it still calls m_3d_render_raytracing->Reload() below
+            // (reloadRaytracingForCalculations) so IntersectBoardItem
+            // can pick across all sub-boards. Without staging, that
+            // pick BVH only covers the active sub-board's geometry —
+            // clicks on other boards return null.
+            if( inAssembly && m_3d_render_raytracing )
             {
                 // Build the per-instance descriptor list using the same
                 // pose composition the OpenGL path uses (BOARD_3D_INSTANCE
@@ -1227,6 +1235,20 @@ void EDA_3D_CANVAS::OnLeftDown( wxMouseEvent& event )
 
             if( footprint )
             {
+                // MOON-1331: visually mark the clicked footprint as
+                // selected so the user gets immediate 3D feedback
+                // (and so cross-probe outbound below has a "current
+                // selection" to anchor against). In MBS mode the
+                // assembly manager routes the selection to the
+                // matching sub-board's per-instance OpenGL renderer
+                // and clears any prior selection on the others.
+                if( m_assemblyManager )
+                    m_assemblyManager->SetSelectedItem( footprint );
+                else if( m_3d_render_opengl )
+                    m_3d_render_opengl->SetCurrentSelectedItem( footprint );
+
+                Refresh();
+
                 // We send a message (by ExpressMail) to the board and schematic editor, but only
                 // if the manager of this canvas is a EDA_3D_VIEWER_FRAME, because only this
                 // kind of frame has ExpressMail stuff
@@ -1234,13 +1256,58 @@ void EDA_3D_CANVAS::OnLeftDown( wxMouseEvent& event )
 
                 if( frame )
                 {
-                    std::string command = fmt::format( "$SELECT: 0,F{}",
-                                        EscapeString( footprint->GetReference(), CTX_IPC ).ToStdString() );
+                    std::string refEsc = EscapeString( footprint->GetReference(),
+                                                        CTX_IPC ).ToStdString();
+                    std::string command = fmt::format( "$SELECT: 0,F{}", refEsc );
 
-                    frame->Kiway().ExpressMail( FRAME_PCB_EDITOR, MAIL_SELECTION, command, frame );
-                    frame->Kiway().ExpressMail( FRAME_SCH, MAIL_SELECTION, command, frame );
+                    // MBS-aware scoping: when the 3D viewer is in MBSCH
+                    // assembly mode, append the owning sub-project's
+                    // full path so MBSCH's MAIL_SELECTION handler
+                    // (mbsch_edit_frame.cpp) can disambiguate refs that
+                    // collide across sub-boards. Without this scope
+                    // token MBSCH falls back to the SENDER frame's
+                    // PROJECT — which for the 3D viewer is the MBS
+                    // container, not the sub-board the footprint lives
+                    // on, so the wrong (or no) module block highlights.
+                    std::string mbsCommand = command;
+
+                    if( m_assemblyManager )
+                    {
+                        const BOARD_3D_INSTANCE* inst =
+                                m_assemblyManager->FindInstanceForItem( footprint );
+
+                        if( inst && inst->subProject )
+                        {
+                            const wxString subProjPath =
+                                    inst->subProject->GetProjectFullName();
+
+                            if( !subProjPath.IsEmpty() )
+                            {
+                                mbsCommand += fmt::format(
+                                        " $PROJECT: \"{}\"",
+                                        subProjPath.utf8_string() );
+                            }
+                        }
+                    }
+
+                    frame->Kiway().ExpressMail( FRAME_PCB_EDITOR, MAIL_SELECTION,
+                                                command, frame );
+                    frame->Kiway().ExpressMail( FRAME_SCH,        MAIL_SELECTION,
+                                                command, frame );
+                    frame->Kiway().ExpressMail( FRAME_MBSCH,      MAIL_SELECTION,
+                                                mbsCommand, frame );
                 }
             }
+        }
+        else
+        {
+            // Click on empty space → clear selection.
+            if( m_assemblyManager )
+                m_assemblyManager->SetSelectedItem( nullptr );
+            else if( m_3d_render_opengl )
+                m_3d_render_opengl->SetCurrentSelectedItem( nullptr );
+
+            Refresh();
         }
     }
 }

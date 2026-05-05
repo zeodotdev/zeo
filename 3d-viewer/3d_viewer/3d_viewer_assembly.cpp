@@ -474,6 +474,51 @@ const BOARD_3D_INSTANCE* ASSEMBLY_3D_MANAGER::GetBoardInstance( const KIID& aIns
 }
 
 
+const BOARD_3D_INSTANCE* ASSEMBLY_3D_MANAGER::FindInstanceForItem( const BOARD_ITEM* aItem ) const
+{
+    if( !aItem )
+        return nullptr;
+
+    const BOARD* itemBoard = aItem->GetBoard();
+
+    if( !itemBoard )
+        return nullptr;
+
+    for( const auto& inst : m_boardInstances )
+    {
+        if( inst.board.get() == itemBoard )
+            return &inst;
+    }
+
+    return nullptr;
+}
+
+
+void ASSEMBLY_3D_MANAGER::SetSelectedItem( BOARD_ITEM* aItem )
+{
+    // Resolve which sub-board owns the item (if any). Then push the
+    // selection into THAT instance's RENDER_3D_OPENGL and clear the
+    // selection on every other instance so only one footprint is
+    // highlighted at a time across the whole assembly.
+    const BOARD* targetBoard = aItem ? aItem->GetBoard() : nullptr;
+
+    for( size_t i = 0; i < m_instanceRenderers.size(); ++i )
+    {
+        if( !m_instanceRenderers[i] )
+            continue;
+
+        const BOARD* instBoard = ( i < m_boardInstances.size() )
+                                      ? m_boardInstances[i].board.get()
+                                      : nullptr;
+
+        if( instBoard && instBoard == targetBoard )
+            m_instanceRenderers[i]->SetCurrentSelectedItem( aItem );
+        else
+            m_instanceRenderers[i]->SetCurrentSelectedItem( nullptr );
+    }
+}
+
+
 void ASSEMBLY_3D_MANAGER::SetBoardPosition( const KIID& aInstanceUuid, const SFVEC3F& aPosition )
 {
     if( BOARD_3D_INSTANCE* inst = GetBoardInstance( aInstanceUuid ) )

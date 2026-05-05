@@ -4631,3 +4631,75 @@ void ASSEMBLY_3D_MANAGER::rebuildMateGizmoEntries()
 
     m_mateGizmo->SetOverlapBoxes( std::move( boxes ) );
 }
+
+
+void ASSEMBLY_3D_MANAGER::BuildRaytraceInstances(
+        std::vector<ASSEMBLY_3D_MANAGER::RAYTRACE_INSTANCE>& aOut ) const
+{
+    aOut.clear();
+
+    if( m_boardInstances.empty() || m_instanceAdapters.size() != m_boardInstances.size() )
+        return;
+
+    // Mirror the OpenGL composite's centerShared offset so the raytraced
+    // scene is co-located with how RedrawAll positions the OpenGL
+    // composite (keeps the camera framing identical between engines).
+    SFVEC3F bboxMinMm, bboxMaxMm;
+    const_cast<ASSEMBLY_3D_MANAGER*>( this )->GetAssemblyBoundingBox(
+            bboxMinMm, bboxMaxMm );
+    const SFVEC3F centerMm = ( bboxMinMm + bboxMaxMm ) * 0.5f;
+    const float   sharedF  = static_cast<float>( m_sharedBiuTo3Dunits );
+    const float   biuPerMm = 1.0e6f;
+    const glm::vec3 centerShared(  centerMm.x * biuPerMm * sharedF,
+                                  -centerMm.y * biuPerMm * sharedF,
+                                   centerMm.z * biuPerMm * sharedF );
+
+    aOut.reserve( m_boardInstances.size() );
+
+    for( size_t i = 0; i < m_boardInstances.size(); i++ )
+    {
+        const BOARD_3D_INSTANCE& inst = m_boardInstances[i];
+
+        if( !inst.visible || !inst.board || !m_instanceAdapters[i] )
+            continue;
+
+        BOARD_ADAPTER* adapter = m_instanceAdapters[i].get();
+
+        // Match the OpenGL pose math in RedrawAll exactly. Each per-
+        // instance adapter has its own biuTo3Dunits; the wrapper's
+        // pose carries the shared/local scale ratio so the raytracer's
+        // INSTANCE_OBJECT_3D maps the inner per-board scene into the
+        // shared assembly frame.
+        const double localFactor = adapter->BiuTo3dUnits();
+        const double scaleFactor = ( localFactor != 0.0 )
+                                       ? m_sharedBiuTo3Dunits / localFactor
+                                       : 1.0;
+
+        const glm::vec3 instShared(  inst.position.x * biuPerMm * sharedF,
+                                    -inst.position.y * biuPerMm * sharedF,
+                                     inst.position.z * biuPerMm * sharedF );
+
+        const SFVEC3F   localCenter = adapter->GetBoardCenter();
+        const glm::vec3 localCenterShared(
+                localCenter.x * static_cast<float>( scaleFactor ),
+                localCenter.y * static_cast<float>( scaleFactor ),
+                localCenter.z * static_cast<float>( scaleFactor ) );
+
+        glm::mat4 pose( 1.0f );
+        pose = glm::translate( pose, instShared - centerShared );
+        pose = glm::translate( pose, localCenterShared );
+        pose = glm::rotate( pose, glm::radians( inst.rotation.z ),
+                            glm::vec3( 0.0f, 0.0f, 1.0f ) );
+        pose = glm::rotate( pose, glm::radians( inst.rotation.y ),
+                            glm::vec3( 0.0f, 1.0f, 0.0f ) );
+        pose = glm::rotate( pose, glm::radians( inst.rotation.x ),
+                            glm::vec3( 1.0f, 0.0f, 0.0f ) );
+        pose = glm::translate( pose, -localCenterShared );
+        pose = glm::scale( pose, glm::vec3( static_cast<float>( scaleFactor ) ) );
+
+        RAYTRACE_INSTANCE entry;
+        entry.adapter = adapter;
+        entry.pose    = pose;
+        aOut.push_back( entry );
+    }
+}

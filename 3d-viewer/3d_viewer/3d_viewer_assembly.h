@@ -611,6 +611,28 @@ public:
     void SetInstancesWindowSize( const wxSize& aSize );
 
     /**
+     * Per-instance descriptor for the multi-instance raytracer. Each
+     * descriptor pairs a sub-board's BOARD_ADAPTER with the local→world
+     * pose the OpenGL composite path applies (scale × pivot-rotate ×
+     * translate). The raytracer's INSTANCE_OBJECT_3D wrapper uses the
+     * pose to transform rays into the inner sub-board's local frame.
+     */
+    struct RAYTRACE_INSTANCE
+    {
+        BOARD_ADAPTER* adapter;
+        glm::mat4      pose;
+    };
+
+    /**
+     * Compose the raytrace instance list from the current visible
+     * BOARD_3D_INSTANCE entries. Pose math matches RedrawAll's OpenGL
+     * pose composition exactly so the raytraced scene visually agrees
+     * with the OpenGL composite. Skips instances without a built
+     * BOARD_ADAPTER.
+     */
+    void BuildRaytraceInstances( std::vector<RAYTRACE_INSTANCE>& aOut ) const;
+
+    /**
      * Destroy every per-instance RENDER_3D_OPENGL while the GL context
      * is current. Called by EDA_3D_CANVAS::releaseOpenGL inside its
      * LockCtx block — otherwise each renderer's destructor would call

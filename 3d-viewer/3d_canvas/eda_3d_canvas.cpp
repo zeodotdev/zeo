@@ -26,6 +26,8 @@
 #include <kicad_gl/gl_utils.h>
 #include <kicad_gl/gl_context_mgr.h>
 
+#include <cstring>
+
 #include <wx/tokenzr.h>
 
 #include "../common_ogl/ogl_utils.h"
@@ -547,13 +549,76 @@ void EDA_3D_CANVAS::DoRePaint()
                 reloadRaytracingForCalculations = true;
             }
 
-            // M6.C: multi-board assembly rendering path. Only the
-            // OpenGL engine is composited at the moment — the raytracer
-            // falls through to its single-board path rendering the
-            // active instance (see SetActiveAssemblyInstance). Fleshing
-            // out the raytracer is M6.C-phase-2.
-            const bool assemblyComposite = m_assemblyManager
-                    && m_boardAdapter.m_Cfg->m_Render.engine == RENDER_ENGINE::OPENGL;
+            // M6.C: multi-board assembly rendering path.
+            //   • OpenGL    → composite via m_assemblyManager (existing).
+            //   • RAYTRACING → publish instance descs to the raytracer
+            //                  via SetPendingInstances; on its next Reload
+            //                  (driven by Redraw below) it dispatches to
+            //                  ReloadMultiInstance, building one merged
+            //                  scene with one BVH that hops through per-
+            //                  instance INSTANCE_OBJECT_3D wrappers.
+            const bool inAssembly      = m_assemblyManager != nullptr;
+            const bool engineIsOpenGL  = ( m_boardAdapter.m_Cfg->m_Render.engine
+                                            == RENDER_ENGINE::OPENGL );
+            const bool assemblyComposite   = inAssembly && engineIsOpenGL;
+            const bool assemblyRaytraced   = inAssembly && !engineIsOpenGL;
+
+            if( assemblyRaytraced && m_3d_render_raytracing )
+            {
+                // Build the per-instance descriptor list using the same
+                // pose composition the OpenGL path uses (BOARD_3D_INSTANCE
+                // pose feeds straight into the renderer's assembly pose).
+                std::vector<ASSEMBLY_3D_MANAGER::RAYTRACE_INSTANCE> raw;
+                m_assemblyManager->BuildRaytraceInstances( raw );
+
+                // Compute a signature over the descriptor list. Adapter
+                // pointer + 16 pose floats per instance reduced to a
+                // 64-bit FNV-style mix. Stable enough that identical
+                // poses → identical signature, any change → different
+                // signature. Avoids the "trace restarts every frame"
+                // bug where calling ReloadRequest each Redraw kept the
+                // raytracer stuck at its first preview pass and the
+                // multi-stage progressive trace never finished.
+                uint64_t sig = 0xcbf29ce484222325ULL;
+                auto mix = [&]( uint64_t aChunk )
+                {
+                    sig ^= aChunk;
+                    sig *= 0x100000001b3ULL;
+                };
+
+                for( const auto& r : raw )
+                {
+                    mix( reinterpret_cast<uintptr_t>( r.adapter ) );
+
+                    const float* p = &r.pose[0][0];
+
+                    for( int idx = 0; idx < 16; idx++ )
+                    {
+                        uint32_t bits;
+                        std::memcpy( &bits, p + idx, sizeof( bits ) );
+                        mix( static_cast<uint64_t>( bits ) );
+                    }
+                }
+
+                std::vector<RENDER_3D_RAYTRACE_BASE::INSTANCE_DESC> insts;
+                insts.reserve( raw.size() );
+
+                for( auto& r : raw )
+                {
+                    RENDER_3D_RAYTRACE_BASE::INSTANCE_DESC d;
+                    d.adapter = r.adapter;
+                    d.pose    = r.pose;
+                    insts.push_back( d );
+                }
+
+                m_3d_render_raytracing->SetPendingInstances( std::move( insts ) );
+
+                if( sig != m_lastRaytraceInstanceSig )
+                {
+                    m_3d_render_raytracing->ReloadRequest();
+                    m_lastRaytraceInstanceSig = sig;
+                }
+            }
 
             if( assemblyComposite )
             {

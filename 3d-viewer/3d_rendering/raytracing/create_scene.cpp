@@ -76,18 +76,18 @@ static float TransparencyControl( float aGrayColorValue, float aTransparency )
 void RENDER_3D_RAYTRACE_BASE::setupMaterials()
 {
     MATERIAL::SetDefaultRefractionRayCount(
-            m_boardAdapter.m_Cfg->m_Render.raytrace_nrsamples_refractions );
+            currentAdapter().m_Cfg->m_Render.raytrace_nrsamples_refractions );
     MATERIAL::SetDefaultReflectionRayCount(
-            m_boardAdapter.m_Cfg->m_Render.raytrace_nrsamples_reflections );
+            currentAdapter().m_Cfg->m_Render.raytrace_nrsamples_reflections );
 
     MATERIAL::SetDefaultRefractionRecursionCount(
-            m_boardAdapter.m_Cfg->m_Render.raytrace_recursivelevel_refractions );
+            currentAdapter().m_Cfg->m_Render.raytrace_recursivelevel_refractions );
     MATERIAL::SetDefaultReflectionRecursionCount(
-            m_boardAdapter.m_Cfg->m_Render.raytrace_recursivelevel_reflections );
+            currentAdapter().m_Cfg->m_Render.raytrace_recursivelevel_reflections );
 
-    double mmTo3Dunits = pcbIUScale.IU_PER_MM * m_boardAdapter.BiuTo3dUnits();
+    double mmTo3Dunits = pcbIUScale.IU_PER_MM * currentAdapter().BiuTo3dUnits();
 
-    if( m_boardAdapter.m_Cfg->m_Render.raytrace_procedural_textures )
+    if( currentAdapter().m_Cfg->m_Render.raytrace_procedural_textures )
     {
         m_boardMaterial = BOARD_NORMAL( 0.40f * mmTo3Dunits );
         m_copperMaterial = COPPER_NORMAL( 4.0f * mmTo3Dunits, &m_boardMaterial );
@@ -102,49 +102,49 @@ void RENDER_3D_RAYTRACE_BASE::setupMaterials()
     // http://devernay.free.fr/cours/opengl/materials.html
     // Copper
     const SFVEC3F copperSpecularLinear =
-            ConvertSRGBToLinear( glm::clamp( (SFVEC3F) m_boardAdapter.m_CopperColor * 0.5f + 0.25f,
+            ConvertSRGBToLinear( glm::clamp( (SFVEC3F) currentAdapter().m_CopperColor * 0.5f + 0.25f,
                     SFVEC3F( 0.0f ), SFVEC3F( 1.0f ) ) );
 
     m_materials.m_Copper = BLINN_PHONG_MATERIAL(
-            ConvertSRGBToLinear( (SFVEC3F) m_boardAdapter.m_CopperColor * 0.3f ),
+            ConvertSRGBToLinear( (SFVEC3F) currentAdapter().m_CopperColor * 0.3f ),
             SFVEC3F( 0.0f ), copperSpecularLinear, 0.4f * 128.0f, 0.0f, 0.0f );
 
-    if( m_boardAdapter.m_Cfg->m_Render.raytrace_procedural_textures )
+    if( currentAdapter().m_Cfg->m_Render.raytrace_procedural_textures )
         m_materials.m_Copper.SetGenerator( &m_platedCopperMaterial );
 
     m_materials.m_NonPlatedCopper = BLINN_PHONG_MATERIAL(
             ConvertSRGBToLinear( SFVEC3F( 0.191f, 0.073f, 0.022f ) ), SFVEC3F( 0.0f, 0.0f, 0.0f ),
             SFVEC3F( 0.256f, 0.137f, 0.086f ), 0.15f * 128.0f, 0.0f, 0.0f );
 
-    if( m_boardAdapter.m_Cfg->m_Render.raytrace_procedural_textures )
+    if( currentAdapter().m_Cfg->m_Render.raytrace_procedural_textures )
         m_materials.m_NonPlatedCopper.SetGenerator( &m_copperMaterial );
 
     m_materials.m_Paste = BLINN_PHONG_MATERIAL(
-            ConvertSRGBToLinear( (SFVEC3F) m_boardAdapter.m_SolderPasteColor )
-                    * ConvertSRGBToLinear( (SFVEC3F) m_boardAdapter.m_SolderPasteColor ),
+            ConvertSRGBToLinear( (SFVEC3F) currentAdapter().m_SolderPasteColor )
+                    * ConvertSRGBToLinear( (SFVEC3F) currentAdapter().m_SolderPasteColor ),
             SFVEC3F( 0.0f, 0.0f, 0.0f ),
-            ConvertSRGBToLinear( (SFVEC3F) m_boardAdapter.m_SolderPasteColor )
+            ConvertSRGBToLinear( (SFVEC3F) currentAdapter().m_SolderPasteColor )
                     * ConvertSRGBToLinear(
-                            (SFVEC3F) m_boardAdapter.m_SolderPasteColor ),
+                            (SFVEC3F) currentAdapter().m_SolderPasteColor ),
             0.10f * 128.0f, 0.0f, 0.0f );
 
     m_materials.m_SilkS = BLINN_PHONG_MATERIAL( ConvertSRGBToLinear( SFVEC3F( 0.11f ) ),
             SFVEC3F( 0.0f, 0.0f, 0.0f ),
             glm::clamp( ( ( SFVEC3F )( 1.0f ) - ConvertSRGBToLinear(
-                                  (SFVEC3F) m_boardAdapter.m_SilkScreenColorTop ) ),
+                                  (SFVEC3F) currentAdapter().m_SilkScreenColorTop ) ),
                         SFVEC3F( 0.0f ), SFVEC3F( 0.10f ) ), 0.078125f * 128.0f, 0.0f, 0.0f );
 
-    if( m_boardAdapter.m_Cfg->m_Render.raytrace_procedural_textures )
+    if( currentAdapter().m_Cfg->m_Render.raytrace_procedural_textures )
         m_materials.m_SilkS.SetGenerator( &m_silkScreenMaterial );
 
     // Assume that SolderMaskTop == SolderMaskBot
     const float solderMask_gray =
-            ( m_boardAdapter.m_SolderMaskColorTop.r + m_boardAdapter.m_SolderMaskColorTop.g
-                    + m_boardAdapter.m_SolderMaskColorTop.b )
+            ( currentAdapter().m_SolderMaskColorTop.r + currentAdapter().m_SolderMaskColorTop.g
+                    + currentAdapter().m_SolderMaskColorTop.b )
             / 3.0f;
 
     const float solderMask_transparency = TransparencyControl( solderMask_gray,
-            1.0f - m_boardAdapter.m_SolderMaskColorTop.a );
+            1.0f - currentAdapter().m_SolderMaskColorTop.a );
 
     // For darker solder mask colors, increase shininess for a more realistic appearance.
     // Darker colors appear to have a sharper specular highlight in real life.
@@ -157,7 +157,7 @@ void RENDER_3D_RAYTRACE_BASE::setupMaterials()
     const float solderMaskReflection = glm::clamp( solderMask_gray * 0.3f, 0.02f, 0.16f );
 
     m_materials.m_SolderMask = BLINN_PHONG_MATERIAL(
-            ConvertSRGBToLinear( (SFVEC3F) m_boardAdapter.m_SolderMaskColorTop ) * 0.10f,
+            ConvertSRGBToLinear( (SFVEC3F) currentAdapter().m_SolderMaskColorTop ) * 0.10f,
             SFVEC3F( 0.0f, 0.0f, 0.0f ),
             SFVEC3F( glm::clamp( solderMask_gray * 2.0f, 0.30f, 1.0f ) ), solderMaskShininess,
             solderMask_transparency, solderMaskReflection );
@@ -165,7 +165,7 @@ void RENDER_3D_RAYTRACE_BASE::setupMaterials()
     m_materials.m_SolderMask.SetCastShadows( true );
     m_materials.m_SolderMask.SetRefractionRayCount( 1 );
 
-    if( m_boardAdapter.m_Cfg->m_Render.raytrace_procedural_textures )
+    if( currentAdapter().m_Cfg->m_Render.raytrace_procedural_textures )
         m_materials.m_SolderMask.SetGenerator( &m_solderMaskMaterial );
 
     m_materials.m_EpoxyBoard =
@@ -174,14 +174,14 @@ void RENDER_3D_RAYTRACE_BASE::setupMaterials()
                                   SFVEC3F( 0.0f, 0.0f, 0.0f ),
                                   ConvertSRGBToLinear( SFVEC3F( 10.0f / 255.0f, 8.0f / 255.0f,
                                                                 10.0f / 255.0f ) ),
-                                  0.1f * 128.0f, 1.0f - m_boardAdapter.m_BoardBodyColor.a, 0.0f );
+                                  0.1f * 128.0f, 1.0f - currentAdapter().m_BoardBodyColor.a, 0.0f );
 
     m_materials.m_EpoxyBoard.SetAbsorvance( 10.0f );
 
-    if( m_boardAdapter.m_Cfg->m_Render.raytrace_procedural_textures )
+    if( currentAdapter().m_Cfg->m_Render.raytrace_procedural_textures )
         m_materials.m_EpoxyBoard.SetGenerator( &m_boardMaterial );
 
-    SFVEC3F bgTop = ConvertSRGBToLinear( (SFVEC3F) m_boardAdapter.m_BgColorTop );
+    SFVEC3F bgTop = ConvertSRGBToLinear( (SFVEC3F) currentAdapter().m_BgColorTop );
 
     m_materials.m_Floor = BLINN_PHONG_MATERIAL( bgTop * 0.125f, SFVEC3F( 0.0f, 0.0f, 0.0f ),
                                                 ( SFVEC3F( 1.0f ) - bgTop ) / 3.0f,
@@ -251,7 +251,7 @@ void RENDER_3D_RAYTRACE_BASE::createItemsFromContainer( const BVH_CONTAINER_2D* 
     if( aContainer2d == nullptr )
         return;
 
-    EDA_3D_VIEWER_SETTINGS::RENDER_SETTINGS& cfg = m_boardAdapter.m_Cfg->m_Render;
+    EDA_3D_VIEWER_SETTINGS::RENDER_SETTINGS& cfg = currentAdapter().m_Cfg->m_Render;
     bool                                     isSilk = aLayer_id == B_SilkS || aLayer_id == F_SilkS;
     const LIST_OBJECT2D&                     listObject2d = aContainer2d->GetList();
 
@@ -274,7 +274,7 @@ void RENDER_3D_RAYTRACE_BASE::createItemsFromContainer( const BVH_CONTAINER_2D* 
         {
             // Check if there are any layerhole that intersects this object
             // Eg: a segment is cut by a via hole or THT hole.
-            const MAP_CONTAINER_2D_BASE& layerHolesMap = m_boardAdapter.GetLayerHoleMap();
+            const MAP_CONTAINER_2D_BASE& layerHolesMap = currentAdapter().GetLayerHoleMap();
 
             if( layerHolesMap.find( aLayer_id ) != layerHolesMap.end() )
             {
@@ -292,8 +292,8 @@ void RENDER_3D_RAYTRACE_BASE::createItemsFromContainer( const BVH_CONTAINER_2D* 
             // layer and the flag is set, then clip the silk at the outer edge of the annular ring,
             // rather than the at the outer edge of the copper plating.
             const BVH_CONTAINER_2D& throughHoleOuter =
-                        cfg.clip_silk_on_via_annuli && isSilk ? m_boardAdapter.GetViaAnnuli()
-                                                              : m_boardAdapter.GetTH_ODs();
+                        cfg.clip_silk_on_via_annuli && isSilk ? currentAdapter().GetViaAnnuli()
+                                                              : currentAdapter().GetTH_ODs();
 
             if( !throughHoleOuter.GetList().empty() )
             {
@@ -321,15 +321,15 @@ void RENDER_3D_RAYTRACE_BASE::createItemsFromContainer( const BVH_CONTAINER_2D* 
 
             if( aLayer_id == F_Cu )
             {
-                clipCutouts( m_boardAdapter.GetFrontCounterboreCutouts() );
-                clipCutouts( m_boardAdapter.GetFrontCountersinkCutouts() );
-                clipCutouts( m_boardAdapter.GetTertiarydrillCutouts() );
+                clipCutouts( currentAdapter().GetFrontCounterboreCutouts() );
+                clipCutouts( currentAdapter().GetFrontCountersinkCutouts() );
+                clipCutouts( currentAdapter().GetTertiarydrillCutouts() );
             }
             else if( aLayer_id == B_Cu )
             {
-                clipCutouts( m_boardAdapter.GetBackCounterboreCutouts() );
-                clipCutouts( m_boardAdapter.GetBackCountersinkCutouts() );
-                clipCutouts( m_boardAdapter.GetBackdrillCutouts() );
+                clipCutouts( currentAdapter().GetBackCounterboreCutouts() );
+                clipCutouts( currentAdapter().GetBackCountersinkCutouts() );
+                clipCutouts( currentAdapter().GetBackdrillCutouts() );
             }
         }
 
@@ -344,7 +344,7 @@ void RENDER_3D_RAYTRACE_BASE::createItemsFromContainer( const BVH_CONTAINER_2D* 
                 object2d_B->push_back( obj );
         }
 
-        const MAP_CONTAINER_2D_BASE& mapLayers = m_boardAdapter.GetLayerMap();
+        const MAP_CONTAINER_2D_BASE& mapLayers = currentAdapter().GetLayerMap();
 
         if( cfg.subtract_mask_from_silk
             && (    ( aLayer_id == B_SilkS && mapLayers.find( B_Mask ) != mapLayers.end() )
@@ -372,11 +372,11 @@ void RENDER_3D_RAYTRACE_BASE::createItemsFromContainer( const BVH_CONTAINER_2D* 
         if( ( object2d_B == CSGITEM_EMPTY ) && ( object2d_C == CSGITEM_FULL ) )
         {
             LAYER_ITEM* objPtr = new LAYER_ITEM( object2d_A,
-                                    m_boardAdapter.GetLayerBottomZPos( aLayer_id ) - aLayerZOffset,
-                                    m_boardAdapter.GetLayerTopZPos( aLayer_id ) + aLayerZOffset );
+                                    currentAdapter().GetLayerBottomZPos( aLayer_id ) - aLayerZOffset,
+                                    currentAdapter().GetLayerTopZPos( aLayer_id ) + aLayerZOffset );
             objPtr->SetMaterial( aMaterialLayer );
             objPtr->SetColor( ConvertSRGBToLinear( aLayerColor ) );
-            m_objectContainer.Add( objPtr );
+            currentContainer().Add( objPtr );
         }
         else
         {
@@ -385,13 +385,13 @@ void RENDER_3D_RAYTRACE_BASE::createItemsFromContainer( const BVH_CONTAINER_2D* 
             m_containerWithObjectsToDelete.Add( itemCSG2d );
 
             LAYER_ITEM* objPtr = new LAYER_ITEM( itemCSG2d,
-                                    m_boardAdapter.GetLayerBottomZPos( aLayer_id ) - aLayerZOffset,
-                                    m_boardAdapter.GetLayerTopZPos( aLayer_id ) + aLayerZOffset );
+                                    currentAdapter().GetLayerBottomZPos( aLayer_id ) - aLayerZOffset,
+                                    currentAdapter().GetLayerTopZPos( aLayer_id ) + aLayerZOffset );
 
             objPtr->SetMaterial( aMaterialLayer );
             objPtr->SetColor( ConvertSRGBToLinear( aLayerColor ) );
 
-            m_objectContainer.Add( objPtr );
+            currentContainer().Add( objPtr );
         }
     }
 }
@@ -403,25 +403,64 @@ extern void buildBoardBoundingBoxPoly( const BOARD* aBoard, SHAPE_POLY_SET& aOut
 void RENDER_3D_RAYTRACE_BASE::Reload( REPORTER* aStatusReporter, REPORTER* aWarningReporter,
                                  bool aOnlyLoadCopperAndShapes )
 {
-    m_reloadRequested = false;
+    // Top-level dispatch: if the caller staged a multi-instance list via
+    // SetPendingInstances (the MBS multi-board path), redirect to the
+    // multi-instance build and clear the staged list so a subsequent
+    // single-board reload won't pick it back up.
+    if( !m_pendingInstances.empty() && !m_overrideContainer )
+    {
+        std::vector<INSTANCE_DESC> instances = std::move( m_pendingInstances );
+        m_pendingInstances.clear();
+        ReloadMultiInstance( instances, aStatusReporter, aWarningReporter );
+        return;
+    }
 
-    m_modelMaterialMap.clear();
-
-    OBJECT_2D_STATS::Instance().ResetStats();
-    OBJECT_3D_STATS::Instance().ResetStats();
+    // Multi-instance scene-build mode: when m_overrideContainer is set,
+    // ReloadMultiInstance is driving us per sub-board. Skip the top-level
+    // setup (it manages container/material/camera state itself, once for
+    // the whole assembly) but still run the geometry-build body against
+    // the per-instance adapter+container under our overrides. We also
+    // skip the global stat reset / outline-2D rebuild since those are
+    // assembly-wide.
+    const bool inInstanceBuild = ( m_overrideContainer != nullptr );
 
     int64_t stats_startReloadTime = GetRunningMicroSecs();
 
-    if( !aOnlyLoadCopperAndShapes )
+    if( !inInstanceBuild )
     {
-        m_boardAdapter.InitSettings( aStatusReporter, aWarningReporter );
+        m_reloadRequested = false;
+        m_modelMaterialMap.clear();
 
-        SFVEC3F camera_pos = m_boardAdapter.GetBoardCenter();
-        m_camera.SetBoardLookAtPos( camera_pos );
+        OBJECT_2D_STATS::Instance().ResetStats();
+        OBJECT_3D_STATS::Instance().ResetStats();
+
+        // Single-board path: trace-time queries fall through to
+        // m_boardAdapter directly. (Multi-instance path overrides this
+        // in ReloadMultiInstance.) The single adapter IS the world
+        // frame, so its thickness is already in world 3D-units.
+        m_renderAdapter                    = &m_boardAdapter;
+        m_renderNonCopperLayerThickness3DU = m_boardAdapter.GetNonCopperLayerThickness();
     }
 
-    m_objectContainer.Clear();
-    m_containerWithObjectsToDelete.Clear();
+    if( !aOnlyLoadCopperAndShapes )
+    {
+        // Each adapter (top-level OR per-instance) needs InitSettings so
+        // its BiuTo3dUnits / footprint Z lookup are valid for THIS build.
+        currentAdapter().InitSettings( aStatusReporter, aWarningReporter );
+
+        if( !inInstanceBuild )
+        {
+            // Global camera framing — only at the top level. In multi-
+            // instance mode the assembly canvas frames the whole composite.
+            SFVEC3F camera_pos = currentAdapter().GetBoardCenter();
+            m_camera.SetBoardLookAtPos( camera_pos );
+        }
+    }
+
+    currentContainer().Clear();
+
+    if( !inInstanceBuild )
+        m_containerWithObjectsToDelete.Clear();
 
     setupMaterials();
 
@@ -435,27 +474,27 @@ void RENDER_3D_RAYTRACE_BASE::Reload( REPORTER* aStatusReporter, REPORTER* aWarn
     m_outlineBoard2dObjects     = new CONTAINER_2D;
     m_antioutlineBoard2dObjects = new BVH_CONTAINER_2D;
 
-    std::bitset<LAYER_3D_END> layerFlags = m_boardAdapter.GetVisibleLayers();
+    std::bitset<LAYER_3D_END> layerFlags = currentAdapter().GetVisibleLayers();
 
     if( !aOnlyLoadCopperAndShapes )
     {
-        const int outlineCount = m_boardAdapter.GetBoardPoly().OutlineCount();
+        const int outlineCount = currentAdapter().GetBoardPoly().OutlineCount();
 
         if( outlineCount > 0 )
         {
             float divFactor = 0.0f;
 
-            if( m_boardAdapter.GetViaCount() )
-                divFactor = m_boardAdapter.GetAverageViaHoleDiameter() * 18.0f;
-            else if( m_boardAdapter.GetHoleCount() )
-                divFactor = m_boardAdapter.GetAverageHoleDiameter() * 8.0f;
+            if( currentAdapter().GetViaCount() )
+                divFactor = currentAdapter().GetAverageViaHoleDiameter() * 18.0f;
+            else if( currentAdapter().GetHoleCount() )
+                divFactor = currentAdapter().GetAverageHoleDiameter() * 8.0f;
 
-            SHAPE_POLY_SET boardPolyCopy = m_boardAdapter.GetBoardPoly();
+            SHAPE_POLY_SET boardPolyCopy = currentAdapter().GetBoardPoly();
 
             // Calculate an antiboard outline
             SHAPE_POLY_SET antiboardPoly;
 
-            buildBoardBoundingBoxPoly( m_boardAdapter.GetBoard(), antiboardPoly );
+            buildBoardBoundingBoxPoly( currentAdapter().GetBoard(), antiboardPoly );
 
             antiboardPoly.BooleanSubtract( boardPolyCopy );
             antiboardPoly.Fracture();
@@ -463,8 +502,8 @@ void RENDER_3D_RAYTRACE_BASE::Reload( REPORTER* aStatusReporter, REPORTER* aWarn
             for( int ii = 0; ii < antiboardPoly.OutlineCount(); ii++ )
             {
                 ConvertPolygonToBlocks( antiboardPoly, *m_antioutlineBoard2dObjects,
-                                        m_boardAdapter.BiuTo3dUnits(), -1.0f,
-                                        *m_boardAdapter.GetBoard(), ii );
+                                        currentAdapter().BiuTo3dUnits(), -1.0f,
+                                        *currentAdapter().GetBoard(), ii );
             }
 
             m_antioutlineBoard2dObjects->BuildBVH();
@@ -474,8 +513,8 @@ void RENDER_3D_RAYTRACE_BASE::Reload( REPORTER* aStatusReporter, REPORTER* aWarn
             for( int ii = 0; ii < boardPolyCopy.OutlineCount(); ii++ )
             {
                 ConvertPolygonToBlocks( boardPolyCopy, *m_outlineBoard2dObjects,
-                                        m_boardAdapter.BiuTo3dUnits(), divFactor,
-                                        *m_boardAdapter.GetBoard(), ii );
+                                        currentAdapter().BiuTo3dUnits(), divFactor,
+                                        *currentAdapter().GetBoard(), ii );
             }
 
             if( layerFlags.test( LAYER_3D_BOARD ) )
@@ -487,9 +526,9 @@ void RENDER_3D_RAYTRACE_BASE::Reload( REPORTER* aStatusReporter, REPORTER* aWarn
                     std::vector<const OBJECT_2D*>* object2d_B = new std::vector<const OBJECT_2D*>();
 
                     // Check if there are any THT that intersects this outline object part
-                    if( !m_boardAdapter.GetTH_ODs().GetList().empty() )
+                    if( !currentAdapter().GetTH_ODs().GetList().empty() )
                     {
-                        const BVH_CONTAINER_2D& throughHoles = m_boardAdapter.GetTH_ODs();
+                        const BVH_CONTAINER_2D& throughHoles = currentAdapter().GetTH_ODs();
                         CONST_LIST_OBJECT2D     intersecting;
 
                         throughHoles.GetIntersectingObjects( object2d_A->GetBBox(), intersecting );
@@ -519,13 +558,13 @@ void RENDER_3D_RAYTRACE_BASE::Reload( REPORTER* aStatusReporter, REPORTER* aWarn
                                 }
                             };
 
-                    addCutoutsFromContainer( m_boardAdapter.GetFrontCounterboreCutouts() );
-                    addCutoutsFromContainer( m_boardAdapter.GetBackCounterboreCutouts() );
-                    addCutoutsFromContainer( m_boardAdapter.GetFrontCountersinkCutouts() );
-                    addCutoutsFromContainer( m_boardAdapter.GetBackCountersinkCutouts() );
+                    addCutoutsFromContainer( currentAdapter().GetFrontCounterboreCutouts() );
+                    addCutoutsFromContainer( currentAdapter().GetBackCounterboreCutouts() );
+                    addCutoutsFromContainer( currentAdapter().GetFrontCountersinkCutouts() );
+                    addCutoutsFromContainer( currentAdapter().GetBackCountersinkCutouts() );
 
                     // Subtract backdrill holes (which are in layerHoleMap for F_Cu and B_Cu)
-                    const MAP_CONTAINER_2D_BASE& layerHolesMap = m_boardAdapter.GetLayerHoleMap();
+                    const MAP_CONTAINER_2D_BASE& layerHolesMap = currentAdapter().GetLayerHoleMap();
 
                     if( layerHolesMap.find( F_Cu ) != layerHolesMap.end() )
                     {
@@ -575,29 +614,29 @@ void RENDER_3D_RAYTRACE_BASE::Reload( REPORTER* aStatusReporter, REPORTER* aWarn
                     if( object2d_B == CSGITEM_EMPTY )
                     {
                         LAYER_ITEM* objPtr = new LAYER_ITEM( object2d_A,
-                                                        m_boardAdapter.GetLayerBottomZPos( F_Cu ),
-                                                        m_boardAdapter.GetLayerBottomZPos( B_Cu ) );
+                                                        currentAdapter().GetLayerBottomZPos( F_Cu ),
+                                                        currentAdapter().GetLayerBottomZPos( B_Cu ) );
 
                         objPtr->SetMaterial( &m_materials.m_EpoxyBoard );
-                        objPtr->SetColor( ConvertSRGBToLinear( m_boardAdapter.m_BoardBodyColor ) );
-                        m_objectContainer.Add( objPtr );
+                        objPtr->SetColor( ConvertSRGBToLinear( currentAdapter().m_BoardBodyColor ) );
+                        currentContainer().Add( objPtr );
                     }
                     else
                     {
 
                         LAYER_ITEM_2D* itemCSG2d = new LAYER_ITEM_2D( object2d_A, object2d_B,
                                                                       CSGITEM_FULL,
-                                                                      *m_boardAdapter.GetBoard() );
+                                                                      *currentAdapter().GetBoard() );
 
                         m_containerWithObjectsToDelete.Add( itemCSG2d );
 
                         LAYER_ITEM* objPtr = new LAYER_ITEM( itemCSG2d,
-                                                        m_boardAdapter.GetLayerBottomZPos( F_Cu ),
-                                                        m_boardAdapter.GetLayerBottomZPos( B_Cu ) );
+                                                        currentAdapter().GetLayerBottomZPos( F_Cu ),
+                                                        currentAdapter().GetLayerBottomZPos( B_Cu ) );
 
                         objPtr->SetMaterial( &m_materials.m_EpoxyBoard );
-                        objPtr->SetColor( ConvertSRGBToLinear( m_boardAdapter.m_BoardBodyColor ) );
-                        m_objectContainer.Add( objPtr );
+                        objPtr->SetColor( ConvertSRGBToLinear( currentAdapter().m_BoardBodyColor ) );
+                        currentContainer().Add( objPtr );
                     }
                 }
 
@@ -607,9 +646,9 @@ void RENDER_3D_RAYTRACE_BASE::Reload( REPORTER* aStatusReporter, REPORTER* aWarn
                 // a polygon or dummy block) it will cut also the render of the hole.
                 // So this will add a full hole.
                 // In fact, that is not need if the hole have copper.
-                if( !m_boardAdapter.GetTH_ODs().GetList().empty() )
+                if( !currentAdapter().GetTH_ODs().GetList().empty() )
                 {
-                    const LIST_OBJECT2D& holeList = m_boardAdapter.GetTH_ODs().GetList();
+                    const LIST_OBJECT2D& holeList = currentAdapter().GetTH_ODs().GetList();
 
                     for( const OBJECT_2D* hole2d : holeList )
                     {
@@ -632,15 +671,15 @@ void RENDER_3D_RAYTRACE_BASE::Reload( REPORTER* aStatusReporter, REPORTER* aWarn
                             const float radius = hole2d->GetBBox().GetExtent().x * 0.5f * 0.999f;
 
                              CYLINDER* objPtr = new CYLINDER( hole2d->GetCentroid(),
-                                    NextFloatDown( m_boardAdapter.GetLayerBottomZPos( F_Cu ) ),
-                                    NextFloatUp( m_boardAdapter.GetLayerBottomZPos( B_Cu ) ),
+                                    NextFloatDown( currentAdapter().GetLayerBottomZPos( F_Cu ) ),
+                                    NextFloatUp( currentAdapter().GetLayerBottomZPos( B_Cu ) ),
                                     radius );
 
                             objPtr->SetMaterial( &m_materials.m_EpoxyBoard );
                             objPtr->SetColor(
-                                    ConvertSRGBToLinear( m_boardAdapter.m_BoardBodyColor ) );
+                                    ConvertSRGBToLinear( currentAdapter().m_BoardBodyColor ) );
 
-                            m_objectContainer.Add( objPtr );
+                            currentContainer().Add( objPtr );
                         }
                         break;
 
@@ -661,7 +700,7 @@ void RENDER_3D_RAYTRACE_BASE::Reload( REPORTER* aStatusReporter, REPORTER* aWarn
 
     // Add layers maps (except B_Mask and F_Mask)
     for( const std::pair<const PCB_LAYER_ID, BVH_CONTAINER_2D*>& entry :
-         m_boardAdapter.GetLayerMap() )
+         currentAdapter().GetLayerMap() )
     {
         const PCB_LAYER_ID      layer_id = entry.first;
         const BVH_CONTAINER_2D* container2d = entry.second;
@@ -689,33 +728,33 @@ void RENDER_3D_RAYTRACE_BASE::Reload( REPORTER* aStatusReporter, REPORTER* aWarn
         case B_Paste:
         case F_Paste:
             materialLayer = &m_materials.m_Paste;
-            layerColor = m_boardAdapter.m_SolderPasteColor;
+            layerColor = currentAdapter().m_SolderPasteColor;
             break;
 
         case B_SilkS:
             materialLayer = &m_materials.m_SilkS;
-            layerColor = m_boardAdapter.m_SilkScreenColorBot;
+            layerColor = currentAdapter().m_SilkScreenColorBot;
             break;
 
         case F_SilkS:
             materialLayer = &m_materials.m_SilkS;
-            layerColor = m_boardAdapter.m_SilkScreenColorTop;
+            layerColor = currentAdapter().m_SilkScreenColorTop;
             break;
 
         case Dwgs_User:
-            layerColor = m_boardAdapter.m_UserDrawingsColor;
+            layerColor = currentAdapter().m_UserDrawingsColor;
             break;
 
         case Cmts_User:
-            layerColor = m_boardAdapter.m_UserCommentsColor;
+            layerColor = currentAdapter().m_UserCommentsColor;
             break;
 
         case Eco1_User:
-            layerColor = m_boardAdapter.m_ECO1Color;
+            layerColor = currentAdapter().m_ECO1Color;
             break;
 
         case Eco2_User:
-            layerColor = m_boardAdapter.m_ECO2Color;
+            layerColor = currentAdapter().m_ECO2Color;
             break;
 
         case B_CrtYd:
@@ -733,16 +772,16 @@ void RENDER_3D_RAYTRACE_BASE::Reload( REPORTER* aStatusReporter, REPORTER* aWarn
             // Note: MUST do this in LAYER_3D space; User_1..User_45 are NOT contiguous
             if( layer3D >= LAYER_3D_USER_1 && layer3D <= LAYER_3D_USER_45 )
             {
-                layerColor = m_boardAdapter.m_UserDefinedLayerColor[ layer3D - LAYER_3D_USER_1 ];
+                layerColor = currentAdapter().m_UserDefinedLayerColor[ layer3D - LAYER_3D_USER_1 ];
             }
-            else if( m_boardAdapter.m_Cfg->m_Render.differentiate_plated_copper )
+            else if( currentAdapter().m_Cfg->m_Render.differentiate_plated_copper )
             {
                 layerColor = SFVEC3F( 184.0f / 255.0f, 115.0f / 255.0f, 50.0f / 255.0f );
                 materialLayer = &m_materials.m_NonPlatedCopper;
             }
             else
             {
-                layerColor = m_boardAdapter.m_CopperColor;
+                layerColor = currentAdapter().m_CopperColor;
                 materialLayer = &m_materials.m_Copper;
             }
 
@@ -754,15 +793,15 @@ void RENDER_3D_RAYTRACE_BASE::Reload( REPORTER* aStatusReporter, REPORTER* aWarn
     } // for each layer on map
 
     // Create plated copper
-    if( m_boardAdapter.m_Cfg->m_Render.differentiate_plated_copper )
+    if( currentAdapter().m_Cfg->m_Render.differentiate_plated_copper )
     {
-        createItemsFromContainer( m_boardAdapter.GetPlatedPadsFront(), F_Cu, &m_materials.m_Copper,
-                                  m_boardAdapter.m_CopperColor,
-                                  m_boardAdapter.GetFrontCopperThickness() * 0.1f );
+        createItemsFromContainer( currentAdapter().GetPlatedPadsFront(), F_Cu, &m_materials.m_Copper,
+                                  currentAdapter().m_CopperColor,
+                                  currentAdapter().GetFrontCopperThickness() * 0.1f );
 
-        createItemsFromContainer( m_boardAdapter.GetPlatedPadsBack(), B_Cu, &m_materials.m_Copper,
-                                  m_boardAdapter.m_CopperColor,
-                                  -m_boardAdapter.GetBackCopperThickness() * 0.1f );
+        createItemsFromContainer( currentAdapter().GetPlatedPadsBack(), B_Cu, &m_materials.m_Copper,
+                                  currentAdapter().m_CopperColor,
+                                  -currentAdapter().GetBackCopperThickness() * 0.1f );
     }
 
     if( !aOnlyLoadCopperAndShapes )
@@ -778,7 +817,7 @@ void RENDER_3D_RAYTRACE_BASE::Reload( REPORTER* aStatusReporter, REPORTER* aWarn
             const MATERIAL* materialLayer = &m_materials.m_SolderMask;
 
             for( const std::pair<const PCB_LAYER_ID, BVH_CONTAINER_2D*>& entry :
-                 m_boardAdapter.GetLayerMap() )
+                 currentAdapter().GetLayerMap() )
             {
                 const PCB_LAYER_ID      layer_id = entry.first;
                 const BVH_CONTAINER_2D* container2d = entry.second;
@@ -801,12 +840,12 @@ void RENDER_3D_RAYTRACE_BASE::Reload( REPORTER* aStatusReporter, REPORTER* aWarn
                 SFVEC3F layerColor;
 
                 if( layer_id == B_Mask )
-                    layerColor = m_boardAdapter.m_SolderMaskColorBot;
+                    layerColor = currentAdapter().m_SolderMaskColorBot;
                 else
-                    layerColor = m_boardAdapter.m_SolderMaskColorTop;
+                    layerColor = currentAdapter().m_SolderMaskColorTop;
 
-                const float zLayerMin = m_boardAdapter.GetLayerBottomZPos( layer_id );
-                const float zLayerMax = m_boardAdapter.GetLayerTopZPos( layer_id );
+                const float zLayerMin = currentAdapter().GetLayerBottomZPos( layer_id );
+                const float zLayerMax = currentAdapter().GetLayerTopZPos( layer_id );
 
                 // Get the outline board objects
                 for( const OBJECT_2D* object2d_A : m_outlineBoard2dObjects->GetList() )
@@ -814,9 +853,9 @@ void RENDER_3D_RAYTRACE_BASE::Reload( REPORTER* aStatusReporter, REPORTER* aWarn
                     std::vector<const OBJECT_2D*>* object2d_B = new std::vector<const OBJECT_2D*>();
 
                     // Check if there are any THT that intersects this outline object part
-                    if( !m_boardAdapter.GetTH_ODs().GetList().empty() )
+                    if( !currentAdapter().GetTH_ODs().GetList().empty() )
                     {
-                        const BVH_CONTAINER_2D& throughHoles = m_boardAdapter.GetTH_ODs();
+                        const BVH_CONTAINER_2D& throughHoles = currentAdapter().GetTH_ODs();
                         CONST_LIST_OBJECT2D     intersecting;
 
                         throughHoles.GetIntersectingObjects( object2d_A->GetBBox(), intersecting );
@@ -849,7 +888,7 @@ void RENDER_3D_RAYTRACE_BASE::Reload( REPORTER* aStatusReporter, REPORTER* aWarn
                     if( object2d_B == CSGITEM_EMPTY )
                     {
 #if 0
-                       createObject( m_objectContainer, object2d_A, zLayerMin, zLayerMax,
+                       createObject( currentContainer(), object2d_A, zLayerMin, zLayerMax,
                                      materialLayer, layerColor );
 #else
                         LAYER_ITEM* objPtr = new LAYER_ITEM( object2d_A, zLayerMin, zLayerMax );
@@ -857,7 +896,7 @@ void RENDER_3D_RAYTRACE_BASE::Reload( REPORTER* aStatusReporter, REPORTER* aWarn
                         objPtr->SetMaterial( materialLayer );
                         objPtr->SetColor( ConvertSRGBToLinear( layerColor ) );
 
-                        m_objectContainer.Add( objPtr );
+                        currentContainer().Add( objPtr );
 #endif
                     }
                     else
@@ -872,7 +911,7 @@ void RENDER_3D_RAYTRACE_BASE::Reload( REPORTER* aStatusReporter, REPORTER* aWarn
                         objPtr->SetMaterial( materialLayer );
                         objPtr->SetColor( ConvertSRGBToLinear( layerColor ) );
 
-                        m_objectContainer.Add( objPtr );
+                        currentContainer().Add( objPtr );
                     }
                 }
             }
@@ -889,26 +928,34 @@ void RENDER_3D_RAYTRACE_BASE::Reload( REPORTER* aStatusReporter, REPORTER* aWarn
     if( aStatusReporter )
         aStatusReporter->Report( _( "Loading 3D models..." ) );
 
-    load3DModels( m_objectContainer, aOnlyLoadCopperAndShapes );
+    load3DModels( currentContainer(), aOnlyLoadCopperAndShapes );
 
 #ifdef PRINT_STATISTICS_3D_VIEWER
     int64_t stats_endLoad3DmodelsTime = GetRunningMicroSecs();
 #endif
 
-    if( !aOnlyLoadCopperAndShapes )
+    // Floor + lights are assembly-wide. In multi-instance build mode
+    // ReloadMultiInstance owns both: it adds a single floor at the
+    // assembly bbox bottom and lights positioned around the assembly
+    // centroid AFTER all per-instance wrappers are in place. Skipping
+    // here prevents the per-instance Reload from emitting one floor
+    // per board (overlapping at different Z's, "interesting border"
+    // artifact) and from clearing m_lights down to just the last
+    // instance's set.
+    if( !aOnlyLoadCopperAndShapes && !inInstanceBuild )
     {
         // Add floor
-        if( m_boardAdapter.m_Cfg->m_Render.raytrace_backfloor )
+        if( currentAdapter().m_Cfg->m_Render.raytrace_backfloor )
         {
-            BBOX_3D boardBBox = m_boardAdapter.GetBBox();
+            BBOX_3D boardBBox = currentAdapter().GetBBox();
 
             if( boardBBox.IsInitialized() )
             {
                 boardBBox.Scale( 3.0f );
 
-                if( m_objectContainer.GetList().size() > 0 )
+                if( currentContainer().GetList().size() > 0 )
                 {
-                    BBOX_3D containerBBox = m_objectContainer.GetBBox();
+                    BBOX_3D containerBBox = currentContainer().GetBBox();
 
                     containerBBox.Scale( 1.3f );
 
@@ -928,13 +975,13 @@ void RENDER_3D_RAYTRACE_BASE::Reload( REPORTER* aStatusReporter, REPORTER* aWarn
                     const SFVEC3F v2 = SFVEC3F( v1.x, v3.y, v1.z );
                     const SFVEC3F v4 = SFVEC3F( v3.x, v1.y, v1.z );
 
-                    SFVEC3F floorColor = ConvertSRGBToLinear( m_boardAdapter.m_BgColorTop );
+                    SFVEC3F floorColor = ConvertSRGBToLinear( currentAdapter().m_BgColorTop );
 
                     TRIANGLE* newTriangle1 = new TRIANGLE( v1, v2, v3 );
                     TRIANGLE* newTriangle2 = new TRIANGLE( v3, v4, v1 );
 
-                    m_objectContainer.Add( newTriangle1 );
-                    m_objectContainer.Add( newTriangle2 );
+                    currentContainer().Add( newTriangle1 );
+                    currentContainer().Add( newTriangle2 );
 
                     newTriangle1->SetMaterial( &m_materials.m_Floor );
                     newTriangle2->SetMaterial( &m_materials.m_Floor );
@@ -953,8 +1000,8 @@ void RENDER_3D_RAYTRACE_BASE::Reload( REPORTER* aStatusReporter, REPORTER* aWarn
                     TRIANGLE* newTriangle3 = new TRIANGLE( v7, v6, v5 );
                     TRIANGLE* newTriangle4 = new TRIANGLE( v5, v8, v7 );
 
-                    m_objectContainer.Add( newTriangle3 );
-                    m_objectContainer.Add( newTriangle4 );
+                    currentContainer().Add( newTriangle3 );
+                    currentContainer().Add( newTriangle4 );
 
                     newTriangle3->SetMaterial( &m_materials.m_Floor );
                     newTriangle4->SetMaterial( &m_materials.m_Floor );
@@ -979,11 +1026,11 @@ void RENDER_3D_RAYTRACE_BASE::Reload( REPORTER* aStatusReporter, REPORTER* aWarn
                 };
 
         SFVEC3F cameraLightColor =
-                m_boardAdapter.GetColor( m_boardAdapter.m_Cfg->m_Render.raytrace_lightColorCamera );
+                currentAdapter().GetColor( currentAdapter().m_Cfg->m_Render.raytrace_lightColorCamera );
         SFVEC3F topLightColor =
-                m_boardAdapter.GetColor( m_boardAdapter.m_Cfg->m_Render.raytrace_lightColorTop );
+                currentAdapter().GetColor( currentAdapter().m_Cfg->m_Render.raytrace_lightColorTop );
         SFVEC3F bottomLightColor =
-                m_boardAdapter.GetColor( m_boardAdapter.m_Cfg->m_Render.raytrace_lightColorBottom );
+                currentAdapter().GetColor( currentAdapter().m_Cfg->m_Render.raytrace_lightColorBottom );
 
         m_cameraLight = new DIRECTIONAL_LIGHT( SFVEC3F( 0.0f, 0.0f, 0.0f ), cameraLightColor );
         m_cameraLight->SetCastShadows( false );
@@ -991,7 +1038,7 @@ void RENDER_3D_RAYTRACE_BASE::Reload( REPORTER* aStatusReporter, REPORTER* aWarn
         if( !IsColorZero( cameraLightColor ) )
             m_lights.push_back( m_cameraLight );
 
-        const SFVEC3F& boardCenter = m_boardAdapter.GetBBox().GetCenter();
+        const SFVEC3F& boardCenter = currentAdapter().GetBBox().GetCenter();
 
         if( !IsColorZero( topLightColor ) )
         {
@@ -1007,14 +1054,14 @@ void RENDER_3D_RAYTRACE_BASE::Reload( REPORTER* aStatusReporter, REPORTER* aWarn
                                                  bottomLightColor ) );
         }
 
-        for( size_t i = 0; i < m_boardAdapter.m_Cfg->m_Render.raytrace_lightColor.size(); ++i )
+        for( size_t i = 0; i < currentAdapter().m_Cfg->m_Render.raytrace_lightColor.size(); ++i )
         {
             SFVEC3F lightColor =
-                    m_boardAdapter.GetColor( m_boardAdapter.m_Cfg->m_Render.raytrace_lightColor[i] );
+                    currentAdapter().GetColor( currentAdapter().m_Cfg->m_Render.raytrace_lightColor[i] );
 
             if( !IsColorZero( lightColor ) )
             {
-                const SFVEC2F sc = m_boardAdapter.GetSphericalCoord( i );
+                const SFVEC2F sc = currentAdapter().GetSphericalCoord( i );
 
                 m_lights.push_back( new DIRECTIONAL_LIGHT(
                         SphericalToCartesian( glm::pi<float>() * sc.x, glm::pi<float>() * sc.y ),
@@ -1026,13 +1073,17 @@ void RENDER_3D_RAYTRACE_BASE::Reload( REPORTER* aStatusReporter, REPORTER* aWarn
     // Set min. and max. zoom range. This doesn't really fit here, but moving this outside of this
     // class would require reimplementing bounding box calculation (feel free to do this if you
     // have time and patience).
-    if( m_objectContainer.GetList().size() > 0 )
+    //
+    // Skip in multi-instance build mode — zoom limits are assembly-wide
+    // and ReloadMultiInstance handles them once after wrapping all the
+    // sub-board scenes.
+    if( !inInstanceBuild && currentContainer().GetList().size() > 0 )
     {
         float ratio =
-                std::max( 1.0f, m_objectContainer.GetBBox().GetMaxDimension() / RANGE_SCALE_3D );
+                std::max( 1.0f, currentContainer().GetBBox().GetMaxDimension() / RANGE_SCALE_3D );
 
         float max_zoom = CAMERA::DEFAULT_MAX_ZOOM * ratio;
-        float min_zoom = static_cast<float>( MIN_DISTANCE_IU * m_boardAdapter.BiuTo3dUnits()
+        float min_zoom = static_cast<float>( MIN_DISTANCE_IU * currentAdapter().BiuTo3dUnits()
                                              / -m_camera.GetCameraInitPos().z );
 
         if( min_zoom > max_zoom )
@@ -1059,9 +1110,15 @@ void RENDER_3D_RAYTRACE_BASE::Reload( REPORTER* aStatusReporter, REPORTER* aWarn
         m_camera.SetMinZoom( min_zoom );
     }
 
-    // Create an accelerator
-    delete m_accelerator;
-    m_accelerator = new BVH_PBRT( m_objectContainer, 8, SPLITMETHOD::MIDDLE );
+    // Top-level accelerator — built only when finalizing the top-level
+    // scene. ReloadMultiInstance builds per-instance accelerators inside
+    // each INSTANCE_OBJECT_3D wrapper and a separate top-level BVH after
+    // wrapping every instance.
+    if( !inInstanceBuild )
+    {
+        delete m_accelerator;
+        m_accelerator = new BVH_PBRT( m_objectContainer, 8, SPLITMETHOD::MIDDLE );
+    }
 
     if( aStatusReporter )
     {
@@ -1073,13 +1130,310 @@ void RENDER_3D_RAYTRACE_BASE::Reload( REPORTER* aStatusReporter, REPORTER* aWarn
 }
 
 
+void RENDER_3D_RAYTRACE_BASE::ReloadMultiInstance(
+        const std::vector<INSTANCE_DESC>& aInstances,
+        REPORTER* aStatusReporter, REPORTER* aWarningReporter )
+{
+    int64_t stats_start = GetRunningMicroSecs();
+
+    // Top-level state reset — same shape as Reload's setup, done ONCE
+    // for the whole assembly.
+    m_reloadRequested = false;
+    m_modelMaterialMap.clear();
+    OBJECT_2D_STATS::Instance().ResetStats();
+    OBJECT_3D_STATS::Instance().ResetStats();
+
+    // Order matters here: clear the 3D wrappers FIRST (deletes per-
+    // instance LAYER_ITEMs that hold non-owning pointers into the 2D
+    // outline containers), THEN drop the 2D containers themselves.
+    // Reversing the order would dangle the LAYER_ITEMs' 2D refs while
+    // they still try to participate in CONTAINER_3D::Clear().
+    m_objectContainer.Clear();
+    m_instanceWrappers.clear();
+    m_perInstanceOutlines2d.clear();
+    m_perInstanceAntiOutlines2d.clear();
+    m_containerWithObjectsToDelete.Clear();
+
+    // Run setupMaterials against the FIRST sub-board adapter, not the
+    // top-level (MBS container) adapter. The container has no real
+    // board loaded, so its m_SolderMaskColorTop, m_BoardBodyColor and
+    // m_Cfg->m_Render values are defaults (alpha = 1.0 → fully opaque
+    // mask). Without this override the F.Mask renders opaque red over
+    // F.Cu, hiding traces from view despite the geometry being correct.
+    //
+    // Same adapter is also published as m_renderAdapter so the trace-
+    // time path (shadeHit's refraction bias, shadow nudge, etc.) reads
+    // a real GetNonCopperLayerThickness, not the container's 0.
+    if( !aInstances.empty() && aInstances[0].adapter )
+    {
+        m_overrideAdapter = aInstances[0].adapter;
+        m_renderAdapter   = aInstances[0].adapter;
+
+        // Convert the first adapter's per-adapter thickness (in its
+        // local 3D-units) into world 3D-units. The wrapper's pose is
+        // uniform-scale × rotate × translate; extract the scale from
+        // pose[0]'s length. Then world thickness = local thickness ×
+        // scale. shadeHit's bias offsets (refraction startpoint,
+        // shadow nudge) are applied to world-frame ray.at(t) calls,
+        // so the bias must be in world units; using the per-adapter
+        // value directly produced a wrong-sized bias for any board
+        // whose biuTo3dUnits differs from the world's
+        // m_sharedBiuTo3Dunits — which is every board in MBS mode.
+        float poseScale = glm::length( glm::vec3( aInstances[0].pose[0] ) );
+
+        if( poseScale <= 0.0f )
+            poseScale = 1.0f;
+
+        m_renderNonCopperLayerThickness3DU =
+                aInstances[0].adapter->GetNonCopperLayerThickness() * poseScale;
+
+        setupMaterials();
+        m_overrideAdapter = nullptr;
+    }
+    else
+    {
+        m_renderAdapter                    = &m_boardAdapter;
+        m_renderNonCopperLayerThickness3DU = m_boardAdapter.GetNonCopperLayerThickness();
+        setupMaterials();
+    }
+
+    // Per-sub-board geometry build. For each instance: redirect
+    // currentAdapter() / currentContainer() to a per-instance pair, run
+    // Reload (which will detect override and skip top-level setup +
+    // BVH-build), build the per-instance BVH, wrap it under the
+    // instance's pose, and add the wrapper to the top-level container.
+    //
+    // The top-level container then "owns" the wrappers (CONTAINER_3D's
+    // Clear() deletes its members, so the wrappers' lifetime tracks the
+    // raytracer's). Each wrapper in turn owns its inner CONTAINER_3D
+    // and ACCELERATOR_3D.
+    for( size_t i = 0; i < aInstances.size(); i++ )
+    {
+        const INSTANCE_DESC& desc = aInstances[i];
+
+        if( !desc.adapter )
+            continue;
+
+        std::unique_ptr<CONTAINER_3D> perInstContainer
+                = std::make_unique<CONTAINER_3D>();
+
+        m_overrideAdapter   = desc.adapter;
+        m_overrideContainer = perInstContainer.get();
+
+        // Null out the outline 2D containers so the inner Reload's
+        // `delete m_outlineBoard2dObjects` is a no-op and we don't kill
+        // the previous instance's 2D objects (which prior instances'
+        // 3D LAYER_ITEMs still reference). The freshly-allocated
+        // containers from this Reload will be transferred into
+        // m_perInstanceOutlines2d below so they outlive THIS instance's
+        // 3D LAYER_ITEMs too.
+        m_outlineBoard2dObjects     = nullptr;
+        m_antioutlineBoard2dObjects = nullptr;
+
+        // Reload populates currentContainer() = perInstContainer with this
+        // instance's full per-board geometry. BVH build is skipped because
+        // override is active.
+        Reload( aStatusReporter, aWarningReporter, /*onlyCopperAndShapes*/ false );
+
+        m_overrideAdapter   = nullptr;
+        m_overrideContainer = nullptr;
+
+        // Transfer ownership of the just-built 2D outline containers
+        // into the multi-instance keep-alive vectors, then null out
+        // the members so the next iteration's Reload allocates fresh
+        // ones. Without this, the 2D OBJECT_2Ds inside these
+        // containers would be deleted at the top of the next inner
+        // Reload, dangling the LAYER_ITEMs we just added to
+        // perInstContainer.
+        if( m_outlineBoard2dObjects )
+        {
+            m_perInstanceOutlines2d.emplace_back( m_outlineBoard2dObjects );
+            m_outlineBoard2dObjects = nullptr;
+        }
+
+        if( m_antioutlineBoard2dObjects )
+        {
+            m_perInstanceAntiOutlines2d.emplace_back( m_antioutlineBoard2dObjects );
+            m_antioutlineBoard2dObjects = nullptr;
+        }
+
+        // Per-instance BVH for the wrapper to dispatch into.
+        std::unique_ptr<ACCELERATOR_3D> perInstAccel(
+                new BVH_PBRT( *perInstContainer, 8, SPLITMETHOD::MIDDLE ) );
+
+        std::unique_ptr<INSTANCE_OBJECT_3D> wrapper(
+                new INSTANCE_OBJECT_3D( std::move( perInstContainer ),
+                                         std::move( perInstAccel ),
+                                         desc.pose ) );
+
+        // Transfer ownership to top-level container (its Clear() deletes
+        // members). Keep a non-owning copy in m_instanceWrappers for
+        // diagnostic/debug introspection — currently unused but cheap to
+        // maintain alongside.
+        INSTANCE_OBJECT_3D* rawWrapper = wrapper.release();
+        m_objectContainer.Add( rawWrapper );
+    }
+
+    // Assembly-wide finalize: lights + floor. Run AFTER all wrapper
+    // bboxes are in m_objectContainer so we can size the floor and
+    // anchor lights against the merged composite, not any one sub-
+    // board.
+    {
+        for( LIGHT* light : m_lights )
+            delete light;
+
+        m_lights.clear();
+        m_cameraLight = nullptr;
+
+        // Use the first instance's adapter for color/light-config
+        // lookups (raytrace_lightColorCamera etc. live in EDA_3D_VIEWER's
+        // settings, which is shared across all sub-boards anyway).
+        BOARD_ADAPTER* cfgAdapter = aInstances.empty() ? &m_boardAdapter
+                                                       : aInstances[0].adapter;
+
+        if( cfgAdapter && cfgAdapter->m_Cfg )
+        {
+            auto isColorZero = []( const SFVEC3F& aSource )
+            {
+                return ( aSource.r < 1.0f / 255.0f )
+                       && ( aSource.g < 1.0f / 255.0f )
+                       && ( aSource.b < 1.0f / 255.0f );
+            };
+
+            const SFVEC3F cameraLightColor =
+                    cfgAdapter->GetColor( cfgAdapter->m_Cfg->m_Render.raytrace_lightColorCamera );
+            const SFVEC3F topLightColor =
+                    cfgAdapter->GetColor( cfgAdapter->m_Cfg->m_Render.raytrace_lightColorTop );
+            const SFVEC3F bottomLightColor =
+                    cfgAdapter->GetColor( cfgAdapter->m_Cfg->m_Render.raytrace_lightColorBottom );
+
+            m_cameraLight = new DIRECTIONAL_LIGHT(
+                    SFVEC3F( 0.0f, 0.0f, 0.0f ), cameraLightColor );
+            m_cameraLight->SetCastShadows( false );
+
+            if( !isColorZero( cameraLightColor ) )
+                m_lights.push_back( m_cameraLight );
+
+            const SFVEC3F assemblyCenter = m_objectContainer.GetBBox().IsInitialized()
+                                            ? m_objectContainer.GetBBox().GetCenter()
+                                            : SFVEC3F( 0.0f, 0.0f, 0.0f );
+
+            if( !isColorZero( topLightColor ) )
+            {
+                m_lights.push_back( new POINT_LIGHT(
+                        SFVEC3F( assemblyCenter.x, assemblyCenter.y,
+                                  +RANGE_SCALE_3D * 2.0f ),
+                        topLightColor ) );
+            }
+
+            if( !isColorZero( bottomLightColor ) )
+            {
+                m_lights.push_back( new POINT_LIGHT(
+                        SFVEC3F( assemblyCenter.x, assemblyCenter.y,
+                                  -RANGE_SCALE_3D * 2.0f ),
+                        bottomLightColor ) );
+            }
+
+            for( size_t k = 0; k < cfgAdapter->m_Cfg->m_Render.raytrace_lightColor.size(); ++k )
+            {
+                SFVEC3F color = cfgAdapter->GetColor(
+                        cfgAdapter->m_Cfg->m_Render.raytrace_lightColor[k] );
+
+                if( !isColorZero( color ) )
+                {
+                    const SFVEC2F sc = cfgAdapter->GetSphericalCoord( k );
+                    m_lights.push_back( new DIRECTIONAL_LIGHT(
+                            SphericalToCartesian( glm::pi<float>() * sc.x,
+                                                   glm::pi<float>() * sc.y ),
+                            color ) );
+                }
+            }
+
+            // Single floor + ceiling at the assembly bbox extents.
+            // Single-board uses Scale(3.0f) on its boardBBox before
+            // taking minZ/maxZ — that pushes the ceiling well above
+            // any reflection ray cast from the board surface, so
+            // F.Mask reflections off flat-on view angles bounce up
+            // past the ceiling and into the background gradient
+            // (and traces show through). With Scale(1.3f) and a
+            // multi-board container, the ceiling lands right above
+            // the boards; flat-on reflection rays hit the red
+            // ceiling and return its color, occluding the F.Cu
+            // traces — that's the curved "no-trace" boundary
+            // visible in the user's Image #13. Match the single-
+            // board math by scaling 3x on Z (X/Y already use
+            // ±RANGE_SCALE_3D * 4 for the floor extents).
+            if( cfgAdapter->m_Cfg->m_Render.raytrace_backfloor
+                && m_objectContainer.GetBBox().IsInitialized() )
+            {
+                BBOX_3D containerBBox = m_objectContainer.GetBBox();
+                containerBBox.Scale( 3.0f );
+
+                const SFVEC3F centerBBox = containerBBox.GetCenter();
+                const float   minZ       = containerBBox.Min().z;
+                const float   maxZ       = containerBBox.Max().z;
+
+                const SFVEC3F v1(
+                        -RANGE_SCALE_3D * 4.0f + centerBBox.x,
+                        -RANGE_SCALE_3D * 4.0f + centerBBox.y, minZ );
+                const SFVEC3F v3(
+                        +RANGE_SCALE_3D * 4.0f + centerBBox.x,
+                        +RANGE_SCALE_3D * 4.0f + centerBBox.y, minZ );
+                const SFVEC3F v2( v1.x, v3.y, v1.z );
+                const SFVEC3F v4( v3.x, v1.y, v1.z );
+
+                SFVEC3F floorColor = ConvertSRGBToLinear( cfgAdapter->m_BgColorTop );
+
+                TRIANGLE* t1 = new TRIANGLE( v1, v2, v3 );
+                TRIANGLE* t2 = new TRIANGLE( v3, v4, v1 );
+                t1->SetMaterial( &m_materials.m_Floor );
+                t2->SetMaterial( &m_materials.m_Floor );
+                t1->SetColor( floorColor );
+                t2->SetColor( floorColor );
+                m_objectContainer.Add( t1 );
+                m_objectContainer.Add( t2 );
+
+                const SFVEC3F v5( v1.x, v1.y, maxZ );
+                const SFVEC3F v6( v2.x, v2.y, maxZ );
+                const SFVEC3F v7( v3.x, v3.y, maxZ );
+                const SFVEC3F v8( v4.x, v4.y, maxZ );
+
+                TRIANGLE* t3 = new TRIANGLE( v7, v6, v5 );
+                TRIANGLE* t4 = new TRIANGLE( v5, v8, v7 );
+                t3->SetMaterial( &m_materials.m_Floor );
+                t4->SetMaterial( &m_materials.m_Floor );
+                t3->SetColor( floorColor );
+                t4->SetColor( floorColor );
+                m_objectContainer.Add( t3 );
+                m_objectContainer.Add( t4 );
+            }
+        }
+    }
+
+    // Top-level BVH dispatches to the per-instance wrappers. The wrappers'
+    // Intersect transforms the ray into each instance's local frame and
+    // delegates to the inner per-instance BVH. Floor tris added above
+    // are NOT wrapped — they participate directly in the top BVH.
+    delete m_accelerator;
+    m_accelerator = new BVH_PBRT( m_objectContainer, 8, SPLITMETHOD::MIDDLE );
+
+    if( aStatusReporter )
+    {
+        double calc_time = (double) ( GetRunningMicroSecs() - stats_start ) / 1e6;
+        aStatusReporter->Report(
+                wxString::Format( _( "Reload time %.3f s (%zu instances)" ),
+                                  calc_time, aInstances.size() ) );
+    }
+}
+
+
 void RENDER_3D_RAYTRACE_BASE::addCounterborePlating( const BOARD_ITEM& aSource,
                                                      const SFVEC2F& aCenter,
                                                      float aInnerRadius, float aDepth,
                                                      float aSurfaceZ, bool aIsFront )
 {
-    const float platingThickness = m_boardAdapter.GetHolePlatingThickness()
-                                   * m_boardAdapter.BiuTo3dUnits();
+    const float platingThickness = currentAdapter().GetHolePlatingThickness()
+                                   * currentAdapter().BiuTo3dUnits();
 
     if( platingThickness <= 0.0f || aInnerRadius <= 0.0f || aDepth <= 0.0f )
         return;
@@ -1094,9 +1448,9 @@ void RENDER_3D_RAYTRACE_BASE::addCounterborePlating( const BOARD_ITEM& aSource,
 
     LAYER_ITEM* objPtr = new LAYER_ITEM( ring, zMin, zMax );
     objPtr->SetMaterial( &m_materials.m_Copper );
-    objPtr->SetColor( ConvertSRGBToLinear( m_boardAdapter.m_CopperColor ) );
+    objPtr->SetColor( ConvertSRGBToLinear( currentAdapter().m_CopperColor ) );
 
-    m_objectContainer.Add( objPtr );
+    currentContainer().Add( objPtr );
 }
 
 
@@ -1106,8 +1460,8 @@ void RENDER_3D_RAYTRACE_BASE::addCountersinkPlating( const SFVEC2F& aCenter,
                                                      float aSurfaceZ, float aDepth,
                                                      bool aIsFront )
 {
-    const float platingThickness = m_boardAdapter.GetHolePlatingThickness()
-                                   * m_boardAdapter.BiuTo3dUnits();
+    const float platingThickness = currentAdapter().GetHolePlatingThickness()
+                                   * currentAdapter().BiuTo3dUnits();
 
     if( platingThickness <= 0.0f || aTopInnerRadius <= 0.0f || aBottomInnerRadius <= 0.0f
             || aDepth <= 0.0f )
@@ -1126,9 +1480,9 @@ void RENDER_3D_RAYTRACE_BASE::addCountersinkPlating( const SFVEC2F& aCenter,
         return;
 
     const float largestDiameter = 2.0f * std::max( aTopInnerRadius, aBottomInnerRadius );
-    unsigned int segments = std::max( 12u, m_boardAdapter.GetCircleSegmentCount( largestDiameter ) );
+    unsigned int segments = std::max( 12u, currentAdapter().GetCircleSegmentCount( largestDiameter ) );
 
-    const SFVEC3F copperColor = ConvertSRGBToLinear( m_boardAdapter.m_CopperColor );
+    const SFVEC3F copperColor = ConvertSRGBToLinear( currentAdapter().m_CopperColor );
 
     auto addQuad = [&]( const SFVEC3F& p0, const SFVEC3F& p1,
                         const SFVEC3F& p2, const SFVEC3F& p3 )
@@ -1141,8 +1495,8 @@ void RENDER_3D_RAYTRACE_BASE::addCountersinkPlating( const SFVEC2F& aCenter,
         tri1->SetColor( copperColor );
         tri2->SetColor( copperColor );
 
-        m_objectContainer.Add( tri1 );
-        m_objectContainer.Add( tri2 );
+        currentContainer().Add( tri1 );
+        currentContainer().Add( tri2 );
     };
 
     auto makePoint = [&]( float radius, float angle, float z )
@@ -1199,19 +1553,19 @@ void RENDER_3D_RAYTRACE_BASE::addCountersinkPlating( const SFVEC2F& aCenter,
 
 void RENDER_3D_RAYTRACE_BASE::backfillPostMachine()
 {
-    if( !m_boardAdapter.GetBoard() )
+    if( !currentAdapter().GetBoard() )
         return;
 
-    const float unitScale = m_boardAdapter.BiuTo3dUnits();
-    const int platingThickness = m_boardAdapter.GetHolePlatingThickness();
+    const float unitScale = currentAdapter().BiuTo3dUnits();
+    const int platingThickness = currentAdapter().GetHolePlatingThickness();
     const float platingThickness3d = platingThickness * unitScale;
-    const SFVEC3F boardColor = ConvertSRGBToLinear( m_boardAdapter.m_BoardBodyColor );
+    const SFVEC3F boardColor = ConvertSRGBToLinear( currentAdapter().m_BoardBodyColor );
 
-    const float boardZTop = m_boardAdapter.GetLayerBottomZPos( F_Cu );
-    const float boardZBot = m_boardAdapter.GetLayerBottomZPos( B_Cu );
+    const float boardZTop = currentAdapter().GetLayerBottomZPos( F_Cu );
+    const float boardZBot = currentAdapter().GetLayerBottomZPos( B_Cu );
 
     // Process vias for backdrill and post-machining plugs
-    for( const PCB_TRACK* track : m_boardAdapter.GetBoard()->Tracks() )
+    for( const PCB_TRACK* track : currentAdapter().GetBoard()->Tracks() )
     {
         if( track->Type() != PCB_VIA_T )
             continue;
@@ -1226,8 +1580,8 @@ void RENDER_3D_RAYTRACE_BASE::backfillPostMachine()
         PCB_LAYER_ID topLayer, bottomLayer;
         via->LayerPair( &topLayer, &bottomLayer );
 
-        const float viaZTop = m_boardAdapter.GetLayerBottomZPos( topLayer );
-        const float viaZBot = m_boardAdapter.GetLayerBottomZPos( bottomLayer );
+        const float viaZTop = currentAdapter().GetLayerBottomZPos( topLayer );
+        const float viaZBot = currentAdapter().GetLayerBottomZPos( bottomLayer );
 
         // Handle backdrill plugs
         const auto secondaryDrillSize = via->GetSecondaryDrillSize();
@@ -1242,7 +1596,7 @@ void RENDER_3D_RAYTRACE_BASE::backfillPostMachine()
                 PCB_LAYER_ID secEnd = via->GetSecondaryDrillEndLayer();
 
                 // Calculate where the backdrill ends and plug should start
-                const float secEndZ = m_boardAdapter.GetLayerBottomZPos( secEnd );
+                const float secEndZ = currentAdapter().GetLayerBottomZPos( secEnd );
 
                 float plugZTop, plugZBot;
 
@@ -1268,7 +1622,7 @@ void RENDER_3D_RAYTRACE_BASE::backfillPostMachine()
                     LAYER_ITEM* objPtr = new LAYER_ITEM( ring, plugZBot, plugZTop );
                     objPtr->SetMaterial( &m_materials.m_EpoxyBoard );
                     objPtr->SetColor( boardColor );
-                    m_objectContainer.Add( objPtr );
+                    currentContainer().Add( objPtr );
                 }
             }
         }
@@ -1313,7 +1667,7 @@ void RENDER_3D_RAYTRACE_BASE::backfillPostMachine()
                                                         holeOuterRadius, frontRadius );
                         frustum->SetMaterial( &m_materials.m_EpoxyBoard );
                         frustum->SetColor( boardColor );
-                        m_objectContainer.Add( frustum );
+                        currentContainer().Add( frustum );
 
                         // If there's a cylindrical portion below the cone
                         if( zInnerTop > plugZBot )
@@ -1324,7 +1678,7 @@ void RENDER_3D_RAYTRACE_BASE::backfillPostMachine()
                             LAYER_ITEM* objPtr = new LAYER_ITEM( ring, plugZBot, zInnerTop );
                             objPtr->SetMaterial( &m_materials.m_EpoxyBoard );
                             objPtr->SetColor( boardColor );
-                            m_objectContainer.Add( objPtr );
+                            currentContainer().Add( objPtr );
                         }
                     }
                     else
@@ -1335,7 +1689,7 @@ void RENDER_3D_RAYTRACE_BASE::backfillPostMachine()
                         LAYER_ITEM* objPtr = new LAYER_ITEM( ring, plugZBot, pmBottomZ );
                         objPtr->SetMaterial( &m_materials.m_EpoxyBoard );
                         objPtr->SetColor( boardColor );
-                        m_objectContainer.Add( objPtr );
+                        currentContainer().Add( objPtr );
                     }
                 }
             }
@@ -1381,7 +1735,7 @@ void RENDER_3D_RAYTRACE_BASE::backfillPostMachine()
                                                         backRadius, holeOuterRadius );
                         frustum->SetMaterial( &m_materials.m_EpoxyBoard );
                         frustum->SetColor( boardColor );
-                        m_objectContainer.Add( frustum );
+                        currentContainer().Add( frustum );
 
                         // If there's a cylindrical portion above the cone
                         if( zInnerBot < plugZTop )
@@ -1392,7 +1746,7 @@ void RENDER_3D_RAYTRACE_BASE::backfillPostMachine()
                             LAYER_ITEM* objPtr = new LAYER_ITEM( ring, zInnerBot, plugZTop );
                             objPtr->SetMaterial( &m_materials.m_EpoxyBoard );
                             objPtr->SetColor( boardColor );
-                            m_objectContainer.Add( objPtr );
+                            currentContainer().Add( objPtr );
                         }
                     }
                     else
@@ -1403,7 +1757,7 @@ void RENDER_3D_RAYTRACE_BASE::backfillPostMachine()
                         LAYER_ITEM* objPtr = new LAYER_ITEM( ring, pmTopZ, plugZTop );
                         objPtr->SetMaterial( &m_materials.m_EpoxyBoard );
                         objPtr->SetColor( boardColor );
-                        m_objectContainer.Add( objPtr );
+                        currentContainer().Add( objPtr );
                     }
                 }
             }
@@ -1411,7 +1765,7 @@ void RENDER_3D_RAYTRACE_BASE::backfillPostMachine()
     }
 
     // Process pads for post-machining plugs
-    for( const FOOTPRINT* footprint : m_boardAdapter.GetBoard()->Footprints() )
+    for( const FOOTPRINT* footprint : currentAdapter().GetBoard()->Footprints() )
     {
         for( const PAD* pad : footprint->Pads() )
         {
@@ -1471,7 +1825,7 @@ void RENDER_3D_RAYTRACE_BASE::backfillPostMachine()
                                                             holeOuterRadius, frontRadius );
                             frustum->SetMaterial( &m_materials.m_EpoxyBoard );
                             frustum->SetColor( boardColor );
-                            m_objectContainer.Add( frustum );
+                            currentContainer().Add( frustum );
 
                             // If there's a cylindrical portion below the cone
                             if( zInnerTop > plugZBot )
@@ -1482,7 +1836,7 @@ void RENDER_3D_RAYTRACE_BASE::backfillPostMachine()
                                 LAYER_ITEM* objPtr = new LAYER_ITEM( ring, plugZBot, zInnerTop );
                                 objPtr->SetMaterial( &m_materials.m_EpoxyBoard );
                                 objPtr->SetColor( boardColor );
-                                m_objectContainer.Add( objPtr );
+                                currentContainer().Add( objPtr );
                             }
                         }
                         else
@@ -1493,7 +1847,7 @@ void RENDER_3D_RAYTRACE_BASE::backfillPostMachine()
                             LAYER_ITEM* objPtr = new LAYER_ITEM( ring, plugZBot, pmBottomZ );
                             objPtr->SetMaterial( &m_materials.m_EpoxyBoard );
                             objPtr->SetColor( boardColor );
-                            m_objectContainer.Add( objPtr );
+                            currentContainer().Add( objPtr );
                         }
                     }
                 }
@@ -1538,7 +1892,7 @@ void RENDER_3D_RAYTRACE_BASE::backfillPostMachine()
                                                             backRadius, holeOuterRadius );
                             frustum->SetMaterial( &m_materials.m_EpoxyBoard );
                             frustum->SetColor( boardColor );
-                            m_objectContainer.Add( frustum );
+                            currentContainer().Add( frustum );
 
                             // If there's a cylindrical portion above the cone
                             if( zInnerBot < plugZTop )
@@ -1549,7 +1903,7 @@ void RENDER_3D_RAYTRACE_BASE::backfillPostMachine()
                                 LAYER_ITEM* objPtr = new LAYER_ITEM( ring, zInnerBot, plugZTop );
                                 objPtr->SetMaterial( &m_materials.m_EpoxyBoard );
                                 objPtr->SetColor( boardColor );
-                                m_objectContainer.Add( objPtr );
+                                currentContainer().Add( objPtr );
                             }
                         }
                         else
@@ -1560,7 +1914,7 @@ void RENDER_3D_RAYTRACE_BASE::backfillPostMachine()
                             LAYER_ITEM* objPtr = new LAYER_ITEM( ring, pmTopZ, plugZTop );
                             objPtr->SetMaterial( &m_materials.m_EpoxyBoard );
                             objPtr->SetColor( boardColor );
-                            m_objectContainer.Add( objPtr );
+                            currentContainer().Add( objPtr );
                         }
                     }
                 }
@@ -1572,7 +1926,7 @@ void RENDER_3D_RAYTRACE_BASE::backfillPostMachine()
 
 void RENDER_3D_RAYTRACE_BASE::insertHole( const PCB_VIA* aVia )
 {
-    if( !m_boardAdapter.m_Cfg->m_Render.show_plated_barrels )
+    if( !currentAdapter().m_Cfg->m_Render.show_plated_barrels )
         return;
 
     PCB_LAYER_ID top_layer, bottom_layer;
@@ -1584,31 +1938,31 @@ void RENDER_3D_RAYTRACE_BASE::insertHole( const PCB_VIA* aVia )
     float backDepth = 0.0f;
 
     if( aVia->Padstack().FrontPostMachining().mode.value_or( PAD_DRILL_POST_MACHINING_MODE::NOT_POST_MACHINED ) != PAD_DRILL_POST_MACHINING_MODE::NOT_POST_MACHINED )
-        frontDepth = aVia->Padstack().FrontPostMachining().depth * m_boardAdapter.BiuTo3dUnits();
+        frontDepth = aVia->Padstack().FrontPostMachining().depth * currentAdapter().BiuTo3dUnits();
 
     if( aVia->Padstack().BackPostMachining().mode.value_or( PAD_DRILL_POST_MACHINING_MODE::NOT_POST_MACHINED ) != PAD_DRILL_POST_MACHINING_MODE::NOT_POST_MACHINED )
-        backDepth = aVia->Padstack().BackPostMachining().depth * m_boardAdapter.BiuTo3dUnits();
+        backDepth = aVia->Padstack().BackPostMachining().depth * currentAdapter().BiuTo3dUnits();
 
-    float topZ = m_boardAdapter.GetLayerBottomZPos( top_layer )
-                 + m_boardAdapter.GetFrontCopperThickness() - frontDepth;
+    float topZ = currentAdapter().GetLayerBottomZPos( top_layer )
+                 + currentAdapter().GetFrontCopperThickness() - frontDepth;
 
-    float botZ = m_boardAdapter.GetLayerBottomZPos( bottom_layer )
-                 - m_boardAdapter.GetBackCopperThickness() + backDepth;
+    float botZ = currentAdapter().GetLayerBottomZPos( bottom_layer )
+                 - currentAdapter().GetBackCopperThickness() + backDepth;
 
-    const float unitScale = m_boardAdapter.BiuTo3dUnits();
+    const float unitScale = currentAdapter().BiuTo3dUnits();
     const SFVEC2F center = SFVEC2F( aVia->GetStart().x * unitScale, -aVia->GetStart().y * unitScale );
 
     RING_2D* ring = new RING_2D( center, radiusBUI * unitScale,
-                                 ( radiusBUI + m_boardAdapter.GetHolePlatingThickness() ) * unitScale, *aVia );
+                                 ( radiusBUI + currentAdapter().GetHolePlatingThickness() ) * unitScale, *aVia );
 
     m_containerWithObjectsToDelete.Add( ring );
 
     LAYER_ITEM* objPtr = new LAYER_ITEM( ring, topZ, botZ );
 
     objPtr->SetMaterial( &m_materials.m_Copper );
-    objPtr->SetColor( ConvertSRGBToLinear( m_boardAdapter.m_CopperColor ) );
+    objPtr->SetColor( ConvertSRGBToLinear( currentAdapter().m_CopperColor ) );
 
-    m_objectContainer.Add( objPtr );
+    currentContainer().Add( objPtr );
 
     const float holeInnerRadius = radiusBUI * unitScale;
     const float frontSurface = topZ + frontDepth;
@@ -1652,15 +2006,15 @@ void RENDER_3D_RAYTRACE_BASE::insertHole( const PCB_VIA* aVia )
 
 void RENDER_3D_RAYTRACE_BASE::insertHole( const PAD* aPad )
 {
-    if( !m_boardAdapter.m_Cfg->m_Render.show_plated_barrels )
+    if( !currentAdapter().m_Cfg->m_Render.show_plated_barrels )
         return;
 
     const OBJECT_2D* object2d_A = nullptr;
 
-    SFVEC3F        objColor = m_boardAdapter.m_CopperColor;
+    SFVEC3F        objColor = currentAdapter().m_CopperColor;
     const VECTOR2I drillsize = aPad->GetDrillSize();
     const bool     hasHole = drillsize.x && drillsize.y;
-    const float    unitScale = m_boardAdapter.BiuTo3dUnits();
+    const float    unitScale = currentAdapter().BiuTo3dUnits();
     const bool     isRoundHole = drillsize.x == drillsize.y;
     SFVEC2F        holeCenter = SFVEC2F( 0.0f, 0.0f );
     float          holeInnerRadius = 0.0f;
@@ -1674,16 +2028,16 @@ void RENDER_3D_RAYTRACE_BASE::insertHole( const PAD* aPad )
     float backDepth = 0.0f;
 
     if( aPad->GetFrontPostMachining() != PAD_DRILL_POST_MACHINING_MODE::NOT_POST_MACHINED )
-        frontDepth = aPad->GetFrontPostMachiningDepth() * m_boardAdapter.BiuTo3dUnits();
+        frontDepth = aPad->GetFrontPostMachiningDepth() * currentAdapter().BiuTo3dUnits();
 
     if( aPad->GetBackPostMachining() != PAD_DRILL_POST_MACHINING_MODE::NOT_POST_MACHINED )
-        backDepth = aPad->GetBackPostMachiningDepth() * m_boardAdapter.BiuTo3dUnits();
+        backDepth = aPad->GetBackPostMachiningDepth() * currentAdapter().BiuTo3dUnits();
 
-    const float topZ = m_boardAdapter.GetLayerBottomZPos( F_Cu )
-                       + m_boardAdapter.GetFrontCopperThickness() * 0.99f - frontDepth;
+    const float topZ = currentAdapter().GetLayerBottomZPos( F_Cu )
+                       + currentAdapter().GetFrontCopperThickness() * 0.99f - frontDepth;
 
-    const float botZ = m_boardAdapter.GetLayerBottomZPos( B_Cu )
-                       - m_boardAdapter.GetBackCopperThickness() * 0.99f + backDepth;
+    const float botZ = currentAdapter().GetLayerBottomZPos( B_Cu )
+                       - currentAdapter().GetBackCopperThickness() * 0.99f + backDepth;
 
     if( isRoundHole ) // usual round hole
     {
@@ -1691,7 +2045,7 @@ void RENDER_3D_RAYTRACE_BASE::insertHole( const PAD* aPad )
                               -aPad->GetPosition().y * unitScale );
 
         int innerRadius = drillsize.x / 2;
-        int outerRadius = innerRadius + m_boardAdapter.GetHolePlatingThickness();
+        int outerRadius = innerRadius + currentAdapter().GetHolePlatingThickness();
         holeInnerRadius = innerRadius * unitScale;
 
         RING_2D* ring = new RING_2D( holeCenter, innerRadius * unitScale,
@@ -1762,7 +2116,7 @@ void RENDER_3D_RAYTRACE_BASE::insertHole( const PAD* aPad )
                                -start.y * unitScale ),
                           SFVEC2F( end.x * unitScale,
                               -end.y * unitScale ),
-                          ( width + m_boardAdapter.GetHolePlatingThickness() * 2 )
+                          ( width + currentAdapter().GetHolePlatingThickness() * 2 )
                           * unitScale, *aPad );
 
         // NOTE: the round segment width is the "diameter", so we double the thickness
@@ -1790,11 +2144,11 @@ void RENDER_3D_RAYTRACE_BASE::insertHole( const PAD* aPad )
 
         // Check if there are any other THT that intersects this hole
         // It will use the non inflated holes
-        if( !m_boardAdapter.GetTH_IDs().GetList().empty() )
+        if( !currentAdapter().GetTH_IDs().GetList().empty() )
         {
             CONST_LIST_OBJECT2D intersecting;
 
-            m_boardAdapter.GetTH_IDs().GetIntersectingObjects( object2d_A->GetBBox(), intersecting );
+            currentAdapter().GetTH_IDs().GetIntersectingObjects( object2d_A->GetBBox(), intersecting );
 
             for( const OBJECT_2D* hole2d : intersecting )
             {
@@ -1818,7 +2172,7 @@ void RENDER_3D_RAYTRACE_BASE::insertHole( const PAD* aPad )
 
             objPtr->SetMaterial( &m_materials.m_Copper );
             objPtr->SetColor( ConvertSRGBToLinear( objColor ) );
-            m_objectContainer.Add( objPtr );
+            currentContainer().Add( objPtr );
         }
         else
         {
@@ -1832,7 +2186,7 @@ void RENDER_3D_RAYTRACE_BASE::insertHole( const PAD* aPad )
             objPtr->SetMaterial( &m_materials.m_Copper );
             objPtr->SetColor( ConvertSRGBToLinear( objColor ) );
 
-            m_objectContainer.Add( objPtr );
+            currentContainer().Add( objPtr );
         }
     }
 
@@ -1882,13 +2236,13 @@ void RENDER_3D_RAYTRACE_BASE::insertHole( const PAD* aPad )
 
 void RENDER_3D_RAYTRACE_BASE::addPadsAndVias()
 {
-    if( !m_boardAdapter.GetBoard() )
+    if( !currentAdapter().GetBoard() )
         return;
 
     // Insert plated vertical holes inside the board
 
     // Insert vias holes (vertical cylinders)
-    for( PCB_TRACK* track : m_boardAdapter.GetBoard()->Tracks() )
+    for( PCB_TRACK* track : currentAdapter().GetBoard()->Tracks() )
     {
         if( track->Type() == PCB_VIA_T )
         {
@@ -1898,7 +2252,7 @@ void RENDER_3D_RAYTRACE_BASE::addPadsAndVias()
     }
 
     // Insert pads holes (vertical cylinders)
-    for( FOOTPRINT* footprint : m_boardAdapter.GetBoard()->Footprints() )
+    for( FOOTPRINT* footprint : currentAdapter().GetBoard()->Footprints() )
     {
         for( PAD* pad : footprint->Pads() )
         {
@@ -1912,38 +2266,38 @@ void RENDER_3D_RAYTRACE_BASE::addPadsAndVias()
 void RENDER_3D_RAYTRACE_BASE::load3DModels( CONTAINER_3D& aDstContainer,
                                             bool aSkipMaterialInformation )
 {
-    if( !m_boardAdapter.GetBoard() )
+    if( !currentAdapter().GetBoard() )
         return;
 
-    if( !m_boardAdapter.m_IsPreviewer
-          && !m_boardAdapter.m_Cfg->m_Render.show_footprints_normal
-          && !m_boardAdapter.m_Cfg->m_Render.show_footprints_insert
-          && !m_boardAdapter.m_Cfg->m_Render.show_footprints_virtual )
+    if( !currentAdapter().m_IsPreviewer
+          && !currentAdapter().m_Cfg->m_Render.show_footprints_normal
+          && !currentAdapter().m_Cfg->m_Render.show_footprints_insert
+          && !currentAdapter().m_Cfg->m_Render.show_footprints_virtual )
     {
         return;
     }
 
-    const wxString currentVariant = m_boardAdapter.GetBoard()->GetCurrentVariant();
+    const wxString currentVariant = currentAdapter().GetBoard()->GetCurrentVariant();
 
     // Go for all footprints
-    for( FOOTPRINT* fp : m_boardAdapter.GetBoard()->Footprints() )
+    for( FOOTPRINT* fp : currentAdapter().GetBoard()->Footprints() )
     {
         if( !fp->Models().empty()
-          && m_boardAdapter.IsFootprintShown( fp ) )
+          && currentAdapter().IsFootprintShown( fp ) )
         {
             // Skip 3D models for footprints that are DNP in the current variant
             if( fp->GetDNPForVariant( currentVariant ) )
                 continue;
 
-            double zpos = m_boardAdapter.GetFootprintZPos( fp->IsFlipped() );
+            double zpos = currentAdapter().GetFootprintZPos( fp->IsFlipped() );
 
             VECTOR2I pos = fp->GetPosition();
 
             glm::mat4 fpMatrix = glm::mat4( 1.0f );
 
             fpMatrix = glm::translate( fpMatrix,
-                                       SFVEC3F( pos.x * m_boardAdapter.BiuTo3dUnits(),
-                                                -pos.y * m_boardAdapter.BiuTo3dUnits(),
+                                       SFVEC3F( pos.x * currentAdapter().BiuTo3dUnits(),
+                                                -pos.y * currentAdapter().BiuTo3dUnits(),
                                                 zpos ) );
 
             if( !fp->GetOrientation().IsZero() )
@@ -1960,26 +2314,26 @@ void RENDER_3D_RAYTRACE_BASE::load3DModels( CONTAINER_3D& aDstContainer,
             }
 
             const double modelunit_to_3d_units_factor =
-                    m_boardAdapter.BiuTo3dUnits() * UNITS3D_TO_UNITSPCB;
+                    currentAdapter().BiuTo3dUnits() * UNITS3D_TO_UNITSPCB;
 
             fpMatrix = glm::scale(
                     fpMatrix, SFVEC3F( modelunit_to_3d_units_factor, modelunit_to_3d_units_factor,
                                        modelunit_to_3d_units_factor ) );
 
             // Get the list of model files for this model
-            S3D_CACHE* cacheMgr = m_boardAdapter.Get3dCacheManager();
+            S3D_CACHE* cacheMgr = currentAdapter().Get3dCacheManager();
 
             wxString                libraryName = fp->GetFPID().GetLibNickname();
 
             wxString                footprintBasePath = wxEmptyString;
 
-            if( m_boardAdapter.GetBoard()->GetProject() )
+            if( currentAdapter().GetBoard()->GetProject() )
             {
                 try
                 {
                     // FindRow() can throw an exception
                     std::optional<LIBRARY_TABLE_ROW*> fpRow =
-                    PROJECT_PCB::FootprintLibAdapter( m_boardAdapter.GetBoard()->GetProject() )
+                    PROJECT_PCB::FootprintLibAdapter( currentAdapter().GetBoard()->GetProject() )
                             ->GetRow( libraryName );
 
                     if( fpRow )
@@ -1999,7 +2353,7 @@ void RENDER_3D_RAYTRACE_BASE::load3DModels( CONTAINER_3D& aDstContainer,
                 // get it from cache
                 std::vector<const EMBEDDED_FILES*> embeddedFilesStack;
                 embeddedFilesStack.push_back( fp->GetEmbeddedFiles() );
-                embeddedFilesStack.push_back( m_boardAdapter.GetBoard()->GetEmbeddedFiles() );
+                embeddedFilesStack.push_back( currentAdapter().GetBoard()->GetEmbeddedFiles() );
 
                 const S3DMODEL* modelPtr = cacheMgr->GetModel( model.m_Filename, footprintBasePath,
                                                                std::move( embeddedFilesStack ) );
@@ -2058,7 +2412,7 @@ MODEL_MATERIALS* RENDER_3D_RAYTRACE_BASE::getModelMaterial( const S3DMODEL* a3DM
 
         for( unsigned int imat = 0; imat < a3DModel->m_MaterialsSize; ++imat )
         {
-            if( m_boardAdapter.m_Cfg->m_Render.material_mode == MATERIAL_MODE::NORMAL )
+            if( currentAdapter().m_Cfg->m_Render.material_mode == MATERIAL_MODE::NORMAL )
             {
                 const SMATERIAL& material = a3DModel->m_Materials[imat];
 
@@ -2080,7 +2434,7 @@ MODEL_MATERIALS* RENDER_3D_RAYTRACE_BASE::getModelMaterial( const S3DMODEL* a3DM
                         ConvertSRGBToLinear( material.m_Specular ), material.m_Shininess * 180.0f,
                         material.m_Transparency, reflectionFactor );
 
-                if( m_boardAdapter.m_Cfg->m_Render.raytrace_procedural_textures )
+                if( currentAdapter().m_Cfg->m_Render.raytrace_procedural_textures )
                 {
                     // Guess material type and apply a normal perturbator
                     if( ( RGBtoGray( material.m_Diffuse ) < 0.3f )
@@ -2247,7 +2601,7 @@ void RENDER_3D_RAYTRACE_BASE::addModels( CONTAINER_3D& aDstContainer, const S3DM
                                 const SFVEC3F diffuseColor =
                                         a3DModel->m_Materials[mesh.m_MaterialIdx].m_Diffuse;
 
-                                if( m_boardAdapter.m_Cfg->m_Render.material_mode == MATERIAL_MODE::CAD_MODE )
+                                if( currentAdapter().m_Cfg->m_Render.material_mode == MATERIAL_MODE::CAD_MODE )
                                     newTriangle->SetColor( ConvertSRGBToLinear(
                                             MaterialDiffuseToColorCAD( diffuseColor ) ) );
                                 else
@@ -2255,7 +2609,7 @@ void RENDER_3D_RAYTRACE_BASE::addModels( CONTAINER_3D& aDstContainer, const S3DM
                             }
                             else
                             {
-                                if( m_boardAdapter.m_Cfg->m_Render.material_mode == MATERIAL_MODE::CAD_MODE )
+                                if( currentAdapter().m_Cfg->m_Render.material_mode == MATERIAL_MODE::CAD_MODE )
                                 {
                                     newTriangle->SetColor(
                                             ConvertSRGBToLinear( MaterialDiffuseToColorCAD(

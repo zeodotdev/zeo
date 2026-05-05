@@ -360,6 +360,13 @@ private:
     bool                   m_opengl_supports_raytracing = true;
     bool                   m_render_raytracing_was_requested = false;
 
+    /// Last published multi-instance raytrace descriptor signature.
+    /// Hash over (adapter ptr, 16 pose floats) per instance. Compared
+    /// each Redraw; reload is requested only when the signature changes
+    /// so the raytracer's multi-stage progressive trace isn't reset on
+    /// every frame.
+    uint64_t               m_lastRaytraceInstanceSig = 0;
+
     ACCELERATOR_3D*        m_accelerator3DShapes = nullptr;    // used for mouse over searching
 
     BOARD_ITEM*            m_currentRollOverItem = nullptr;

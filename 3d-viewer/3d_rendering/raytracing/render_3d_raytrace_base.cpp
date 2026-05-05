@@ -1415,7 +1415,7 @@ SFVEC4F RENDER_3D_RAYTRACE_BASE::shadeHit( const SFVEC4F& aBgColor, const RAY& a
 
     SFVEC3F hitPoint = aHitInfo.m_HitPoint;
 
-    hitPoint += aHitInfo.m_HitNormal * m_boardAdapter.GetNonCopperLayerThickness() * 0.6f;
+    hitPoint += aHitInfo.m_HitNormal * renderNonCopperLayerThickness() * 0.6f;
 
     const SFVEC4F diffuseColorObj =
             SFVEC4F( aHitInfo.pHitObject->GetDiffuseColor( aHitInfo ), 1.0f );
@@ -1586,7 +1586,7 @@ SFVEC4F RENDER_3D_RAYTRACE_BASE::shadeHit( const SFVEC4F& aBgColor, const RAY& a
                 // This increase the start point by a "fixed" factor so it will work the
                 // same for all distances
                 const SFVEC3F startPoint =
-                        aRay.at( aHitInfo.m_tHit + m_boardAdapter.GetNonCopperLayerThickness() *
+                        aRay.at( aHitInfo.m_tHit + renderNonCopperLayerThickness() *
                                  0.25f );
 
                 const unsigned int refractions_number_of_samples =

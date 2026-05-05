@@ -31,9 +31,14 @@
 #include "light.h"
 #include "../post_shader_ssao.h"
 #include "material.h"
+#include "shapes3D/instance_object_3d.h"
 #include <plugins/3dapi/c3dmodel.h>
 
 #include <map>
+#include <memory>
+#include <vector>
+
+#include <glm/mat4x4.hpp>
 
 /// Vector of materials.
 typedef std::vector< BLINN_PHONG_MATERIAL > MODEL_MATERIALS;
@@ -66,6 +71,44 @@ public:
 
     void Reload( REPORTER* aStatusReporter, REPORTER* aWarningReporter,
                  bool aOnlyLoadCopperAndShapes );
+
+    /**
+     * One sub-board to merge into the multi-instance scene.
+     */
+    struct INSTANCE_DESC
+    {
+        BOARD_ADAPTER* adapter;     ///< per-instance scene source (must outlive Reload)
+        glm::mat4      pose;        ///< local→world pose for this instance
+    };
+
+    /**
+     * Multi-instance scene build for the MBS multi-board path. For each
+     * descriptor: temporarily target a per-instance container, run the
+     * existing Reload geometry pipeline against that instance's adapter,
+     * build a per-instance BVH, wrap it in an INSTANCE_OBJECT_3D under
+     * the instance pose, and add the wrapper to the top-level container.
+     * Top-level BVH then dispatches to per-instance BVHs.
+     *
+     * The first instance also drives the camera framing and shared scene
+     * setup (background, lights). Pose for instance 0 is generally
+     * identity but doesn't have to be.
+     */
+    void ReloadMultiInstance( const std::vector<INSTANCE_DESC>& aInstances,
+                               REPORTER* aStatusReporter,
+                               REPORTER* aWarningReporter );
+
+    /**
+     * Stage a multi-instance descriptor list to be consumed on the NEXT
+     * Reload call. Used by the assembly canvas to publish the current MBS
+     * instance set without bypassing the existing reload-on-Redraw flow.
+     *
+     * Pass an empty vector to revert to single-board Reload behavior on
+     * the next reload.
+     */
+    void SetPendingInstances( std::vector<INSTANCE_DESC> aInstances )
+    {
+        m_pendingInstances = std::move( aInstances );
+    }
 
     BOARD_ITEM *IntersectBoardItem( const RAY& aRay );
 
@@ -176,6 +219,109 @@ protected:
 
     /// Store the list of created objects special for RT that will be clear in the end.
     CONTAINER_2D m_containerWithObjectsToDelete;
+
+    /**
+     * Per-instance scene-build override. When non-null these point at the
+     * instance under construction inside ReloadMultiInstance; otherwise
+     * the accessors below fall back to the top-level
+     * m_boardAdapter / m_objectContainer. Use the accessors throughout
+     * create_scene.cpp instead of touching the top-level members directly,
+     * so the scene-build code is reusable for both single- and multi-
+     * instance paths without copy-pasting.
+     */
+    BOARD_ADAPTER* m_overrideAdapter   = nullptr;
+    CONTAINER_3D*  m_overrideContainer = nullptr;
+
+    BOARD_ADAPTER& currentAdapter()
+    {
+        return m_overrideAdapter ? *m_overrideAdapter : m_boardAdapter;
+    }
+
+    const BOARD_ADAPTER& currentAdapter() const
+    {
+        return m_overrideAdapter ? *m_overrideAdapter : m_boardAdapter;
+    }
+
+    CONTAINER_3D& currentContainer()
+    {
+        return m_overrideContainer ? *m_overrideContainer : m_objectContainer;
+    }
+
+    /**
+     * Owned wrappers populated by ReloadMultiInstance. Each holds one
+     * sub-board's container + BVH + pose. The top-level m_objectContainer
+     * receives raw pointers to these wrappers and the main BVH dispatches
+     * through them.
+     */
+    std::vector<std::unique_ptr<INSTANCE_OBJECT_3D>> m_instanceWrappers;
+
+    /**
+     * Per-instance 2D outline containers captured during multi-instance
+     * Reload. Each per-instance 3D LAYER_ITEM holds a non-owning
+     * pointer to a 2D OBJECT_2D inside one of these containers, so the
+     * containers must outlive the wrappers. Cleared (and 2D objects
+     * deleted) only AFTER m_objectContainer.Clear() at the top of the
+     * NEXT ReloadMultiInstance call, so the live LAYER_ITEMs are
+     * destroyed first and no dangling refs survive.
+     */
+    std::vector<std::unique_ptr<CONTAINER_2D>>     m_perInstanceOutlines2d;
+    std::vector<std::unique_ptr<BVH_CONTAINER_2D>> m_perInstanceAntiOutlines2d;
+
+    /**
+     * Staged multi-instance list. Consumed by the next Reload (which
+     * dispatches to ReloadMultiInstance when this is non-empty). Cleared
+     * by Reload after use so a stale list can't drive an unintended
+     * multi-instance build.
+     */
+    std::vector<INSTANCE_DESC> m_pendingInstances;
+
+    /**
+     * Adapter used by the trace-time path (shadeHit, render setup) for
+     * per-board geometric queries that don't have a sensible top-level
+     * answer in MBS multi-board mode — most importantly
+     * GetNonCopperLayerThickness, which drives the bias offsets applied
+     * to refraction/shadow ray origins. The MBS container's m_boardAdapter
+     * has no real board and reports 0 thickness, which collapses the
+     * refraction bias and prevents the F.Mask refracted ray from
+     * reaching F.Cu underneath. Set to:
+     *   • &m_boardAdapter         for single-board Reload, OR
+     *   • aInstances[0].adapter   for ReloadMultiInstance.
+     * Falls back to &m_boardAdapter if unset.
+     */
+    BOARD_ADAPTER* m_renderAdapter = nullptr;
+
+    BOARD_ADAPTER& renderAdapter()
+    {
+        return m_renderAdapter ? *m_renderAdapter : m_boardAdapter;
+    }
+
+    const BOARD_ADAPTER& renderAdapter() const
+    {
+        return m_renderAdapter ? *m_renderAdapter : m_boardAdapter;
+    }
+
+    /**
+     * Non-copper layer thickness expressed in WORLD 3D-units, suitable
+     * for the bias offsets shadeHit applies to refraction-startpoint
+     * and shadow-ray-nudge math. In single-board mode the world frame
+     * is the (single) adapter's frame, so this equals
+     * m_boardAdapter.GetNonCopperLayerThickness(). In MBS multi-board
+     * mode each sub-board adapter has its own biuTo3dUnits — the
+     * wrapper's pose carries a sharedBiu/localBiu scale to map between
+     * frames — so the per-adapter thickness must be rescaled by the
+     * first wrapper's scale before it can be used as a world-frame
+     * bias. ReloadMultiInstance writes this; trace code should read
+     * `renderNonCopperLayerThickness()` instead of going to the
+     * adapter directly.
+     */
+    float m_renderNonCopperLayerThickness3DU = 0.0f;
+
+    float renderNonCopperLayerThickness() const
+    {
+        return m_renderNonCopperLayerThickness3DU > 0.0f
+                       ? m_renderNonCopperLayerThickness3DU
+                       : m_boardAdapter.GetNonCopperLayerThickness();
+    }
 
     CONTAINER_2D* m_outlineBoard2dObjects;
     BVH_CONTAINER_2D* m_antioutlineBoard2dObjects;

@@ -949,7 +949,18 @@ void EDA_3D_VIEWER_FRAME::ExportImage( EDA_3D_VIEWER_EXPORT_FORMAT aFormat, cons
             return;
     }
 
-    wxImage screenshotImage = captureScreenshot( aSize );
+    // Clipboard always captures at the live canvas size, so we can read
+    // straight from the live canvas's framebuffer — that path already
+    // handles MBS multi-board through DoRePaint's assemblyComposite
+    // branch. captureScreenshot() builds a temporary canvas whose
+    // OpenGL per-instance renderers (cached in m_assemblyManager) are
+    // tied to the LIVE canvas's GL context, so they can't be driven
+    // from the temp's context — the temp falls through to rendering
+    // only the active sub-board's BOARD_ADAPTER. Avoid that whole
+    // detour for the clipboard case by using the live canvas directly.
+    wxImage screenshotImage = ( aFormat == EDA_3D_VIEWER_EXPORT_FORMAT::CLIPBOARD )
+                                      ? captureCurrentViewScreenshot()
+                                      : captureScreenshot( aSize );
 
     if( screenshotImage.IsOk() )
     {
@@ -1078,6 +1089,32 @@ wxImage EDA_3D_VIEWER_FRAME::captureRaytracingScreenshot( BOARD_ADAPTER& aAdapte
     RENDER_3D_RAYTRACE_RAM raytrace( tempadapter, aCamera );
     raytrace.SetCurWindowSize( aSize );
 
+    // Multi-board (MBS) export: stage the assembly's per-instance
+    // descriptor list onto the temporary raytracer the same way the
+    // live canvas does. Reload picks it up on the first Redraw and
+    // dispatches to ReloadMultiInstance, building one merged scene
+    // (per-instance BVH + INSTANCE_OBJECT_3D wrappers) instead of
+    // rendering only the active sub-board's BOARD via tempadapter.
+    if( IsAssemblyMode() && m_assemblyManager )
+    {
+        std::vector<ASSEMBLY_3D_MANAGER::RAYTRACE_INSTANCE> raw;
+        m_assemblyManager->BuildRaytraceInstances( raw );
+
+        std::vector<RENDER_3D_RAYTRACE_BASE::INSTANCE_DESC> insts;
+        insts.reserve( raw.size() );
+
+        for( auto& r : raw )
+        {
+            RENDER_3D_RAYTRACE_BASE::INSTANCE_DESC d;
+            d.adapter = r.adapter;
+            d.pose    = r.pose;
+            insts.push_back( d );
+        }
+
+        raytrace.SetPendingInstances( std::move( insts ) );
+        raytrace.ReloadRequest();
+    }
+
     while( raytrace.Redraw( false, nullptr, nullptr ) );
 
     uint8_t* rgbaBuffer = raytrace.GetBuffer();
@@ -1145,6 +1182,16 @@ wxImage EDA_3D_VIEWER_FRAME::captureOpenGLScreenshot( BOARD_ADAPTER& aAdapter, T
 
     canvas->SetSize( aSize );
     configureCanvas( canvas, cfg );
+
+    // Multi-board (MBS) export: hand the assembly manager to the
+    // temp canvas so its DoRePaint takes the assemblyComposite branch
+    // and renders every visible sub-board through the manager's
+    // per-instance pipeline. Without this the temp canvas falls back
+    // to the single-adapter path and only the "active" sub-board
+    // ends up in the screenshot.
+    if( IsAssemblyMode() && m_assemblyManager )
+        canvas->SetAssemblyManager( m_assemblyManager.get() );
+
     wxWindowUpdateLocker noUpdates( this );
 
     // Temporarily disable highlight during screenshot

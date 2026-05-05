@@ -147,12 +147,27 @@ static std::unique_ptr<SCHEMATIC> readSchematicFromFile( const std::string& aFil
 }
 
 
-// TODO: This should move out of this file
+// MOON-1300: route this through EESCHEMA_HELPERS::LoadSchematic instead
+// of the legacy `readSchematicFromFile` (which loads with a dummy
+// LoadProject("") and so loses env-var resolution, project text vars,
+// netclass overrides, and per-project library table membership). The
+// helper handles the project lookup correctly — when the schematic's
+// `.kicad_pro` is already loaded by SETTINGS_MANAGER (the typical
+// PCB-running-in-the-same-process case) it reuses that PROJECT, so the
+// netlist sees the same connectivity / variable resolution the live SCH
+// frame would.
 bool generateSchematicNetlist( const wxString& aFilename, std::string& aNetlist )
 {
-    std::unique_ptr<SCHEMATIC> schematic = readSchematicFromFile( aFilename.ToStdString() );
-    NETLIST_EXPORTER_KICAD exporter( schematic.get() );
-    STRING_FORMATTER formatter;
+    SCHEMATIC* schematic = EESCHEMA_HELPERS::LoadSchematic(
+            aFilename,
+            /* aSetActive */         false,
+            /* aForceDefaultProject */ false );
+
+    if( !schematic )
+        return false;
+
+    NETLIST_EXPORTER_KICAD exporter( schematic );
+    STRING_FORMATTER       formatter;
 
     exporter.Format( &formatter, GNL_ALL | GNL_OPT_KICAD );
     aNetlist = formatter.GetString();

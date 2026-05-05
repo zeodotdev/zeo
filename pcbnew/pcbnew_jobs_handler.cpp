@@ -2332,10 +2332,11 @@ int PCBNEW_JOBS_HANDLER::JobExportDrc( JOB* aJob )
         wxString annotateMsg = _( "Schematic parity tests require a fully annotated schematic." );
         netlist_str = annotateMsg;
 
-        // The KIFACE_NETLIST_SCHEMATIC function has some broken-ness that the schematic
-        // frame's version does not, but it is the only one that works in CLI, so we use it
-        // if we don't have the sch frame open.
-        // TODO: clean this up, see https://gitlab.com/kicad/code/kicad/-/issues/19929
+        // KIFACE_NETLIST_SCHEMATIC now routes through EESCHEMA_HELPERS::LoadSchematic
+        // (MOON-1300), which honours the schematic's actual project — env-var
+        // resolution, project text vars, and netclass overrides resolve the same as
+        // they would in the live SCH frame. We still prefer the mail path when the
+        // SCH editor is already open because its connectivity graph is cached.
         if( m_kiway->Player( FRAME_SCH, false ) )
         {
             m_kiway->ExpressMail( FRAME_SCH, MAIL_SCH_GET_NETLIST, netlist_str );

@@ -23,7 +23,6 @@
 #include <advanced_config.h>
 #include <connectivity/connectivity_data.h>
 #include <kiface_base.h>
-#include <kiface_ids.h>           // KIFACE_NETLIST_SCHEMATIC for headless netlist fetch
 #include <kiway.h>
 #include <board_design_settings.h>
 #include <settings/color_settings.h>
@@ -2530,137 +2529,36 @@ int PCB_EDIT_FRAME::TestStandalone()
 bool PCB_EDIT_FRAME::FetchNetlistFromSchematic( NETLIST& aNetlist,
                                                 const wxString& aAnnotateMessage )
 {
-    // Standalone mode (no project) can't fetch a netlist — there's no
-    // schematic to fetch from. Same gate the legacy TestStandalone()
-    // applied; we keep it here so the user gets the existing dialog.
-    if( Kiface().IsSingle() )
+    int standalone = TestStandalone();
+
+    if( standalone == 0 )
     {
         DisplayErrorMessage( this, _( "Cannot update the PCB because PCB editor is opened in "
                                       "stand-alone mode. In order to create or update PCBs from "
                                       "schematics, you must launch the Zeo project manager and "
                                       "create a project." ) );
+        return false;       // Not in standalone mode
+    }
+
+    if( standalone < 0 )      // Problem with Eeschema or the schematic
         return false;
-    }
 
-    Raise();
+    Raise();                // Show
 
-    // MOON-1300: skip the SCH-frame spawn that TestStandalone() used to
-    // do when no editor was open. Two paths now:
-    //   1. A SCH peer pinned to OUR project is already open → use the
-    //      cached MAIL_SCH_GET_NETLIST mail (the editor's connectivity
-    //      graph is up-to-date and free).
-    //   2. No matching peer → call KIFACE_NETLIST_SCHEMATIC for a
-    //      headless load + netlist export. Mirrors the dispatch already
-    //      used by pcbnew_jobs_handler.cpp DRC parity (line 2330+) and
-    //      eliminates the "spawn an SCH window every time the user
-    //      clicks Update PCB" UX wart.
-    PROJECT* ourProject = &Prj();
-    wxString ourProPath = ourProject->GetProjectFullName();
+    std::string payload( aAnnotateMessage );
 
-    auto matchesOurProject = [&]( KIWAY_PLAYER* aPeer ) -> bool
+    Kiway().ExpressMail( FRAME_SCH, MAIL_SCH_GET_NETLIST, payload, this );
+
+    if( payload == aAnnotateMessage )
     {
-        if( !aPeer )
-            return false;
-
-        EDA_BASE_FRAME* peerFrame = dynamic_cast<EDA_BASE_FRAME*>( aPeer );
-
-        if( !peerFrame )
-            return false;
-
-        // Compare via project file path so a peer pinned via SetPrjOverride
-        // to a sibling project is correctly excluded (multi-board safety).
-        return peerFrame->Prj().GetProjectFullName() == ourProPath;
-    };
-
-    KIWAY_PLAYER* schPeer = nullptr;
-
-    for( KIWAY_PLAYER* peer : Kiway().GetAllPlayerFrames( FRAME_SCH ) )
-    {
-        if( matchesOurProject( peer ) )
-        {
-            schPeer = peer;
-            break;
-        }
-    }
-
-    if( !schPeer )
-    {
-        // Fall back to the primary FRAME_SCH player slot, but only if
-        // it ALSO matches our project. (Sibling sub-projects can hold
-        // it via SetPrjOverride.)
-        KIWAY_PLAYER* primary = Kiway().Player( FRAME_SCH, /* doCreate */ false );
-
-        if( matchesOurProject( primary ) )
-            schPeer = primary;
-    }
-
-    std::string netlistStr;
-
-    if( schPeer )
-    {
-        // Path 1: SCH editor already open for our project. Mail-fetch
-        // gives us the connectivity-graph-based netlist for free.
-        netlistStr = aAnnotateMessage;
-        Kiway().ExpressMail( FRAME_SCH, MAIL_SCH_GET_NETLIST, netlistStr, this );
-
-        if( netlistStr == aAnnotateMessage )
-        {
-            // Mail handler returned without populating the payload. The
-            // standard reason is the schematic isn't fully annotated;
-            // the SCH editor's MAIL_SCH_GET_NETLIST handler bails with
-            // the original payload string in that case.
-            Raise();
-            DisplayErrorMessage( this, aAnnotateMessage );
-            return false;
-        }
-    }
-    else
-    {
-        // Path 2: No SCH peer for this project. Headless netlist via
-        // the eeschema kiface's KIFACE_NETLIST_SCHEMATIC entry point.
-        wxFileName schFn( Prj().GetProjectPath(), Prj().GetProjectName(),
-                          FILEEXT::KiCadSchematicFileExtension );
-
-        if( !schFn.FileExists() )
-        {
-            schFn.SetExt( FILEEXT::LegacySchematicFileExtension );
-
-            if( !schFn.FileExists() )
-            {
-                DisplayErrorMessage( this,
-                        _( "The schematic for this board cannot be found." ) );
-                return false;
-            }
-        }
-
-        KIFACE* eeschema = Kiway().KiFACE( KIWAY::FACE_SCH );
-
-        if( !eeschema )
-        {
-            DisplayErrorMessage( this,
-                    _( "Cannot reach the schematic editor module to generate a "
-                       "netlist." ) );
-            return false;
-        }
-
-        typedef bool ( *NETLIST_FN_PTR )( const wxString&, std::string& );
-
-        NETLIST_FN_PTR netlister =
-                (NETLIST_FN_PTR) eeschema->IfaceOrAddress( KIFACE_NETLIST_SCHEMATIC );
-
-        if( !netlister || !netlister( schFn.GetFullPath(), netlistStr ) )
-        {
-            DisplayErrorMessage( this,
-                    _( "Failed to read the schematic for netlist generation. "
-                       "Open the schematic in the editor and check for parse "
-                       "errors, then retry." ) );
-            return false;
-        }
+        Raise();
+        DisplayErrorMessage( this, aAnnotateMessage );
+        return false;
     }
 
     try
     {
-        auto lineReader = new STRING_LINE_READER( netlistStr, _( "Eeschema netlist" ) );
+        auto lineReader = new STRING_LINE_READER( payload, _( "Eeschema netlist" ) );
         KICAD_NETLIST_READER netlistReader( lineReader, &aNetlist );
         netlistReader.LoadNetlist();
     }

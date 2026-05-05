@@ -665,6 +665,15 @@ void ASSEMBLY_3D_MANAGER::MateConnectors()
                       inst.rotation.x, inst.rotation.y, inst.rotation.z );
     }
 
+    // SolveMatePoses mutates BOARD_3D_INSTANCE::position / rotation
+    // directly via pointers; without persisting here the snapped poses
+    // would only live in memory and revert to the FLAT default the
+    // next time the 3D viewer reopens (LoadProjectBoards →
+    // ArrangeBoards). Persist every visible instance so the
+    // .kicad_pro picks up the new poses through the SetAssemblyInstances
+    // notify chain and saves them on the next project save.
+    PersistAllInstances();
+
     m_state.mateConnectors = true;
 }
 
@@ -1578,7 +1587,14 @@ KIID ASSEMBLY_3D_MANAGER::AddCustomMate( const CUSTOM_MATE& aMate )
     if( stored.uuid == KIID( 0 ) )
         stored.uuid = KIID();
 
-    pf.GetCustomMates().push_back( stored );
+    // Read-modify-write through the setter: writing through the
+    // GetCustomMates() non-const reference directly bypasses the
+    // T3 NotifyMultiBoardChanged call that marks the project dirty,
+    // so the change wouldn't survive an app close. SetCustomMates
+    // does the notify and dirty bookkeeping in one go.
+    std::vector<CUSTOM_MATE> mates = pf.GetCustomMates();
+    mates.push_back( stored );
+    pf.SetCustomMates( std::move( mates ) );
 
     return stored.uuid;
 }
@@ -1589,7 +1605,9 @@ bool ASSEMBLY_3D_MANAGER::UpdateCustomMate( const CUSTOM_MATE& aMate )
     if( !m_project )
         return false;
 
-    auto& mates = m_project->GetProjectFile().GetCustomMates();
+    PROJECT_FILE& pf = m_project->GetProjectFile();
+
+    std::vector<CUSTOM_MATE> mates = pf.GetCustomMates();
     auto  it    = std::find_if( mates.begin(), mates.end(),
                                 [&]( const CUSTOM_MATE& m ) { return m.uuid == aMate.uuid; } );
 
@@ -1597,6 +1615,7 @@ bool ASSEMBLY_3D_MANAGER::UpdateCustomMate( const CUSTOM_MATE& aMate )
         return false;
 
     *it = aMate;
+    pf.SetCustomMates( std::move( mates ) );
     return true;
 }
 
@@ -1606,7 +1625,9 @@ bool ASSEMBLY_3D_MANAGER::RemoveCustomMate( const KIID& aMateUuid )
     if( !m_project )
         return false;
 
-    auto& mates = m_project->GetProjectFile().GetCustomMates();
+    PROJECT_FILE& pf = m_project->GetProjectFile();
+
+    std::vector<CUSTOM_MATE> mates = pf.GetCustomMates();
     auto  it    = std::find_if( mates.begin(), mates.end(),
                                 [&]( const CUSTOM_MATE& m ) { return m.uuid == aMateUuid; } );
 
@@ -1614,6 +1635,7 @@ bool ASSEMBLY_3D_MANAGER::RemoveCustomMate( const KIID& aMateUuid )
         return false;
 
     mates.erase( it );
+    pf.SetCustomMates( std::move( mates ) );
     return true;
 }
 
@@ -3836,10 +3858,16 @@ void ASSEMBLY_3D_MANAGER::persistInstanceState( const BOARD_3D_INSTANCE& aInst )
     if( aInst.subProjectUuid == niluuid )
         return;
 
-    auto& states = pf.GetAssemblyInstances();
-    auto  it     = std::find_if( states.begin(), states.end(),
-                                 [&]( const ASSEMBLY_INSTANCE_STATE& s )
-                                 { return s.subProjectUuid == aInst.subProjectUuid; } );
+    // Read-modify-write through the setter so the T3 multi-board
+    // observer chain marks the project dirty and the state actually
+    // gets flushed to .kicad_pro on save / app close. Writing through
+    // GetAssemblyInstances()'s non-const reference directly was the
+    // root of MOON-1280: in-memory state updated, project never
+    // dirtied, positions reset to last-saved values on next open.
+    std::vector<ASSEMBLY_INSTANCE_STATE> states = pf.GetAssemblyInstances();
+    auto it = std::find_if( states.begin(), states.end(),
+                             [&]( const ASSEMBLY_INSTANCE_STATE& s )
+                             { return s.subProjectUuid == aInst.subProjectUuid; } );
 
     if( it == states.end() )
     {
@@ -3854,6 +3882,8 @@ void ASSEMBLY_3D_MANAGER::persistInstanceState( const BOARD_3D_INSTANCE& aInst )
     it->visible     = aInst.visible;
     it->transparent = aInst.transparent;
     it->opacity     = aInst.opacity;
+
+    pf.SetAssemblyInstances( std::move( states ) );
 }
 
 

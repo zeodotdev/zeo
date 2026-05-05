@@ -611,11 +611,31 @@ void RENDER_3D_RAYTRACE_BASE::Reload( REPORTER* aStatusReporter, REPORTER* aWarn
                         object2d_B = CSGITEM_EMPTY;
                     }
 
+                    const float zTop = currentAdapter().GetLayerBottomZPos( F_Cu );
+                    const float zBot = currentAdapter().GetLayerBottomZPos( B_Cu );
+
+                    // Diagnostic: emit per-build body Z values + color so
+                    // we can tell whether the substrate slab actually got
+                    // built and where it sits in adapter-frame Z. In MBS
+                    // mode each instance reports its own values; if any
+                    // pair shows zTop ≈ zBot the body has degenerate Z
+                    // extent (the symptom would be "no body visible").
+                    wxLogMessage( wxT( "[RT-BODY] inst='%s' zTop=%.6f zBot=%.6f thk=%.6f "
+                                       "color=(%.3f,%.3f,%.3f,%.3f) BiuTo3d=%.3e" ),
+                                  currentAdapter().GetBoard()
+                                          ? wxString::Format( wxT( "%p" ),
+                                                               currentAdapter().GetBoard() )
+                                          : wxString( wxT( "<none>" ) ),
+                                  zTop, zBot, zTop - zBot,
+                                  currentAdapter().m_BoardBodyColor.r,
+                                  currentAdapter().m_BoardBodyColor.g,
+                                  currentAdapter().m_BoardBodyColor.b,
+                                  currentAdapter().m_BoardBodyColor.a,
+                                  currentAdapter().BiuTo3dUnits() );
+
                     if( object2d_B == CSGITEM_EMPTY )
                     {
-                        LAYER_ITEM* objPtr = new LAYER_ITEM( object2d_A,
-                                                        currentAdapter().GetLayerBottomZPos( F_Cu ),
-                                                        currentAdapter().GetLayerBottomZPos( B_Cu ) );
+                        LAYER_ITEM* objPtr = new LAYER_ITEM( object2d_A, zTop, zBot );
 
                         objPtr->SetMaterial( &m_materials.m_EpoxyBoard );
                         objPtr->SetColor( ConvertSRGBToLinear( currentAdapter().m_BoardBodyColor ) );
@@ -630,9 +650,7 @@ void RENDER_3D_RAYTRACE_BASE::Reload( REPORTER* aStatusReporter, REPORTER* aWarn
 
                         m_containerWithObjectsToDelete.Add( itemCSG2d );
 
-                        LAYER_ITEM* objPtr = new LAYER_ITEM( itemCSG2d,
-                                                        currentAdapter().GetLayerBottomZPos( F_Cu ),
-                                                        currentAdapter().GetLayerBottomZPos( B_Cu ) );
+                        LAYER_ITEM* objPtr = new LAYER_ITEM( itemCSG2d, zTop, zBot );
 
                         objPtr->SetMaterial( &m_materials.m_EpoxyBoard );
                         objPtr->SetColor( ConvertSRGBToLinear( currentAdapter().m_BoardBodyColor ) );
@@ -1168,6 +1186,17 @@ void RENDER_3D_RAYTRACE_BASE::ReloadMultiInstance(
     {
         m_overrideAdapter = aInstances[0].adapter;
         m_renderAdapter   = aInstances[0].adapter;
+
+        // InitSettings BEFORE setupMaterials so the first sub-board's
+        // stackup colors are populated. setupMaterials reads
+        // m_BoardBodyColor.a to compute EpoxyBoard's transparency
+        // (1.0 - alpha); on a freshly-constructed adapter the
+        // constructor default is alpha=0.9 → transparency=0.1, so the
+        // body material renders translucent (you can see "into" the
+        // board edge — the symptom in Image #19). After InitSettings
+        // the adapter's m_BoardBodyColor reflects the real stackup
+        // value (typically alpha=1.0 → fully opaque).
+        aInstances[0].adapter->InitSettings( aStatusReporter, aWarningReporter );
 
         // Convert the first adapter's per-adapter thickness (in its
         // local 3D-units) into world 3D-units. The wrapper's pose is

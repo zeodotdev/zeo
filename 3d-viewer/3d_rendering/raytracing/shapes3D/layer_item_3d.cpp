@@ -221,7 +221,21 @@ bool LAYER_ITEM::Intersect( const RAY& aRay, HITINFO& aHitInfo ) const
             // and calculate the real hitT of the ray.
             SFVEC3F hitPoint = boxHitPointStart + ( boxHitPointEnd - boxHitPointStart ) * tOut;
 
-            const float t = glm::length( hitPoint - aRay.m_Origin );
+            // Parametric t along the ray (origin + t*dir = hitPoint),
+            // not Euclidean distance. tBBoxStart/End are already
+            // parametric on this ray, and the 2D segment maps linearly
+            // into them. Using glm::length(hitPoint - origin) here
+            // would give Euclidean distance, which only equals
+            // parametric t when |aRay.m_Dir| == 1 — the assembly
+            // multi-instance wrapper passes unnormalized rays whose
+            // direction has length 1/scale, so Euclidean ≠ parametric
+            // and the outer BVH's tHit comparisons against
+            // parametric-t hits from other primitives become apples-
+            // to-oranges. The visible symptom is that body side walls
+            // disappear behind nearer-but-larger-Euclidean F.Cu/mask
+            // hits, leaving only the back walls visible from the
+            // camera's side ("see-through to the far wall").
+            const float t = tBBoxStart + tOut * ( tBBoxEnd - tBBoxStart );
 
             if( t < aHitInfo.m_tHit )
             {
@@ -485,12 +499,10 @@ bool LAYER_ITEM::IntersectP( const RAY& aRay, float aMaxDistance ) const
     {
         //if( (tOut > FLT_EPSILON) && (tOut < 1.0f) )
         {
-            // The hitT is a hit value for the segment length 'start' - 'end',
-            // so it ranges from 0.0 - 1.0. We now convert it to a 3D hit position
-            // and calculate the real hitT of the ray.
-            const SFVEC3F hitPoint = boxHitPointStart +
-                                     ( boxHitPointEnd - boxHitPointStart ) * tOut;
-            const float t = glm::length( hitPoint - aRay.m_Origin );
+            // Parametric t along the ray (see Intersect for the long
+            // explanation). aMaxDistance is in the same parametric
+            // units the caller's ray uses, so consistency matters.
+            const float t = tBBoxStart + tOut * ( tBBoxEnd - tBBoxStart );
 
             if( ( t < aMaxDistance ) && ( t > FLT_EPSILON ) )
                 return true;

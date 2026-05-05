@@ -654,6 +654,21 @@ int KICAD_MANAGER_CONTROL::EditMultiBoardSchematic( const TOOL_EVENT& aEvent )
 
     wxFileName mbs = ::EnsureMbsFile( *multi, containerBasename );
 
+    // EnsureMbsFile derives its directory from `aContainer.GetFullFilename()`,
+    // but a SETTINGS_MANAGER-loaded PROJECT_FILE has only a basename for
+    // `m_filename` (see `settings_manager.cpp::loadProjectFile`), so the
+    // returned wxFileName comes back path-less. Without this override the
+    // basename then propagates: file_list passes `<basename>.kicad_mbs` to
+    // SCH_EDIT_FRAME::OpenProjectFiles → LoadProject → setProjectFullName,
+    // re-keying SETTINGS_MANAGER's m_project_files map by basename. Every
+    // subsequent SaveProject(absolute) lookup misses, so netclass edits
+    // committed via Schematic Setup never reach the container's .kicad_pro.
+    // The directory we resolved through SETTINGS_MANAGER above is the
+    // authoritative source — apply it here to keep the absolute path
+    // invariant intact across the SCH editor's project-load handshake.
+    if( mbs.IsOk() && !mbs.IsAbsolute() && !containerDir.IsEmpty() )
+        mbs.SetPath( containerDir );
+
     if( !mbs.IsOk() || !mbs.FileExists() )
     {
         DisplayErrorMessage( m_frame,

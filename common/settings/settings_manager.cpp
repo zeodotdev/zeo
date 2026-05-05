@@ -1210,15 +1210,38 @@ bool SETTINGS_MANAGER::SaveProject( const wxString& aFullPath, PROJECT* aProject
         return false;
     }
 
-    PROJECT_FILE* project     = m_project_files.at( path );
-    wxString      projectPath = aProject->GetProjectPath();
+    PROJECT_FILE* project = m_project_files.at( path );
+
+    // Defensive: the caller's `aProject` and the path it asked us to save
+    // can disagree — e.g. SCH_EDIT_FRAME::saveProjectSettings passing the
+    // peer sub-board's path while `aProject` came from `&Prj()` (which on
+    // a peer-frame saveProjectSettings flow may resolve to the SM-active
+    // container, not the sub-board). Using `aProject->GetProjectPath()`
+    // for the write directory in that case writes the sub-board's
+    // .kicad_pro to the container's root → stray file at the project
+    // root. Look up the project that actually owns `path` and use its
+    // directory instead. Fall back to `aProject` only when we don't have
+    // a project for the path (genuinely transient saves shouldn't hit
+    // this branch — they construct their own PROJECT_FILE).
+    PROJECT* pathOwner = m_projects.count( path ) ? m_projects.at( path ) : aProject;
+
+    if( pathOwner != aProject )
+    {
+        wxLogWarning( wxT( "[SM-SAVE] caller passed aProject ('%s') that does NOT "
+                           "own path ('%s'). Using path-owner's directory to "
+                           "prevent a wrong-location write. Caller should pass "
+                           "&FrameOwningPrj() to SaveProject." ),
+                      aProject->GetProjectFullName(), path );
+    }
+
+    wxString projectPath = pathOwner->GetProjectPath();
 
     wxLogMessage( wxT( "[SM-SAVE] writing path='%s' projectPath='%s' "
                        "fileGetFilename='%s'" ),
                   path, projectPath, project->GetFilename() );
 
     project->SaveToFile( projectPath );
-    aProject->GetLocalSettings().SaveToFile( projectPath );
+    pathOwner->GetLocalSettings().SaveToFile( projectPath );
 
     return true;
 }

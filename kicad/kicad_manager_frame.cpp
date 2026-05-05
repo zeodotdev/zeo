@@ -1596,7 +1596,29 @@ void KICAD_MANAGER_FRAME::CommonSettingsChanged( int aFlags )
         m_lastToolbarIconSize = settings->m_Appearance.toolbar_icon_size;
     }
 
-    m_projectTreePane->ReCreateTreePrj();
+    // Skip the project-tree rebuild when the only change is text-variable
+    // substitution. Schematic Setup → OK fires
+    // `Kiway().CommonSettingsChanged(TEXTVARS_CHANGED)` (eeschema_config.cpp),
+    // which lands here on every Kiway peer including the manager. The
+    // unconditional ReCreateTreePrj that used to live here collapsed every
+    // expanded folder in the project tree on each OK — visible to users
+    // as "the tree resets when I save". ENVVARS_CHANGED can affect path
+    // resolution so we still rebuild then; aFlags == 0 (unknown change)
+    // also rebuilds to stay safe.
+    if( aFlags != TEXTVARS_CHANGED )
+    {
+        m_projectTreePane->ReCreateTreePrj();
+    }
+    else
+    {
+        // The base RecreateToolbars + ReCreateMenuBar above leaves the
+        // AUI panes in a half-laid-out state on macOS — without the
+        // tree rebuild's downstream Refresh() to nudge the manager,
+        // the left toolbar's bottom-pinned icons float up and the
+        // status bar disappears until the next size event. An explicit
+        // Update() restores the docked layout cheaply.
+        m_auimgr.Update();
+    }
 }
 
 

@@ -43,6 +43,20 @@ namespace kiapi { namespace schematic { namespace commands {
     class GetMbsRulesResponse;
     class SetMbsRules;
     class SetMbsRulesResponse;
+    class GetMultiBoardNetClassReport;
+    class GetMultiBoardNetClassReportResponse;
+    class GetMultiBoardLibraryReport;
+    class GetMultiBoardLibraryReportResponse;
+    class SetMultiBoardNetClass;
+    class SetMultiBoardNetClassResponse;
+    class DeleteMultiBoardNetClass;
+    class DeleteMultiBoardNetClassResponse;
+    class AddMultiBoardLibrary;
+    class AddMultiBoardLibraryResponse;
+    class DeleteMultiBoardLibrary;
+    class DeleteMultiBoardLibraryResponse;
+    class ShareMultiBoardLibrary;
+    class ShareMultiBoardLibraryResponse;
 } } }
 
 
@@ -117,6 +131,34 @@ private:
     HANDLER_RESULT<schematic::commands::SetMbsRulesResponse>
     handleSetMbsRules(
             const HANDLER_CONTEXT<schematic::commands::SetMbsRules>& aCtx );
+
+    HANDLER_RESULT<schematic::commands::GetMultiBoardNetClassReportResponse>
+    handleGetMultiBoardNetClassReport(
+            const HANDLER_CONTEXT<schematic::commands::GetMultiBoardNetClassReport>& aCtx );
+
+    HANDLER_RESULT<schematic::commands::GetMultiBoardLibraryReportResponse>
+    handleGetMultiBoardLibraryReport(
+            const HANDLER_CONTEXT<schematic::commands::GetMultiBoardLibraryReport>& aCtx );
+
+    HANDLER_RESULT<schematic::commands::SetMultiBoardNetClassResponse>
+    handleSetMultiBoardNetClass(
+            const HANDLER_CONTEXT<schematic::commands::SetMultiBoardNetClass>& aCtx );
+
+    HANDLER_RESULT<schematic::commands::DeleteMultiBoardNetClassResponse>
+    handleDeleteMultiBoardNetClass(
+            const HANDLER_CONTEXT<schematic::commands::DeleteMultiBoardNetClass>& aCtx );
+
+    HANDLER_RESULT<schematic::commands::AddMultiBoardLibraryResponse>
+    handleAddMultiBoardLibrary(
+            const HANDLER_CONTEXT<schematic::commands::AddMultiBoardLibrary>& aCtx );
+
+    HANDLER_RESULT<schematic::commands::DeleteMultiBoardLibraryResponse>
+    handleDeleteMultiBoardLibrary(
+            const HANDLER_CONTEXT<schematic::commands::DeleteMultiBoardLibrary>& aCtx );
+
+    HANDLER_RESULT<schematic::commands::ShareMultiBoardLibraryResponse>
+    handleShareMultiBoardLibrary(
+            const HANDLER_CONTEXT<schematic::commands::ShareMultiBoardLibrary>& aCtx );
 };
 
 #endif // KICAD_API_HANDLER_MBS_SCH_H

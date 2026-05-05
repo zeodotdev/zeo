@@ -387,14 +387,14 @@
   },
   {
     "name": "mbs_setup",
-    "description": "Manage a multi-board container project. Two scopes: (1) RULE SETS on the container .kicad_pro — action='get'|'set' for min_power_pins, max_length_nm, cross_board_diff_pairs, current_rules, voltage_rules (requires MBSCH editor open; routes via IPC so the live PROJECT_FILE invalidates correctly). (2) CONTAINER ACTIONS that edit .kicad_pro JSON files directly (no editor required) — action='create_container' makes a new container .kicad_pro + empty .kicad_mbs alongside; action='add_sub_project' registers an existing sub-project's .kicad_pro with a container and writes the back-reference into the sub-project; action='remove_sub_project' unregisters a sub-project and clears its back-reference. Container actions edit files on disk: if any file is loaded in an editor, call open_editor action='close' first to avoid the editor's autosave clobbering the JSON edits.",
+    "description": "Manage a multi-board container project. Three scopes covered by one tool: (1) action='get' returns the full container state — RULES (cross-board DRC rule sets), NET_CLASSES (container's classes plus per-sub-project classes with shared/local/conflict status), and LIBRARIES (global + container + per-sub-project sym/fp library tables with shared/local/conflict status). Requires MBSCH editor open (active project must be a multi-board container). (2) action='set' applies partial mutations — provide any subset of {rules: {...}, net_classes: {create, update, delete}, libraries: {add, delete, share}}. Net-class mutations on the container auto-propagate to loaded sub-projects via MultiBoardPropagateNetSettings (silent USE_CONTAINER on conflict). Library mutations route through the MOON-1294 cascade helpers (AddSharedLibrary / RemoveSharedLibrary): add and delete are container-scope and physically replicate to/from every sub-project's lib-table on disk; share takes a sub-project's local row and promotes it to container scope. Project-local row ops (add a single row to one sub-project, unshare a single peer's row without touching the container) stay in the desktop sub-project library panel for now. (3) Container-structure actions that edit .kicad_pro JSON files directly (no editor required): action='create_container' makes a new container .kicad_pro + empty .kicad_mbs alongside; action='add_sub_project' registers an existing sub-project's .kicad_pro with a container and writes the back-reference into the sub-project; action='remove_sub_project' unregisters a sub-project and clears its back-reference. Container-structure actions edit files on disk: if any file is loaded in an editor, call open_editor action='close' first to avoid the editor's autosave clobbering the JSON edits.",
     "input_schema": {
       "type": "object",
       "properties": {
         "action": {
           "type": "string",
           "enum": ["get", "set", "create_container", "add_sub_project", "remove_sub_project"],
-          "description": "'get'/'set' for rule sets (need MBSCH open). 'create_container'/'add_sub_project'/'remove_sub_project' edit .kicad_pro files on disk (no editor required)."
+          "description": "'get' returns full container state (rules + net_classes + libraries). 'set' applies partial mutations — pass any subset of body sections (rules, net_classes). Both need MBSCH open. 'create_container'/'add_sub_project'/'remove_sub_project' edit .kicad_pro files on disk (no editor required)."
         },
         "container_pro_path": {
           "type": "string",
@@ -495,6 +495,156 @@
                   "contact_r_per_pin_milliohm": { "type": "number" }
                 },
                 "required": ["net_name"]
+              }
+            }
+          }
+        },
+        "net_classes": {
+          "type": "object",
+          "description": "Netclass mutations on the multi-board container (action='set' only). Mirrors the sch_setup net_classes shape: 'create' adds new classes, 'update' modifies existing, 'delete' removes by name. Each create/update spec carries the full netclass field bag; omitted fields are cleared on the resulting class. The handler runs MultiBoardPropagateNetSettings after each create/update so loaded sub-projects pick up the change immediately (silent USE_CONTAINER on conflict — headless agent path skips the desktop modal). Deletes do NOT propagate: sub-projects keep their own copy (matches desktop behaviour). Priority is intentionally NOT settable here (per-board grid metadata).",
+          "properties": {
+            "create": {
+              "type": "array",
+              "description": "Netclasses to create on the container. Each spec must include 'name'.",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "description": "Unique netclass name. Cannot be 'Default' (use 'update' instead)."
+                  },
+                  "tuning_profile": { "type": "string" },
+                  "pcb_color": {
+                    "type": "string",
+                    "description": "CSS color string (e.g. 'rgb(255, 0, 0)' or '#ff0000'). Empty for unset."
+                  },
+                  "schematic_color": {
+                    "type": "string",
+                    "description": "CSS color string. Empty for unset."
+                  },
+                  "clearance_mm":         { "type": "number", "description": "PCB-side clearance, in millimetres." },
+                  "track_width_mm":       { "type": "number", "description": "PCB-side track width, in millimetres." },
+                  "via_diameter_mm":      { "type": "number" },
+                  "via_drill_mm":         { "type": "number" },
+                  "uvia_diameter_mm":     { "type": "number" },
+                  "uvia_drill_mm":        { "type": "number" },
+                  "diff_pair_width_mm":   { "type": "number" },
+                  "diff_pair_gap_mm":     { "type": "number" },
+                  "diff_pair_via_gap_mm": { "type": "number" },
+                  "wire_width_mils":      { "type": "number", "description": "Schematic-side wire width, in mils." },
+                  "bus_width_mils":       { "type": "number", "description": "Schematic-side bus width, in mils." },
+                  "line_style": {
+                    "type": "integer",
+                    "description": "0=solid, 1=dash, 2=dot, 3=dash-dot, 4=dash-dot-dot."
+                  }
+                },
+                "required": ["name"]
+              }
+            },
+            "update": {
+              "type": "array",
+              "description": "Netclasses to update on the container. Same field bag as 'create'; omitted fields are cleared. Use name='Default' to update the default class.",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name":                 { "type": "string" },
+                  "tuning_profile":       { "type": "string" },
+                  "pcb_color":            { "type": "string" },
+                  "schematic_color":      { "type": "string" },
+                  "clearance_mm":         { "type": "number" },
+                  "track_width_mm":       { "type": "number" },
+                  "via_diameter_mm":      { "type": "number" },
+                  "via_drill_mm":         { "type": "number" },
+                  "uvia_diameter_mm":     { "type": "number" },
+                  "uvia_drill_mm":        { "type": "number" },
+                  "diff_pair_width_mm":   { "type": "number" },
+                  "diff_pair_gap_mm":     { "type": "number" },
+                  "diff_pair_via_gap_mm": { "type": "number" },
+                  "wire_width_mils":      { "type": "number" },
+                  "bus_width_mils":       { "type": "number" },
+                  "line_style":           { "type": "integer" }
+                },
+                "required": ["name"]
+              }
+            },
+            "delete": {
+              "type": "array",
+              "description": "Names of container netclasses to delete. The Default class cannot be deleted. Sub-projects keep their copy of any deleted class (no deletion propagation).",
+              "items": { "type": "string" }
+            }
+          }
+        },
+        "libraries": {
+          "type": "object",
+          "description": "Library row mutations on the multi-board container (action='set' only). All three sub-verbs are CONTAINER-SCOPE and cascade to every sub-project's lib-table on disk via the MOON-1294 LIBRARY_MANAGER helpers. 'add' inserts a fresh row at container scope. 'delete' removes a container row (cascades the delete from every peer). 'share' takes an existing local row from a specified sub-project and promotes it to container scope (replicates back to all peers). Project-local row mutations (add a row to a single sub-project, unshare without removing from container) stay in the desktop sub-project library panel.",
+          "properties": {
+            "add": {
+              "type": "array",
+              "description": "Library rows to add at container scope. Each entry replicates to every sub-project's lib-table.",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": ["symbol", "footprint"],
+                    "description": "Which library table the row belongs to."
+                  },
+                  "nickname": {
+                    "type": "string",
+                    "description": "The library nickname (LIB_ID prefix). Must be unique within the table."
+                  },
+                  "uri": {
+                    "type": "string",
+                    "description": "Library URI (file path, KiCad ${PATH_VAR}/..., etc.)."
+                  },
+                  "type": {
+                    "type": "string",
+                    "description": "Optional file-format hint for the row's `(type ...)` field. Empty -> defaults to 'KiCad'."
+                  },
+                  "description": { "type": "string" },
+                  "options":     { "type": "string" },
+                  "enabled": {
+                    "type": "boolean",
+                    "description": "Default true. Maps to the inverse of the row's `(disabled)` flag on disk."
+                  },
+                  "visible": {
+                    "type": "boolean",
+                    "description": "Default true. Maps to the inverse of the row's `(hidden)` flag on disk."
+                  }
+                },
+                "required": ["kind", "nickname", "uri"]
+              }
+            },
+            "delete": {
+              "type": "array",
+              "description": "Library rows to delete from the container. Cascades the delete from every sub-project's lib-table.",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "kind":     { "type": "string", "enum": ["symbol", "footprint"] },
+                  "nickname": { "type": "string" }
+                },
+                "required": ["kind", "nickname"]
+              }
+            },
+            "share": {
+              "type": "array",
+              "description": "Promote a sub-project's local library row to container scope. Reads the row from the source sub-project's on-disk lib-table, then calls AddSharedLibrary on the container. Source sub-project must be loaded in SETTINGS_MANAGER (open in an editor).",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "kind":     { "type": "string", "enum": ["symbol", "footprint"] },
+                  "nickname": { "type": "string" },
+                  "source_sub_project_uuid": {
+                    "type": "string",
+                    "description": "UUID of the source sub-project (from mbs_setup get -> libraries.sub_projects[].sub_project_uuid). Either UUID or path must be provided."
+                  },
+                  "source_sub_project_path": {
+                    "type": "string",
+                    "description": "Absolute path to the source sub-project's .kicad_pro. Either UUID or path must be provided."
+                  }
+                },
+                "required": ["kind", "nickname"]
               }
             }
           }

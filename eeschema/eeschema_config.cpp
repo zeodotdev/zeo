@@ -258,7 +258,14 @@ void SCH_EDIT_FRAME::saveProjectSettings()
         }
     }
 
-    GetSettingsManager()->SaveProject( fn.GetFullPath() );
+    // Pass &Prj() explicitly so SETTINGS_MANAGER routes through THIS
+    // frame's project (which honours SetPrjOverride for peer sub-board
+    // editors) rather than defaulting to the SM-active project. Without
+    // this, a peer sub-board's saveProjectSettings calls SaveProject
+    // with the sub-board's path but ends up using the container's
+    // GetProjectPath() as the write directory — writing the sub-board's
+    // .kicad_pro into the container's root and creating a stray file.
+    GetSettingsManager()->SaveProject( fn.GetFullPath(), &Prj() );
 }
 
 

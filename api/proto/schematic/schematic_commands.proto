@@ -1899,3 +1899,285 @@ message SyncCrossBoardNetsToPcbResponse
   repeated MbsNetNameConflict conflicts            = 5;
   string                      summary              = 6;
 }
+
+/// MOON-1333 Phase 1 — Multi-board netclass + library inspection.
+///
+/// These two reports surface what the desktop's Schematic Setup → Net
+/// Classes panel and the symbol/footprint library tables already render,
+/// in a form the AI agent can consume directly. Both are read-only;
+/// mutation lives in Phase 2 / Phase 3 messages.
+///
+/// ────────────────────────── Net classes ──────────────────────────
+
+/// Per-class settings on a single PROJECT_FILE. All numeric fields are
+/// stored on the wire in raw IU (matching the in-memory NETCLASS API);
+/// the Python tool layer converts to mm/mils for display so we don't
+/// bake unit choices into the protocol. Optional scalars use proto3
+/// `optional` so callers can distinguish "unset" (use container default)
+/// from "explicitly zero".
+message MbsNetClassFields
+{
+  string             name                  = 1;
+  int32              priority              = 2;   ///< Per-board grid-row metadata; not propagated.
+  string             tuning_profile        = 3;
+  string             pcb_color_css         = 4;   ///< Empty when COLOR4D::UNSPECIFIED.
+  string             schematic_color_css   = 5;
+  optional int32     clearance_iu          = 6;
+  optional int32     track_width_iu        = 7;
+  optional int32     via_diameter_iu       = 8;
+  optional int32     via_drill_iu          = 9;
+  optional int32     uvia_diameter_iu      = 10;
+  optional int32     uvia_drill_iu         = 11;
+  optional int32     diff_pair_width_iu    = 12;
+  optional int32     diff_pair_gap_iu      = 13;
+  optional int32     diff_pair_via_gap_iu  = 14;
+  optional int32     wire_width_iu         = 15;
+  optional int32     bus_width_iu          = 16;
+  optional int32     line_style            = 17;
+}
+
+/// Same Source / Shared / Local / Conflict semantics as the desktop
+/// PANEL_SETUP_NETCLASSES Status column. SHARED / LOCAL / CONFLICT only
+/// apply to sub-project-side classes; container-side classes are always
+/// SOURCE. Conflict is computed via `MultiBoardNetclassesEquivalent` so
+/// the agent gets the same answer the desktop user sees.
+enum MbsNetClassStatus
+{
+  MBS_NET_CLASS_STATUS_UNSPECIFIED = 0;
+  MBS_NET_CLASS_SOURCE             = 1;
+  MBS_NET_CLASS_SHARED             = 2;
+  MBS_NET_CLASS_LOCAL              = 3;
+  MBS_NET_CLASS_CONFLICT           = 4;
+}
+
+message MbsNetClassEntry
+{
+  MbsNetClassFields fields = 1;
+  MbsNetClassStatus status = 2;
+}
+
+/// Per-sub-project bucket. `loaded` distinguishes sub-projects that are
+/// currently in SETTINGS_MANAGER (so their in-memory net_settings is
+/// authoritative) from disk-only peers we read transiently. Disk-only
+/// reads can fail — `read_error` carries the reason if so, and `classes`
+/// is empty.
+message MbsSubProjectNetClasses
+{
+  string                    sub_project_uuid = 1;
+  string                    display_name     = 2;
+  string                    absolute_path    = 3;
+  bool                      loaded           = 4;
+  string                    read_error       = 5;
+  repeated MbsNetClassEntry classes          = 6;
+}
+
+message GetMultiBoardNetClassReport
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+}
+
+message GetMultiBoardNetClassReportResponse
+{
+  /// Container's own classes (always status = SOURCE).
+  repeated MbsNetClassEntry        container_classes = 1;
+  /// One bucket per sub-project listed in container's `multi_board.boards`.
+  repeated MbsSubProjectNetClasses sub_projects      = 2;
+}
+
+/// ────────────────────────── Libraries ──────────────────────────
+
+enum MbsLibraryKind
+{
+  MBS_LIBRARY_KIND_UNSPECIFIED = 0;
+  MBS_LIBRARY_SYMBOL           = 1;
+  MBS_LIBRARY_FOOTPRINT        = 2;
+}
+
+/// Where the row lives. `GLOBAL` is the user-wide table (only ever
+/// reported once, in the `global_rows` field of the response).
+/// `CONTAINER` is the multi-board container's project-scoped table.
+/// `PROJECT` is a sub-project's project-scoped table. Status
+/// (Shared / Local / Conflict) is read directly from the
+/// LIBRARY_TABLE_ROW shared/conflict flags MOON-1294 added.
+enum MbsLibraryScope
+{
+  MBS_LIBRARY_SCOPE_UNSPECIFIED = 0;
+  MBS_LIBRARY_SCOPE_GLOBAL      = 1;
+  MBS_LIBRARY_SCOPE_CONTAINER   = 2;
+  MBS_LIBRARY_SCOPE_PROJECT     = 3;
+}
+
+enum MbsLibraryStatus
+{
+  MBS_LIBRARY_STATUS_UNSPECIFIED = 0;
+  MBS_LIBRARY_STATUS_LOCAL       = 1;
+  MBS_LIBRARY_STATUS_SHARED      = 2;
+  MBS_LIBRARY_STATUS_CONFLICT    = 3;
+}
+
+message MbsLibraryEntry
+{
+  string           nickname    = 1;
+  string           uri         = 2;
+  string           description = 3;
+  string           options     = 4;
+  bool             enabled     = 5;
+  bool             visible     = 6;
+  MbsLibraryKind   kind        = 7;
+  MbsLibraryScope  scope       = 8;
+  MbsLibraryStatus status      = 9;
+}
+
+message MbsSubProjectLibraries
+{
+  string                   sub_project_uuid = 1;
+  string                   display_name     = 2;
+  string                   absolute_path    = 3;
+  bool                     loaded           = 4;
+  string                   read_error       = 5;
+  repeated MbsLibraryEntry rows             = 6;
+}
+
+message GetMultiBoardLibraryReport
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+}
+
+message GetMultiBoardLibraryReportResponse
+{
+  /// Both symbol + footprint tables, with `kind` distinguishing.
+  repeated MbsLibraryEntry        global_rows       = 1;
+  repeated MbsLibraryEntry        container_rows    = 2;
+  repeated MbsSubProjectLibraries sub_projects      = 3;
+}
+
+/// MOON-1333 Phase 2 — netclass mutation on the multi-board container.
+///
+/// Per-class create/update on the container project. The same field bag
+/// the GetMultiBoardNetClassReport response uses, with one extra knob:
+/// `name` is required and identifies the target. Pre-existing class with
+/// the same name → updated in place (other sub-projects classify it as
+/// CONFLICT until they re-sync). New name → created. The handler runs
+/// `MultiBoardPropagateNetSettings` after the mutation so loaded peers
+/// pick up the new state; disk-only peers are NOT auto-updated by this
+/// call (the propagator's ephemeral path is reserved for the desktop
+/// save flow — agent-driven mutations stay scoped to the container, then
+/// disk-only peers pick up the change on their next regular open).
+///
+/// `priority` is intentionally NOT settable here. Per-board grid-row
+/// metadata; matches `cloneNetclass` / `MultiBoardNetclassesEquivalent`
+/// semantics.
+message SetMultiBoardNetClass
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  MbsNetClassFields                    fields   = 2;
+}
+
+message SetMultiBoardNetClassResponse
+{
+  bool   created                = 1;   ///< true when a new class was added; false when an existing class was updated
+  bool   propagator_ran         = 2;   ///< true if MultiBoardPropagateNetSettings was invoked
+  int32  sub_projects_touched   = 3;   ///< Loaded peers iterated by the propagator
+  int32  classes_added          = 4;   ///< Per-peer additions
+  int32  classes_unchanged      = 5;
+  int32  classes_overwritten    = 6;
+  int32  classes_kept           = 7;
+  int32  classes_skipped        = 8;
+  string container_pro_path     = 9;   ///< For confirmation in the agent reply
+}
+
+/// Remove a netclass from the container's net_settings. Sub-projects
+/// keep their own copy (matches desktop behaviour — there's no
+/// "deletion propagation" today; the user explicitly chose physical
+/// replication, not a runtime overlay).
+///
+/// Cannot delete the Default netclass; returns AS_BAD_REQUEST.
+message DeleteMultiBoardNetClass
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  string                               name     = 2;
+}
+
+message DeleteMultiBoardNetClassResponse
+{
+  bool deleted = 1;   ///< false if the named class wasn't present (idempotent)
+}
+
+/// MOON-1333 Phase 3 — library mutation on the multi-board container.
+///
+/// All three ops route through the LIBRARY_MANAGER M7.1 helpers and so
+/// inherit their physical-replication semantics: container-scope mutations
+/// cascade to every sub-project's lib-table on disk, with conflict markers
+/// where a local row would collide. Project-local row mutations are NOT
+/// covered here — those stay in the desktop sub-project library panels for
+/// now. Call from MBSCH (the active project must be a multi-board container).
+
+/// Add a library row at the multi-board container's scope. Replicates to
+/// every sub-project's lib-table immediately (M7.1 cascade). If a peer
+/// already has a non-shared local row with the same nickname AND matching
+/// URI/options, that row is promoted to shared in place; otherwise a
+/// conflict marker is emplaced on that peer (per MOON-1294 LR7 behaviour).
+/// Idempotent on repeated calls with the same row.
+message AddMultiBoardLibrary
+{
+  kiapi.common.types.DocumentSpecifier document    = 1;
+  MbsLibraryKind                       kind        = 2;
+  string                               nickname    = 3;
+  string                               uri         = 4;
+  string                               type        = 5;   ///< Optional table-row "type" (file format hint). Empty = use default.
+  string                               description = 6;
+  string                               options     = 7;
+  bool                                 enabled     = 8;   ///< Default true. Stored as `(disabled)` inverse on disk.
+  bool                                 visible     = 9;   ///< Default true. Stored as `(hidden)` inverse on disk.
+}
+
+message AddMultiBoardLibraryResponse
+{
+  bool   added                    = 1;
+  int32  peers_replicated         = 2;   ///< Sub-project lib-tables that received the new row
+  int32  peers_with_conflict      = 3;   ///< Peers where a local-row collision created a conflict marker
+}
+
+/// Remove a library row from the multi-board container, cascading the
+/// delete to every sub-project's lib-table (M7.1 RemoveSharedLibrary).
+/// Use UnshareLibraryRow (not exposed in this Phase 3 slice) when the
+/// caller wants to remove the shared marker from one sub-project but
+/// leave the container row in place — that path stays in the desktop
+/// sub-project lib-table panel for now.
+message DeleteMultiBoardLibrary
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  MbsLibraryKind                       kind     = 2;
+  string                               nickname = 3;
+}
+
+message DeleteMultiBoardLibraryResponse
+{
+  bool   deleted          = 1;   ///< false when the row wasn't on the container (idempotent)
+  int32  peers_cleared    = 2;   ///< Sub-project lib-tables the row was removed from
+}
+
+/// Promote a sub-project's local library row to container scope. Reads the
+/// row's URI / options / etc. from the source sub-project's on-disk
+/// lib-table, then calls AddSharedLibrary on the container — which
+/// cascades the row back to every sub-project (including the source) with
+/// `shared=true`. Source sub-project must be loaded in SETTINGS_MANAGER
+/// (so we can find its PROJECT* and confidently identify the row).
+message ShareMultiBoardLibrary
+{
+  kiapi.common.types.DocumentSpecifier document                = 1;
+  MbsLibraryKind                       kind                    = 2;
+  string                               nickname                = 3;
+  /// Either a sub-project KIID-as-string or its absolute .kicad_pro path.
+  /// The handler tries both (UUID lookup first, then path); whichever
+  /// resolves to a loaded SETTINGS_MANAGER PROJECT wins.
+  string                               source_sub_project_uuid = 4;
+  string                               source_sub_project_path = 5;
+}
+
+message ShareMultiBoardLibraryResponse
+{
+  bool   shared              = 1;
+  int32  peers_replicated    = 2;
+  int32  peers_with_conflict = 3;
+}

@@ -340,50 +340,148 @@ void EDA_3D_VIEWER_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& aEvent )
         return;
     }
 
-    if( aEvent.Command() != MAIL_CROSS_PROBE )
+    // Two cross-probe channels reach the 3D viewer:
+    //
+    //   MAIL_CROSS_PROBE — net / pad highlights (MBSCH net click,
+    //                      sub-project schematic net click, etc.).
+    //                      Payload: `$PART: "<ref>"` ± `$PAD: "<pin>"`
+    //                      ± `$PROJECT: "<absolute path>"`.
+    //
+    //   MAIL_SELECTION   — symbol / module-block selection sync
+    //                      (MBSCH or sub-SCH selecting a symbol /
+    //                      SCH_MODULE_BLOCK fans out to peer
+    //                      editors via SendSelectItemsToPcb in
+    //                      cross-probing.cpp).
+    //                      Payload: `$SELECT: 0,F<ref>[,F<ref2>,...]`
+    //                      ± `$PROJECT: "<absolute path>"`.
+    //
+    // We funnel both through the same matcher: extract a single F<ref>,
+    // optionally constrain by $PROJECT scope, then highlight in 3D.
+    const auto& cmd     = aEvent.Command();
+    const bool  isProbe = ( cmd == MAIL_CROSS_PROBE );
+    const bool  isSel   = ( cmd == MAIL_SELECTION || cmd == MAIL_SELECTION_FORCE );
+
+    if( !isProbe && !isSel )
     {
         KIWAY_PLAYER::KiwayMailIn( aEvent );
         return;
     }
 
-    // MBSCH cross-probe payload format (see mbsch_edit_frame.cpp):
-    //   `$PART: "<ref>"`                — component highlight
-    //   `$PART: "<ref>" $PAD: "<pin>"`  — component + pad highlight
-    // The 3D viewer treats either as "focus the sub-board containing
-    // <ref>". Pad-level highlighting inside the board is M6.E.
     const std::string& payload = aEvent.GetPayload();
 
+    wxString ref;
+
+    // MAIL_CROSS_PROBE format: `$PART: "<ref>"` (quoted).
     const std::string partKey = "$PART: \"";
     size_t partStart = payload.find( partKey );
 
-    if( partStart == std::string::npos )
+    if( partStart != std::string::npos )
     {
-        KIWAY_PLAYER::KiwayMailIn( aEvent );
-        return;
+        partStart += partKey.size();
+        size_t partEnd = payload.find( '"', partStart );
+
+        if( partEnd != std::string::npos )
+        {
+            ref = wxString::FromUTF8(
+                    payload.substr( partStart, partEnd - partStart ).c_str() );
+        }
     }
 
-    partStart += partKey.size();
-    size_t partEnd = payload.find( '"', partStart );
-
-    if( partEnd == std::string::npos )
+    // MAIL_SELECTION format: `$SELECT: 0,F<ref>[,F<ref2>,...]` (no
+    // quotes around individual specs). Take the FIRST F-spec — the
+    // 3D viewer highlights one footprint at a time. Sender-side
+    // EscapeString uses CTX_IPC; kept as-is here since the 3D
+    // viewer's match goes through BOARD::FindFootprintByReference
+    // which compares against the same escaped form.
+    if( ref.IsEmpty() )
     {
-        KIWAY_PLAYER::KiwayMailIn( aEvent );
-        return;
-    }
+        const std::string selKey = "$SELECT: ";
+        size_t selStart = payload.find( selKey );
 
-    wxString ref = wxString::FromUTF8(
-            payload.substr( partStart, partEnd - partStart ).c_str() );
+        if( selStart != std::string::npos )
+        {
+            // Skip past `$SELECT: 0,` (we don't read the focus index).
+            selStart = payload.find( ',', selStart + selKey.size() );
+
+            if( selStart != std::string::npos )
+            {
+                selStart++;     // past comma
+
+                // Find first F-spec. Specs are comma-separated and
+                // begin with 'F' (footprint), 'P' (pin), or 'S'
+                // (sheet). Skip any leading whitespace.
+                while( selStart < payload.size() && payload[selStart] != 'F'
+                       && payload[selStart] != ',' && payload[selStart] != ' '
+                       && payload[selStart] != '\0' )
+                {
+                    if( payload[selStart] == ' ' )
+                        break;
+                    selStart++;
+                }
+
+                if( selStart < payload.size() && payload[selStart] == 'F' )
+                {
+                    selStart++;     // past 'F'
+
+                    // Ref ends at next comma, space, or `$` (start of
+                    // a trailing token like `$PROJECT:`).
+                    size_t refEnd = payload.find_first_of( ",$ ", selStart );
+
+                    if( refEnd == std::string::npos )
+                        refEnd = payload.size();
+
+                    ref = wxString::FromUTF8(
+                            payload.substr( selStart, refEnd - selStart ).c_str() );
+                }
+            }
+        }
+    }
 
     if( ref.IsEmpty() )
+    {
+        KIWAY_PLAYER::KiwayMailIn( aEvent );
         return;
+    }
 
-    // Find the first instance whose BOARD contains a footprint with
-    // this ref. Duplicate refs across sub-boards are an MBS-level
-    // error; we pick the first match deterministically.
+    // Honor MBSCH's `$PROJECT: "<absolute path>"` scope token when
+    // present. MBSCH stamps it on every cross-probe so siblings can
+    // disambiguate footprint refs that exist on multiple sub-boards
+    // ("J2" on board A and on board B, for example). When the scope
+    // is given we ONLY accept a footprint match in that specific
+    // sub-project; without it we fall back to first-match across all
+    // visible instances.
+    const std::string projKey = "$PROJECT: \"";
+    wxString          scopePath;
+    size_t            projStart = payload.find( projKey );
+
+    if( projStart != std::string::npos )
+    {
+        projStart += projKey.size();
+        size_t projEnd = payload.find( '"', projStart );
+
+        if( projEnd != std::string::npos )
+        {
+            scopePath = wxString::FromUTF8(
+                    payload.substr( projStart, projEnd - projStart ).c_str() );
+        }
+    }
+
     for( const BOARD_3D_INSTANCE& inst : m_assemblyManager->GetBoardInstances() )
     {
         if( !inst.board )
             continue;
+
+        if( !scopePath.IsEmpty() )
+        {
+            // Compare absolute paths case-insensitively (MBSCH passes
+            // them through wxFileName::MakeAbsolute which normalizes).
+            const wxString instPath = inst.subProject
+                                              ? inst.subProject->GetProjectFullName()
+                                              : wxString();
+
+            if( instPath.IsEmpty() || !instPath.IsSameAs( scopePath, false ) )
+                continue;
+        }
 
         FOOTPRINT* fp = inst.board->FindFootprintByReference( ref );
 

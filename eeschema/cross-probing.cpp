@@ -561,6 +561,15 @@ void SCH_EDIT_FRAME::SendSelectItemsToPcb( const std::vector<EDA_ITEM*>& aItems,
         std::string pcb = aCommand;
         Kiway().ExpressMail( FRAME_PCB_EDITOR, selType, pcb, this );
 
+        // The MBSCH 3D assembly viewer registers as a FRAME_PCB_DISPLAY3D
+        // peer player; when present it consumes MAIL_SELECTION the same
+        // way the sub-project pcbnew does, so a symbol pick in MBSCH or
+        // a sub-SCH lights up the matching footprint in the 3D view.
+        // Single-board 3D viewers don't override KiwayMailIn so this
+        // is a silent no-op for them.
+        std::string display3d = aCommand;
+        Kiway().ExpressMail( FRAME_PCB_DISPLAY3D, selType, display3d, this );
+
         // Skip self-send: when the sender is MBSCH, fanning $SELECT back
         // to FRAME_MBSCH lands on our own KiwayMailIn, which would clear
         // and re-add only the matched items — collapsing multi-item

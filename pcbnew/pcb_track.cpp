@@ -2327,6 +2327,55 @@ wxString PCB_TRACK::GetFriendlyName() const
 }
 
 
+// MOON-1328: Properties Manager surfaces for the routed-length values
+// already shown in the message panel. Both return 0 when the track has
+// no BOARD or no NET — the property panel renders that as a blank field.
+int PCB_TRACK::GetTrackLengthValue() const
+{
+    const BOARD* board = GetBoard();
+
+    if( !board )
+        return 0;
+
+    // BOARD::GetTrackLength returns the same per-board net total the
+    // message panel uses for "Routed Length" (track length + this-side
+    // pad-to-die). Truncating int64 -> int is safe: KiCad PCB IU = nm,
+    // and PCB extents are well below the 2 GB int limit (>2 m of trace).
+    auto [count, trackLen, lenPadToDie, trackDelay, delayPadToDie] =
+            board->GetTrackLength( *this );
+
+    return static_cast<int>( trackLen + lenPadToDie );
+}
+
+
+int PCB_TRACK::GetCrossBoardLengthValue() const
+{
+    const BOARD* board = GetBoard();
+
+    if( !board )
+        return 0;
+
+    const NETINFO_ITEM* net = GetNet();
+
+    if( !net )
+        return 0;
+
+    // ComputeCrossBoardNetLength takes a non-const BOARD&; the
+    // implementation is read-only against the BOARD (it only reads the
+    // owning project to walk siblings) but the API hasn't been const-
+    // tightened yet. const_cast is safe here. Worth a follow-up to
+    // make the foundation `const BOARD&` so this isn't needed.
+    CROSS_BOARD_NET_LENGTH cb =
+            ComputeCrossBoardNetLength( const_cast<BOARD&>( *board ), net );
+
+    // totalNm equals the per-board value when isCrossBoard=false — same
+    // fall-through the foundation API documents — so the property is
+    // meaningful on single-board projects too (just shows the per-board
+    // number twice, alongside the existing track-length property).
+    return static_cast<int>( cb.totalNm );
+}
+
+
 void PCB_TRACK::GetMsgPanelInfo( EDA_DRAW_FRAME* aFrame, std::vector<MSG_PANEL_ITEM>& aList )
 {
     wxString  msg;
@@ -3199,6 +3248,21 @@ static struct TRACK_VIA_DESC
             &PCB_TRACK::SetLocalSolderMaskMargin, &PCB_TRACK::GetLocalSolderMaskMargin,
             PROPERTY_DISPLAY::PT_SIZE ), groupTechLayers )
             .SetAvailableFunc( isExternalLayerTrack );
+
+        // MOON-1328: read-only length surfaces for the Properties Manager,
+        // mirroring the existing message-panel display from MOON-1299. Both
+        // are net-level values; we expose them on PCB_TRACK because that's
+        // the selectable click target the Properties Manager already shows
+        // for routed signals. NO_SETTER marks them read-only so the panel
+        // renders the value without an edit field.
+        const wxString groupNetLengths = _HKI( "Net Lengths" );
+
+        propMgr.AddProperty( new PROPERTY<PCB_TRACK, int>( _HKI( "Track Length" ),
+            NO_SETTER( PCB_TRACK, int ), &PCB_TRACK::GetTrackLengthValue,
+            PROPERTY_DISPLAY::PT_SIZE ), groupNetLengths );
+        propMgr.AddProperty( new PROPERTY<PCB_TRACK, int>( _HKI( "Cross-Board Length" ),
+            NO_SETTER( PCB_TRACK, int ), &PCB_TRACK::GetCrossBoardLengthValue,
+            PROPERTY_DISPLAY::PT_SIZE ), groupNetLengths );
 
         // Arc
         REGISTER_TYPE( PCB_ARC );

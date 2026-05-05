@@ -99,6 +99,18 @@ public:
     bool IsCrossBoard() const { return m_is_cross_board; }
     void SetIsCrossBoard( bool aValue ) { m_is_cross_board = aValue; }
 
+    /**
+     * MOON-1328: total routed length for the cross-board net across this
+     * board + every sibling sub-project. Stored, not derived — the net
+     * inspector populates it once via `ComputeCrossBoardNetLength` during
+     * its build pass so the column doesn't re-walk siblings on every
+     * sort/select. Equals the per-board total when the net isn't cross-
+     * board (the foundation primitive's `isCrossBoard=false` fall-through
+     * leaves `totalNm == thisBoardNm`).
+     */
+    int64_t GetCrossBoardLength() const { return m_cross_board_length; }
+    void    SetCrossBoardLength( int64_t aValue ) { m_cross_board_length = aValue; }
+
     void ResetColumnChangedBits()
     {
         std::fill( m_column_changed.begin(), m_column_changed.end(), 0 );
@@ -496,7 +508,8 @@ private:
     wxString m_net_class;
     wxString m_group_name;
 
-    bool m_is_cross_board = false;
+    bool    m_is_cross_board = false;
+    int64_t m_cross_board_length = 0;   ///< MOON-1328: cached cross-board total in nm
 };
 
 
@@ -915,6 +928,17 @@ protected:
                 // together when the user sorts on this column.
                 aOutValue = i->IsCrossBoard() ? wxString( wxT( "✓" ) ) : wxString();
             }
+            else if( aCol == COLUMN_CROSS_BOARD_LENGTH )
+            {
+                // Show the full cross-board total when the net is multi-
+                // board; blank for non-cross-board nets so the column
+                // doesn't visually duplicate Total Length on standalone
+                // projects.
+                if( i->IsCrossBoard() )
+                    aOutValue = m_parent.formatLength( i->GetCrossBoardLength() );
+                else
+                    aOutValue = wxString();
+            }
             else if( aCol > COLUMN_LAST_STATIC_COL && aCol <= m_parent.m_columns.size() )
             {
                 if( m_show_time_domain_details )
@@ -1008,6 +1032,14 @@ protected:
 
             if( !m_show_time_domain_details && i1.GetTotalLength() != i2.GetTotalLength() )
                 return compareUInt( i1.GetTotalLength(), i2.GetTotalLength(), aAsc );
+        }
+        else if( aCol == COLUMN_CROSS_BOARD_LENGTH )
+        {
+            // Sort by cross-board total. Non-cross-board nets sort to
+            // the same bucket (they all share the per-board total),
+            // grouping cross-board nets by their actual sum.
+            if( i1.GetCrossBoardLength() != i2.GetCrossBoardLength() )
+                return compareUInt( i1.GetCrossBoardLength(), i2.GetCrossBoardLength(), aAsc );
         }
         else if( aCol > COLUMN_LAST_STATIC_COL && aCol < m_parent.m_columns.size() )
         {

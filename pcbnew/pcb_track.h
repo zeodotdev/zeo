@@ -259,6 +259,25 @@ public:
 
     virtual MINOPTMAX<int> GetWidthConstraint( wxString* aSource = nullptr ) const;
 
+    /**
+     * Read-only Properties Manager accessors for net length surfaces (MOON-1328).
+     *
+     * `GetTrackLengthValue` returns the same routed length the message panel's
+     * "Routed Length" line shows for the net this track belongs to (per-board
+     * track length plus pad-to-die contribution). Mirrors what
+     * `BOARD::GetTrackLength(*this)` already computes — exposed here as a
+     * member so the Properties Manager can register it without a wrapper.
+     *
+     * `GetCrossBoardLengthValue` returns the same cross-board total the
+     * message panel's "Cross-Board Total Length" line shows. Equals the
+     * per-board value on standalone projects (via the `isCrossBoard=false`
+     * fall-through path in `ComputeCrossBoardNetLength`), so the same
+     * property is meaningful for single-board users too — they just see
+     * the same number twice, which is fine.
+     */
+    int GetTrackLengthValue() const;
+    int GetCrossBoardLengthValue() const;
+
     wxString GetItemDescription( UNITS_PROVIDER* aUnitsProvider, bool aFull ) const override;
 
     BITMAPS GetMenuImage() const override;

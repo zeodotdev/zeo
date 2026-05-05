@@ -32,6 +32,7 @@
 #include <wx/filename.h>
 #include <length_delay_calculation/length_delay_calculation.h>
 #include <length_delay_calculation/length_delay_calculation_item.h>
+#include <length_delay_calculation/multi_board_length.h>   // MOON-1328: ComputeCrossBoardNetLength
 #include <pad.h>
 #include <pcb_edit_frame.h>
 #include <pcb_painter.h>
@@ -154,6 +155,11 @@ void PCB_NET_INSPECTOR_PANEL::buildColumns()
     m_columns.emplace_back( 7u, UNDEFINED_LAYER, _( "Pad Count" ), _( "Pad Count" ), CSV_COLUMN_DESC::CSV_NONE, false );
     m_columns.emplace_back( 8u, UNDEFINED_LAYER, _( "Cross-Board" ),
                             _( "Cross-Board" ), CSV_COLUMN_DESC::CSV_NONE, false );
+    // MOON-1328: Cross-Board Length column. has_units=true so the value
+    // renders as a length with the user's units (mm/mils), matching the
+    // existing Total/Track/Via/Die length columns.
+    m_columns.emplace_back( 9u, UNDEFINED_LAYER, _( "Cross-Board Length" ),
+                            _( "Cross-Board Length" ), CSV_COLUMN_DESC::CSV_NONE, true );
 
     const std::vector<std::function<void( void )>> add_col{
         [&]()
@@ -208,6 +214,16 @@ void PCB_NET_INSPECTOR_PANEL::buildColumns()
         {
             m_netsList->AppendTextColumn( m_columns[COLUMN_CROSS_BOARD].display_name,
                                           m_columns[COLUMN_CROSS_BOARD],
+                                          wxDATAVIEW_CELL_INERT, -1, wxALIGN_CENTER,
+                                          wxDATAVIEW_COL_RESIZABLE|wxDATAVIEW_COL_REORDERABLE|wxDATAVIEW_COL_SORTABLE );
+        },
+        [&]()
+        {
+            // MOON-1328: Cross-Board Length column. Reads from the same
+            // ComputeCrossBoardNetLength foundation primitive used by
+            // PCB_TRACK's msg-panel + Properties Manager surfaces.
+            m_netsList->AppendTextColumn( m_columns[COLUMN_CROSS_BOARD_LENGTH].display_name,
+                                          m_columns[COLUMN_CROSS_BOARD_LENGTH],
                                           wxDATAVIEW_CELL_INERT, -1, wxALIGN_CENTER,
                                           wxDATAVIEW_COL_RESIZABLE|wxDATAVIEW_COL_REORDERABLE|wxDATAVIEW_COL_SORTABLE );
         }
@@ -597,8 +613,20 @@ void PCB_NET_INSPECTOR_PANEL::buildNetsList( const bool rebuildColumns )
     {
         for( const std::unique_ptr<LIST_ITEM>& item : lengths )
         {
-            if( crossBoardNetCodes.count( item->GetNetCode() ) > 0 )
-                item->SetIsCrossBoard( true );
+            if( crossBoardNetCodes.count( item->GetNetCode() ) <= 0 )
+                continue;
+
+            item->SetIsCrossBoard( true );
+
+            // MOON-1328: also cache the cross-board total here so the
+            // Cross-Board Length column doesn't re-walk siblings on
+            // every sort/select. Done once per buildNetsList pass.
+            if( NETINFO_ITEM* netInfo = m_board->FindNet( item->GetNetCode() ) )
+            {
+                CROSS_BOARD_NET_LENGTH cb =
+                        ComputeCrossBoardNetLength( *m_board, netInfo );
+                item->SetCrossBoardLength( cb.totalNm );
+            }
         }
     }
 

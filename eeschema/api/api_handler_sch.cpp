@@ -3349,6 +3349,27 @@ API_HANDLER_SCH::handleRunERC( const HANDLER_CONTEXT<kiapi::schematic::commands:
 
     kiapi::schematic::commands::RunERCResponse response;
 
+    // Connectivity warm-up: a fresh API session may dispatch ERC before
+    // any user interaction has triggered a CONNECTION_GRAPH rebuild.
+    // The regular SCH editor refreshes the graph on canvas events; the
+    // agent / IPC path can run before any of those have fired. Without
+    // this, ERC walks a stale graph and (most visibly on MBSCH) emits
+    // order-of-magnitude inflated `cross_board_stale_pin` warnings
+    // until the user closes/reopens the editor. Mirrors the dirty-
+    // check + rebuild pattern in `MBSCH_EDIT_FRAME::HighlightNet`
+    // (mbsch_edit_frame.cpp:636-646). See MOON-1314.
+    if( SCH_SCREEN* rootScreen = m_frame->Schematic().RootScreen() )
+    {
+        for( SCH_ITEM* item : rootScreen->Items() )
+        {
+            if( item->IsConnectivityDirty() )
+            {
+                m_frame->RecalculateConnections( nullptr, NO_CLEANUP );
+                break;
+            }
+        }
+    }
+
     // Record existing exclusions before clearing markers (matches dialog_erc behavior)
     m_frame->Schematic().RecordERCExclusions();
 

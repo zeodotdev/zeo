@@ -639,6 +639,16 @@ void EDA_3D_CANVAS::DoRePaint()
                     m_3d_render_raytracing->SetPendingInstances( std::move( insts ) );
                     m_3d_render_raytracing->ReloadRequest();
                     m_lastRaytraceInstanceSig = sig;
+
+                    // Drive the BVH rebuild now while we have the GL
+                    // context. In MBS-OpenGL mode the legacy Reload()
+                    // trigger below is gated off (it would rebuild every
+                    // frame against the wrong adapter), so without this
+                    // call IntersectBoardItem's m_accelerator stays null
+                    // and 3D-canvas clicks never resolve a footprint —
+                    // breaking the in-canvas highlight and outbound
+                    // cross-probe to PCB/SCH/MBSCH.
+                    m_3d_render_raytracing->Reload( nullptr, nullptr, true );
                 }
             }
 

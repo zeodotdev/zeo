@@ -179,6 +179,10 @@ public:
     /// No-op when the frame was constructed in single-board mode.
     void ToggleAssemblyPanel();
 
+    /// Accessor used by the canvas to refresh X/Y/Z text controls
+    /// after a drag-on-board move. Returns null in single-board mode.
+    PANEL_3D_ASSEMBLY* GetAssemblyPanel() { return m_assemblyPanel; }
+
     void OnDarkModeToggle();
 
     /**

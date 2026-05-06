@@ -673,6 +673,21 @@ public:
      */
     void SetSelectedItem( BOARD_ITEM* aItem );
 
+    /**
+     * MOON-1331 phase 4a — board-level selection. Distinct from the
+     * footprint selection above: a click on a sub-board's substrate
+     * (no fp hit) selects the WHOLE board so the translation gizmo
+     * has something to attach to. A click on a footprint sets the fp
+     * selection AND the board selection (its parent board).
+     */
+    void SetSelectedBoardInstance( const KIID& aInstanceUuid );
+
+    /// Clear board-level selection (typically on click in empty space).
+    void ClearSelectedBoardInstance();
+
+    /// Currently-selected board instance UUID, or niluuid if none.
+    KIID GetSelectedBoardInstance() const { return m_selectedBoardUuid; }
+
     /// Find the BOARD_3D_INSTANCE whose `board` pointer owns aItem.
     /// Returns nullptr when the item is not from any sub-board (e.g.
     /// a sibling-ITEM raycast hit on the floor / ceiling decoration).
@@ -870,6 +885,13 @@ private:
     /// string from `MakeMatePairId`). Empty string = no selection
     /// → all gizmos render at full intensity.
     wxString                        m_selectedMatePairId;
+
+    /// MOON-1331 phase 4a — currently-selected sub-board (UUID of the
+    /// BOARD_3D_INSTANCE). niluuid when no board is selected.
+    /// Independent of the per-instance footprint highlight stored on
+    /// the OpenGL renderers; both can be set simultaneously when the
+    /// user clicks a footprint (selects fp + parent board).
+    KIID                            m_selectedBoardUuid;
 
     /// Per-pair priority offset applied during BuildMateGraph sort.
     /// Negative = higher priority (appears earlier in edge.pairs;

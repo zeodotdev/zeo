@@ -36,6 +36,7 @@
 #include <3d_rendering/raytracing/render_3d_raytrace_gl.h>
 #include <3d_rendering/opengl/render_3d_opengl.h>
 #include <3d_viewer/3d_viewer_assembly.h>
+#include "../dialogs/panel_3d_assembly.h"
 #include <3d_viewer_id.h>
 #include <advanced_config.h>
 #include <build_version.h>
@@ -541,14 +542,6 @@ void EDA_3D_CANVAS::DoRePaint()
         {
             m_3d_render->SetCurWindowSize( clientSize );
 
-            bool reloadRaytracingForCalculations = false;
-
-            if( m_boardAdapter.m_Cfg->m_Render.engine == RENDER_ENGINE::OPENGL
-                    && m_3d_render_opengl->IsReloadRequestPending() )
-            {
-                reloadRaytracingForCalculations = true;
-            }
-
             // M6.C: multi-board assembly rendering path.
             //   • OpenGL    → composite via m_assemblyManager (existing).
             //   • RAYTRACING → publish instance descs to the raytracer
@@ -562,6 +555,23 @@ void EDA_3D_CANVAS::DoRePaint()
                                             == RENDER_ENGINE::OPENGL );
             const bool assemblyComposite   = inAssembly && engineIsOpenGL;
             const bool assemblyRaytraced   = inAssembly && !engineIsOpenGL;
+
+            bool reloadRaytracingForCalculations = false;
+
+            // In MBS mode the main m_3d_render_opengl is never Redraw'd —
+            // per-instance renderers paint instead — so its
+            // m_reloadRequested flag stays true forever. Triggering the
+            // raytracer reload off that flag would rebuild the whole BVH
+            // every frame (single-board topology, against the wrong
+            // adapter), which crushes mouse/drag responsiveness. The
+            // per-instance descriptor staging below is signature-gated
+            // and drives the raytracer's reload lifecycle correctly for
+            // MBS, so we skip this single-board calculation reload here.
+            if( !inAssembly && engineIsOpenGL
+                    && m_3d_render_opengl->IsReloadRequestPending() )
+            {
+                reloadRaytracingForCalculations = true;
+            }
 
             // Stage multi-instance descriptors on the raytracer whenever
             // MBS is active, regardless of which engine is rendering.
@@ -608,21 +618,25 @@ void EDA_3D_CANVAS::DoRePaint()
                     }
                 }
 
-                std::vector<RENDER_3D_RAYTRACE_BASE::INSTANCE_DESC> insts;
-                insts.reserve( raw.size() );
-
-                for( auto& r : raw )
-                {
-                    RENDER_3D_RAYTRACE_BASE::INSTANCE_DESC d;
-                    d.adapter = r.adapter;
-                    d.pose    = r.pose;
-                    insts.push_back( d );
-                }
-
-                m_3d_render_raytracing->SetPendingInstances( std::move( insts ) );
-
+                // Only stage + ReloadRequest when poses actually changed.
+                // Previously we staged every frame, which made the unconditional
+                // `Reload()` below see a non-empty pending list and rebuild the
+                // multi-instance BVH on every paint — a per-frame full BVH
+                // rebuild that crushed mouse-drag responsiveness in MBS mode.
                 if( sig != m_lastRaytraceInstanceSig )
                 {
+                    std::vector<RENDER_3D_RAYTRACE_BASE::INSTANCE_DESC> insts;
+                    insts.reserve( raw.size() );
+
+                    for( auto& r : raw )
+                    {
+                        RENDER_3D_RAYTRACE_BASE::INSTANCE_DESC d;
+                        d.adapter = r.adapter;
+                        d.pose    = r.pose;
+                        insts.push_back( d );
+                    }
+
+                    m_3d_render_raytracing->SetPendingInstances( std::move( insts ) );
                     m_3d_render_raytracing->ReloadRequest();
                     m_lastRaytraceInstanceSig = sig;
                 }
@@ -1088,6 +1102,47 @@ void EDA_3D_CANVAS::OnMouseMove( wxMouseEvent& event )
     if( m_camera_is_moving )
         return;
 
+    // MOON-1331 phase 4a — board-drag wins over camera motion. While
+    // a left-button drag is in progress on a selected sub-board, mouse
+    // motion translates the board (drag-handle semantics: world XY at
+    // the click's Z stays anchored under the cursor) and we suppress
+    // the camera rotation/pan that would otherwise consume the same
+    // motion event.
+    if( m_boardDragMode == BOARD_DRAG_MODE::TRANSLATE_XY
+        && event.LeftIsDown()
+        && m_assemblyManager )
+    {
+        RAY mouseRay = getRayAtCurrentMousePosition();
+        const float dirZ = mouseRay.m_Dir.z;
+
+        if( std::abs( dirZ ) > 1e-6f )
+        {
+            const float t = ( m_boardDragPlaneZ - mouseRay.m_Origin.z ) / dirZ;
+            const glm::vec3 hitWorld(
+                    mouseRay.m_Origin.x + t * mouseRay.m_Dir.x,
+                    mouseRay.m_Origin.y + t * mouseRay.m_Dir.y,
+                    m_boardDragPlaneZ );
+
+            const glm::vec3 delta = hitWorld - m_boardDragHitWorld;
+
+            SFVEC3F newPos = m_boardDragStartPos;
+            newPos.x += delta.x;
+            newPos.y += delta.y;
+
+            // Update without persisting — we'll persist once on
+            // OnLeftUp via SetBoardPosition (which marks the project
+            // dirty exactly once instead of on every motion event).
+            if( BOARD_3D_INSTANCE* inst =
+                        m_assemblyManager->GetBoardInstance( m_boardDragInstanceUuid ) )
+            {
+                inst->position = newPos;
+                Request_refresh();
+            }
+        }
+
+        return;
+    }
+
     OnMouseMoveCamera( event );
 
     if( m_mouse_was_moved )
@@ -1247,6 +1302,53 @@ void EDA_3D_CANVAS::OnLeftDown( wxMouseEvent& event )
                 else if( m_3d_render_opengl )
                     m_3d_render_opengl->SetCurrentSelectedItem( footprint );
 
+                // MOON-1331 phase 4a — capture drag state. If the user
+                // immediately moves the mouse the OnMouseMove path
+                // translates the selected sub-board on the world XY
+                // plane at the click's Z (drag-handle semantics: the
+                // world point under the cursor stays under the cursor).
+                // No drag fires on a stationary click — the state is
+                // cleared on OnLeftUp without committing.
+                if( m_assemblyManager )
+                {
+                    const BOARD_3D_INSTANCE* inst =
+                            m_assemblyManager->FindInstanceForItem( footprint );
+
+                    if( inst )
+                    {
+                        m_assemblyManager->SetSelectedBoardInstance( inst->uuid );
+
+                        // Project the click ray onto a horizontal plane
+                        // at the board's Z. The world point at this
+                        // intersection becomes the "drag handle" — on
+                        // motion we project the new ray onto the same
+                        // plane and keep that world point under the
+                        // cursor by translating the board by the delta.
+                        // (Picking the EXACT geometry-hit Z would be
+                        // marginally better but IntersectBoardItem
+                        // doesn't expose the t value; using inst.z is
+                        // fine for typical PCBs where the substrate
+                        // dominates the Z range.)
+                        const float planeZ = inst->position.z;
+                        const float dirZ   = mouseRay.m_Dir.z;
+
+                        if( std::abs( dirZ ) > 1e-6f )
+                        {
+                            const float t = ( planeZ - mouseRay.m_Origin.z ) / dirZ;
+                            const glm::vec3 hitWorld(
+                                    mouseRay.m_Origin.x + t * mouseRay.m_Dir.x,
+                                    mouseRay.m_Origin.y + t * mouseRay.m_Dir.y,
+                                    planeZ );
+
+                            m_boardDragInstanceUuid = inst->uuid;
+                            m_boardDragStartPos     = inst->position;
+                            m_boardDragHitWorld     = hitWorld;
+                            m_boardDragPlaneZ       = planeZ;
+                            m_boardDragMode         = BOARD_DRAG_MODE::TRANSLATE_XY;
+                        }
+                    }
+                }
+
                 Refresh();
 
                 // We send a message (by ExpressMail) to the board and schematic editor, but only
@@ -1317,6 +1419,35 @@ void EDA_3D_CANVAS::OnLeftUp( wxMouseEvent& event )
 {
     if( m_camera_is_moving )
         return;
+
+    // MOON-1331 phase 4a — finalize board drag. The position is already
+    // updated in m_assemblyManager's BOARD_3D_INSTANCE from OnMouseMove;
+    // call SetBoardPosition with the final value so persistInstanceState
+    // fires (once, on release — not on every motion event), the project
+    // file gets dirtied via the SetAssemblyInstances setter chain (see
+    // MOON-1280), and the LHS panel's X/Y/Z fields refresh.
+    if( m_boardDragMode == BOARD_DRAG_MODE::TRANSLATE_XY && m_assemblyManager )
+    {
+        if( const BOARD_3D_INSTANCE* inst =
+                    m_assemblyManager->GetBoardInstance( m_boardDragInstanceUuid ) )
+        {
+            const SFVEC3F finalPos = inst->position;
+            m_assemblyManager->SetBoardPosition( m_boardDragInstanceUuid, finalPos );
+
+            // Bump the appearance/assembly panel so the X/Y/Z fields
+            // show the new position. Frame holds the panel; we call
+            // through the panel's public UpdateSelectedBoardControls
+            // which re-reads inst.position into the text controls.
+            if( EDA_3D_VIEWER_FRAME* frame =
+                        dynamic_cast<EDA_3D_VIEWER_FRAME*>( GetParent() ) )
+            {
+                if( PANEL_3D_ASSEMBLY* panel = frame->GetAssemblyPanel() )
+                    panel->UpdateSelectedBoardControls();
+            }
+        }
+
+        m_boardDragMode = BOARD_DRAG_MODE::NONE;
+    }
 
     if( m_mouse_is_moving )
     {

@@ -371,6 +371,26 @@ private:
 
     BOARD_ITEM*            m_currentRollOverItem = nullptr;
 
+    /// MOON-1331 phase 4a — board drag state. While ACTIVE, mouse-motion
+    /// translates the selected sub-board on the world XY plane at the
+    /// click's Z instead of rotating the camera. The point under the
+    /// cursor at click stays anchored under the cursor through the drag
+    /// (standard "drag-handle" semantics). On release we persist via
+    /// ASSEMBLY_3D_MANAGER::SetBoardPosition (which wires through the
+    /// MOON-1280 setter→notify chain so save-on-close preserves the
+    /// new pose).
+    enum class BOARD_DRAG_MODE
+    {
+        NONE,
+        TRANSLATE_XY
+    };
+
+    BOARD_DRAG_MODE        m_boardDragMode      = BOARD_DRAG_MODE::NONE;
+    KIID                   m_boardDragInstanceUuid;
+    SFVEC3F                m_boardDragStartPos  = SFVEC3F( 0.0f, 0.0f, 0.0f );
+    glm::vec3              m_boardDragHitWorld  = glm::vec3( 0.0f, 0.0f, 0.0f );
+    float                  m_boardDragPlaneZ    = 0.0f;
+
     bool    m_render3dmousePivot = false; // Render the 3dmouse pivot
     SFVEC3F m_3dmousePivotPos;            // The position of the 3dmouse pivot
 

@@ -502,6 +502,8 @@ void ASSEMBLY_3D_MANAGER::SetSelectedItem( BOARD_ITEM* aItem )
     // highlighted at a time across the whole assembly.
     const BOARD* targetBoard = aItem ? aItem->GetBoard() : nullptr;
 
+    KIID matchingInstanceUuid;
+
     for( size_t i = 0; i < m_instanceRenderers.size(); ++i )
     {
         if( !m_instanceRenderers[i] )
@@ -512,10 +514,34 @@ void ASSEMBLY_3D_MANAGER::SetSelectedItem( BOARD_ITEM* aItem )
                                       : nullptr;
 
         if( instBoard && instBoard == targetBoard )
+        {
             m_instanceRenderers[i]->SetCurrentSelectedItem( aItem );
+            matchingInstanceUuid = m_boardInstances[i].uuid;
+        }
         else
+        {
             m_instanceRenderers[i]->SetCurrentSelectedItem( nullptr );
+        }
     }
+
+    // Track parent-board selection too so the manipulation gizmo
+    // (MOON-1331 phase 4a) attaches to the right sub-board.
+    if( matchingInstanceUuid != niluuid )
+        m_selectedBoardUuid = matchingInstanceUuid;
+    else if( !aItem )
+        m_selectedBoardUuid = KIID( 0 );   // explicit clear on empty-space click
+}
+
+
+void ASSEMBLY_3D_MANAGER::SetSelectedBoardInstance( const KIID& aInstanceUuid )
+{
+    m_selectedBoardUuid = aInstanceUuid;
+}
+
+
+void ASSEMBLY_3D_MANAGER::ClearSelectedBoardInstance()
+{
+    m_selectedBoardUuid = KIID( 0 );
 }
 
 

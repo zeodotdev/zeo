@@ -331,11 +331,23 @@ BOARD* EDA_3D_VIEWER_FRAME::GetBoard()
 
 void EDA_3D_VIEWER_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& aEvent )
 {
-    // Single-board mode: fall through to the default (no-op) base
-    // handler. Only the assembly viewer cares about cross-probe mail
-    // because only it has a concept of "which sub-board is active".
+    // Single-board mode: the BOARD pointer is shared with pcbnew, so
+    // pcbnew's selection state already drives the per-footprint highlight
+    // (render_3d_opengl reads fp->IsSelected()). All we need is a repaint
+    // so the new state shows up immediately — without it the canvas only
+    // repaints on the next mouse-hover event, which is what the user was
+    // hitting (highlight only appearing after hovering over the canvas).
     if( !IsAssemblyMode() || !m_assemblyManager )
     {
+        const auto& cmd = aEvent.Command();
+
+        if( ( cmd == MAIL_CROSS_PROBE || cmd == MAIL_SELECTION
+              || cmd == MAIL_SELECTION_FORCE )
+            && m_canvas )
+        {
+            m_canvas->Refresh();
+        }
+
         KIWAY_PLAYER::KiwayMailIn( aEvent );
         return;
     }

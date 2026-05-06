@@ -344,6 +344,7 @@ set( BMAPS_MID
     icon_gerbview_24
     icon_kicad_24
     icon_libedit_24
+    icon_mbs_24
     icon_modedit_24
     icon_pagelayout_editor_24
     icon_pcbcalculator_24
@@ -386,6 +387,7 @@ set( BMAPS_MID
     load_module_board
     lock_unlock
     locked
+    manage_boards
     marker_exclude
     marker_next
     marker_previous
@@ -427,6 +429,7 @@ set( BMAPS_MID
     options_3drender
     options_board
     options_generic
+    options_mbs
     options_pad
     options_schematic
     opt_show_polygon
@@ -573,6 +576,8 @@ set( BMAPS_MID
     unlocked
     unzip
     up
+    update_mbs_from_sch
+    update_pcb_from_mbs
     update_pcb_from_sch
     update_sch_from_pcb
     via
@@ -615,6 +620,7 @@ set( BMAPS_32
     icon_kicad_32
     icon_kicad_nightly_32
     icon_libedit_32
+    icon_mbs_32
     icon_modedit_32
     icon_pagelayout_editor_32
     icon_pcbcalculator_32
@@ -631,6 +637,7 @@ set( BMAPS_BIG
     icon_kicad
     icon_kicad_nightly
     icon_libedit
+    icon_mbs
     icon_modedit
     icon_pcbnew
     icon_bitmap2component
@@ -657,6 +664,7 @@ set( BMAPS_64
     icon_kicad
     icon_kicad_nightly
     icon_libedit
+    icon_mbs
     icon_modedit
     icon_pcbnew
     icon_pagelayout_editor
@@ -673,6 +681,7 @@ set( BMAPS_128
     icon_kicad
     icon_kicad_nightly
     icon_libedit
+    icon_mbs
     icon_modedit
     icon_pcbnew
     icon_pagelayout_editor
@@ -689,6 +698,7 @@ set( BMAPS_256
     icon_kicad
     icon_kicad_nightly
     icon_libedit
+    icon_mbs
     icon_modedit
     icon_pcbnew
     icon_pagelayout_editor

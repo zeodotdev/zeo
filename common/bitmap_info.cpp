@@ -5142,4 +5142,76 @@ void BuildBitmapInfo( std::unordered_map<BITMAPS, std::vector<BITMAP_INFO>>& aBi
     aBitmapInfoCache[BITMAPS::constraint_via_style].emplace_back( BITMAPS::constraint_via_style, wxT( "constraint_via_style_dark.png" ), -1, wxT( "dark" ) );
     aBitmapInfoCache[BITMAPS::constraint_vias_under_smd].emplace_back( BITMAPS::constraint_vias_under_smd, wxT( "constraint_vias_under_smd_dark.png" ), -1, wxT( "dark" ) );
 
+    // Multi-board (MBS) icons. Order doesn't matter (BITMAPS keys are
+    // hashed; sizes get matched at lookup). PNGs were rendered offline
+    // from sources/{light,dark}/*.svg; running cmake with
+    // MAINTAIN_PNGS=ON regenerates the whole file from the template
+    // and supersedes these entries.
+    aBitmapInfoCache[BITMAPS::update_mbs_from_sch].emplace_back( BITMAPS::update_mbs_from_sch, wxT( "update_mbs_from_sch_16.png" ), 16, wxT( "light" ) );
+    aBitmapInfoCache[BITMAPS::update_mbs_from_sch].emplace_back( BITMAPS::update_mbs_from_sch, wxT( "update_mbs_from_sch_dark_16.png" ), 16, wxT( "dark" ) );
+    aBitmapInfoCache[BITMAPS::update_mbs_from_sch].emplace_back( BITMAPS::update_mbs_from_sch, wxT( "update_mbs_from_sch_24.png" ), 24, wxT( "light" ) );
+    aBitmapInfoCache[BITMAPS::update_mbs_from_sch].emplace_back( BITMAPS::update_mbs_from_sch, wxT( "update_mbs_from_sch_dark_24.png" ), 24, wxT( "dark" ) );
+    aBitmapInfoCache[BITMAPS::update_mbs_from_sch].emplace_back( BITMAPS::update_mbs_from_sch, wxT( "update_mbs_from_sch_32.png" ), 32, wxT( "light" ) );
+    aBitmapInfoCache[BITMAPS::update_mbs_from_sch].emplace_back( BITMAPS::update_mbs_from_sch, wxT( "update_mbs_from_sch_dark_32.png" ), 32, wxT( "dark" ) );
+    aBitmapInfoCache[BITMAPS::update_mbs_from_sch].emplace_back( BITMAPS::update_mbs_from_sch, wxT( "update_mbs_from_sch_48.png" ), 48, wxT( "light" ) );
+    aBitmapInfoCache[BITMAPS::update_mbs_from_sch].emplace_back( BITMAPS::update_mbs_from_sch, wxT( "update_mbs_from_sch_dark_48.png" ), 48, wxT( "dark" ) );
+    aBitmapInfoCache[BITMAPS::update_mbs_from_sch].emplace_back( BITMAPS::update_mbs_from_sch, wxT( "update_mbs_from_sch_64.png" ), 64, wxT( "light" ) );
+    aBitmapInfoCache[BITMAPS::update_mbs_from_sch].emplace_back( BITMAPS::update_mbs_from_sch, wxT( "update_mbs_from_sch_dark_64.png" ), 64, wxT( "dark" ) );
+
+    aBitmapInfoCache[BITMAPS::update_pcb_from_mbs].emplace_back( BITMAPS::update_pcb_from_mbs, wxT( "update_pcb_from_mbs_16.png" ), 16, wxT( "light" ) );
+    aBitmapInfoCache[BITMAPS::update_pcb_from_mbs].emplace_back( BITMAPS::update_pcb_from_mbs, wxT( "update_pcb_from_mbs_dark_16.png" ), 16, wxT( "dark" ) );
+    aBitmapInfoCache[BITMAPS::update_pcb_from_mbs].emplace_back( BITMAPS::update_pcb_from_mbs, wxT( "update_pcb_from_mbs_24.png" ), 24, wxT( "light" ) );
+    aBitmapInfoCache[BITMAPS::update_pcb_from_mbs].emplace_back( BITMAPS::update_pcb_from_mbs, wxT( "update_pcb_from_mbs_dark_24.png" ), 24, wxT( "dark" ) );
+    aBitmapInfoCache[BITMAPS::update_pcb_from_mbs].emplace_back( BITMAPS::update_pcb_from_mbs, wxT( "update_pcb_from_mbs_32.png" ), 32, wxT( "light" ) );
+    aBitmapInfoCache[BITMAPS::update_pcb_from_mbs].emplace_back( BITMAPS::update_pcb_from_mbs, wxT( "update_pcb_from_mbs_dark_32.png" ), 32, wxT( "dark" ) );
+    aBitmapInfoCache[BITMAPS::update_pcb_from_mbs].emplace_back( BITMAPS::update_pcb_from_mbs, wxT( "update_pcb_from_mbs_48.png" ), 48, wxT( "light" ) );
+    aBitmapInfoCache[BITMAPS::update_pcb_from_mbs].emplace_back( BITMAPS::update_pcb_from_mbs, wxT( "update_pcb_from_mbs_dark_48.png" ), 48, wxT( "dark" ) );
+    aBitmapInfoCache[BITMAPS::update_pcb_from_mbs].emplace_back( BITMAPS::update_pcb_from_mbs, wxT( "update_pcb_from_mbs_64.png" ), 64, wxT( "light" ) );
+    aBitmapInfoCache[BITMAPS::update_pcb_from_mbs].emplace_back( BITMAPS::update_pcb_from_mbs, wxT( "update_pcb_from_mbs_dark_64.png" ), 64, wxT( "dark" ) );
+
+    aBitmapInfoCache[BITMAPS::options_mbs].emplace_back( BITMAPS::options_mbs, wxT( "options_mbs_16.png" ), 16, wxT( "light" ) );
+    aBitmapInfoCache[BITMAPS::options_mbs].emplace_back( BITMAPS::options_mbs, wxT( "options_mbs_dark_16.png" ), 16, wxT( "dark" ) );
+    aBitmapInfoCache[BITMAPS::options_mbs].emplace_back( BITMAPS::options_mbs, wxT( "options_mbs_24.png" ), 24, wxT( "light" ) );
+    aBitmapInfoCache[BITMAPS::options_mbs].emplace_back( BITMAPS::options_mbs, wxT( "options_mbs_dark_24.png" ), 24, wxT( "dark" ) );
+    aBitmapInfoCache[BITMAPS::options_mbs].emplace_back( BITMAPS::options_mbs, wxT( "options_mbs_32.png" ), 32, wxT( "light" ) );
+    aBitmapInfoCache[BITMAPS::options_mbs].emplace_back( BITMAPS::options_mbs, wxT( "options_mbs_dark_32.png" ), 32, wxT( "dark" ) );
+    aBitmapInfoCache[BITMAPS::options_mbs].emplace_back( BITMAPS::options_mbs, wxT( "options_mbs_48.png" ), 48, wxT( "light" ) );
+    aBitmapInfoCache[BITMAPS::options_mbs].emplace_back( BITMAPS::options_mbs, wxT( "options_mbs_dark_48.png" ), 48, wxT( "dark" ) );
+    aBitmapInfoCache[BITMAPS::options_mbs].emplace_back( BITMAPS::options_mbs, wxT( "options_mbs_64.png" ), 64, wxT( "light" ) );
+    aBitmapInfoCache[BITMAPS::options_mbs].emplace_back( BITMAPS::options_mbs, wxT( "options_mbs_dark_64.png" ), 64, wxT( "dark" ) );
+
+    aBitmapInfoCache[BITMAPS::icon_mbs_24].emplace_back( BITMAPS::icon_mbs_24, wxT( "icon_mbs_24_16.png" ), 16, wxT( "light" ) );
+    aBitmapInfoCache[BITMAPS::icon_mbs_24].emplace_back( BITMAPS::icon_mbs_24, wxT( "icon_mbs_24_dark_16.png" ), 16, wxT( "dark" ) );
+    aBitmapInfoCache[BITMAPS::icon_mbs_24].emplace_back( BITMAPS::icon_mbs_24, wxT( "icon_mbs_24_24.png" ), 24, wxT( "light" ) );
+    aBitmapInfoCache[BITMAPS::icon_mbs_24].emplace_back( BITMAPS::icon_mbs_24, wxT( "icon_mbs_24_dark_24.png" ), 24, wxT( "dark" ) );
+    aBitmapInfoCache[BITMAPS::icon_mbs_24].emplace_back( BITMAPS::icon_mbs_24, wxT( "icon_mbs_24_32.png" ), 32, wxT( "light" ) );
+    aBitmapInfoCache[BITMAPS::icon_mbs_24].emplace_back( BITMAPS::icon_mbs_24, wxT( "icon_mbs_24_dark_32.png" ), 32, wxT( "dark" ) );
+    aBitmapInfoCache[BITMAPS::icon_mbs_24].emplace_back( BITMAPS::icon_mbs_24, wxT( "icon_mbs_24_48.png" ), 48, wxT( "light" ) );
+    aBitmapInfoCache[BITMAPS::icon_mbs_24].emplace_back( BITMAPS::icon_mbs_24, wxT( "icon_mbs_24_dark_48.png" ), 48, wxT( "dark" ) );
+    aBitmapInfoCache[BITMAPS::icon_mbs_24].emplace_back( BITMAPS::icon_mbs_24, wxT( "icon_mbs_24_64.png" ), 64, wxT( "light" ) );
+    aBitmapInfoCache[BITMAPS::icon_mbs_24].emplace_back( BITMAPS::icon_mbs_24, wxT( "icon_mbs_24_dark_64.png" ), 64, wxT( "dark" ) );
+
+    aBitmapInfoCache[BITMAPS::icon_mbs_32].emplace_back( BITMAPS::icon_mbs_32, wxT( "icon_mbs_32_32.png" ), 32, wxT( "light" ) );
+    aBitmapInfoCache[BITMAPS::icon_mbs_32].emplace_back( BITMAPS::icon_mbs_32, wxT( "icon_mbs_32_dark_32.png" ), 32, wxT( "dark" ) );
+
+    aBitmapInfoCache[BITMAPS::icon_mbs].emplace_back( BITMAPS::icon_mbs, wxT( "icon_mbs_48.png" ), 48, wxT( "light" ) );
+    aBitmapInfoCache[BITMAPS::icon_mbs].emplace_back( BITMAPS::icon_mbs, wxT( "icon_mbs_dark_48.png" ), 48, wxT( "dark" ) );
+    aBitmapInfoCache[BITMAPS::icon_mbs].emplace_back( BITMAPS::icon_mbs, wxT( "icon_mbs_64.png" ), 64, wxT( "light" ) );
+    aBitmapInfoCache[BITMAPS::icon_mbs].emplace_back( BITMAPS::icon_mbs, wxT( "icon_mbs_dark_64.png" ), 64, wxT( "dark" ) );
+    aBitmapInfoCache[BITMAPS::icon_mbs].emplace_back( BITMAPS::icon_mbs, wxT( "icon_mbs_128.png" ), 128, wxT( "light" ) );
+    aBitmapInfoCache[BITMAPS::icon_mbs].emplace_back( BITMAPS::icon_mbs, wxT( "icon_mbs_dark_128.png" ), 128, wxT( "dark" ) );
+    aBitmapInfoCache[BITMAPS::icon_mbs].emplace_back( BITMAPS::icon_mbs, wxT( "icon_mbs_256.png" ), 256, wxT( "light" ) );
+    aBitmapInfoCache[BITMAPS::icon_mbs].emplace_back( BITMAPS::icon_mbs, wxT( "icon_mbs_dark_256.png" ), 256, wxT( "dark" ) );
+
+    aBitmapInfoCache[BITMAPS::manage_boards].emplace_back( BITMAPS::manage_boards, wxT( "manage_boards_16.png" ), 16, wxT( "light" ) );
+    aBitmapInfoCache[BITMAPS::manage_boards].emplace_back( BITMAPS::manage_boards, wxT( "manage_boards_dark_16.png" ), 16, wxT( "dark" ) );
+    aBitmapInfoCache[BITMAPS::manage_boards].emplace_back( BITMAPS::manage_boards, wxT( "manage_boards_24.png" ), 24, wxT( "light" ) );
+    aBitmapInfoCache[BITMAPS::manage_boards].emplace_back( BITMAPS::manage_boards, wxT( "manage_boards_dark_24.png" ), 24, wxT( "dark" ) );
+    aBitmapInfoCache[BITMAPS::manage_boards].emplace_back( BITMAPS::manage_boards, wxT( "manage_boards_32.png" ), 32, wxT( "light" ) );
+    aBitmapInfoCache[BITMAPS::manage_boards].emplace_back( BITMAPS::manage_boards, wxT( "manage_boards_dark_32.png" ), 32, wxT( "dark" ) );
+    aBitmapInfoCache[BITMAPS::manage_boards].emplace_back( BITMAPS::manage_boards, wxT( "manage_boards_48.png" ), 48, wxT( "light" ) );
+    aBitmapInfoCache[BITMAPS::manage_boards].emplace_back( BITMAPS::manage_boards, wxT( "manage_boards_dark_48.png" ), 48, wxT( "dark" ) );
+    aBitmapInfoCache[BITMAPS::manage_boards].emplace_back( BITMAPS::manage_boards, wxT( "manage_boards_64.png" ), 64, wxT( "light" ) );
+    aBitmapInfoCache[BITMAPS::manage_boards].emplace_back( BITMAPS::manage_boards, wxT( "manage_boards_dark_64.png" ), 64, wxT( "dark" ) );
+
 };

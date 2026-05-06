@@ -30,6 +30,7 @@ class PANEL_SETUP_PINMAP;
 class PANEL_TEXT_VARIABLES;
 class PANEL_SETUP_NETCLASSES;
 class PANEL_SETUP_BUSES;
+class PANEL_SETUP_CROSS_BOARD_RULES;
 class ERC_ITEM;
 
 
@@ -59,4 +60,5 @@ protected:
     size_t                    m_severitiesPage;
     size_t                    m_netclassesPage;
     size_t                    m_embeddedFilesPage;
+    size_t                    m_crossBoardRulesPage = 0;  ///< 0 if not added
 };

@@ -493,6 +493,7 @@ set( COMMON_DLG_SRCS
     dialogs/dialog_multi_board_setup.cpp
     dialogs/dialog_multi_board_net_class_conflict.cpp
     dialogs/dialog_multi_board_rules.cpp
+    dialogs/panel_setup_cross_board_rules.cpp
     dialogs/multi_board_propagate_settings_ui.cpp
     dialogs/dialog_multi_unit_entry.cpp
     dialogs/dialog_page_settings_base.cpp

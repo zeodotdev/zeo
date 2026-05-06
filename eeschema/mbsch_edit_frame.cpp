@@ -258,10 +258,14 @@ void MBSCH_EDIT_FRAME::doReCreateMenuBar()
     placeMenu->Add( SCH_ACTIONS::drawLines );
     placeMenu->Add( SCH_ACTIONS::placeImage );
 
-    // -- Tools menu -- (MBS-specific)
+    // -- Tools menu -- (MBS-specific). Cross-Board Rules now lives as a
+    // tree page in the Schematic Setup dialog; this menu keeps the
+    // refresh + manage entry points alongside it for keyboard / menubar
+    // discovery.
     ACTION_MENU* toolsMenu = new ACTION_MENU( false, selTool );
     toolsMenu->Add( SCH_ACTIONS::refreshMbsFromSubProjects );
-    toolsMenu->Add( SCH_ACTIONS::mbsCrossBoardRules );
+    toolsMenu->AppendSeparator();
+    toolsMenu->Add( SCH_ACTIONS::mbsManageSubBoards );
 
     // -- Preferences menu --
     ACTION_MENU* prefsMenu = new ACTION_MENU( false, selTool );

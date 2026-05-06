@@ -189,6 +189,8 @@ public:
     static TOOL_ACTION mbsOpenSubProjectPcb;
     static TOOL_ACTION mbsOpen3DAssembly;
     static TOOL_ACTION mbsCrossBoardRules;
+    static TOOL_ACTION mbsSchematicSetup;
+    static TOOL_ACTION mbsShowTerminal;
 
     static TOOL_ACTION nextNetItem;
     static TOOL_ACTION previousNetItem;

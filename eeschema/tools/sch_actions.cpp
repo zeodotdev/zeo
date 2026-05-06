@@ -1168,23 +1168,23 @@ TOOL_ACTION SCH_ACTIONS::refreshMbsFromSubProjects( TOOL_ACTION_ARGS()
         .Scope( AS_GLOBAL )
         .FriendlyName( _( "Refresh Module Blocks from Sub-Projects" ) )
         .Tooltip( _( "Scan each sub-project and add any new connectors or pads that aren't yet on this multi-board schematic" ) )
-        .Icon( BITMAPS::refresh ) );
+        .Icon( BITMAPS::update_mbs_from_sch ) );
 
-// Multi-board bridge actions — placeholder icons, swap later.
+// Multi-board bridge actions.
 
 TOOL_ACTION SCH_ACTIONS::mbsManageSubBoards( TOOL_ACTION_ARGS()
         .Name( "eeschema.EditorControl.mbsManageSubBoards" )
         .Scope( AS_GLOBAL )
         .FriendlyName( _( "Manage Sub-Boards..." ) )
         .Tooltip( _( "Add, remove, or inspect sub-boards in this multi-board project" ) )
-        .Icon( BITMAPS::new_project_from_template ) );
+        .Icon( BITMAPS::manage_boards ) );
 
 TOOL_ACTION SCH_ACTIONS::mbsSyncCrossBoardNets( TOOL_ACTION_ARGS()
         .Name( "eeschema.EditorControl.mbsSyncCrossBoardNets" )
         .Scope( AS_GLOBAL )
         .FriendlyName( _( "Sync Cross-Board Nets to PCBs" ) )
         .Tooltip( _( "Write the multi-board schematic's cross-board nets into each sub-project's PCB connector pads" ) )
-        .Icon( BITMAPS::net_highlight ) );
+        .Icon( BITMAPS::update_pcb_from_mbs ) );
 
 TOOL_ACTION SCH_ACTIONS::mbsOpenSubProjectSchematic( TOOL_ACTION_ARGS()
         .Name( "eeschema.EditorControl.mbsOpenSubProjectSchematic" )
@@ -1215,6 +1215,28 @@ TOOL_ACTION SCH_ACTIONS::mbsCrossBoardRules( TOOL_ACTION_ARGS()
                      "diff pairs, current capacity, voltage drop) persisted on the multi-board "
                      "container project" ) )
         .Icon( BITMAPS::tools ) );
+
+// MBSCH-only Schematic Setup affordance. Same handler as
+// SCH_ACTIONS::schematicSetup (opens DIALOG_SCHEMATIC_SETUP) — separate
+// action only so the MBSCH toolbar can carry the BITMAPS::options_mbs
+// icon without changing the regular SCH editor's icon.
+TOOL_ACTION SCH_ACTIONS::mbsSchematicSetup( TOOL_ACTION_ARGS()
+        .Name( "eeschema.EditorControl.mbsSchematicSetup" )
+        .Scope( AS_GLOBAL )
+        .FriendlyName( _( "Schematic Setup..." ) )
+        .Tooltip( _( "Edit schematic setup (net classes, electrical rules, formatting) for the multi-board container project" ) )
+        .Icon( BITMAPS::options_mbs ) );
+
+// MBSCH-side Terminal entry point. Opens FRAME_TERMINAL via KIWAY,
+// mirroring KICAD_MANAGER_ACTIONS::showTerminal so the MBSCH toolbar
+// can offer the same affordance without registering the manager tool
+// in eeschema.
+TOOL_ACTION SCH_ACTIONS::mbsShowTerminal( TOOL_ACTION_ARGS()
+        .Name( "eeschema.EditorControl.mbsShowTerminal" )
+        .Scope( AS_GLOBAL )
+        .FriendlyName( _( "Terminal" ) )
+        .Tooltip( _( "Open Terminal" ) )
+        .Icon( BITMAPS::icon_terminal ) );
 
 TOOL_ACTION SCH_ACTIONS::nextNetItem( TOOL_ACTION_ARGS()
         .Name( "eeschema.EditorControl.nextNetItem" )

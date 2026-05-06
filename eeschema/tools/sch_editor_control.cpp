@@ -825,6 +825,32 @@ int SCH_EDITOR_CONTROL::MbsCrossBoardRules( const TOOL_EVENT& aEvent )
 }
 
 
+int SCH_EDITOR_CONTROL::MbsShowTerminal( const TOOL_EVENT& aEvent )
+{
+    KIWAY_PLAYER* frame = m_frame->Kiway().Player( FRAME_TERMINAL, true );
+
+    if( !frame )
+        return 0;
+
+    if( frame->IsShown() && frame->IsVisible() )
+    {
+        if( frame->IsIconized() )
+            frame->Iconize( false );
+
+        frame->Raise();
+        frame->SetFocus();
+        return 0;
+    }
+
+    frame->Show( true );
+    frame->Raise();
+    frame->SetFocus();
+    return 0;
+}
+
+
+
+
 int SCH_EDITOR_CONTROL::MbsSyncCrossBoardNets( const TOOL_EVENT& aEvent )
 {
     PROJECT_FILE& container = m_frame->Prj().GetProjectFile();
@@ -4210,6 +4236,7 @@ void SCH_EDITOR_CONTROL::setTransitions()
     Go( &SCH_EDITOR_CONTROL::SaveCurrSheetCopyAs,     SCH_ACTIONS::saveCurrSheetCopyAs.MakeEvent() );
     Go( &SCH_EDITOR_CONTROL::Revert,                  ACTIONS::revert.MakeEvent() );
     Go( &SCH_EDITOR_CONTROL::ShowSchematicSetup,      SCH_ACTIONS::schematicSetup.MakeEvent() );
+    Go( &SCH_EDITOR_CONTROL::ShowSchematicSetup,      SCH_ACTIONS::mbsSchematicSetup.MakeEvent() );
     Go( &SCH_EDITOR_CONTROL::PageSetup,               ACTIONS::pageSettings.MakeEvent() );
     Go( &SCH_EDITOR_CONTROL::Print,                   ACTIONS::print.MakeEvent() );
     Go( &SCH_EDITOR_CONTROL::Plot,                    ACTIONS::plot.MakeEvent() );
@@ -4231,6 +4258,8 @@ void SCH_EDITOR_CONTROL::setTransitions()
         SCH_ACTIONS::mbsOpenSubProjectPcb.MakeEvent() );
     Go( &SCH_EDITOR_CONTROL::MbsCrossBoardRules,
         SCH_ACTIONS::mbsCrossBoardRules.MakeEvent() );
+    Go( &SCH_EDITOR_CONTROL::MbsShowTerminal,
+        SCH_ACTIONS::mbsShowTerminal.MakeEvent() );
 
     Go( &SCH_EDITOR_CONTROL::CrossProbeToPcb, EVENTS::PointSelectedEvent );
     Go( &SCH_EDITOR_CONTROL::CrossProbeToPcb, EVENTS::SelectedEvent );

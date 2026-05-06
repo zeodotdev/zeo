@@ -87,6 +87,11 @@ public:
     int MbsOpen3DAssembly( const TOOL_EVENT& aEvent );
     int MbsCrossBoardRules( const TOOL_EVENT& aEvent );
 
+    /// Bridge to FRAME_TERMINAL via KIWAY — invoked by
+    /// SCH_ACTIONS::mbsShowTerminal so the MBSCH toolbar can launch the
+    /// same Terminal frame KICAD_MANAGER_ACTIONS::showTerminal does.
+    int MbsShowTerminal( const TOOL_EVENT& aEvent );
+
     bool RescueLegacyProject( bool aRunningOnDemand );
     bool RescueSymbolLibTableProject( bool aRunningOnDemand );
 

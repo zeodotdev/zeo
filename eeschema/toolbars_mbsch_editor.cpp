@@ -104,7 +104,7 @@ std::optional<TOOLBAR_CONFIGURATION> MBSCH_EDIT_TOOLBAR_SETTINGS::DefaultToolbar
               .AppendAction( ACTIONS::showVersionControl );
 
         config.AppendSeparator()
-              .AppendAction( SCH_ACTIONS::schematicSetup );
+              .AppendAction( SCH_ACTIONS::mbsSchematicSetup );
 
         config.AppendSeparator()
               .AppendAction( ACTIONS::pageSettings )
@@ -144,27 +144,27 @@ std::optional<TOOLBAR_CONFIGURATION> MBSCH_EDIT_TOOLBAR_SETTINGS::DefaultToolbar
         config.AppendSeparator()
               .AppendAction( SCH_ACTIONS::runERC );
 
-        // Multi-board management group: surfaces the project-manager
-        // actions that make sense while the MBSCH is the active
-        // editor. Each delegates via SCH_EDITOR_CONTROL to the KiCad
-        // manager frame's tool manager so the handlers live in one
-        // place. Order: refresh pulls fresh pins in, sync pushes nets
-        // out, manage opens the setup dialog, and the Open SCH / PCB
-        // buttons show a picker for sub-board navigation (one board
-        // at a time — there's no Switch affordance because the
-        // active container is fixed for the MBSCH session).
+        // Multi-board workflow group: structural operations on the MBS
+        // container — manage sub-boards, refresh modules from each
+        // sub-project, push cross-board nets to PCB, and open the 3D
+        // assembly preview. Cross-Board Rules is not here — it lives
+        // as a tree page inside the Schematic Setup dialog.
         config.AppendSeparator()
+              .AppendAction( SCH_ACTIONS::mbsManageSubBoards )
               .AppendAction( SCH_ACTIONS::refreshMbsFromSubProjects )
               .AppendAction( SCH_ACTIONS::mbsSyncCrossBoardNets )
-              .AppendAction( SCH_ACTIONS::mbsManageSubBoards )
-              .AppendAction( SCH_ACTIONS::mbsCrossBoardRules )
-              .AppendAction( SCH_ACTIONS::mbsOpenSubProjectSchematic )
-              .AppendAction( SCH_ACTIONS::mbsOpenSubProjectPcb )
               .AppendAction( SCH_ACTIONS::mbsOpen3DAssembly );
 
-        // Agent — same action as the SCH toolbar; opens the AI agent panel
-        // against whichever editor is active (FRAME_MBSCH here).
+        // Sub-board navigation: pickers that open one sub-project's
+        // schematic or PCB in a peer editor window.
         config.AppendSeparator()
+              .AppendAction( SCH_ACTIONS::mbsOpenSubProjectSchematic )
+              .AppendAction( SCH_ACTIONS::mbsOpenSubProjectPcb );
+
+        // External-tool group: terminal + agent. Both spawn separate
+        // KIWAY frames; agent docks against whichever editor is active.
+        config.AppendSeparator()
+              .AppendAction( SCH_ACTIONS::mbsShowTerminal )
               .AppendAction( SCH_ACTIONS::showAgent );
 
         break;

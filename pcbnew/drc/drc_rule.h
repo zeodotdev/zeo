@@ -175,6 +175,18 @@ public:
         SPACE_DOMAIN,
         TIME_DOMAIN,
 
+        /// MOON-1328: when set on a length / matched-length constraint,
+        /// the test provider compares against the cross-board total
+        /// (per-board length + every sibling sub-project's contribution)
+        /// rather than the per-board length. Authored as
+        /// `(scope cross_board)` inside the rule file. Has no effect on
+        /// constraints that don't read length, and falls through to
+        /// per-board behaviour on standalone projects (the foundation
+        /// primitive returns isCrossBoard=false in that case, matching
+        /// per-board exactly — see length_delay_calculation/
+        /// multi_board_length.h).
+        CROSS_BOARD_SCOPE,
+
         // Keep this last value - used to statically size the options bitset
         NUM_OPTIONS
     };

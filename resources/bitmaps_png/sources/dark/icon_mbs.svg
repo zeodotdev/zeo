@@ -1,0 +1,23 @@
+<svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+<mask id="mask0_2_1338" style="mask-type:luminance" maskUnits="userSpaceOnUse" x="0" y="0" width="48" height="48">
+<path d="M40.166 0H7.834C3.5074 0 0 3.5074 0 7.834V40.166C0 44.4926 3.5074 48 7.834 48H40.166C44.4926 48 48 44.4926 48 40.166V7.834C48 3.5074 44.4926 0 40.166 0Z" fill="white"/>
+</mask>
+<g mask="url(#mask0_2_1338)">
+<path d="M40.166 0H7.834C3.5074 0 0 3.5074 0 7.834V40.166C0 44.4926 3.5074 48 7.834 48H40.166C44.4926 48 48 44.4926 48 40.166V7.834C48 3.5074 44.4926 0 40.166 0Z" fill="#D0C5AC"/>
+<path d="M23 10V21" stroke="#545454" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M39.4444 7.89032H30.0442" stroke="#5A5A5A" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M35.6404 3H30" stroke="#5A5A5A" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M16 44.8903H25.4002" stroke="#5A5A5A" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M19.804 40H25.4444" stroke="#5A5A5A" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M23 21L32 21" stroke="#545454" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M18 10V26" stroke="#545454" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M18 26L32 26" stroke="#545454" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M13 10V31" stroke="#545454" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M13 31L32 31" stroke="#545454" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M8 10V36" stroke="#545454" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M8 36L32 36" stroke="#545454" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M49 21H37.16" stroke="#545454" stroke-width="2" stroke-linejoin="round"/>
+<rect x="-6" y="-2" width="32" height="14" rx="0.5" fill="#DB295B"/>
+<rect x="30" y="50" width="32" height="20" rx="0.5" transform="rotate(-90 30 50)" fill="#DB295B"/>
+</g>
+</svg>

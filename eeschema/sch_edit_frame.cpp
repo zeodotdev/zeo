@@ -207,19 +207,26 @@ SCH_EDIT_FRAME::SCH_EDIT_FRAME( KIWAY* aKiway, wxWindow* aParent, FRAME_T aFrame
     m_crossProbeFlashTimer.SetOwner( this );
     Bind( wxEVT_TIMER, &SCH_EDIT_FRAME::OnCrossProbeFlashTimer, this, m_crossProbeFlashTimer.GetId() );
 
-    // Give an icon
+    // Give an icon. MBSCH gets its own icon set; everyone else (regular SCH
+    // editor) keeps icon_eeschema.
     wxIcon       icon;
     wxIconBundle icon_bundle;
 
-    icon.CopyFromBitmap( KiBitmap( BITMAPS::icon_eeschema, 48 ) );
+    const bool isMbsch = ( aFrameType == FRAME_MBSCH );
+    const BITMAPS bigIcon = isMbsch ? BITMAPS::icon_mbs : BITMAPS::icon_eeschema;
+    const BITMAPS icon32  = isMbsch ? BITMAPS::icon_mbs_32 : BITMAPS::icon_eeschema_32;
+    // No 16x16 MBS variant yet — fall back to icon_eeschema_16.
+    const BITMAPS icon16  = BITMAPS::icon_eeschema_16;
+
+    icon.CopyFromBitmap( KiBitmap( bigIcon, 48 ) );
     icon_bundle.AddIcon( icon );
-    icon.CopyFromBitmap( KiBitmap( BITMAPS::icon_eeschema, 128 ) );
+    icon.CopyFromBitmap( KiBitmap( bigIcon, 128 ) );
     icon_bundle.AddIcon( icon );
-    icon.CopyFromBitmap( KiBitmap( BITMAPS::icon_eeschema, 256 ) );
+    icon.CopyFromBitmap( KiBitmap( bigIcon, 256 ) );
     icon_bundle.AddIcon( icon );
-    icon.CopyFromBitmap( KiBitmap( BITMAPS::icon_eeschema_32 ) );
+    icon.CopyFromBitmap( KiBitmap( icon32 ) );
     icon_bundle.AddIcon( icon );
-    icon.CopyFromBitmap( KiBitmap( BITMAPS::icon_eeschema_16 ) );
+    icon.CopyFromBitmap( KiBitmap( icon16 ) );
     icon_bundle.AddIcon( icon );
 
     SetIcons( icon_bundle );

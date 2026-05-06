@@ -25,6 +25,7 @@
 #include <dialogs/panel_setup_netclasses.h>
 #include <dialogs/panel_setup_severities.h>
 #include <dialogs/panel_setup_buses.h>
+#include <dialogs/panel_setup_cross_board_rules.h>
 #include <panel_eeschema_annotation_options.h>
 #include <panel_setup_formatting.h>
 #include <panel_setup_pinmap.h>
@@ -107,6 +108,22 @@ DIALOG_SCHEMATIC_SETUP::DIALOG_SCHEMATIC_SETUP( SCH_EDIT_FRAME* aFrame ) :
             {
                 return new PANEL_SETUP_PINMAP( aParent, m_frame );
             }, _( "Pin Conflicts Map" ) );
+
+    // Cross-board ERC/DRC rules — only meaningful when the open project
+    // is a multi-board container. The panel works against PROJECT_FILE
+    // setters that are no-ops on non-container projects, so technically
+    // it would be harmless to always show it; we hide it on regular
+    // schematics to keep the tree uncluttered for the common case.
+    if( m_frame->Prj().GetProjectFile().IsMultiBoardContainer() )
+    {
+        m_crossBoardRulesPage = m_treebook->GetPageCount();
+        m_treebook->AddLazySubPage(
+                [this]( wxWindow* aParent ) -> wxWindow*
+                {
+                    return new PANEL_SETUP_CROSS_BOARD_RULES(
+                            aParent, &m_frame->Prj().GetProjectFile() );
+                }, _( "Cross-Board Rules" ) );
+    }
 
     m_treebook->AddPage( new wxPanel( GetTreebook() ), _( "Project" ) );
 

@@ -22,11 +22,15 @@
 #define DIALOG_MODULE_BLOCK_PROPERTIES_H
 
 #include <dialog_shim.h>
+#include <widgets/unit_binder.h>
+
+#include <memory>
 
 class SCH_MODULE_BLOCK;
 class SCH_EDIT_FRAME;
 class WX_GRID;
 class wxNotebook;
+class wxStaticText;
 class wxTextCtrl;
 class wxButton;
 class wxCommandEvent;
@@ -60,8 +64,22 @@ private:
 
     // General tab
     WX_GRID*          m_fieldsGrid;
-    wxTextCtrl*       m_widthMm;
-    wxTextCtrl*       m_heightMm;
+
+    /// Width / height geometry inputs are routed through UNIT_BINDER
+    /// so the dialog honours the user's display-unit preference
+    /// (mm / mils / inches), validates input, and matches the styling
+    /// of every peer property dialog (DIALOG_SYMBOL_PROPERTIES,
+    /// DIALOG_LABEL_PROPERTIES, etc.). The label / control / units
+    /// triplets below back the UNIT_BINDER instances.
+    wxStaticText*                m_widthLabel;
+    wxTextCtrl*                  m_widthCtrl;
+    wxStaticText*                m_widthUnits;
+    wxStaticText*                m_heightLabel;
+    wxTextCtrl*                  m_heightCtrl;
+    wxStaticText*                m_heightUnits;
+    std::unique_ptr<UNIT_BINDER> m_width;
+    std::unique_ptr<UNIT_BINDER> m_height;
+
     wxTextCtrl*       m_sourceSchPath;   ///< read-only display of resolved .kicad_sch
     wxButton*         m_openSourceBtn;
 

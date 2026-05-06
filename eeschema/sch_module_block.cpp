@@ -22,6 +22,8 @@
 #include "sch_module_pin.h"
 
 #include <eda_search_data.h>
+#include <origin_transforms.h>
+#include <properties/property_mgr.h>
 
 #include <bitmaps.h>
 #include <core/mirror.h>
@@ -507,3 +509,84 @@ void SCH_MODULE_BLOCK::swapData( SCH_ITEM* aItem )
     for( SCH_MODULE_PIN* pin : other->m_pins )
         pin->SetParent( other );
 }
+
+
+// PROPERTY_MANAGER registration so the right-side properties pane shows
+// editable / read-only fields when a SCH_MODULE_BLOCK is selected.
+// Mirrors the SCH_SYMBOL_DESC pattern at sch_symbol.cpp:4116. Position
+// and size are editable; the identity fields (display name, MBS ref)
+// are editable; connector ref + sub-project path are read-only since
+// they're authoritative on the sub-project's schematic and flow into
+// the MBS through Refresh, not the other way around.
+static struct SCH_MODULE_BLOCK_DESC
+{
+    SCH_MODULE_BLOCK_DESC()
+    {
+        PROPERTY_MANAGER& propMgr = PROPERTY_MANAGER::Instance();
+        REGISTER_TYPE( SCH_MODULE_BLOCK );
+        propMgr.InheritsAfter( TYPE_HASH( SCH_MODULE_BLOCK ), TYPE_HASH( SCH_ITEM ) );
+
+        // Hide SCH_ITEM-inherited properties that don't apply to
+        // module blocks. These are symbol-flavoured concepts: "Unit"
+        // and "Body Style" are multi-unit / De Morgan symbol affordances
+        // (a module block is a sub-project placeholder, not a library
+        // symbol with units), and "Private" is a library-symbol
+        // visibility flag with no analogue here. SCH_ITEM marks them
+        // with SetIsHiddenFromDesignEditors() but the right-side
+        // properties pane on MBSCH still surfaces them — explicit
+        // Mask is the canonical way to drop them per-derived-type
+        // (mirrors the pattern in pcbnew/pcb_text.cpp:721,742).
+        propMgr.Mask( TYPE_HASH( SCH_MODULE_BLOCK ), TYPE_HASH( SCH_ITEM ),
+                      _HKI( "Unit" ) );
+        propMgr.Mask( TYPE_HASH( SCH_MODULE_BLOCK ), TYPE_HASH( SCH_ITEM ),
+                      _HKI( "Body Style" ) );
+        propMgr.Mask( TYPE_HASH( SCH_MODULE_BLOCK ), TYPE_HASH( SCH_ITEM ),
+                      _HKI( "Private" ) );
+
+        propMgr.AddProperty( new PROPERTY<SCH_MODULE_BLOCK, int>(
+                                     _HKI( "Position X" ),
+                                     &SCH_MODULE_BLOCK::SetX, &SCH_MODULE_BLOCK::GetX,
+                                     PROPERTY_DISPLAY::PT_COORD,
+                                     ORIGIN_TRANSFORMS::ABS_X_COORD ) );
+        propMgr.AddProperty( new PROPERTY<SCH_MODULE_BLOCK, int>(
+                                     _HKI( "Position Y" ),
+                                     &SCH_MODULE_BLOCK::SetY, &SCH_MODULE_BLOCK::GetY,
+                                     PROPERTY_DISPLAY::PT_COORD,
+                                     ORIGIN_TRANSFORMS::ABS_Y_COORD ) );
+        propMgr.AddProperty( new PROPERTY<SCH_MODULE_BLOCK, int>(
+                                     _HKI( "Width" ),
+                                     &SCH_MODULE_BLOCK::SetWidth, &SCH_MODULE_BLOCK::GetWidth,
+                                     PROPERTY_DISPLAY::PT_SIZE ) );
+        propMgr.AddProperty( new PROPERTY<SCH_MODULE_BLOCK, int>(
+                                     _HKI( "Height" ),
+                                     &SCH_MODULE_BLOCK::SetHeight, &SCH_MODULE_BLOCK::GetHeight,
+                                     PROPERTY_DISPLAY::PT_SIZE ) );
+
+        const wxString groupFields = _HKI( "Fields" );
+
+        propMgr.AddProperty( new PROPERTY<SCH_MODULE_BLOCK, wxString>(
+                                     _HKI( "Display Name" ),
+                                     &SCH_MODULE_BLOCK::SetDisplayName,
+                                     &SCH_MODULE_BLOCK::GetDisplayName ),
+                             groupFields );
+        propMgr.AddProperty( new PROPERTY<SCH_MODULE_BLOCK, wxString>(
+                                     _HKI( "MBS Reference" ),
+                                     &SCH_MODULE_BLOCK::SetMbsReference,
+                                     &SCH_MODULE_BLOCK::GetMbsReference ),
+                             groupFields );
+
+        // Connector ref + sub-project path are sourced from the sub-
+        // project; surface them read-only so the user can inspect but
+        // not edit (renames flow in via RefreshMbsFromSubProjects).
+        propMgr.AddProperty( new PROPERTY<SCH_MODULE_BLOCK, wxString>(
+                                     _HKI( "Connector Ref" ),
+                                     NO_SETTER( SCH_MODULE_BLOCK, wxString ),
+                                     &SCH_MODULE_BLOCK::GetComponentRef ),
+                             groupFields );
+        propMgr.AddProperty( new PROPERTY<SCH_MODULE_BLOCK, wxString>(
+                                     _HKI( "Sub-Project Path" ),
+                                     NO_SETTER( SCH_MODULE_BLOCK, wxString ),
+                                     &SCH_MODULE_BLOCK::GetSubProjectPath ),
+                             groupFields );
+    }
+} _SCH_MODULE_BLOCK_DESC;

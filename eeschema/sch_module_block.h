@@ -97,6 +97,21 @@ public:
     const VECTOR2I& GetSize() const { return m_size; }
     void SetSize( const VECTOR2I& aSize ) { m_size = aSize; }
 
+    /// Scalar position helpers used by the PROPERTY_MANAGER registration
+    /// at the bottom of `sch_module_block.cpp` so the right-side
+    /// properties pane can show / edit the block's top-left X / Y. Mirror
+    /// the SCH_SYMBOL pattern (sch_symbol.h:873-877).
+    int  GetX() const          { return GetPosition().x; }
+    void SetX( int aX )        { SetPosition( VECTOR2I( aX, GetY() ) ); }
+    int  GetY() const          { return GetPosition().y; }
+    void SetY( int aY )        { SetPosition( VECTOR2I( GetX(), aY ) ); }
+
+    /// Scalar size helpers for property pane Width / Height fields.
+    int  GetWidth() const      { return m_size.x; }
+    void SetWidth( int aW )    { m_size.x = std::max( aW, 1 ); }
+    int  GetHeight() const     { return m_size.y; }
+    void SetHeight( int aH )   { m_size.y = std::max( aH, 1 ); }
+
     const std::vector<SCH_MODULE_PIN*>& GetPins() const { return m_pins; }
     std::vector<SCH_MODULE_PIN*>&       GetPins() { return m_pins; }
 

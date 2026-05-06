@@ -68,60 +68,75 @@ DIALOG_MBS_REFRESH::DIALOG_MBS_REFRESH( SCH_EDIT_FRAME* aFrame,
 
 void DIALOG_MBS_REFRESH::buildUI()
 {
+    // Layout mirrors `pcbnew/dialogs/dialog_update_pcb` — single
+    // top-level vertical sizer, one checkbox per row in the operations
+    // group, WX_HTML_REPORT_PANEL filling the rest of the dialog, and
+    // the standard buttons via DIALOG_SHIM::SetupStandardButtons. This
+    // keeps the look + feel consistent with the canonical "sync" dialog.
     wxBoxSizer* mainSizer = new wxBoxSizer( wxVERTICAL );
 
     // ---- Operations to perform ----
     wxStaticBoxSizer* sbCategories = new wxStaticBoxSizer(
-            new wxStaticBox( this, wxID_ANY, _( "Operations to perform" ) ),
+            new wxStaticBox( this, wxID_ANY, _( "Include in update" ) ),
             wxVERTICAL );
 
-    wxBoxSizer* row1 = new wxBoxSizer( wxHORIZONTAL );
-    wxBoxSizer* row2 = new wxBoxSizer( wxHORIZONTAL );
-
-    auto makeCheckbox = [&]( const wxString& aLabel, wxBoxSizer* aRow ) -> wxCheckBox*
+    auto makeCheckbox = [&]( const wxString& aLabel ) -> wxCheckBox*
     {
         wxCheckBox* cb = new wxCheckBox( sbCategories->GetStaticBox(), wxID_ANY, aLabel );
         cb->SetValue( true );
         cb->Bind( wxEVT_CHECKBOX, &DIALOG_MBS_REFRESH::onCategoryToggled, this );
-        aRow->Add( cb, 1, wxALL, 4 );
+        sbCategories->Add( cb, 0, wxLEFT | wxRIGHT | wxTOP, 5 );
         return cb;
     };
 
-    m_cbAddBlocks    = makeCheckbox( _( "Add new module blocks" ),                    row1 );
-    m_cbAddPins      = makeCheckbox( _( "Add new pins" ),                              row1 );
-    m_cbRenamePins   = makeCheckbox( _( "Rename pin labels" ),                         row1 );
-    m_cbUpdatePaths  = makeCheckbox( _( "Update sub-project paths" ),                  row1 );
+    m_cbAddBlocks    = makeCheckbox( _( "Add new module blocks" ) );
+    m_cbAddPins      = makeCheckbox( _( "Add new pins" ) );
+    m_cbRenamePins   = makeCheckbox( _( "Rename pin labels" ) );
+    m_cbUpdatePaths  = makeCheckbox( _( "Update sub-project paths" ) );
+    m_cbRemoveBlocks = makeCheckbox( _( "Remove obsolete blocks (destructive)" ) );
+    m_cbRemovePins   = makeCheckbox( _( "Remove obsolete pins (destructive)" ) );
+    m_cbUpgradeUuids = makeCheckbox( _( "Adopt sub-project UUIDs (legacy upgrade)" ) );
 
-    m_cbRemoveBlocks = makeCheckbox( _( "Remove obsolete blocks (destructive)" ),      row2 );
-    m_cbRemovePins   = makeCheckbox( _( "Remove obsolete pins (destructive)" ),        row2 );
-    m_cbUpgradeUuids = makeCheckbox( _( "Adopt sub-project UUIDs (legacy upgrade)" ),  row2 );
-    row2->AddStretchSpacer();   // keep widths consistent across the two rows
+    // Trailing margin so the bottom checkbox isn't flush with the box.
+    sbCategories->AddSpacer( 5 );
 
-    sbCategories->Add( row1, 0, wxEXPAND | wxALL, 4 );
-    sbCategories->Add( row2, 0, wxEXPAND | wxALL, 4 );
-
-    mainSizer->Add( sbCategories, 0, wxEXPAND | wxALL, 8 );
+    mainSizer->Add( sbCategories, 0, wxEXPAND | wxALL, 5 );
 
     // ---- Report panel ----
     m_messagePanel = new WX_HTML_REPORT_PANEL( this, wxID_ANY );
-    m_messagePanel->SetLabel( _( "Changes" ) );
+    m_messagePanel->SetLabel( _( "Changes To Be Applied" ) );
     m_messagePanel->SetFileName( Prj().GetProjectPath() + wxT( "mbs_refresh_report.txt" ) );
     m_messagePanel->SetLazyUpdate( true );
 
-    mainSizer->Add( m_messagePanel, 1, wxEXPAND | wxLEFT | wxRIGHT, 8 );
+    mainSizer->Add( m_messagePanel, 1, wxEXPAND | wxALL, 5 );
 
-    // ---- Buttons ----
+    // Standard wxStdDialogButtonSizer with OK + Cancel. Hand-coded
+    // dialogs without an .fbp twin must create the buttons explicitly
+    // (DIALOG_SHIM::SetupStandardButtons only re-labels existing
+    // buttons; it doesn't create them). Add the sizer to the main
+    // layout *before* calling SetupStandardButtons so the relabel walk
+    // can find them.
     wxStdDialogButtonSizer* sdb = new wxStdDialogButtonSizer();
-    m_updateButton = new wxButton( this, wxID_OK, _( "Update MBS" ) );
-    m_cancelButton = new wxButton( this, wxID_CANCEL, _( "Close" ) );
+    m_updateButton = new wxButton( this, wxID_OK );
+    m_cancelButton = new wxButton( this, wxID_CANCEL );
     sdb->AddButton( m_updateButton );
     sdb->AddButton( m_cancelButton );
     sdb->Realize();
 
-    mainSizer->Add( sdb, 0, wxEXPAND | wxALL, 8 );
+    mainSizer->Add( sdb, 0, wxEXPAND | wxALL, 5 );
 
     SetSizer( mainSizer );
-    Layout();
+
+    // Bind the report panel's natural size into the dialog's size
+    // hints — same trick `dialog_update_pcb` uses so the dialog
+    // resizes gracefully across platforms with different default fonts.
+    m_messagePanel->GetSizer()->SetSizeHints( this );
+    m_messagePanel->Layout();
+
+    // Apply custom labels to the standard buttons (mirrors
+    // dialog_update_pcb's "Update PCB" / "Close" pair).
+    SetupStandardButtons( { { wxID_OK,     _( "Update MBS" ) },
+                            { wxID_CANCEL, _( "Close" ) } } );
 
     m_updateButton->Bind( wxEVT_BUTTON, &DIALOG_MBS_REFRESH::onUpdate, this );
 }

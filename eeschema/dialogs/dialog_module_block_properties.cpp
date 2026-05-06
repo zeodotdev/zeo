@@ -75,6 +75,16 @@ DIALOG_MODULE_BLOCK_PROPERTIES::DIALOG_MODULE_BLOCK_PROPERTIES( SCH_EDIT_FRAME* 
         m_frame( aFrame ),
         m_block( aBlock )
 {
+    // Force natural-size on every open instead of restoring the
+    // (possibly oversized) saved dialog geometry. DIALOG_SHIM persists
+    // window size keyed by dialog title; this dialog historically
+    // opened screen-tall, and that bad size got stuck in user prefs.
+    // Mirrors how content-driven dialogs (e.g. rule editors) opt out
+    // of the save/restore so the natural sizer fit is used every time.
+    // The user can still resize (wxRESIZE_BORDER is set) — the size
+    // just isn't persisted.
+    m_useCalculatedSize = true;
+
     wxBoxSizer* mainSizer = new wxBoxSizer( wxVERTICAL );
 
     m_notebook = new wxNotebook( this, wxID_ANY );
@@ -120,28 +130,37 @@ DIALOG_MODULE_BLOCK_PROPERTIES::DIALOG_MODULE_BLOCK_PROPERTIES( SCH_EDIT_FRAME* 
     generalSizer->Add( sbSource, 0, wxEXPAND | wxALL, 5 );
 
     // ---- Geometry box ----
+    // Use the UNIT_BINDER triplet pattern (label + ctrl + units) so the
+    // user's chosen display units (mm / mils / inches) and validation
+    // come for free. Mirrors DIALOG_PAD_PROPERTIES / DIALOG_SYMBOL_PROPERTIES
+    // styling — keeps every property dialog consistent.
     wxStaticBoxSizer* sbGeom = new wxStaticBoxSizer(
             new wxStaticBox( generalPage, wxID_ANY, _( "Geometry" ) ), wxVERTICAL );
 
     wxFlexGridSizer* geomGrid = new wxFlexGridSizer( 0, 3, 6, 8 );
     geomGrid->AddGrowableCol( 1, 1 );
 
-    geomGrid->Add( new wxStaticText( sbGeom->GetStaticBox(), wxID_ANY, _( "Width:" ) ),
-                   0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 5 );
-    m_widthMm = new wxTextCtrl( sbGeom->GetStaticBox(), wxID_ANY, wxEmptyString );
-    geomGrid->Add( m_widthMm, 1, wxEXPAND );
-    geomGrid->Add( new wxStaticText( sbGeom->GetStaticBox(), wxID_ANY, _( "mm" ) ),
-                   0, wxALIGN_CENTER_VERTICAL | wxLEFT, 4 );
+    m_widthLabel = new wxStaticText( sbGeom->GetStaticBox(), wxID_ANY, _( "Width:" ) );
+    m_widthCtrl  = new wxTextCtrl( sbGeom->GetStaticBox(), wxID_ANY, wxEmptyString );
+    m_widthUnits = new wxStaticText( sbGeom->GetStaticBox(), wxID_ANY, wxEmptyString );
 
-    geomGrid->Add( new wxStaticText( sbGeom->GetStaticBox(), wxID_ANY, _( "Height:" ) ),
-                   0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 5 );
-    m_heightMm = new wxTextCtrl( sbGeom->GetStaticBox(), wxID_ANY, wxEmptyString );
-    geomGrid->Add( m_heightMm, 1, wxEXPAND );
-    geomGrid->Add( new wxStaticText( sbGeom->GetStaticBox(), wxID_ANY, _( "mm" ) ),
-                   0, wxALIGN_CENTER_VERTICAL | wxLEFT, 4 );
+    geomGrid->Add( m_widthLabel, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 5 );
+    geomGrid->Add( m_widthCtrl,  1, wxEXPAND );
+    geomGrid->Add( m_widthUnits, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, 4 );
+
+    m_heightLabel = new wxStaticText( sbGeom->GetStaticBox(), wxID_ANY, _( "Height:" ) );
+    m_heightCtrl  = new wxTextCtrl( sbGeom->GetStaticBox(), wxID_ANY, wxEmptyString );
+    m_heightUnits = new wxStaticText( sbGeom->GetStaticBox(), wxID_ANY, wxEmptyString );
+
+    geomGrid->Add( m_heightLabel, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 5 );
+    geomGrid->Add( m_heightCtrl,  1, wxEXPAND );
+    geomGrid->Add( m_heightUnits, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, 4 );
 
     sbGeom->Add( geomGrid, 0, wxEXPAND | wxALL, 5 );
     generalSizer->Add( sbGeom, 0, wxEXPAND | wxALL, 5 );
+
+    m_width  = std::make_unique<UNIT_BINDER>( aFrame, m_widthLabel,  m_widthCtrl,  m_widthUnits );
+    m_height = std::make_unique<UNIT_BINDER>( aFrame, m_heightLabel, m_heightCtrl, m_heightUnits );
 
     generalPage->SetSizer( generalSizer );
     m_notebook->AddPage( generalPage, _( "General" ), true );
@@ -174,14 +193,38 @@ DIALOG_MODULE_BLOCK_PROPERTIES::DIALOG_MODULE_BLOCK_PROPERTIES( SCH_EDIT_FRAME* 
 
     mainSizer->Add( m_notebook, 1, wxEXPAND | wxALL, 10 );
 
-    // ============================================================
-    // Standard buttons
-    // ============================================================
-    wxStdDialogButtonSizer* buttons = CreateStdDialogButtonSizer( wxOK | wxCANCEL );
-    mainSizer->Add( buttons, 0, wxEXPAND | wxALL, 8 );
+    // Standard wxStdDialogButtonSizer with OK + Cancel. Hand-coded
+    // dialogs without an .fbp twin must create the buttons explicitly
+    // (DIALOG_SHIM::SetupStandardButtons only re-labels existing
+    // buttons; it doesn't create them). Add the sizer to the main
+    // layout *before* calling SetupStandardButtons so the relabel walk
+    // can find them.
+    wxStdDialogButtonSizer* sdb = new wxStdDialogButtonSizer();
+    wxButton* okBtn     = new wxButton( this, wxID_OK );
+    wxButton* cancelBtn = new wxButton( this, wxID_CANCEL );
+    sdb->AddButton( okBtn );
+    sdb->AddButton( cancelBtn );
+    sdb->Realize();
 
-    SetSizerAndFit( mainSizer );
-    SetMinSize( wxSize( 600, 450 ) );
+    mainSizer->Add( sdb, 0, wxEXPAND | wxALL, 8 );
+
+    SetSizer( mainSizer );
+
+    // Lay out children + size dialog to natural sizer size BEFORE
+    // finishDialogSettings(). DIALOG_SHIM::finishDialogSettings calls
+    // GetSizer()->SetSizeHints(this) which locks in the dialog's
+    // current size as its minimum — so the dialog must already be at
+    // its natural (compact) size at that point. Without an explicit
+    // Layout()+Fit() pair the dialog stays at the ctor's wxDefaultSize
+    // (which can be screen-tall on macOS), and SetSizeHints then makes
+    // that the floor — user can't shrink it. Mirrors the pattern in
+    // dialog_symbol_properties.cpp:410-416.
+    Layout();
+    mainSizer->Fit( this );
+
+    // Apply platform-conventional button ordering / default-button
+    // handling on top of the now-laid-out sizer hierarchy.
+    SetupStandardButtons();
 
     m_openSourceBtn->Bind( wxEVT_BUTTON,
                            &DIALOG_MODULE_BLOCK_PROPERTIES::onOpenSourceSchematic, this );
@@ -239,13 +282,8 @@ bool DIALOG_MODULE_BLOCK_PROPERTIES::TransferDataToWindow()
     m_openSourceBtn->Enable( !schDisplay.IsEmpty() && wxFileName::FileExists( schDisplay ) );
 
     // ---- Geometry ----
-    auto toMmStr = []( int aIu )
-    {
-        return wxString::FromDouble( schIUScale.IUTomm( aIu ), 3 );
-    };
-
-    m_widthMm->SetValue( toMmStr( m_block->GetSize().x ) );
-    m_heightMm->SetValue( toMmStr( m_block->GetSize().y ) );
+    m_width->SetValue( m_block->GetSize().x );
+    m_height->SetValue( m_block->GetSize().y );
 
     // ---- Pin Functions grid ----
     const auto& pins = m_block->GetPins();
@@ -282,20 +320,17 @@ bool DIALOG_MODULE_BLOCK_PROPERTIES::TransferDataFromWindow()
     m_block->SetMbsReference(
             m_fieldsGrid->GetCellValue( FIELD_ROW_MBS_REF, FIELD_COL_VALUE ) );
 
-    auto parseMm = []( const wxString& aText, int aFallback ) -> int
-    {
-        double mm = 0.0;
+    // UNIT_BINDER returns IU directly, already validated and unit-
+    // converted from the user's display preference. Guard against a
+    // zero size from an empty / invalid input by falling back to the
+    // current block size.
+    int newWidth  = m_width->GetIntValue();
+    int newHeight = m_height->GetIntValue();
 
-        if( aText.ToDouble( &mm ) && mm > 0.0 )
-            return schIUScale.mmToIU( mm );
+    if( newWidth  <= 0 ) newWidth  = m_block->GetSize().x;
+    if( newHeight <= 0 ) newHeight = m_block->GetSize().y;
 
-        return aFallback;
-    };
-
-    VECTOR2I newSize( parseMm( m_widthMm->GetValue(), m_block->GetSize().x ),
-                      parseMm( m_heightMm->GetValue(), m_block->GetSize().y ) );
-
-    m_block->SetSize( newSize );
+    m_block->SetSize( VECTOR2I( newWidth, newHeight ) );
 
     return true;
 }

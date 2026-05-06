@@ -4,6 +4,7 @@
 #include "agent_frame.h"
 #include <cstdio>
 #include <wx/app.h>
+#include <wx/weakref.h>
 
 // The KIFACE implementation
 class KIFACE_AGENT : public KIFACE_BASE
@@ -28,8 +29,11 @@ public:
         case FRAME_AGENT:
         {
             // Singleton guard: reuse the existing agent frame if it's still alive.
-            // This prevents duplicate windows when KIWAY's cached ID is stale
-            // (e.g., after the frame was hidden rather than destroyed).
+            // wxWeakRef auto-clears when the underlying window is destroyed, so
+            // this no longer dereferences a dangling pointer after the previous
+            // frame went away (the cause of an EXC_BAD_ACCESS in IsBeingDeleted
+            // when the launcher's OnIdle re-issued Player(FRAME_AGENT, true)
+            // after a project switch).
             if( m_agentFrame && !m_agentFrame->IsBeingDeleted() )
                 return m_agentFrame;
 
@@ -47,8 +51,8 @@ public:
     static KIFACE_BASE& Kiface() { return kiface; }
 
 private:
-    static KIFACE_AGENT kiface;
-    AGENT_FRAME*        m_agentFrame = nullptr;
+    static KIFACE_AGENT     kiface;
+    wxWeakRef<AGENT_FRAME>  m_agentFrame;
 };
 
 KIFACE_AGENT KIFACE_AGENT::kiface( "agent", KIWAY::FACE_AGENT );

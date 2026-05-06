@@ -48,6 +48,8 @@
 class KICAD_MANAGER_FRAME;
 class PROJECT_TREE_ITEM;
 class PROJECT_TREE;
+class wxButton;
+class wxPanel;
 
 /** PROJECT_TREE_PANE
  * Window to display the tree files
@@ -349,6 +351,23 @@ private:
 
     void gitStatusTimerHandler();
 
+    /**
+     * Build the placeholder shown when no project is loaded — a centered
+     * "Open Project" / "New Project" pair so the user has somewhere to go
+     * when the tree would otherwise be blank.
+     */
+    void buildEmptyStatePanel();
+
+    /**
+     * Toggle the empty-state placeholder vs. the project tree based on
+     * whether a project is currently open. Drives both visibility and
+     * the parent's Layout() so the visible child fills the pane.
+     */
+    void showEmptyState( bool aShow );
+
+    void onEmptyStateOpenProject( wxCommandEvent& aEvent );
+    void onEmptyStateNewProject( wxCommandEvent& aEvent );
+
 public:
     KICAD_MANAGER_FRAME*    m_Parent;
     PROJECT_TREE*           m_TreeProject;
@@ -356,6 +375,7 @@ public:
 private:
     bool                    m_isRenaming;       // Are we in the process of renaming a file
     wxTreeItemId            m_root;
+    wxPanel*                m_emptyStatePanel;  // Shown when no project is open
     std::vector<wxString>   m_filters;
     wxFileSystemWatcher*    m_watcher;          // file system watcher
     PROJECT_TREE_ITEM*      m_selectedItem;

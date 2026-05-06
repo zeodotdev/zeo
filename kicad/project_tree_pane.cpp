@@ -55,9 +55,13 @@
 #include <string_utils.h>
 #include <thread_pool.h>
 #include <launch_ext.h>
+#include <wx/button.h>
 #include <wx/dcclient.h>
+#include <wx/panel.h>
 #include <wx/progdlg.h>
 #include <wx/settings.h>
+#include <wx/sizer.h>
+#include <wx/stattext.h>
 
 #include <git/git_commit_handler.h>
 #include <git/git_config_handler.h>
@@ -82,6 +86,8 @@
 #include "pgm_kicad.h"
 #include "kicad_id.h"
 #include "kicad_manager_frame.h"
+#include "tools/kicad_manager_actions.h"
+#include <tool/tool_manager.h>
 
 #include <project_template.h>
 
@@ -263,6 +269,38 @@ PROJECT_TREE_PANE::PROJECT_TREE_PANE( KICAD_MANAGER_FRAME* parent ) :
     m_gitLastError = GIT_ERROR_NONE;
     m_watcher = nullptr;
     m_gitIconsInitialized = false;
+    m_emptyStatePanel = nullptr;
+
+    // Build the tree control and the no-project placeholder up front so
+    // the sizer can flip between them. Previously the tree was created
+    // lazily inside ReCreateTreePrj, but with the placeholder in the mix
+    // we want a stable two-child layout from t=0.
+    m_TreeProject = new PROJECT_TREE( this );
+    buildEmptyStatePanel();
+
+    // wxSashLayoutWindow + AUI doesn't reliably propagate size through a
+    // sizer; the previous tree-only design got away with it because AUI
+    // sized the wxTreeCtrl directly via its single-child heuristic. Now
+    // that we have two children to flip between, drive the resize
+    // ourselves on wxEVT_SIZE so both stay coincident with the pane
+    // regardless of which is visible.
+    Bind( wxEVT_SIZE,
+          [this]( wxSizeEvent& aEvent )
+          {
+              wxSize sz = GetClientSize();
+
+              if( m_TreeProject )
+                  m_TreeProject->SetSize( 0, 0, sz.x, sz.y );
+
+              if( m_emptyStatePanel )
+                  m_emptyStatePanel->SetSize( 0, 0, sz.x, sz.y );
+
+              aEvent.Skip();
+          } );
+
+    // Default to the placeholder hidden; ReCreateTreePrj below will flip
+    // it on if it determines no project is open.
+    m_emptyStatePanel->Hide();
 
     Bind( wxEVT_FSWATCHER,
              wxFileSystemWatcherEventHandler( PROJECT_TREE_PANE::onFileSystemEvent ), this );
@@ -1078,6 +1116,104 @@ wxTreeItemId PROJECT_TREE_PANE::addItemToProjectTree( const wxString& aName,
 }
 
 
+void PROJECT_TREE_PANE::buildEmptyStatePanel()
+{
+    // wxBORDER_NONE drops the default 1px frame the panel paints on macOS,
+    // which was showing as the thin grey strips on either side of the
+    // empty state. wxSYS_COLOUR_WINDOW matches the wxTreeCtrl background
+    // so the placeholder visually replaces the tree without a seam.
+    m_emptyStatePanel = new wxPanel( this, wxID_ANY, wxDefaultPosition, wxDefaultSize,
+                                     wxBORDER_NONE | wxTAB_TRAVERSAL );
+    m_emptyStatePanel->SetBackgroundColour(
+            wxSystemSettings::GetColour( wxSYS_COLOUR_WINDOW ) );
+
+    wxStaticText* heading = new wxStaticText( m_emptyStatePanel, wxID_ANY, _( "No project open" ),
+                                              wxDefaultPosition, wxDefaultSize,
+                                              wxALIGN_CENTER_HORIZONTAL | wxST_ELLIPSIZE_END );
+    wxFont        headingFont = heading->GetFont();
+    headingFont.SetWeight( wxFONTWEIGHT_BOLD );
+    headingFont.SetPointSize( headingFont.GetPointSize() + 2 );
+    heading->SetFont( headingFont );
+
+    wxButton* openBtn = new wxButton( m_emptyStatePanel, wxID_ANY, _( "Open Project..." ) );
+    wxButton* newBtn  = new wxButton( m_emptyStatePanel, wxID_ANY, _( "New Project..." ) );
+
+    // Pin a reasonable button width so they don't render absurdly wide in
+    // a wide pane (previous wxEXPAND-everywhere stretched them edge to
+    // edge) but stay legible in a narrow pane.
+    const wxSize btnSize = FromDIP( wxSize( 200, -1 ) );
+    openBtn->SetMinSize( btnSize );
+    newBtn->SetMinSize( btnSize );
+
+    openBtn->Bind( wxEVT_BUTTON, &PROJECT_TREE_PANE::onEmptyStateOpenProject, this );
+    newBtn->Bind( wxEVT_BUTTON, &PROJECT_TREE_PANE::onEmptyStateNewProject, this );
+
+    // Inner is the centered content column: buttons stay at natural
+    // (200-px) width centered in the pane. Heading is wxEXPAND so its
+    // wxST_ELLIPSIZE_END style kicks in instead of overflowing right
+    // when the pane is narrowed.
+    wxBoxSizer* inner = new wxBoxSizer( wxVERTICAL );
+    inner->Add( heading, 0, wxEXPAND | wxBOTTOM, FromDIP( 12 ) );
+    inner->Add( openBtn, 0, wxALIGN_CENTER_HORIZONTAL | wxBOTTOM, FromDIP( 8 ) );
+    inner->Add( newBtn, 0, wxALIGN_CENTER_HORIZONTAL );
+
+    // Horizontal centering: stretch spacers on both sides keep the
+    // content column anchored to the pane center regardless of pane
+    // width, so resizing the window doesn't drag the column off to
+    // the left or right.
+    wxBoxSizer* row = new wxBoxSizer( wxHORIZONTAL );
+    row->AddStretchSpacer();
+    row->Add( inner, 0, wxALIGN_CENTER_VERTICAL );
+    row->AddStretchSpacer();
+
+    wxBoxSizer* outer = new wxBoxSizer( wxVERTICAL );
+    outer->AddStretchSpacer();
+    outer->Add( row, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP( 16 ) );
+    outer->AddStretchSpacer();
+
+    m_emptyStatePanel->SetSizer( outer );
+}
+
+
+void PROJECT_TREE_PANE::showEmptyState( bool aShow )
+{
+    if( !m_emptyStatePanel || !m_TreeProject )
+        return;
+
+    m_emptyStatePanel->Show( aShow );
+    m_TreeProject->Show( !aShow );
+
+    // Both children share the pane rect and are sized by our wxEVT_SIZE
+    // handler — we just need to nudge a re-layout so the visible child
+    // re-derives its sub-layout for the current pane width.
+    wxSize sz = GetClientSize();
+
+    if( aShow )
+    {
+        m_emptyStatePanel->SetSize( 0, 0, sz.x, sz.y );
+        m_emptyStatePanel->Layout();
+    }
+    else
+    {
+        m_TreeProject->SetSize( 0, 0, sz.x, sz.y );
+    }
+}
+
+
+void PROJECT_TREE_PANE::onEmptyStateOpenProject( wxCommandEvent& aEvent )
+{
+    if( m_Parent && m_Parent->GetToolManager() )
+        m_Parent->GetToolManager()->RunAction( KICAD_MANAGER_ACTIONS::openProject );
+}
+
+
+void PROJECT_TREE_PANE::onEmptyStateNewProject( wxCommandEvent& aEvent )
+{
+    if( m_Parent && m_Parent->GetToolManager() )
+        m_Parent->GetToolManager()->RunAction( KICAD_MANAGER_ACTIONS::newProject );
+}
+
+
 void PROJECT_TREE_PANE::ReCreateTreePrj()
 {
     std::lock_guard<std::mutex> lock1( m_gitStatusMutex );
@@ -1143,13 +1279,17 @@ void PROJECT_TREE_PANE::ReCreateTreePrj()
         }
     }
 
-    if( !m_TreeProject )
-        m_TreeProject = new PROJECT_TREE( this );
-    else
-        m_TreeProject->DeleteAllItems();
+    m_TreeProject->DeleteAllItems();
 
     if( !pro_dir )  // This is empty from PROJECT_TREE_PANE constructor
+    {
+        // No project loaded — surface the placeholder so the user has
+        // an Open / New target instead of a blank pane.
+        showEmptyState( true );
         return;
+    }
+
+    showEmptyState( false );
 
     if( m_TreeProject->GetGitRepo() )
     {
@@ -2252,6 +2392,10 @@ void PROJECT_TREE_PANE::EmptyTreePrj()
     shutdownFileWatcher();
 
     m_TreeProject->DeleteAllItems();
+
+    // Project just closed — flip back to the Open/New placeholder so the
+    // pane has actionable content instead of going visually blank.
+    showEmptyState( true );
 
     // Remove the git repository when the project is unloaded
     if( m_TreeProject->GetGitRepo() )

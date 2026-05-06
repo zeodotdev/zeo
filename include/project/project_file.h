@@ -673,6 +673,13 @@ public:
 
     void SetAssemblyInstances( std::vector<ASSEMBLY_INSTANCE_STATE> aStates );
 
+    /// Mesh-overlap thickness threshold for the COLLISION-vs-CONTACT
+    /// verdict in the 3D assembly viewer. Persisted alongside the rest
+    /// of `multi_board.assembly_3d.*` so per-project tuning (different
+    /// connector classes mate at different depths) survives reopens.
+    double GetCollisionThresholdMm() const { return m_collisionThresholdMm; }
+    void   SetCollisionThresholdMm( double aMm );
+
     /// Convenience accessor for the MBS schematic filename referenced by
     /// this container project. Empty when the MBS hasn't been created yet.
     const wxString& GetMbsFileName() const { return m_mbsFileName; }
@@ -986,6 +993,10 @@ private:
     /// For container projects: persisted per-instance assembly state
     /// (pose + visibility + transparency). M6.G.
     std::vector<ASSEMBLY_INSTANCE_STATE> m_assemblyInstances;
+
+    /// For container projects: collision-vs-contact threshold (mm) for
+    /// the 3D assembly viewer's mesh-overlap verdict. Default 0.5.
+    double m_collisionThresholdMm = 0.5;
 
     /// For container projects: filename of the multi-board schematic.
     wxString m_mbsFileName;

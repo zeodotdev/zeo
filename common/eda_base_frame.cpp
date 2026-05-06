@@ -180,6 +180,13 @@ void EDA_BASE_FRAME::commonInit( FRAME_T aFrameType )
 }
 
 
+// Cross-kiface signal for the project-manager's project-tree refresh.
+// Defined here in `kicommon` so that any kiface that links kicommon
+// sees the same wxEventTypeTag value — sender and receiver agree on
+// the type. See declaration + docstring in <eda_base_frame.h>.
+wxDEFINE_EVENT( EDA_EVT_KICAD_MANAGER_PROJECT_TREE_REFRESH, wxCommandEvent );
+
+
 EDA_BASE_FRAME::EDA_BASE_FRAME( wxWindow* aParent, FRAME_T aFrameType, const wxString& aTitle,
                                 const wxPoint& aPos, const wxSize& aSize, long aStyle,
                                 const wxString& aFrameName, KIWAY* aKiway,

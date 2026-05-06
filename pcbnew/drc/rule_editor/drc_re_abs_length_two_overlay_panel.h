@@ -34,6 +34,7 @@ enum class EDA_UNITS;
 
 class DRC_RE_ABSOLUTE_LENGTH_TWO_CONSTRAINT_DATA;
 class UNIT_BINDER;
+class wxCheckBox;
 
 
 /**
@@ -63,6 +64,15 @@ private:
     std::unique_ptr<UNIT_BINDER> m_minLengthBinder;
     std::unique_ptr<UNIT_BINDER> m_optLengthBinder;
     std::unique_ptr<UNIT_BINDER> m_maxLengthBinder;
+
+    /// Cross-board scope toggle. Positioned below the bitmap diagram
+    /// (outside the overlay's field grid). When checked, the rule
+    /// emits `(scope cross_board)` so the matched-length DRC test
+    /// provider folds sibling sub-project contributions into the
+    /// per-net total before comparison. No effect on standalone
+    /// projects — the foundation primitive returns isCrossBoard=false
+    /// in that case, identical to per-board behaviour.
+    wxCheckBox* m_crossBoardScopeCheckbox = nullptr;
 };
 
 #endif // DRC_RE_ABS_LENGTH_TWO_OVERLAY_PANEL_H

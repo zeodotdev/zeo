@@ -29,8 +29,9 @@
 #include <eda_base_frame.h>
 #include <widgets/unit_binder.h>
 
+#include <wx/checkbox.h>
 #include <wx/textctrl.h>
-#include <dialogs/rule_editor_dialog_base.h> 
+#include <dialogs/rule_editor_dialog_base.h>
 
 DRC_RE_ABS_LENGTH_TWO_OVERLAY_PANEL::DRC_RE_ABS_LENGTH_TWO_OVERLAY_PANEL(
         wxWindow* aParent, DRC_RE_ABSOLUTE_LENGTH_TWO_CONSTRAINT_DATA* aData, EDA_UNITS aUnits ) :
@@ -99,6 +100,43 @@ DRC_RE_ABS_LENGTH_TWO_OVERLAY_PANEL::DRC_RE_ABS_LENGTH_TWO_OVERLAY_PANEL(
     optLengthField->GetControl()->Bind( wxEVT_TEXT_ENTER, notifySave );
     maxLengthField->GetControl()->Bind( wxEVT_TEXT_ENTER, notifySave );
 
+    // Cross-board scope checkbox — positioned below the bitmap, outside
+    // the overlay-field grid. The bitmap-overlay base class set the
+    // panel's MinSize from the bitmap; we extend it here to make room
+    // for a row of UI below the diagram. The checkbox uses absolute
+    // positioning to stay consistent with the panel's layout model
+    // (mixing wxSizer with absolute fields would re-flow the overlay
+    // fields off the bitmap).
+    const wxSize bitmapSize = GetMinSize();
+
+    m_crossBoardScopeCheckbox = new wxCheckBox( this, wxID_ANY,
+                                                _( "Cross-board total length (multi-board projects)" ) );
+    m_crossBoardScopeCheckbox->SetToolTip(
+            _( "Compare against the sum of this board + sibling sub-projects' contributions "
+               "to the same cross-board net. No effect on standalone projects." ) );
+
+    const int chkHeight = m_crossBoardScopeCheckbox->GetBestSize().GetHeight();
+    const int chkY      = bitmapSize.GetHeight() + 8;
+
+    m_crossBoardScopeCheckbox->SetPosition( wxPoint( 8, chkY ) );
+
+    // Use a width that reaches across the bitmap so the label fits.
+    m_crossBoardScopeCheckbox->SetSize(
+            wxSize( std::max( bitmapSize.GetWidth() - 16, 240 ), chkHeight ) );
+
+    SetMinSize( wxSize( bitmapSize.GetWidth(),
+                        bitmapSize.GetHeight() + chkHeight + 16 ) );
+
+    m_crossBoardScopeCheckbox->Bind( wxEVT_CHECKBOX,
+            [this]( wxCommandEvent& )
+            {
+                if( m_data )
+                    m_data->SetCrossBoardScope( m_crossBoardScopeCheckbox->IsChecked() );
+
+                if( RULE_EDITOR_DIALOG_BASE* dlg = RULE_EDITOR_DIALOG_BASE::GetDialog( this ) )
+                    dlg->SetModified();
+            } );
+
     // Position all fields and update the panel layout
     PositionFields();
     TransferDataToWindow();
@@ -114,6 +152,9 @@ bool DRC_RE_ABS_LENGTH_TWO_OVERLAY_PANEL::TransferDataToWindow()
     m_optLengthBinder->SetDoubleValue( pcbIUScale.mmToIU( m_data->GetOptimumLength() ) );
     m_maxLengthBinder->SetDoubleValue( pcbIUScale.mmToIU( m_data->GetMaximumLength() ) );
 
+    if( m_crossBoardScopeCheckbox )
+        m_crossBoardScopeCheckbox->SetValue( m_data->GetCrossBoardScope() );
+
     return true;
 }
 
@@ -126,6 +167,9 @@ bool DRC_RE_ABS_LENGTH_TWO_OVERLAY_PANEL::TransferDataFromWindow()
     m_data->SetMinimumLength( pcbIUScale.IUTomm( m_minLengthBinder->GetDoubleValue() ) );
     m_data->SetOptimumLength( pcbIUScale.IUTomm( m_optLengthBinder->GetDoubleValue() ) );
     m_data->SetMaximumLength( pcbIUScale.IUTomm( m_maxLengthBinder->GetDoubleValue() ) );
+
+    if( m_crossBoardScopeCheckbox )
+        m_data->SetCrossBoardScope( m_crossBoardScopeCheckbox->IsChecked() );
 
     return true;
 }

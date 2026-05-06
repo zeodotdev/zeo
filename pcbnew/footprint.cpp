@@ -55,6 +55,7 @@
 #include <lset.h>
 #include <macros.h>
 #include <pad.h>
+#include <project/multi_board_scan.h>
 #include <pcb_dimension.h>
 #include <pcb_edit_frame.h>
 #include <pcb_field.h>
@@ -2174,6 +2175,96 @@ void FOOTPRINT::GetMsgPanelInfo( EDA_DRAW_FRAME* aFrame, std::vector<MSG_PANEL_I
     {
         aList.emplace_back( _( "Component Class" ),
                             m_componentClassCacheProxy->GetComponentClass()->GetHumanReadableName() );
+    }
+
+    // Cross-board mates: when this footprint has any connector pads
+    // (BOARD::IsConnectorPad), look up the container view from the
+    // sub-project's PROJECT to discover which sibling sub-projects
+    // share a cross-board net via this footprint's connector pads.
+    // The view scan parses the container's .kicad_pro but doesn't load
+    // any sibling .kicad_pcb files — cheap enough to do on every
+    // selection-changed render of the message panel. PCB_EDIT_FRAME
+    // only — the FOOTPRINT_EDIT_FRAME has no live BOARD/PROJECT.
+    if( aFrame->IsType( FRAME_PCB_EDITOR ) )
+    {
+        BOARD*   board = GetBoard();
+        PROJECT* prj   = board ? board->GetProject() : nullptr;
+
+        bool hasConnectorPad = false;
+
+        if( board )
+        {
+            for( PAD* pad : Pads() )
+            {
+                if( board->IsConnectorPad( pad->m_Uuid ) )
+                {
+                    hasConnectorPad = true;
+                    break;
+                }
+            }
+        }
+
+        if( hasConnectorPad && prj )
+        {
+            wxString proPath = prj->GetProjectFullName();
+
+            if( !proPath.IsEmpty() )
+            {
+                MULTI_BOARD_CONTAINER_VIEW view =
+                        MultiBoardBuildContainerView( wxFileName( proPath ) );
+
+                if( !view.containerProAbsPath.IsEmpty() )
+                {
+                    // Collect deduplicated sibling display names across
+                    // every cross-board net whose myEndpoints reference
+                    // this footprint by component ref.
+                    const wxString myRef = GetReference();
+                    std::set<wxString>          uniqueSiblings;
+                    std::vector<wxString>       siblingsOrdered;
+
+                    for( const MULTI_BOARD_CROSS_BOARD_NET_VIEW& net : view.crossBoardNets )
+                    {
+                        bool touchesThisFootprint = false;
+
+                        for( const MULTI_BOARD_NET_ENDPOINT_VIEW& mine : net.myEndpoints )
+                        {
+                            if( mine.componentRef == myRef )
+                            {
+                                touchesThisFootprint = true;
+                                break;
+                            }
+                        }
+
+                        if( !touchesThisFootprint )
+                            continue;
+
+                        for( const MULTI_BOARD_NET_ENDPOINT_VIEW& sib : net.siblingEndpoints )
+                        {
+                            if( sib.subProjectName.IsEmpty() )
+                                continue;
+
+                            if( uniqueSiblings.insert( sib.subProjectName ).second )
+                                siblingsOrdered.push_back( sib.subProjectName );
+                        }
+                    }
+
+                    if( !siblingsOrdered.empty() )
+                    {
+                        wxString joined;
+
+                        for( const wxString& sib : siblingsOrdered )
+                        {
+                            if( !joined.IsEmpty() )
+                                joined += wxS( ", " );
+
+                            joined += sib;
+                        }
+
+                        aList.emplace_back( _( "Cross-Board Mates" ), joined );
+                    }
+                }
+            }
+        }
     }
 
     msg.Printf( _( "Footprint: %s" ), m_fpid.GetUniStringLibId() );

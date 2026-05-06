@@ -27,6 +27,7 @@
 #include <drc/drc_item.h>
 #include <drc/drc_test_provider.h>
 #include <drc/drc_rtree.h>
+#include <length_delay_calculation/multi_board_length.h>
 #include <geometry/shape_segment.h>
 #include <connectivity/connectivity_data.h>
 #include <connectivity/from_to_cache.h>
@@ -237,6 +238,15 @@ struct DIFF_PAIR_KEY
     DRC_RULE* gapRule;
     std::optional<MINOPTMAX<int>> uncoupledConstraint;
     DRC_RULE* uncoupledRule;
+
+    /// Cross-board scope flag for the MAX_UNCOUPLED_CONSTRAINT — when
+    /// set, the sibling sub-projects' contributions to each leg's NET
+    /// length are added to the per-pair `totalLen` before computing
+    /// `totalUncoupled`. Realistic for cross-board diff pairs since
+    /// the inter-board portion is inherently uncoupled (no P/N
+    /// proximity across a connector). Captured at constraint
+    /// resolution time alongside `uncoupledConstraint`.
+    bool      uncoupledCrossBoardScope = false;
 };
 
 struct DIFF_PAIR_COUPLED_SEGMENTS
@@ -539,6 +549,8 @@ bool test::DRC_TEST_PROVIDER_DIFF_PAIR_COUPLING::Run()
                             key.uncoupledConstraint = constraint.GetValue();
                             key.uncoupledRule = parentRule;
                             key.uncoupledRuleName = std::move( ruleName );
+                            key.uncoupledCrossBoardScope =
+                                    constraint.GetOption( DRC_CONSTRAINT::OPTIONS::CROSS_BOARD_SCOPE );
                             break;
 
                         default:
@@ -650,6 +662,24 @@ bool test::DRC_TEST_PROVIDER_DIFF_PAIR_COUPLING::Run()
         }
 
         int totalLen = std::max( itemSet.totalLengthN, itemSet.totalLengthP );
+
+        // Cross-board uncoupled scope: a diff pair that crosses sub-
+        // projects via connector pads has the entire inter-board path
+        // running uncoupled (no P/N proximity across a connector). When
+        // the rule asks for cross-board scope, fold sibling net length
+        // contributions into `totalLen` so the uncoupled check sees the
+        // whole-assembly uncoupled budget. Use the larger leg's
+        // sibling delta (matches the existing `std::max` of P/N).
+        if( key.uncoupledCrossBoardScope )
+        {
+            CROSS_BOARD_NET_LENGTH cbP = ComputeCrossBoardNetLength( *m_board, niP );
+            CROSS_BOARD_NET_LENGTH cbN = ComputeCrossBoardNetLength( *m_board, niN );
+
+            int64_t sibDeltaP = cbP.isCrossBoard ? ( cbP.totalNm - cbP.thisBoardNm ) : 0;
+            int64_t sibDeltaN = cbN.isCrossBoard ? ( cbN.totalNm - cbN.thisBoardNm ) : 0;
+
+            totalLen += static_cast<int>( std::max( sibDeltaP, sibDeltaN ) );
+        }
 
         REPORT_AUX( wxString::Format( wxT( "   - coupled length: %s, total length: %s" ),
                                       MessageTextFromValue( itemSet.totalCoupled ),

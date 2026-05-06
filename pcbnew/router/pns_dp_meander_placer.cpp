@@ -226,7 +226,7 @@ bool DP_MEANDER_PLACER::Move( const VECTOR2I& aP, ITEM* aEndItem )
     {
         m_finalShapeP = m_originPair.CP();
         m_finalShapeN = m_originPair.CN();
-        m_lastLength  = origPathLength();
+        m_lastLength  = origPathLength() + m_settings.m_crossBoardSiblingDeltaNm;
         m_lastStatus  = TOO_SHORT;
 
         return false;
@@ -256,7 +256,7 @@ bool DP_MEANDER_PLACER::Move( const VECTOR2I& aP, ITEM* aEndItem )
         // the length from being zero by just using the original.
         m_finalShapeP = m_originPair.CP();
         m_finalShapeN = m_originPair.CN();
-        m_lastLength  = origPathLength();
+        m_lastLength  = origPathLength() + m_settings.m_crossBoardSiblingDeltaNm;
         updateStatus();
 
         return false;
@@ -375,7 +375,13 @@ bool DP_MEANDER_PLACER::Move( const VECTOR2I& aP, ITEM* aEndItem )
 
     m_result.AddCorner( tunedP.CLastPoint(), tunedN.CLastPoint() );
 
-    long long int dpLen = origPathLength();
+    // Cross-board total: when scope is set, fold sibling sub-projects'
+    // contributions into dpLen so target comparisons + reported length
+    // come back in cross-board space (delta is precomputed by the host
+    // PCB_TUNING_PATTERN). For diff pairs, the delta represents the
+    // longer leg's sibling contribution — sufficient because the
+    // tuning target is a single value applied to the longer leg.
+    long long int dpLen = origPathLength() + m_settings.m_crossBoardSiblingDeltaNm;
     int64_t       dpDelay = origPathDelay();
 
     m_lastStatus = TUNED;

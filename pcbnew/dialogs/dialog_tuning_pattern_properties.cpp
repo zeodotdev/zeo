@@ -25,6 +25,10 @@
 #include <board_design_settings.h>
 #include <drc/drc_engine.h>
 
+#include <wx/checkbox.h>
+#include <wx/gbsizer.h>
+#include <wx/sizer.h>
+
 
 DIALOG_TUNING_PATTERN_PROPERTIES::DIALOG_TUNING_PATTERN_PROPERTIES( PCB_BASE_EDIT_FRAME*   aFrame,
                                                                     PNS::MEANDER_SETTINGS& aSettings,
@@ -62,6 +66,27 @@ DIALOG_TUNING_PATTERN_PROPERTIES::DIALOG_TUNING_PATTERN_PROPERTIES( PCB_BASE_EDI
 
     default:
         break;
+    }
+
+    // Cross-board scope toggle: inserted programmatically into the
+    // same wxGridBagSizer that hosts m_singleSided so we don't touch
+    // the .fbp / generated _base files (avoids merge conflicts on
+    // upstream KiCad pulls). Sits one row below Single-sided. Falls
+    // through to a no-op layout-wise if the sizer cast fails (the
+    // checkbox is parented but unrooted — sizing skips it).
+    m_crossBoardScopeCheckbox = new wxCheckBox(
+            this, wxID_ANY,
+            _( "Cross-board total length (multi-board projects)" ) );
+    m_crossBoardScopeCheckbox->SetToolTip(
+            _( "Tune to the sum of this board + sibling sub-projects' "
+               "contributions to the same cross-board net. No effect on "
+               "standalone projects." ) );
+
+    if( wxGridBagSizer* gbs = dynamic_cast<wxGridBagSizer*>(
+                m_singleSided->GetContainingSizer() ) )
+    {
+        gbs->Add( m_crossBoardScopeCheckbox, wxGBPosition( 10, 1 ),
+                  wxGBSpan( 1, 2 ), wxALIGN_CENTER_VERTICAL, 5 );
     }
 
     // Bitmap has a new size, so recalculate sizes
@@ -140,6 +165,9 @@ bool DIALOG_TUNING_PATTERN_PROPERTIES::TransferDataToWindow()
     m_r.SetValue( m_settings.m_cornerRadiusPercentage );
     m_singleSided->SetValue( m_settings.m_singleSided );
 
+    if( m_crossBoardScopeCheckbox )
+        m_crossBoardScopeCheckbox->SetValue( m_settings.m_crossBoardScope );
+
     return true;
 }
 
@@ -212,6 +240,9 @@ bool DIALOG_TUNING_PATTERN_PROPERTIES::TransferDataFromWindow()
                                                             : PNS::MEANDER_STYLE_CHAMFER;
     m_settings.m_cornerRadiusPercentage = m_r.GetIntValue();
     m_settings.m_singleSided = m_singleSided->GetValue();
+
+    if( m_crossBoardScopeCheckbox )
+        m_settings.m_crossBoardScope = m_crossBoardScopeCheckbox->GetValue();
 
     return true;
 }

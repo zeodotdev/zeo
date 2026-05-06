@@ -45,6 +45,7 @@
 #include <board.h>
 #include <board_design_settings.h>
 #include <drc/drc_engine.h>
+#include <length_delay_calculation/multi_board_length.h>
 #include <pcb_track.h>
 #include <pcb_shape.h>
 #include <pcb_group.h>
@@ -1225,6 +1226,27 @@ bool PCB_TUNING_PATTERN::Update( GENERATOR_TOOL* aTool, BOARD* aBoard, BOARD_COM
     PNS::MEANDER_PLACER_BASE* placer = static_cast<PNS::MEANDER_PLACER_BASE*>( router->Placer() );
 
     m_settings.m_keepEndpoints = true; // Required for re-grouping
+
+    // Cross-board sibling delta: when the user has chosen cross-board
+    // total scope on this tuning pattern, resolve the static sibling
+    // contribution to the tuned net's length once at edit-start and
+    // hand it to the placer via settings. The placer adds it inside
+    // doMove() so target comparisons (TOO_SHORT / TUNED / TOO_LONG)
+    // and TuningLengthResult both come back in cross-board space —
+    // the user-set target stays in cross-board space throughout.
+    // Falls through to 0 (per-board) on standalone projects:
+    // ComputeCrossBoardNetLength returns isCrossBoard=false there.
+    m_settings.m_crossBoardSiblingDeltaNm = 0;
+
+    if( m_settings.m_crossBoardScope && aBoard )
+    {
+        wxString netName = iface->GetNetName( startItem->Net() );
+        CROSS_BOARD_NET_LENGTH cb = ComputeCrossBoardNetLength( *aBoard, netName );
+
+        if( cb.isCrossBoard )
+            m_settings.m_crossBoardSiblingDeltaNm = cb.totalNm - cb.thisBoardNm;
+    }
+
     placer->UpdateSettings( m_settings );
 
     router->Move( m_end, nullptr );
@@ -1691,6 +1713,7 @@ const STRING_ANY_MAP PCB_TUNING_PATTERN::GetProperties() const
     props.set( "end", m_end );
     props.set( "corner_radius_percent", m_settings.m_cornerRadiusPercentage );
     props.set( "single_sided", m_settings.m_singleSided );
+    props.set( "cross_board_scope", m_settings.m_crossBoardScope );
     props.set( "rounded", m_settings.m_cornerStyle == PNS::MEANDER_STYLE_ROUND );
 
     props.set_iu( "max_amplitude", m_settings.m_maxAmplitude );
@@ -1743,6 +1766,7 @@ void PCB_TUNING_PATTERN::SetProperties( const STRING_ANY_MAP& aProps )
     aProps.get_to( "end", m_end );
     aProps.get_to( "corner_radius_percent", m_settings.m_cornerRadiusPercentage );
     aProps.get_to( "single_sided", m_settings.m_singleSided );
+    aProps.get_to( "cross_board_scope", m_settings.m_crossBoardScope );
     aProps.get_to( "side", m_settings.m_initialSide );
 
     bool rounded = false;

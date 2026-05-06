@@ -325,6 +325,19 @@ KICAD_MANAGER_FRAME::KICAD_MANAGER_FRAME( wxWindow* parent, const wxString& titl
               // Don't skip, otherwise the frame gets too big
           } );
 
+    // Cross-kiface refresh signal — editor kifaces (eeschema's MBSCH-
+    // side Manage Sub-Boards handler) post this after operations that
+    // mutate the on-disk `boards/` subtree. The manager's own file-
+    // system watcher can't reliably catch directory-level changes, so
+    // this explicit refresh keeps the project tree in sync with
+    // cross-kiface mutations. Defined in kicommon so the type tag is
+    // shared between sender and receiver.
+    Bind( EDA_EVT_KICAD_MANAGER_PROJECT_TREE_REFRESH,
+          [this]( wxCommandEvent& )
+          {
+              RefreshProjectTree();
+          } );
+
     m_sessionManager->Initialize();
 }
 

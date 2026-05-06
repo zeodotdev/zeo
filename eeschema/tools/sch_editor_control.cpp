@@ -792,16 +792,20 @@ int SCH_EDITOR_CONTROL::MbsManageSubBoards( const TOOL_EVENT& aEvent )
     // alone isn't enough for live PROJECT_FILEs.
     container.SaveToFile( containerFile.GetPath() );
 
-    // Note: if the launcher (kicad manager) is open, it won't pick up
-    // sub-project add/remove until the user manually refreshes (Cmd+R
-    // / F5). The launcher is not a KIWAY_PLAYER so it can't receive
-    // ExpressMail, and its file-system watcher handler keys on a
-    // modified path (which we don't have a single one for here — the
-    // dialog may have created a directory tree, modified the
-    // `.kicad_pro`, and deleted nothing). The kicad-manager-launched
-    // path through `KICAD_MANAGER_CONTROL::ManageSubBoards` calls
-    // `RefreshProjectTree()` directly; that's the user-visible
-    // launcher case. From MBSCH the auto-refresh is a follow-up.
+    // Auto-refresh the kicad-manager's project-tree pane: the dialog
+    // may have added or removed sub-projects (`boards/` subtree
+    // mutated), and the manager's file-system watcher can't reliably
+    // pick that up. Post a cross-kiface event the manager binds in
+    // its ctor — same wxEventTypeTag thanks to definition in
+    // kicommon. No-op when the manager isn't running. The
+    // kicad-manager-launched path (KICAD_MANAGER_CONTROL::Manage
+    // SubBoards) already calls RefreshProjectTree() directly, so
+    // both entry points keep the launcher in sync.
+    if( wxWindow* mgr = wxWindow::FindWindowByName( KICAD_MANAGER_FRAME_NAME ) )
+    {
+        wxCommandEvent refreshEvt( EDA_EVT_KICAD_MANAGER_PROJECT_TREE_REFRESH );
+        wxPostEvent( mgr, refreshEvt );
+    }
 
     return 0;
 }

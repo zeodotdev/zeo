@@ -143,6 +143,25 @@ public:
 
     ///< The net class this meander pattern belongs to
     NETCLASS* m_netClass;
+
+    ///< Tune against the cross-board total instead of the per-board
+    ///< length. When true, the live overlay + tuning-status math
+    ///< computes `currentLength = thisBoardNm + (cb.totalNm -
+    ///< cb.thisBoardNm)` so the user is tuning to the assembly's
+    ///< overall budget rather than this PCB's contribution alone.
+    ///< Falls through to per-board on standalone projects (the
+    ///< foundation primitive returns `isCrossBoard=false` there).
+    bool m_crossBoardScope = false;
+
+    ///< Runtime cache of the sibling sub-projects' contribution to the
+    ///< tuned net's length, in nanometers. Computed by the host
+    ///< (`PCB_TUNING_PATTERN`) at edit-start when `m_crossBoardScope`
+    ///< is true, then added inside the placer to `lineLen` /
+    ///< `m_lastLength` so target comparisons and TuningLengthResult
+    ///< are in cross-board space without the placer itself needing
+    ///< multi-board awareness. NOT serialized — recomputed every
+    ///< edit session from current sibling-board state.
+    long long int m_crossBoardSiblingDeltaNm = 0;
 };
 
 /**

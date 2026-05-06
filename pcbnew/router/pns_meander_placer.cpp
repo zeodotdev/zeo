@@ -209,7 +209,11 @@ bool MEANDER_PLACER::doMove( const VECTOR2I& aP, ITEM* aEndItem, long long int a
         m_result.AddCorner( s.B );
     }
 
-    long long int lineLen = origPathLength();
+    // Cross-board total: when scope is set, fold sibling sub-projects'
+    // contributions into lineLen so target comparisons + reported
+    // length come back in cross-board space without the placer needing
+    // multi-board awareness (delta is precomputed by the host).
+    long long int lineLen = origPathLength() + m_settings.m_crossBoardSiblingDeltaNm;
     int64_t       lineDelay = origPathDelay();
 
     m_lastLength = lineLen;

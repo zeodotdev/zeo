@@ -120,6 +120,10 @@ PROJECT_FILE::PROJECT_FILE( const wxString& aFullPath ) :
     m_params.emplace_back( new PARAM_LIST<ASSEMBLY_INSTANCE_STATE>(
             "multi_board.assembly_3d.instances", &m_assemblyInstances, {} ) );
 
+    m_params.emplace_back( new PARAM<double>(
+            "multi_board.assembly_3d.collision_threshold_mm",
+            &m_collisionThresholdMm, 0.5 ) );
+
     // M5.2: sub-project back-reference to the enclosing container
     // .kicad_pro (relative path). Empty for standalone or container
     // projects. Container-aware code prefers this O(1) ref over the
@@ -1917,6 +1921,16 @@ void PROJECT_FILE::SetAssemblyInstances( std::vector<ASSEMBLY_INSTANCE_STATE> aS
 {
     m_assemblyInstances = std::move( aStates );
     NotifyMultiBoardChanged( MULTI_BOARD_FIELD::ASSEMBLY_INSTANCES );
+}
+
+
+void PROJECT_FILE::SetCollisionThresholdMm( double aMm )
+{
+    if( m_collisionThresholdMm == aMm )
+        return;
+
+    m_collisionThresholdMm = aMm;
+    NotifyMultiBoardChanged( MULTI_BOARD_FIELD::COLLISION_THRESHOLD );
 }
 
 

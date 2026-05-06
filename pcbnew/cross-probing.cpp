@@ -600,6 +600,14 @@ void PCB_EDIT_FRAME::SendSelectItemsToSch( const std::deque<EDA_ITEM*>& aItems, 
         // so broadcasts to FRAME_SCH don't reach it. Send a copy so module
         // blocks / cross-board nets can mirror the selection.
         Kiway().ExpressMail( FRAME_MBSCH, selType, command, this );
+
+        // The 3D viewer registers as FRAME_PCB_DISPLAY3D peer. In MBS
+        // mode it consumes MAIL_SELECTION to highlight the matching
+        // footprint; in single-board mode it just refreshes (the BOARD
+        // already shares pcbnew's selection state, so a repaint is all
+        // that's needed). Mirrors the eeschema side.
+        std::string display3d = command;
+        Kiway().ExpressMail( FRAME_PCB_DISPLAY3D, selType, display3d, this );
     }
 }
 
@@ -663,6 +671,11 @@ void PCB_EDIT_FRAME::SendCrossProbeItem( BOARD_ITEM* aSyncItem )
             // side in place, we use that here.
             Kiway().ExpressMail( FRAME_SCH,   MAIL_CROSS_PROBE, packet, this );
             Kiway().ExpressMail( FRAME_MBSCH, MAIL_CROSS_PROBE, packet, this );
+
+            // 3D viewer mirrors the highlight (assembly mode) or
+            // refreshes (single-board mode) on this packet.
+            std::string display3d = packet;
+            Kiway().ExpressMail( FRAME_PCB_DISPLAY3D, MAIL_CROSS_PROBE, display3d, this );
         }
     }
 }

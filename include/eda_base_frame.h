@@ -66,6 +66,24 @@
 #define KICAD_MANAGER_FRAME_NAME   wxT( "KicadFrame" )
 
 
+/**
+ * Cross-kiface signal for the project-manager (KICAD_MANAGER_FRAME)
+ * to rebuild its project-tree pane. Posted by editor kifaces (e.g.
+ * eeschema's MBSCH-side Manage Sub-Boards handler) after operations
+ * that mutate the on-disk `boards/` subtree but the manager's
+ * file-system watcher can't pick up cleanly. Defined in `kicommon`
+ * (`common/eda_base_frame.cpp`) so the type tag is identical across
+ * the manager binary and every kiface that links kicommon — i.e.,
+ * sender and receiver see the same wxEventTypeTag value.
+ *
+ * Recipient: KICAD_MANAGER_FRAME (binds in its ctor and calls
+ * `RefreshProjectTree()`). Sender: any wxEVT-aware code that has
+ * found the manager via `wxWindow::FindWindowByName(
+ * KICAD_MANAGER_FRAME_NAME )`.
+ */
+wxDECLARE_EVENT( EDA_EVT_KICAD_MANAGER_PROJECT_TREE_REFRESH, wxCommandEvent );
+
+
 class wxChoice;
 class wxEvent;
 class wxFileName;

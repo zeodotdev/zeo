@@ -17,7 +17,7 @@
 #   MINOR: Incremented for new features (99 = nightly/development)
 #   PATCH: Incremented for bug fixes
 #
-set( ZEO_SEMANTIC_VERSION "0.1.1" )
+set( ZEO_SEMANTIC_VERSION "0.2.0" )
 
 # Default the version to the semantic version.
 # This could be overridden by git tags in the future.

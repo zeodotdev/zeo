@@ -214,6 +214,31 @@ DIALOG_PAD_PROPERTIES::DIALOG_PAD_PROPERTIES( PCB_BASE_FRAME* aParent, PAD* aPad
 
     m_FlippedWarningSizer->Show( false );
 
+    // Cross-board indicator: when this pad is marked as a connector
+    // pad on a multi-board sub-project (BOARD::IsConnectorPad —
+    // populated by the MBSCH cross-board PCB sync), surface it as a
+    // read-only line in the dialog. Inserted programmatically to
+    // avoid an .fbp regen for a single label that's only visible on
+    // multi-board projects. The footprint editor doesn't have BOARD
+    // context for IsConnectorPad to resolve against, so the indicator
+    // stays hidden there — same gating as the net selector above.
+    if( !m_isFpEditor && m_board && aPad && m_board->IsConnectorPad( aPad->m_Uuid ) )
+    {
+        wxBoxSizer* mbsRow = new wxBoxSizer( wxHORIZONTAL );
+
+        wxStaticText* mbsLabel = new wxStaticText( m_panelGeneral, wxID_ANY,
+                _( "Cross-Board:" ) );
+        wxStaticText* mbsValue = new wxStaticText( m_panelGeneral, wxID_ANY,
+                _( "Yes (connector pad — mates with sibling sub-project)" ) );
+
+        mbsRow->Add( mbsLabel, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT | wxLEFT, 5 );
+        mbsRow->Add( mbsValue, 1, wxALIGN_CENTER_VERTICAL | wxRIGHT, 5 );
+
+        // Insert directly above the static-line separator that ends the
+        // common section (row 1 in m_LeftBoxSizer, after gbSizerCommon).
+        m_LeftBoxSizer->Insert( 1, mbsRow, 0, wxEXPAND | wxTOP | wxBOTTOM, 4 );
+    }
+
     // Pad needs to have a parent for painting; use the parent board for its design settings
     if( !m_previewPad->GetParent() )
         m_previewPad->SetParent( m_board );

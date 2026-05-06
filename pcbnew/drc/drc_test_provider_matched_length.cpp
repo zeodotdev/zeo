@@ -161,38 +161,58 @@ void DRC_TEST_PROVIDER_MATCHED_LENGTH::checkSkews( const DRC_CONSTRAINT& aConstr
     auto checkSkewsImpl = [this, &aConstraint]( const std::vector<CONNECTION>& connections )
     {
         const bool          isTimeDomain = aConstraint.GetOption( DRC_CONSTRAINT::OPTIONS::TIME_DOMAIN );
+        const bool          isCrossBoardScope =
+                aConstraint.GetOption( DRC_CONSTRAINT::OPTIONS::CROSS_BOARD_SCOPE );
         const EDA_DATA_TYPE dataType = isTimeDomain ? EDA_DATA_TYPE::TIME : EDA_DATA_TYPE::DISTANCE;
+
+        // Pre-compute per-net adjusted totals so we don't re-walk
+        // siblings inside the per-net comparison loop. Cross-board
+        // scope only applies to the distance domain — the foundation
+        // primitive doesn't expose sibling delay yet, so time-domain
+        // stays per-board (matches checkLengths behaviour).
+        std::map<int, double> adjustedTotalByNetcode;
+
+        auto adjustedTotalFor =
+                [&]( const DRC_LENGTH_REPORT::ENTRY& ent ) -> double
+                {
+                    double total = isTimeDomain ? ent.totalDelay : ent.total;
+
+                    if( !isCrossBoardScope || isTimeDomain )
+                        return total;
+
+                    auto it = adjustedTotalByNetcode.find( ent.netcode );
+
+                    if( it != adjustedTotalByNetcode.end() )
+                        return it->second;
+
+                    CROSS_BOARD_NET_LENGTH cb =
+                            ComputeCrossBoardNetLength( *m_board, ent.netinfo );
+
+                    if( cb.isCrossBoard )
+                        total += static_cast<double>( cb.totalNm - cb.thisBoardNm );
+
+                    adjustedTotalByNetcode[ent.netcode] = total;
+                    return total;
+                };
 
         double   maxLength = 0;
         wxString maxNetname;
 
-        if( !isTimeDomain )
+        for( const DRC_LENGTH_REPORT::ENTRY& ent : connections )
         {
-            for( const DRC_LENGTH_REPORT::ENTRY& ent : connections )
+            double total = adjustedTotalFor( ent );
+
+            if( total > maxLength )
             {
-                if( ent.total > maxLength )
-                {
-                    maxLength = ent.total;
-                    maxNetname = ent.netname;
-                }
-            }
-        }
-        else
-        {
-            for( const DRC_LENGTH_REPORT::ENTRY& ent : connections )
-            {
-                if( ent.totalDelay > maxLength )
-                {
-                    maxLength = ent.totalDelay;
-                    maxNetname = ent.netname;
-                }
+                maxLength = total;
+                maxNetname = ent.netname;
             }
         }
 
         for( const DRC_LENGTH_REPORT::ENTRY& ent : connections )
         {
-            int skew = isTimeDomain ? KiROUND( ent.totalDelay - maxLength )
-                                    : KiROUND( ent.total - maxLength );
+            double entTotal = adjustedTotalFor( ent );
+            int    skew = KiROUND( entTotal - maxLength );
 
             bool fail_min = false;
             bool fail_max = false;
@@ -207,7 +227,7 @@ void DRC_TEST_PROVIDER_MATCHED_LENGTH::checkSkews( const DRC_CONSTRAINT& aConstr
                 std::shared_ptr<DRC_ITEM> drcItem = DRC_ITEM::Create( DRCE_SKEW_OUT_OF_RANGE );
                 wxString                  msg;
 
-                double reportTotal = isTimeDomain ? ent.totalDelay : ent.total;
+                double reportTotal = entTotal;
 
                 if( fail_min )
                 {

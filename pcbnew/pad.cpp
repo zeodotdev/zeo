@@ -1869,6 +1869,17 @@ void PAD::GetMsgPanelInfo( EDA_DRAW_FRAME* aFrame, std::vector<MSG_PANEL_ITEM>& 
         aList.emplace_back( _( "Resolved Netclass" ),
                             UnescapeString( GetEffectiveNetClass()->GetHumanReadableName() ) );
 
+        // Cross-board indicator. Connector pads are pads marked as
+        // crossing into a sibling sub-project via a cross-board net
+        // (BOARD::m_connectorPads, populated by the MBSCH cross-board
+        // PCB sync). Shown only when the editor is the PCB editor —
+        // the FOOTPRINT_EDIT_FRAME doesn't have BOARD context.
+        if( BOARD* board = GetBoard() )
+        {
+            if( board->IsConnectorPad( m_Uuid ) )
+                aList.emplace_back( _( "Cross-Board" ), _( "Yes (connector pad)" ) );
+        }
+
         if( IsLocked() )
             aList.emplace_back( _( "Status" ), _( "Locked" ) );
     }

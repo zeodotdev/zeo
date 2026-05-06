@@ -26,6 +26,8 @@
 
 #include <router/pns_router.h>
 
+class wxCheckBox;
+
 namespace PNS {
 
 class MEANDER_SETTINGS;
@@ -64,6 +66,12 @@ private:
 
     PNS::MEANDER_SETTINGS& m_settings;
     PNS::ROUTER_MODE       m_mode;
+
+    /// Programmatically-inserted checkbox under the Single-sided
+    /// option in the same gbSizer1 row column. Bound to
+    /// `m_settings.m_crossBoardScope`. Keeps the .fbp untouched so
+    /// upstream KiCad updates of `_base.{fbp,cpp,h}` won't conflict.
+    wxCheckBox*            m_crossBoardScopeCheckbox = nullptr;
 };
 
 #endif // DIALOG_TUNING_PATTERN_PROPERTIES_H

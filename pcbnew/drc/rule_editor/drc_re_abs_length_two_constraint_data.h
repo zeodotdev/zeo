@@ -77,6 +77,17 @@ public:
 
     void SetMaximumLength( double aLength ) { m_maxLength = aLength; }
 
+    /// Cross-board scope: when true, the emitted constraint clause
+    /// includes `(scope cross_board)` so the matched-length DRC test
+    /// provider sums sibling sub-project contributions before checking
+    /// against min/max. Default false → per-board scope (no clause
+    /// emitted, identical to legacy behaviour). Authoring UI for this
+    /// flag is a follow-up; the field exists so manually-authored
+    /// rules round-trip cleanly through the data model.
+    bool GetCrossBoardScope() const { return m_crossBoardScope; }
+
+    void SetCrossBoardScope( bool aOn ) { m_crossBoardScope = aOn; }
+
     VALIDATION_RESULT Validate() const override
     {
         VALIDATION_RESULT result;
@@ -116,12 +127,18 @@ public:
         if( code.IsEmpty() )
             code = wxS( "length" );
 
+        wxString scopeClause;
+
+        if( m_crossBoardScope )
+            scopeClause = wxS( " (scope cross_board)" );
+
         wxString clause = wxString::Format(
-                wxS( "(constraint %s (min %s) (opt %s) (max %s))" ),
+                wxS( "(constraint %s (min %s) (opt %s) (max %s)%s)" ),
                 code,
                 formatDistance( m_minLength ),
                 formatDistance( m_optLength ),
-                formatDistance( m_maxLength ) );
+                formatDistance( m_maxLength ),
+                scopeClause );
 
         return { clause };
     }
@@ -138,15 +155,17 @@ public:
 
         DRC_RE_BASE_CONSTRAINT_DATA::CopyFrom( source );
 
-        m_minLength = source.m_minLength;
-        m_optLength = source.m_optLength;
-        m_maxLength = source.m_maxLength;
+        m_minLength       = source.m_minLength;
+        m_optLength       = source.m_optLength;
+        m_maxLength       = source.m_maxLength;
+        m_crossBoardScope = source.m_crossBoardScope;
     }
 
 private:
     double m_minLength{ 0 };
     double m_optLength{ 0 };
     double m_maxLength{ 0 };
+    bool   m_crossBoardScope{ false };
 };
 
 class DRC_RE_MATCHED_LENGTH_DIFF_PAIR_CONSTRAINT_DATA : public DRC_RE_ABSOLUTE_LENGTH_TWO_CONSTRAINT_DATA

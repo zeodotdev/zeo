@@ -709,6 +709,38 @@ void DRC_RULES_PARSER::parseConstraint( DRC_RULE* aRule )
 
             break;
 
+        case T_scope:
+            // (scope this_board | cross_board) — restricts how the
+            // matched-length / skew constraint reads the trace length.
+            // Only meaningful for LENGTH_CONSTRAINT / SKEW_CONSTRAINT;
+            // the foundation primitive (multi_board_length.h) returns
+            // per-board on standalone projects, so the option is a
+            // safe no-op there even if authored on a non-MBS rule.
+            if( c.m_Type != LENGTH_CONSTRAINT && c.m_Type != SKEW_CONSTRAINT )
+            {
+                reportError( _( "scope option valid only on length / skew constraints." ) );
+            }
+
+            token = NextTok();
+
+            switch( token )
+            {
+            case T_cross_board:
+                c.SetOption( DRC_CONSTRAINT::OPTIONS::CROSS_BOARD_SCOPE );
+                break;
+            case T_this_board:
+                // Default — explicit author intent, no flag to set.
+                break;
+            default:
+                reportError( _( "Expected 'this_board' or 'cross_board' for scope." ) );
+                break;
+            }
+
+            if( (int) NextTok() != DSN_RIGHT )
+                reportError( _( "Missing ')'." ) );
+
+            break;
+
         case T_min:
         {
             size_t   offset = CurOffset() + GetTokenString( token ).length();

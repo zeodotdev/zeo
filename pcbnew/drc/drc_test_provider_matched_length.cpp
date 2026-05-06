@@ -24,6 +24,7 @@
 #include <drc/drc_test_provider.h>
 #include <drc/drc_length_report.h>
 #include <length_delay_calculation/length_delay_calculation.h>
+#include <length_delay_calculation/multi_board_length.h>
 
 #include <connectivity/connectivity_data.h>
 #include <connectivity/from_to_cache.h>
@@ -72,6 +73,9 @@ private:
 void DRC_TEST_PROVIDER_MATCHED_LENGTH::checkLengths( const DRC_CONSTRAINT& aConstraint,
                                                      const std::vector<CONNECTION>& aMatchedConnections )
 {
+    const bool isCrossBoardScope = aConstraint.GetOption(
+            DRC_CONSTRAINT::OPTIONS::CROSS_BOARD_SCOPE );
+
     for( const DRC_LENGTH_REPORT::ENTRY& ent : aMatchedConnections )
     {
         bool minViolation = false;
@@ -82,45 +86,54 @@ void DRC_TEST_PROVIDER_MATCHED_LENGTH::checkLengths( const DRC_CONSTRAINT& aCons
         const bool          isTimeDomain = aConstraint.GetOption( DRC_CONSTRAINT::OPTIONS::TIME_DOMAIN );
         const EDA_DATA_TYPE dataType = isTimeDomain ? EDA_DATA_TYPE::TIME : EDA_DATA_TYPE::DISTANCE;
 
-        if( !isTimeDomain )
+        // For cross-board scope, fold sibling sub-project contributions
+        // into the comparison length. The foundation primitive's
+        // thisBoardNm uses the same PATH_OPTIMISATIONS as the per-board
+        // calc above (see SumNetLengthOnBoard), so the (totalNm -
+        // thisBoardNm) delta represents siblings only — adding it on
+        // top of `ent.total` (which already covers this board's
+        // matched items) preserves correct accounting for cross-board
+        // sums. Time-domain isn't cross-board-aware yet (the foundation
+        // primitive doesn't expose sibling delay); falls through to
+        // per-board comparison until an extended API lands.
+        double comparisonLength = isTimeDomain ? ent.totalDelay : ent.total;
+        int64_t siblingDeltaNm = 0;
+
+        if( isCrossBoardScope && !isTimeDomain )
         {
-            if( aConstraint.GetValue().HasMin() && ent.total < aConstraint.GetValue().Min() )
+            CROSS_BOARD_NET_LENGTH cb = ComputeCrossBoardNetLength( *m_board, ent.netinfo );
+
+            if( cb.isCrossBoard )
             {
-                minViolation = true;
-                minLen = aConstraint.GetValue().Min();
-            }
-            else if( aConstraint.GetValue().HasMax() && ent.total > aConstraint.GetValue().Max() )
-            {
-                maxViolation = true;
-                maxLen = aConstraint.GetValue().Max();
+                siblingDeltaNm = cb.totalNm - cb.thisBoardNm;
+                comparisonLength += static_cast<double>( siblingDeltaNm );
             }
         }
-        else
+
+        if( aConstraint.GetValue().HasMin() && comparisonLength < aConstraint.GetValue().Min() )
         {
-            if( aConstraint.GetValue().HasMin() && ent.totalDelay < aConstraint.GetValue().Min() )
-            {
-                minViolation = true;
-                minLen = aConstraint.GetValue().Min();
-            }
-            else if( aConstraint.GetValue().HasMax() && ent.totalDelay > aConstraint.GetValue().Max() )
-            {
-                maxViolation = true;
-                maxLen = aConstraint.GetValue().Max();
-            }
+            minViolation = true;
+            minLen = aConstraint.GetValue().Min();
+        }
+        else if( aConstraint.GetValue().HasMax()
+                 && comparisonLength > aConstraint.GetValue().Max() )
+        {
+            maxViolation = true;
+            maxLen = aConstraint.GetValue().Max();
         }
 
         if( ( minViolation || maxViolation ) )
         {
             std::shared_ptr<DRC_ITEM> drcItem = DRC_ITEM::Create( DRCE_LENGTH_OUT_OF_RANGE );
 
+            const double reportedLength = comparisonLength;
+
             if( minViolation )
             {
                 drcItem->SetErrorDetail( formatMsg( _( "(%s min length %s; actual %s)" ),
                                                     aConstraint.GetName(),
                                                     minLen,
-                                                    aConstraint.GetOption( DRC_CONSTRAINT::OPTIONS::TIME_DOMAIN )
-                                                            ? ent.totalDelay
-                                                            : ent.total,
+                                                    reportedLength,
                                                     dataType ) );
             }
             else if( maxViolation )
@@ -128,9 +141,7 @@ void DRC_TEST_PROVIDER_MATCHED_LENGTH::checkLengths( const DRC_CONSTRAINT& aCons
                 drcItem->SetErrorDetail( formatMsg( _( "(%s max length %s; actual %s)" ),
                                                     aConstraint.GetName(),
                                                     maxLen,
-                                                    aConstraint.GetOption( DRC_CONSTRAINT::OPTIONS::TIME_DOMAIN )
-                                                            ? ent.totalDelay
-                                                            : ent.total,
+                                                    reportedLength,
                                                     dataType ) );
             }
 

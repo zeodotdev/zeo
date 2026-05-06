@@ -11,6 +11,7 @@ connection_width
 constraint
 courtyard_clearance
 creepage
+cross_board
 diff_pair_gap
 diff_pair_uncoupled
 disallow
@@ -42,6 +43,7 @@ pth
 physical_clearance
 physical_hole_clearance
 rule
+scope
 severity
 silk_clearance
 skew
@@ -53,6 +55,7 @@ solid
 text
 text_height
 text_thickness
+this_board
 thermal_reliefs
 thermal_relief_gap
 thermal_spoke_width

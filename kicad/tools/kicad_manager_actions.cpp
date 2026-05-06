@@ -103,7 +103,7 @@ TOOL_ACTION KICAD_MANAGER_ACTIONS::editMultiBoardSchematic( TOOL_ACTION_ARGS()
                                                                     .Scope( AS_GLOBAL )
                                                                     .FriendlyName( _( "Multi-Board Schematic" ) )
                                                                     .Tooltip( _( "Open the multi-board schematic (module blocks for each sub-project)" ) )
-                                                                    .Icon( BITMAPS::icon_eeschema ) );
+                                                                    .Icon( BITMAPS::icon_mbs ) );
 
 
 TOOL_ACTION KICAD_MANAGER_ACTIONS::openSubProjectSchematicById( TOOL_ACTION_ARGS()

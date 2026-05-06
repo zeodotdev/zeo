@@ -384,6 +384,15 @@ void ASSEMBLY_3D_MANAGER::LoadProjectBoards( PROJECT* aProject )
     // already arranged.
     applyPersistedInstanceStates();
 
+    // Per-project collision threshold (mm). Same persistence channel.
+    if( m_project )
+    {
+        const PROJECT_FILE& pf = m_project->GetProjectFile();
+
+        if( pf.IsMultiBoardContainer() )
+            m_collisionThresholdMm = static_cast<float>( pf.GetCollisionThresholdMm() );
+    }
+
     // Hide sub-boards that have no PCB content yet (no footprints and
     // no Edge.Cuts outline). Without this the 3D pipeline draws a
     // unit-cube placeholder for them, which is confusing in an
@@ -3955,6 +3964,38 @@ void ASSEMBLY_3D_MANAGER::persistInstanceState( const BOARD_3D_INSTANCE& aInst )
     it->opacity     = aInst.opacity;
 
     pf.SetAssemblyInstances( std::move( states ) );
+}
+
+
+void ASSEMBLY_3D_MANAGER::SetCollisionThresholdMm( float aMm )
+{
+    m_collisionThresholdMm = aMm;
+
+    // Push through to the project file so the value survives close/
+    // reopen. SetCollisionThresholdMm short-circuits when value is
+    // unchanged so this is safe to call from the panel's text-changed
+    // handler without spurious dirty marks.
+    if( m_project )
+    {
+        PROJECT_FILE& pf = m_project->GetProjectFile();
+
+        if( pf.IsMultiBoardContainer() )
+            pf.SetCollisionThresholdMm( static_cast<double>( aMm ) );
+    }
+}
+
+
+bool ASSEMBLY_3D_MANAGER::HasPersistedInstanceStates() const
+{
+    if( !m_project )
+        return false;
+
+    const PROJECT_FILE& pf = m_project->GetProjectFile();
+
+    if( !pf.IsMultiBoardContainer() )
+        return false;
+
+    return !pf.GetAssemblyInstances().empty();
 }
 
 

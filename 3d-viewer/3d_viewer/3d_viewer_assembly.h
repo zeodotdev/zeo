@@ -462,8 +462,17 @@ public:
      * the panel (different connector classes have different natural
      * mating depths).
      */
-    void  SetCollisionThresholdMm( float aMm ) { m_collisionThresholdMm = aMm; }
+    void  SetCollisionThresholdMm( float aMm );
     float GetCollisionThresholdMm() const      { return m_collisionThresholdMm; }
+
+    /**
+     * True iff the project file has any persisted per-instance pose
+     * (read by `applyPersistedInstanceStates`). The panel uses this to
+     * default the layout-mode dropdown to "Custom" when reopening a
+     * project the user has already arranged manually — otherwise we'd
+     * keep showing "Flat (side by side)" even though that's a lie.
+     */
+    bool HasPersistedInstanceStates() const;
 
     /**
      * Highlight one mate pair in the gizmo render. The matching pair

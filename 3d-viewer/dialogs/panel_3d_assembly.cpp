@@ -100,7 +100,7 @@ void PANEL_3D_ASSEMBLY::createControls()
 
     m_boardListBox = new wxCheckListBox( m_scrolled, wxID_ANY, wxDefaultPosition,
                                           wxSize( -1, 120 ) );
-    m_boardListBox->SetMinSize( wxSize( FromDIP( 80 ), FromDIP( 80 ) ) );
+    m_boardListBox->SetMinSize( wxSize( FromDIP( 60 ), FromDIP( 80 ) ) );
     m_boardListBox->SetToolTip( _( "Visibility checkboxes per sub-board." ) );
     boardBox->Add( m_boardListBox, 1, wxEXPAND | wxBOTTOM, 5 );
 
@@ -318,14 +318,14 @@ void PANEL_3D_ASSEMBLY::createControls()
             _( "Overlay coloured rods linking each connector mate pair." ) );
     viewBox->Add( m_showMatesCheck, 0, wxBOTTOM, 3 );
 
-    m_showCollisionsCheck = new wxCheckBox( m_scrolled, wxID_ANY, _( "Show collision highlights" ) );
+    m_showCollisionsCheck = new wxCheckBox( m_scrolled, wxID_ANY, _( "Show collisions" ) );
     m_showCollisionsCheck->SetValue( true );
     m_showCollisionsCheck->SetToolTip(
             _( "Overlay red markers on components that physically overlap. "
                 "Auto-runs on every position change." ) );
     viewBox->Add( m_showCollisionsCheck, 0, wxBOTTOM, 3 );
 
-    m_showContactsCheck = new wxCheckBox( m_scrolled, wxID_ANY, _( "Show contact highlights" ) );
+    m_showContactsCheck = new wxCheckBox( m_scrolled, wxID_ANY, _( "Show contacts" ) );
     m_showContactsCheck->SetValue( true );
     m_showContactsCheck->SetToolTip(
             _( "Overlay markers on components that are in expected contact (mated). "
@@ -339,9 +339,16 @@ void PANEL_3D_ASSEMBLY::createControls()
     // user tune it per project.
     wxBoxSizer* thresholdRow = new wxBoxSizer( wxHORIZONTAL );
     thresholdRow->Add( new wxStaticText( m_scrolled, wxID_ANY,
-                                          _( "Collision tolerance (mm):" ) ),
+                                          _( "Tolerance (mm):" ) ),
                        0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 5 );
-    m_collisionThresholdCtrl = new wxTextCtrl( m_scrolled, wxID_ANY, "0.5",
+    // Initial value from the manager (which reads from project file on
+    // bind), not a hard-coded string — otherwise the dropdown shows
+    // 0.5 even when the user has saved a different threshold.
+    const wxString initialThreshold =
+            m_manager
+                    ? wxString::Format( "%.2f", m_manager->GetCollisionThresholdMm() )
+                    : wxString( "0.5" );
+    m_collisionThresholdCtrl = new wxTextCtrl( m_scrolled, wxID_ANY, initialThreshold,
                                                 wxDefaultPosition, wxDefaultSize,
                                                 wxTE_PROCESS_ENTER );
     m_collisionThresholdCtrl->SetMinSize( wxSize( FromDIP( 50 ), -1 ) );
@@ -493,6 +500,13 @@ void PANEL_3D_ASSEMBLY::RefreshBoardList()
     {
         m_selectedBoardIndex = wxNOT_FOUND;
     }
+
+    // If the project has persisted per-instance poses, the layout is
+    // necessarily a user-arranged "Custom" — not the FLAT default. Sync
+    // the dropdown so reopening a saved project doesn't lie about the
+    // current arrangement.
+    if( m_manager && m_manager->HasPersistedInstanceStates() )
+        m_layoutModeChoice->SetSelection( 2 );    // Custom
 
     UpdateSelectedBoardControls();
 }

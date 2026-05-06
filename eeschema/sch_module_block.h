@@ -171,6 +171,14 @@ public:
     bool HasConnectivityChanges( const SCH_ITEM* aItem,
                                  const SCH_SHEET_PATH* aInstance = nullptr ) const override;
 
+    /// Find/Replace + search-pane integration. Matches the search
+    /// query against the block's identifying text fields: display
+    /// name, MBS reference (e.g. "B1"), connector reference (e.g.
+    /// "J1"), and sub-project path. The pin-level child labels are
+    /// matched separately via SCH_LABEL_BASE::Matches when the search
+    /// recurses into block children.
+    bool Matches( const EDA_SEARCH_DATA& aSearchData, void* aAuxData ) const override;
+
 private:
     bool doIsConnected( const VECTOR2I& aPosition ) const override;
 

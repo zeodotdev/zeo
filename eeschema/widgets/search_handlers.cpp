@@ -19,6 +19,7 @@
 
 #include <sch_actions.h>
 #include <sch_edit_frame.h>
+#include <sch_module_block.h>
 #include <sch_painter.h>
 #include <sch_symbol.h>
 #include <sch_group.h>
@@ -555,4 +556,69 @@ wxString GROUP_SEARCH_HANDLER::getResultCell( const SCH_SEARCH_HIT& aHit, int aC
         return m_frame->MessageTextFromValue( group->GetPosition().y );
 
     return wxEmptyString;
+}
+
+
+MODULE_BLOCK_SEARCH_HANDLER::MODULE_BLOCK_SEARCH_HANDLER( SCH_EDIT_FRAME* aFrame ) :
+        SCH_SEARCH_HANDLER( _HKI( "Module Blocks" ), aFrame )
+{
+    m_columns.emplace_back( _HKI( "Ref" ),         2, wxLIST_FORMAT_LEFT );
+    m_columns.emplace_back( _HKI( "Name" ),        4, wxLIST_FORMAT_LEFT );
+    m_columns.emplace_back( _HKI( "Connector" ),   2, wxLIST_FORMAT_LEFT );
+    m_columns.emplace_back( _HKI( "Sub-Project" ), 4, wxLIST_FORMAT_LEFT );
+    m_columns.emplace_back( _HKI( "Page" ),        2, wxLIST_FORMAT_CENTER );
+    m_columns.emplace_back( wxT( "X" ),            3, wxLIST_FORMAT_CENTER );
+    m_columns.emplace_back( wxT( "Y" ),            3, wxLIST_FORMAT_CENTER );
+}
+
+
+int MODULE_BLOCK_SEARCH_HANDLER::Search( const wxString& aQuery )
+{
+    m_hitlist.clear();
+
+    APP_SETTINGS_BASE::SEARCH_PANE& settings = m_frame->config()->m_SearchPane;
+    SCH_SEARCH_DATA                 frp;
+
+    frp.searchAllFields = settings.search_hidden_fields;
+    frp.searchMetadata = settings.search_metadata;
+    frp.findString = aQuery;
+    frp.matchMode = EDA_SEARCH_MATCH_MODE::PERMISSIVE;
+    frp.searchCurrentSheetOnly = false;
+
+    auto search =
+            [&frp]( SCH_ITEM* item, SCH_SHEET_PATH* sheet )
+            {
+                if( item->Type() != SCH_MODULE_BLOCK_T )
+                    return false;
+
+                if( frp.findString.IsEmpty() )
+                    return true;
+
+                return item->Matches( frp, sheet );
+            };
+
+    FindAll( search );
+
+    return (int) m_hitlist.size();
+}
+
+
+wxString MODULE_BLOCK_SEARCH_HANDLER::getResultCell( const SCH_SEARCH_HIT& aHit, int aCol )
+{
+    const SCH_MODULE_BLOCK* block = dynamic_cast<const SCH_MODULE_BLOCK*>( aHit.item );
+
+    if( !block )
+        return wxEmptyString;
+
+    switch( aCol )
+    {
+    case 0: return block->GetMbsReference();
+    case 1: return block->GetDisplayName();
+    case 2: return block->GetComponentRef();
+    case 3: return block->GetSubProjectPath();
+    case 4: return aHit.sheetPath ? aHit.sheetPath->GetPageNumber() : wxString();
+    case 5: return m_frame->MessageTextFromValue( block->GetPosition().x );
+    case 6: return m_frame->MessageTextFromValue( block->GetPosition().y );
+    default: return wxEmptyString;
+    }
 }

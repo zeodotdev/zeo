@@ -129,4 +129,23 @@ protected:
     wxString getResultCell( const SCH_SEARCH_HIT& hit, int aCol ) override;
 };
 
+/**
+ * Search handler for SCH_MODULE_BLOCK items on a multi-board schematic.
+ * Matches against the block's identifying text fields (display name,
+ * MBS reference, connector reference, sub-project path) via
+ * SCH_MODULE_BLOCK::Matches. Always registered on every SCH-style
+ * editor; returns zero hits in non-MBSCH contexts (no module blocks
+ * exist on a regular schematic).
+ */
+class MODULE_BLOCK_SEARCH_HANDLER : public SCH_SEARCH_HANDLER
+{
+public:
+    MODULE_BLOCK_SEARCH_HANDLER( SCH_EDIT_FRAME* aFrame );
+
+    int Search( const wxString& aQuery ) override;
+
+protected:
+    wxString getResultCell( const SCH_SEARCH_HIT& hit, int aCol ) override;
+};
+
 #endif

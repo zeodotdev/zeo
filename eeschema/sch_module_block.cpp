@@ -21,6 +21,8 @@
 #include "sch_module_block.h"
 #include "sch_module_pin.h"
 
+#include <eda_search_data.h>
+
 #include <bitmaps.h>
 #include <core/mirror.h>
 #include <font/font.h>
@@ -393,6 +395,31 @@ bool SCH_MODULE_BLOCK::HasConnectivityChanges( const SCH_ITEM* aItem,
         if( m_pins[i]->HasConnectivityChanges( other->m_pins[i] ) )
             return true;
     }
+
+    return false;
+}
+
+
+bool SCH_MODULE_BLOCK::Matches( const EDA_SEARCH_DATA& aSearchData, void* aAuxData ) const
+{
+    // Search every identifying text field on the block. The base
+    // EDA_ITEM::Matches(text, data) helper handles match-mode (literal
+    // / wildcard / regex), case sensitivity, and word-boundary
+    // semantics — we just feed it each candidate string in turn.
+    // Child pin labels are matched separately when the search recurses
+    // into block children via SCH_MODULE_BLOCK::RunOnChildren →
+    // SCH_LABEL_BASE::Matches.
+    if( EDA_ITEM::Matches( m_displayName, aSearchData ) )
+        return true;
+
+    if( EDA_ITEM::Matches( m_mbsReference, aSearchData ) )
+        return true;
+
+    if( EDA_ITEM::Matches( m_componentRef, aSearchData ) )
+        return true;
+
+    if( EDA_ITEM::Matches( m_subProjectPath, aSearchData ) )
+        return true;
 
     return false;
 }

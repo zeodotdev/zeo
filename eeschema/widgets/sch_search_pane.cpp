@@ -44,6 +44,10 @@ SCH_SEARCH_PANE::SCH_SEARCH_PANE( SCH_EDIT_FRAME* aFrame ) :
     AddSearcher( std::make_shared<TEXT_SEARCH_HANDLER>( aFrame ) );
     AddSearcher( std::make_shared<LABEL_SEARCH_HANDLER>( aFrame ) );
     AddSearcher( std::make_shared<GROUP_SEARCH_HANDLER>( aFrame ) );
+    // Module Blocks tab: matches SCH_MODULE_BLOCK items by display
+    // name / MBS ref / connector ref / sub-project path. Returns zero
+    // hits on a regular schematic (no module blocks exist there).
+    AddSearcher( std::make_shared<MODULE_BLOCK_SEARCH_HANDLER>( aFrame ) );
 }
 
 

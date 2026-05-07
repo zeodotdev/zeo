@@ -3692,7 +3692,16 @@ bool SCH_EDIT_FRAME::DetectAgentChanges()
     if( !m_agentChangeTracker || !m_agentChangeTracker->HasChanges() )
     {
         if( !m_hasAgentPendingChanges )
+        {
+            // Project-level tool calls (e.g. sch_setup mutating netclasses)
+            // open a transaction + snapshot but never call TrackItem on the
+            // SCH side. Tear the snapshot session down so we don't leave
+            // orphan snapshot files that would later confuse RevertAgentChanges.
+            if( m_snapshotSession )
+                m_snapshotSession->EndSession();
+
             return false;
+        }
     }
 
     m_hasAgentPendingChanges = true;

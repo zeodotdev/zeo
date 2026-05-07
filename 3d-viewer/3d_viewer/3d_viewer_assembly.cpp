@@ -786,6 +786,23 @@ std::vector<MATE_EDGE> ASSEMBLY_3D_MANAGER::BuildMateGraph() const
     using PairKey = std::tuple<KIID, wxString, KIID, wxString>;
     std::map<PairKey, MATE_PAIR> pairMap;
 
+    // Track which (net, footprint-pair) tuples have already produced a
+    // pin-pair correspondence. Multi-endpoint power nets (GND, VCC,
+    // etc.) typically have N pads on one connector and M on the other;
+    // the netlist gives us no information to identify which physical
+    // GND-A pin should mate to which GND-B pin, so contributing all
+    // N*M cross-board combinations to padPins produced a "rats nest"
+    // gizmo and skewed the Kabsch solver (the spurious pin-i↔pin-j
+    // pairings averaged out to a wrong rotation). Dedupe to one
+    // representative pair per (net, footprint-pair) so:
+    //   • the visualizer draws one line per net rather than N*M
+    //   • Kabsch sees one rotational constraint per net (signal nets
+    //     with unique 1↔1 endpoint correspondence dominate; power
+    //     nets contribute one weakly-meaningful constraint)
+    // pinCount is still accumulated per cross-board edge so the
+    // primary-pair-by-pin-weight ordering is unchanged.
+    std::set<std::tuple<KIID, PairKey>> netPairSeen;
+
     for( const MB_CROSS_BOARD_NET& net : projectFile.GetCrossBoardNets() )
     {
         if( net.endpoints.size() < 2 )
@@ -817,6 +834,8 @@ std::vector<MATE_EDGE> ASSEMBLY_3D_MANAGER::BuildMateGraph() const
                 const BOARD_3D_INSTANCE* iB = itB->second;
                 wxString refA = epA.componentRef;
                 wxString refB = epB.componentRef;
+                wxString pinA = epA.pinNumber;
+                wxString pinB = epB.pinNumber;
 
                 bool swap = ( iB->uuid < iA->uuid )
                             || ( iA->uuid == iB->uuid && refB < refA );
@@ -825,6 +844,7 @@ std::vector<MATE_EDGE> ASSEMBLY_3D_MANAGER::BuildMateGraph() const
                 {
                     std::swap( iA, iB );
                     std::swap( refA, refB );
+                    std::swap( pinA, pinB );
                 }
 
                 PairKey key{ iA->uuid, refA, iB->uuid, refB };
@@ -840,6 +860,12 @@ std::vector<MATE_EDGE> ASSEMBLY_3D_MANAGER::BuildMateGraph() const
                 }
 
                 it->second.pinCount++;
+
+                // Only the first cross-board endpoint pair encountered
+                // per net per footprint-pair contributes a padPins
+                // entry. See netPairSeen comment above.
+                if( netPairSeen.insert( std::make_tuple( net.uuid, key ) ).second )
+                    it->second.padPins.emplace_back( pinA, pinB );
             }
         }
     }
@@ -1378,52 +1404,341 @@ bool ASSEMBLY_3D_MANAGER::PlaceChildOnParent( const BOARD_3D_INSTANCE& aParent,
                   padAOnTop ? "+zGap" : "-zGap" );
 
     // Account for parent's existing flip when projecting its mate side
-    // into world frame. Phase-1 only supports 0° / 180° X-rotation, so
-    // a parent rotation of (180, 0, 0) inverts its effective top/bot.
-    const bool parentFlipped =
-            std::abs( aParent.rotation.x - 180.0f ) < 0.1f
-            && std::abs( aParent.rotation.y ) < 0.1f
-            && std::abs( aParent.rotation.z ) < 0.1f;
+    // into world frame. The check is "does the parent's full rotation
+    // matrix invert the local +Z normal?" — which captures (180,0,0)
+    // X-flips AND any (180,0,θ) X-flip-plus-Z-rotation produced by the
+    // Kabsch step below when an upstream BFS hop placed this parent.
+    glm::mat4 R_P( 1.0f );
+    R_P = glm::rotate( R_P, glm::radians( aParent.rotation.z ), glm::vec3( 0, 0, 1 ) );
+    R_P = glm::rotate( R_P, glm::radians( aParent.rotation.y ), glm::vec3( 0, 1, 0 ) );
+    R_P = glm::rotate( R_P, glm::radians( aParent.rotation.x ), glm::vec3( 1, 0, 0 ) );
 
-    const bool parentEffectivelyOnTop = parentFlipped ? !padAOnTop : padAOnTop;
-    const bool sameEffectiveSide      = ( parentEffectivelyOnTop == padBOnTop );
+    const glm::vec4 zNormalWorld = R_P * glm::vec4( 0.0f, 0.0f, 1.0f, 0.0f );
+    const bool      parentFlipped       = ( zNormalWorld.z < 0.0f );
+    const bool      parentEffectivelyOnTop = parentFlipped ? !padAOnTop : padAOnTop;
+    const bool      sameEffectiveSide      = ( parentEffectivelyOnTop == padBOnTop );
 
     const float thicknessA      = GetBoardThickness( aParent.board.get() );
     const float thicknessB      = GetBoardThickness( aChild.board.get()  );
     const float connectorHeight = ComputeMateZGap( aParent, aPrimary.footprintRefA,
                                                    aChild,  aPrimary.footprintRefB );
-    const float zGap            = thicknessA * 0.5f + thicknessB * 0.5f + connectorHeight;
+    const float zGapMm          = thicknessA * 0.5f + thicknessB * 0.5f + connectorHeight;
 
-    // Pad centroids in mm, in stored (un-Y-inverted) coords.
-    float dx = ( padCentroidA.x - padCentroidB.x ) / 1.0e6f;
-    float dy;
-    float dz;
-
-    if( sameEffectiveSide )
+    // ----- Z-rotation via robust 2D Kabsch on pin-pair correspondences -----
+    //
+    // Centroid-to-centroid alignment doesn't constrain rotation around
+    // the connector's normal: a single connector pair can't tell us
+    // whether the child should be 0° or 180° around Z. With ≥2 cross-
+    // net pad pairs we solve the optimal rotation that aligns the
+    // child's pin set to the parent's pin set (after the X-flip).
+    //
+    // Math: working entirely in world render frame (Y-flipped). For
+    // each pin pair i:
+    //   • vA_i = parent's pad i offset from parent connector centroid,
+    //            after parent's full rotation R_P (independent of
+    //            parent's board-center pivot since centroid-relative
+    //            offsets cancel the pivot).
+    //   • vB_i = child's pad i offset from child connector centroid,
+    //            after the X-flip (sameEffectiveSide ⇒ flip ⇒ Y mirror).
+    //   • Solve R_z(θ) such that R_z(θ) * vB_i ≈ vA_i.
+    // Closed form (2D Kabsch via SVD shortcut):
+    //   θ = atan2( Σ(vAy·vBx − vAx·vBy), Σ(vAx·vBx + vAy·vBy) ).
+    //
+    // MOON-1364: a single bad port pin (wrong endpoint pairing in the
+    // schematic) is an L2 outlier — least-squares is biased toward it,
+    // so the whole board lands tilted. We iterate: fit, score per-pair
+    // residuals, drop the worst pair if it's far from the median, and
+    // re-fit. Dropped pairs go to m_lastMateResiduals for the
+    // validation panel to surface so the user knows which pin to
+    // investigate without the placement getting wrecked by it.
+    struct PadPairEntry
     {
-        // Child gets flipped 180° about X. After the flip, the child's
-        // pad-centroid Y mirrors around the child's centroid, so the
-        // alignment formula sums Ys instead of subtracting.
-        dy = ( padCentroidA.y + padCentroidB.y ) / 1.0e6f;
-        aChild.rotation = SFVEC3F( parentFlipped ? 0.0f : 180.0f, 0.0f, 0.0f );
-    }
-    else
+        wxString  pinA;
+        wxString  pinB;
+        VECTOR2I  posA;       // BIU on A's stored coords
+        VECTOR2I  posB;       // BIU on B's stored coords
+    };
+
+    std::vector<PadPairEntry> padPairs;
+    padPairs.reserve( aPrimary.padPins.size() );
+
+    for( const auto& [pinA, pinB] : aPrimary.padPins )
     {
-        dy = ( padCentroidA.y - padCentroidB.y ) / 1.0e6f;
-        aChild.rotation = SFVEC3F( parentFlipped ? 180.0f : 0.0f, 0.0f, 0.0f );
+        PAD* pA = fpA->FindPadByNumber( pinA );
+        PAD* pB = fpB->FindPadByNumber( pinB );
+
+        if( pA && pB )
+            padPairs.push_back( { pinA, pinB, pA->GetPosition(), pB->GetPosition() } );
     }
 
-    // Place child on the side parent's connector faces in world.
-    // parentEffectivelyOnTop true → +Z gap; false → −Z gap.
-    dz = parentEffectivelyOnTop ? zGap : -zGap;
+    // Pivot the Kabsch around the FOOTPRINT centroid (the same point
+    // projectFootprintCentroidToWorld will project for the translation
+    // step) rather than the padPin-set centroid. Otherwise, when a
+    // connector has pads that aren't in any cross-board net, the two
+    // centroids diverge — Kabsch finds the rotation that aligns
+    // padPin centroids while the translation snaps footprint centroids,
+    // and the connectors land offset by the centroid delta.
+    const VECTOR2I& cA = padCentroidA;
+    const VECTOR2I& cB = padCentroidB;
+    constexpr double biuPerMm = 1.0e6;
 
-    // Parent flip mirrors the child's Y offset: the parent's pad-Y in
-    // stored coords becomes effectively −pad-Y in world Y after the
-    // parent's 180°-X rotation.
-    if( parentFlipped )
-        dy = -dy;
+    // Compute the post-X-flip render-frame offset for one pair, used
+    // for both the Kabsch accumulator and the per-pair residual probe
+    // after the fit. Returns (vAx, vAy, vBx, vBy) in mm.
+    auto pairVectors = [&]( const PadPairEntry& aEntry,
+                             double& aOutVAx, double& aOutVAy,
+                             double& aOutVBx, double& aOutVBy )
+    {
+        const double aLocalX =  static_cast<double>( aEntry.posA.x - cA.x ) / biuPerMm;
+        const double aLocalY = -static_cast<double>( aEntry.posA.y - cA.y ) / biuPerMm;
 
-    aChild.position = aParent.position + SFVEC3F( dx, dy, dz );
+        const glm::vec4 aRot = R_P * glm::vec4( static_cast<float>( aLocalX ),
+                                                 static_cast<float>( aLocalY ),
+                                                 0.0f, 0.0f );
+        aOutVAx = aRot.x;
+        aOutVAy = aRot.y;
+
+        const double bLocalX =  static_cast<double>( aEntry.posB.x - cB.x ) / biuPerMm;
+        const double bLocalY = -static_cast<double>( aEntry.posB.y - cB.y ) / biuPerMm;
+        aOutVBx = bLocalX;
+        aOutVBy = sameEffectiveSide ? -bLocalY : bLocalY;
+    };
+
+    // Closed-form 2D Kabsch over the supplied indexes. Returns θ in
+    // degrees and writes the cross/dot sums for diagnostic logs.
+    auto fitKabsch = [&]( const std::vector<size_t>& aActiveIdxs,
+                           double& aOutSumCross, double& aOutSumDot ) -> float
+    {
+        aOutSumCross = 0.0;
+        aOutSumDot   = 0.0;
+
+        for( size_t k : aActiveIdxs )
+        {
+            double vAx, vAy, vBx, vBy;
+            pairVectors( padPairs[k], vAx, vAy, vBx, vBy );
+
+            aOutSumCross += vAy * vBx - vAx * vBy;
+            aOutSumDot   += vAx * vBx + vAy * vBy;
+        }
+
+        return static_cast<float>(
+                glm::degrees( std::atan2( aOutSumCross, aOutSumDot ) ) );
+    };
+
+    // Per-pair residual after applying θ to vB_after_xflip. In world
+    // mm: |R_z(θ)*vB - vA|. Lower is better; outliers stand out.
+    auto perPairResidual = [&]( const PadPairEntry& aEntry, float aThetaZDeg ) -> double
+    {
+        double vAx, vAy, vBx, vBy;
+        pairVectors( aEntry, vAx, vAy, vBx, vBy );
+
+        const double t  = glm::radians( static_cast<double>( aThetaZDeg ) );
+        const double c  = std::cos( t );
+        const double s  = std::sin( t );
+        const double rx = c * vBx - s * vBy;
+        const double ry = s * vBx + c * vBy;
+
+        const double dx = rx - vAx;
+        const double dy = ry - vAy;
+        return std::sqrt( dx * dx + dy * dy );
+    };
+
+    float thetaZDeg = 0.0f;
+
+    // Inlier set — start with all pairs, drop outliers iteratively.
+    std::vector<size_t> inliers;
+    std::vector<size_t> outliers;
+    inliers.reserve( padPairs.size() );
+
+    for( size_t i = 0; i < padPairs.size(); i++ )
+        inliers.push_back( i );
+
+    if( inliers.size() >= 2 )
+    {
+        // Tunables. Pin spacing is typically 1.27–2.54 mm; 0.5 mm is a
+        // reasonable absolute floor for "actually misaligned" — below
+        // it we're in the noise of stackup/router rounding. Ratio 3×
+        // catches pads that are clearly worse than the population while
+        // staying tolerant of natural spread on connectors with a
+        // wide pin layout. Cap iterations at 1/3 of the pairs so we
+        // can't drop the entire connector to chase noise.
+        constexpr double  k_outlierAbsMinMm = 0.5;
+        constexpr double  k_outlierRatio    = 3.0;
+        const size_t      k_maxDrops        = std::max<size_t>( 1, inliers.size() / 3 );
+
+        double sumCross = 0.0, sumDot = 0.0;
+        thetaZDeg = fitKabsch( inliers, sumCross, sumDot );
+
+        for( size_t drop = 0; drop < k_maxDrops && inliers.size() > 2; drop++ )
+        {
+            // Score the current inliers under the current θ.
+            std::vector<double> resi( inliers.size() );
+
+            for( size_t k = 0; k < inliers.size(); k++ )
+                resi[k] = perPairResidual( padPairs[inliers[k]], thetaZDeg );
+
+            // Median (sort copy, take middle).
+            std::vector<double> sorted = resi;
+            std::sort( sorted.begin(), sorted.end() );
+            const double median = sorted[sorted.size() / 2];
+
+            // Worst pair.
+            size_t worstK = 0;
+            double worstR = resi[0];
+
+            for( size_t k = 1; k < resi.size(); k++ )
+            {
+                if( resi[k] > worstR )
+                {
+                    worstR = resi[k];
+                    worstK = k;
+                }
+            }
+
+            const bool isOutlier =
+                    ( worstR > k_outlierAbsMinMm )
+                    && ( worstR > k_outlierRatio * std::max( median, 1e-3 ) );
+
+            if( !isOutlier )
+                break;
+
+            wxLogMessage( wxT( "[MATE]   robust: dropping pin pair %s↔%s "
+                               "residual=%.3fmm (median=%.3fmm) θ_before=%.2f°" ),
+                          padPairs[inliers[worstK]].pinA,
+                          padPairs[inliers[worstK]].pinB,
+                          worstR, median, thetaZDeg );
+
+            outliers.push_back( inliers[worstK] );
+            inliers.erase( inliers.begin() + worstK );
+
+            thetaZDeg = fitKabsch( inliers, sumCross, sumDot );
+        }
+    }
+
+    // Surface dropped pairs as residuals so the validation panel can
+    // report "this connector has a probable wrong port-pin mapping".
+    // Each entry pinpoints the specific pin pair via a synthesized
+    // MATE_PAIR carrying just that one padPin tuple.
+    for( size_t k : outliers )
+    {
+        MATE_RESIDUAL r;
+        r.pair = aPrimary;
+        r.pair.padPins.clear();
+        r.pair.padPins.emplace_back( padPairs[k].pinA, padPairs[k].pinB );
+        r.residualMm  = static_cast<float>(
+                perPairResidual( padPairs[k], thetaZDeg ) );
+        r.residualDeg = 0.0f;
+        m_lastMateResiduals.push_back( r );
+    }
+
+    // X-flip portion of the child's rotation. With Kabsch's Z-rotation
+    // applied last (Z·Y·X composition), the X-flip then Z-rotation
+    // produces the same orientation regardless of axis order.
+    const float childRotXDeg = sameEffectiveSide
+                                       ? ( parentFlipped ? 0.0f : 180.0f )
+                                       : ( parentFlipped ? 180.0f : 0.0f );
+
+    aChild.rotation = SFVEC3F( childRotXDeg, 0.0f, thetaZDeg );
+
+    wxLogMessage( wxT( "[MATE]   Kabsch inliers=%zu/%zu thetaZ=%.3f° parentFlipped=%d "
+                       "sameSide=%d childRotX=%.0f° connectorH=%.3fmm zGap=%.3fmm" ),
+                  inliers.size(), padPairs.size(), thetaZDeg,
+                  parentFlipped ? 1 : 0,
+                  sameEffectiveSide ? 1 : 0, childRotXDeg,
+                  connectorHeight, zGapMm );
+
+    // ----- World-frame translation -----
+    //
+    // Place the child so its connector centroid (under the new R_C)
+    // lands at parent's connector centroid + (0,0,±zGap) in world
+    // render frame. The previous formula used stored-coord differences
+    // and only patched the parent-flipped (180,0,0) case, so a parent
+    // with a Kabsch-derived Z-rotation (or any non-X-flip rotation) put
+    // its child in the wrong world position — the "far away" symptom
+    // for 3+ board chains.
+
+    // Look up parent's adapter (needed for the centroid projection;
+    // mirrors the gizmo's pose math). We index instances by UUID since
+    // the call site doesn't pass adapters in.
+    auto findAdapter = [&]( const KIID& aUuid ) -> const BOARD_ADAPTER*
+    {
+        for( size_t i = 0; i < m_boardInstances.size(); i++ )
+        {
+            if( m_boardInstances[i].uuid == aUuid
+                && i < m_instanceAdapters.size() )
+                return m_instanceAdapters[i].get();
+        }
+
+        return nullptr;
+    };
+
+    const BOARD_ADAPTER* adapterA = findAdapter( aParent.uuid );
+    const BOARD_ADAPTER* adapterB = findAdapter( aChild.uuid );
+
+    if( !adapterA || !adapterB )
+        return false;
+
+    glm::vec3 worldA;
+
+    if( !projectFootprintCentroidToWorld( aParent, *adapterA,
+                                           aPrimary.footprintRefA, worldA ) )
+        return false;
+
+    const float biuPerMmF = 1.0e6f;
+    const float sharedF   = static_cast<float>( m_sharedBiuTo3Dunits );
+    const float zGapShared = zGapMm * biuPerMmF * sharedF
+                             * ( parentEffectivelyOnTop ? 1.0f : -1.0f );
+
+    const glm::vec3 worldB( worldA.x, worldA.y, worldA.z + zGapShared );
+
+    // Solve for child's inst.position. The pose math the renderer
+    // applies is:
+    //   world = R_C * (localBshared - localCenterShared_C)
+    //         + localCenterShared_C
+    //         + instShared_C - centerShared
+    // → instShared_C = worldB - replaced_C + centerShared
+    // where replaced_C = R_C*(localBshared - localCenterShared_C)
+    //                  + localCenterShared_C.
+    glm::mat4 R_C( 1.0f );
+    R_C = glm::rotate( R_C, glm::radians( aChild.rotation.z ), glm::vec3( 0, 0, 1 ) );
+    R_C = glm::rotate( R_C, glm::radians( aChild.rotation.y ), glm::vec3( 0, 1, 0 ) );
+    R_C = glm::rotate( R_C, glm::radians( aChild.rotation.x ), glm::vec3( 1, 0, 0 ) );
+
+    const double localFactorB = adapterB->BiuTo3dUnits();
+    const double scaleFactorB = ( localFactorB != 0.0 )
+                                        ? m_sharedBiuTo3Dunits / localFactorB
+                                        : 1.0;
+
+    // Child connector centroid in board-local 3D-units (Y inverted to
+    // match render-frame, Z=0 for the centroid plane).
+    const glm::vec3 localB( static_cast<float>( padCentroidB.x )
+                                    * static_cast<float>( localFactorB ),
+                            -static_cast<float>( padCentroidB.y )
+                                    * static_cast<float>( localFactorB ),
+                            0.0f );
+    const glm::vec3 localBshared = localB * static_cast<float>( scaleFactorB );
+
+    const SFVEC3F   lcB = adapterB->GetBoardCenter();
+    const glm::vec3 localCenterSharedB( lcB.x * static_cast<float>( scaleFactorB ),
+                                        lcB.y * static_cast<float>( scaleFactorB ),
+                                        lcB.z * static_cast<float>( scaleFactorB ) );
+
+    const glm::vec3 shifted  = localBshared - localCenterSharedB;
+    const glm::vec4 rotated  = R_C * glm::vec4( shifted, 1.0f );
+    const glm::vec3 replaced = glm::vec3( rotated ) + localCenterSharedB;
+
+    SFVEC3F bboxMin, bboxMax;
+    GetAssemblyBoundingBox( bboxMin, bboxMax );
+    const SFVEC3F   centerMm = ( bboxMin + bboxMax ) * 0.5f;
+    const glm::vec3 centerShared(  centerMm.x * biuPerMmF * sharedF,
+                                  -centerMm.y * biuPerMmF * sharedF,
+                                   centerMm.z * biuPerMmF * sharedF );
+
+    const glm::vec3 instSharedC = worldB - replaced + centerShared;
+
+    aChild.position.x =  instSharedC.x / ( biuPerMmF * sharedF );
+    aChild.position.y = -instSharedC.y / ( biuPerMmF * sharedF );
+    aChild.position.z =  instSharedC.z / ( biuPerMmF * sharedF );
 
     // M6.D-phase-2: apply the custom mate's offset override on top of
     // the auto-computed pose. Translation is added in the parent's
@@ -4613,7 +4928,56 @@ void ASSEMBLY_3D_MANAGER::rebuildMateGizmoEntries()
     // "this checkbox = these lines." Each toggle now controls one
     // visual concept: mate gizmos = lines, contact highlights = on-
     // model yellow boxes, collision highlights = on-model red boxes.
-    if( m_showMateGizmos )
+    // Helper: project an arbitrary board-stored BIU point to shared
+    // world units, mirroring projectFootprintCentroidToWorld's pose
+    // math but for a caller-supplied point (a specific pad, not the
+    // footprint centroid). Used for the per-pin-pair gizmo lines below.
+    auto projectStoredBIUPoint = [&]( const BOARD_3D_INSTANCE& aInst,
+                                       const BOARD_ADAPTER&     aAdapter,
+                                       const VECTOR2I&          aStoredBIU,
+                                       glm::vec3&               aOutWorld )
+    {
+        const double localFactor = aAdapter.BiuTo3dUnits();
+        const double scaleFactor = ( localFactor != 0.0 )
+                                            ? m_sharedBiuTo3Dunits / localFactor
+                                            : 1.0;
+        const float  sharedF     = static_cast<float>( m_sharedBiuTo3Dunits );
+        const float  biuPerMm    = 1.0e6f;
+
+        const glm::vec3 local3D( static_cast<float>( aStoredBIU.x ) * localFactor,
+                                 -static_cast<float>( aStoredBIU.y ) * localFactor,
+                                 0.0f );
+        const glm::vec3 localShared = local3D * static_cast<float>( scaleFactor );
+
+        const SFVEC3F   lc = aAdapter.GetBoardCenter();
+        const glm::vec3 localCenterShared( lc.x * static_cast<float>( scaleFactor ),
+                                           lc.y * static_cast<float>( scaleFactor ),
+                                           lc.z * static_cast<float>( scaleFactor ) );
+
+        glm::mat4 R( 1.0f );
+        R = glm::rotate( R, glm::radians( aInst.rotation.z ), glm::vec3( 0, 0, 1 ) );
+        R = glm::rotate( R, glm::radians( aInst.rotation.y ), glm::vec3( 0, 1, 0 ) );
+        R = glm::rotate( R, glm::radians( aInst.rotation.x ), glm::vec3( 1, 0, 0 ) );
+
+        const glm::vec3 shifted  = localShared - localCenterShared;
+        const glm::vec4 rotated  = R * glm::vec4( shifted, 1.0f );
+        const glm::vec3 replaced = glm::vec3( rotated ) + localCenterShared;
+
+        const glm::vec3 instShared(  aInst.position.x * biuPerMm * sharedF,
+                                    -aInst.position.y * biuPerMm * sharedF,
+                                     aInst.position.z * biuPerMm * sharedF );
+
+        SFVEC3F bboxMin, bboxMax;
+        GetAssemblyBoundingBox( bboxMin, bboxMax );
+        const SFVEC3F   centerMm = ( bboxMin + bboxMax ) * 0.5f;
+        const glm::vec3 centerShared(  centerMm.x * biuPerMm * sharedF,
+                                      -centerMm.y * biuPerMm * sharedF,
+                                       centerMm.z * biuPerMm * sharedF );
+
+        aOutWorld = replaced + instShared - centerShared;
+    };
+
+    if( m_showMateGizmos || m_showPinPairGizmos )
     for( const MATE_EDGE& edge : edges )
     {
         const MATE_PAIR* primary = PickPrimaryPair( edge );
@@ -4630,6 +4994,13 @@ void ASSEMBLY_3D_MANAGER::rebuildMateGizmoEntries()
             const size_t idxB = itB->second;
 
             if( idxA >= m_instanceAdapters.size() || idxB >= m_instanceAdapters.size() )
+                continue;
+
+            // MOON-1362: skip the entire mate when either side's board
+            // is hidden — its gizmo would otherwise float over empty
+            // space (or, worse, overlap an unrelated visible board the
+            // user is currently inspecting).
+            if( !m_boardInstances[idxA].visible || !m_boardInstances[idxB].visible )
                 continue;
 
             const BOARD_ADAPTER* adapterA = m_instanceAdapters[idxA].get();
@@ -4673,7 +5044,51 @@ void ASSEMBLY_3D_MANAGER::rebuildMateGizmoEntries()
             e.selected    = anySelected && ( e.matePairId == m_selectedMatePairId );
             e.anySelected = anySelected;
 
-            entries.push_back( e );
+            // The bold connector-centroid entry — render only when its
+            // own toggle is on (m_showMateGizmos). Pin-pair lines below
+            // have their own independent toggle (m_showPinPairGizmos)
+            // so the user can show centroid summary without pin noise,
+            // or vice versa for diagnosing wrong correspondences.
+            if( m_showMateGizmos )
+                entries.push_back( e );
+
+            if( !m_showPinPairGizmos )
+                continue;
+
+            // Per-pin diagnostic gizmos. One thin line per cross-net
+            // pad correspondence, drawn between the actual pad
+            // positions (not centroids). When the Kabsch solver
+            // produces a tilted pose, an inverted pin mapping shows
+            // up here as a line that crosses the others — visible
+            // sanity check on the schematic-side endpoint pairing.
+            FOOTPRINT* fpAforPins = findFootprintByRef(
+                    m_boardInstances[idxA].board.get(), p.footprintRefA );
+            FOOTPRINT* fpBforPins = findFootprintByRef(
+                    m_boardInstances[idxB].board.get(), p.footprintRefB );
+
+            if( !fpAforPins || !fpBforPins )
+                continue;
+
+            for( const auto& [pinA, pinB] : p.padPins )
+            {
+                PAD* padA = fpAforPins->FindPadByNumber( pinA );
+                PAD* padB = fpBforPins->FindPadByNumber( pinB );
+
+                if( !padA || !padB )
+                    continue;
+
+                glm::vec3 padWorldA, padWorldB;
+                projectStoredBIUPoint( m_boardInstances[idxA], *adapterA,
+                                       padA->GetPosition(), padWorldA );
+                projectStoredBIUPoint( m_boardInstances[idxB], *adapterB,
+                                       padB->GetPosition(), padWorldB );
+
+                MATE_GIZMO::ENTRY pe = e;        // inherit selection state
+                pe.posA = padWorldA;
+                pe.posB = padWorldB;
+                pe.role = MATE_GIZMO::ROLE::PIN_PAIR;
+                entries.push_back( pe );
+            }
         }
     }
 

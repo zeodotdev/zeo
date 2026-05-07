@@ -27,6 +27,11 @@ import "common/types/project_settings.proto";
 
 message GetNetClasses
 {
+  // Optional project scope. When unset, falls back to the globally active
+  // project (Pgm().Prj()). Multi-board contexts MUST set this so the read
+  // targets the same project the agent is acting on, otherwise the parent
+  // container's netclasses get returned for a sub-project query.
+  kiapi.common.types.DocumentSpecifier document = 1;
 }
 
 message NetClassesResponse
@@ -37,6 +42,12 @@ message NetClassesResponse
 
 message SetNetClasses
 {
+  // Optional project scope (see GetNetClasses for rationale). Without this,
+  // mutations always land on Pgm().Prj() which is the wrong project in
+  // multi-board layouts where the agent is rooted at the parent MBSCH but
+  // the user is editing a sub-project's netclasses.
+  kiapi.common.types.DocumentSpecifier document = 4;
+
   repeated kiapi.common.project.NetClass net_classes = 1;
 
   // Whether to merge or replace the existing netclasses with the contents of this message
@@ -54,6 +65,9 @@ message SetNetClasses
 /// Creates a new net class
 message CreateNetClass
 {
+  // Optional project scope (see SetNetClasses).
+  kiapi.common.types.DocumentSpecifier document = 2;
+
   kiapi.common.project.NetClass net_class = 1;
 }
 
@@ -75,6 +89,9 @@ message CreateNetClassResponse
 /// Deletes a net class by name
 message DeleteNetClass
 {
+  // Optional project scope (see SetNetClasses).
+  kiapi.common.types.DocumentSpecifier document = 2;
+
   string name = 1;  // Name of the net class to delete
 }
 
@@ -136,6 +153,8 @@ message NetClassAssignment
 /// Gets all netclass pattern assignments
 message GetNetClassAssignments
 {
+  // Optional project scope (see SetNetClasses).
+  kiapi.common.types.DocumentSpecifier document = 1;
 }
 
 message GetNetClassAssignmentsResponse
@@ -147,6 +166,9 @@ message GetNetClassAssignmentsResponse
 /// Sets all netclass pattern assignments (replaces existing)
 message SetNetClassAssignments
 {
+  // Optional project scope (see SetNetClasses).
+  kiapi.common.types.DocumentSpecifier document = 2;
+
   repeated NetClassAssignment assignments = 1;
 }
 

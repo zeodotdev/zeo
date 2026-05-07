@@ -106,6 +106,7 @@ private:
     void onMateTreeSelectionChanged( wxTreeEvent& aEvent );
     void onMateTreeActivated( wxTreeEvent& aEvent );    ///< double-click → edit
     void onShowMatesToggled( wxCommandEvent& aEvent );
+    void onShowPinPairsToggled( wxCommandEvent& aEvent );
     void onShowCollisionsToggled( wxCommandEvent& aEvent );
     void onShowContactsToggled( wxCommandEvent& aEvent );
     void onCollisionThresholdChanged( wxCommandEvent& aEvent );
@@ -203,6 +204,7 @@ private:
     // View / overlay toggles. Independent of the underlying solver
     // and collision state — controls *what* the gizmo pass renders.
     wxCheckBox*             m_showMatesCheck;
+    wxCheckBox*             m_showPinPairsCheck;
     wxCheckBox*             m_showCollisionsCheck;
     wxCheckBox*             m_showContactsCheck;
     wxTextCtrl*             m_collisionThresholdCtrl;

@@ -68,7 +68,11 @@ public:
     {
         PRIMARY,           ///< Highest-weight pair on its edge; constrains placement
         SECONDARY,         ///< Alignment-check pair (over-constrained on its edge)
-        DISABLED           ///< User-disabled mate (drawn dim, dashed)
+        DISABLED,          ///< User-disabled mate (drawn dim, dashed)
+        PIN_PAIR           ///< Single pin-pair correspondence within a footprint mate
+                           ///< (drawn as a very thin line so multiple pins on the same
+                           ///< connector are individually visible — e.g. for diagnosing
+                           ///< inverted pin mappings that mis-skew the Kabsch solver)
     };
 
     /// One mate gizmo entry: two world-space endpoints + style.

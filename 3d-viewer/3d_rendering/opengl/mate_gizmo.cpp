@@ -63,10 +63,26 @@ STYLE styleFor( MATE_GIZMO::SOURCE aSource, MATE_GIZMO::ROLE aRole, bool aSelect
         return s;
     }
 
-    // Custom mates lean blue/cyan; auto mates lean green/yellow.
-    glm::vec3 base = ( aSource == MATE_GIZMO::SOURCE::CUSTOM )
-                             ? glm::vec3( 0.20f, 0.80f, 1.00f )      // cyan
-                             : glm::vec3( 0.30f, 1.00f, 0.40f );     // green
+    // Hue convention:
+    //   • Custom mates lean blue/cyan; auto mates lean green/yellow.
+    //   • Pin-pair lines get a distinct warm hue (orange / gold) so they
+    //     read as "supporting diagnostic" against the cooler centroid
+    //     gizmo — easy to tell at a glance which is which when both are
+    //     drawn over the same connector.
+    glm::vec3 base;
+
+    if( aRole == MATE_GIZMO::ROLE::PIN_PAIR )
+    {
+        base = ( aSource == MATE_GIZMO::SOURCE::CUSTOM )
+                       ? glm::vec3( 1.00f, 0.80f, 0.20f )            // gold (custom)
+                       : glm::vec3( 1.00f, 0.55f, 0.15f );           // orange (auto)
+    }
+    else
+    {
+        base = ( aSource == MATE_GIZMO::SOURCE::CUSTOM )
+                       ? glm::vec3( 0.20f, 0.80f, 1.00f )            // cyan (custom)
+                       : glm::vec3( 0.30f, 1.00f, 0.40f );           // green (auto)
+    }
 
     if( aRole == MATE_GIZMO::ROLE::SECONDARY )
         base *= 0.7f;                                                 // dim
@@ -82,8 +98,19 @@ STYLE styleFor( MATE_GIZMO::SOURCE aSource, MATE_GIZMO::ROLE aRole, bool aSelect
     // Sizes are in shared 3D units. The whole assembly fits in ±4
     // (RANGE_SCALE_3D=8). Keep gizmos small enough to read on small
     // boards but visible from the default camera framing.
-    s.lineRadius   = ( aRole == MATE_GIZMO::ROLE::PRIMARY ) ? 0.06f : 0.03f;
-    s.sphereRadius = ( aRole == MATE_GIZMO::ROLE::PRIMARY ) ? 0.12f : 0.07f;
+    if( aRole == MATE_GIZMO::ROLE::PIN_PAIR )
+    {
+        // Thin diagnostic lines — N pins on one connector mean N of
+        // these lines, and they should read as "supporting cast" to
+        // the bold centroid gizmo, not compete with it.
+        s.lineRadius   = 0.015f;
+        s.sphereRadius = 0.04f;
+    }
+    else
+    {
+        s.lineRadius   = ( aRole == MATE_GIZMO::ROLE::PRIMARY ) ? 0.06f : 0.03f;
+        s.sphereRadius = ( aRole == MATE_GIZMO::ROLE::PRIMARY ) ? 0.12f : 0.07f;
+    }
 
     if( aSelected )
     {

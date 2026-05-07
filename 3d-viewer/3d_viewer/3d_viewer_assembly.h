@@ -156,6 +156,16 @@ struct MATE_PAIR
     bool        hasOffset = false;
     double      offsetTx = 0.0, offsetTy = 0.0, offsetTz = 0.0;   ///< mm
     double      offsetRx = 0.0, offsetRy = 0.0, offsetRz = 0.0;   ///< deg
+
+    /// Pin-to-pin correspondences for this footprint pair, populated
+    /// from cross-board net endpoints. Each entry is (pinNumber on the
+    /// canonical-A footprint, pinNumber on the canonical-B footprint).
+    /// Used by `PlaceChildOnParent` to solve Z-rotation via 2D Kabsch
+    /// on the actual pad positions — without these the solver only
+    /// aligns connector centroids and a single-connector mate has no
+    /// rotational constraint. Empty for non-electrical custom mates
+    /// (mounting holes, alignment posts).
+    std::vector<std::pair<wxString, wxString>> padPins;
 };
 
 
@@ -434,6 +444,16 @@ public:
     void SetShowMateGizmos( bool aShow ) { m_showMateGizmos = aShow; }
 
     bool GetShowMateGizmos() const { return m_showMateGizmos; }
+
+    /**
+     * Separate toggle for the thin per-pin gizmo lines drawn in
+     * addition to the bold connector-centroid gizmo. Default: on.
+     * Hiding pin-pair lines is useful when a connector has many pins
+     * and the diagnostic noise distracts from the centroid summary;
+     * the user can re-enable when chasing a wrong-correspondence bug.
+     */
+    void SetShowPinPairGizmos( bool aShow ) { m_showPinPairGizmos = aShow; }
+    bool GetShowPinPairGizmos() const       { return m_showPinPairGizmos; }
 
     /// Show red collision markers for unintended component overlaps
     /// (auto-populated by every position change). Default: on.
@@ -875,6 +895,7 @@ private:
     /// User-controllable toggle for the mate-gizmo render pass.
     /// Default on so the visualization is discoverable.
     bool                            m_showMateGizmos          = true;
+    bool                            m_showPinPairGizmos       = true;
     bool                            m_showCollisionHighlights = true;
     bool                            m_showContactHighlights   = true;
     /// Debug: render broad-phase AABB-overlap boxes (blue wireframe)

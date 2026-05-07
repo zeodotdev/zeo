@@ -318,6 +318,17 @@ void PANEL_3D_ASSEMBLY::createControls()
             _( "Overlay coloured rods linking each connector mate pair." ) );
     viewBox->Add( m_showMatesCheck, 0, wxBOTTOM, 3 );
 
+    // Pin-pair lines have their own toggle — they're useful for chasing
+    // wrong-correspondence bugs but noisy on large connectors.
+    m_showPinPairsCheck = new wxCheckBox( m_scrolled, wxID_ANY, _( "Show pin pairs" ) );
+    m_showPinPairsCheck->SetValue( true );
+    m_showPinPairsCheck->SetToolTip(
+            _( "Thin orange lines drawn between paired pads on each "
+                "connector mate. Reveals wrong port-pin mappings — "
+                "lines that cross or fan out indicate the schematic "
+                "endpoints disagree with the physical connector." ) );
+    viewBox->Add( m_showPinPairsCheck, 0, wxBOTTOM, 3 );
+
     m_showCollisionsCheck = new wxCheckBox( m_scrolled, wxID_ANY, _( "Show collisions" ) );
     m_showCollisionsCheck->SetValue( true );
     m_showCollisionsCheck->SetToolTip(
@@ -449,6 +460,8 @@ void PANEL_3D_ASSEMBLY::bindEvents()
 
     // View toggles control gizmo entry filtering in the manager.
     m_showMatesCheck->Bind( wxEVT_CHECKBOX, &PANEL_3D_ASSEMBLY::onShowMatesToggled, this );
+    m_showPinPairsCheck->Bind( wxEVT_CHECKBOX,
+                                &PANEL_3D_ASSEMBLY::onShowPinPairsToggled, this );
     m_showCollisionsCheck->Bind( wxEVT_CHECKBOX,
                                   &PANEL_3D_ASSEMBLY::onShowCollisionsToggled, this );
     m_showContactsCheck->Bind( wxEVT_CHECKBOX,
@@ -857,18 +870,43 @@ void PANEL_3D_ASSEMBLY::updateCollisionStatus()
         return;
 
     const auto& collisions = m_manager->GetLastCollisions();
+    const auto& residuals  = m_manager->GetMateResiduals();
 
-    if( collisions.empty() )
+    // Surface both unintended overlaps (collisions) and outlier pin
+    // pairs (MOON-1364: dropped by the robust mate solver) in the
+    // single status line so the user can spot either kind of issue at
+    // a glance. Pin residuals are warnings — they don't block placement
+    // (the mate placed using the inlier set) but they flag bad port
+    // mappings that the user should fix in the schematic.
+    wxString label;
+    wxColour color;
+
+    if( collisions.empty() && residuals.empty() )
     {
-        m_collisionStatusLabel->SetLabel( _( "Status: No collisions" ) );
-        m_collisionStatusLabel->SetForegroundColour( wxColour( 0, 128, 0 ) );  // Green
+        label = _( "Status: No collisions" );
+        color = wxColour( 0, 128, 0 );    // Green
+    }
+    else if( !collisions.empty() && residuals.empty() )
+    {
+        label = wxString::Format( _( "Status: %zu collision(s) found" ),
+                                   collisions.size() );
+        color = wxColour( 200, 0, 0 );    // Red
+    }
+    else if( collisions.empty() && !residuals.empty() )
+    {
+        label = wxString::Format( _( "Status: %zu pin alignment warning(s)" ),
+                                   residuals.size() );
+        color = wxColour( 200, 130, 0 );  // Orange
     }
     else
     {
-        m_collisionStatusLabel->SetLabel(
-            wxString::Format( _( "Status: %zu collision(s) found" ), collisions.size() ) );
-        m_collisionStatusLabel->SetForegroundColour( wxColour( 200, 0, 0 ) );  // Red
+        label = wxString::Format( _( "Status: %zu collision(s), %zu pin warning(s)" ),
+                                   collisions.size(), residuals.size() );
+        color = wxColour( 200, 0, 0 );    // Red dominates
     }
+
+    m_collisionStatusLabel->SetLabel( label );
+    m_collisionStatusLabel->SetForegroundColour( color );
 }
 
 
@@ -1107,6 +1145,16 @@ void PANEL_3D_ASSEMBLY::onShowMatesToggled( wxCommandEvent& aEvent )
         return;
 
     m_manager->SetShowMateGizmos( m_showMatesCheck->GetValue() );
+    refresh3DView();
+}
+
+
+void PANEL_3D_ASSEMBLY::onShowPinPairsToggled( wxCommandEvent& aEvent )
+{
+    if( !m_manager )
+        return;
+
+    m_manager->SetShowPinPairGizmos( m_showPinPairsCheck->GetValue() );
     refresh3DView();
 }
 

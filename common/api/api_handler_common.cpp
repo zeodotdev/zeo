@@ -102,13 +102,53 @@ HANDLER_RESULT<PathResponse> API_HANDLER_COMMON::handleGetKiCadBinaryPath(
 }
 
 
+/**
+ * Resolve the optional document.project.path on a project-scoped command
+ * to a specific PROJECT&. Falls back to the global active project when
+ * the field is unset, so callers without a multi-board context (and the
+ * existing pre-document handlers) keep working.
+ *
+ * Without this, every project-level mutation (netclasses, text vars,
+ * netclass assignments) lands on Pgm().Prj() — which in a multi-board
+ * layout is whichever project happens to be the global active context
+ * (typically the parent MBSCH container), not the sub-project the agent
+ * scoped its command to. The result is the agent's pcb_setup tool
+ * silently mutates the wrong project's NET_SETTINGS — the sub-project's
+ * pcbnew dialog shows old values because nothing actually changed there.
+ */
+template <typename TRequest>
+PROJECT& resolveProjectFromDocument( const TRequest& aReq )
+{
+    SETTINGS_MANAGER& mgr = Pgm().GetSettingsManager();
+
+    if( !aReq.has_document() || aReq.document().type() != DOCTYPE_PROJECT )
+        return mgr.Prj();
+
+    wxString projectPath = wxString::FromUTF8( aReq.document().project().path() );
+
+    if( projectPath.IsEmpty() )
+        return mgr.Prj();
+
+    if( PROJECT* scoped = mgr.GetProject( projectPath ) )
+        return *scoped;
+
+    // Document specifies a project the SETTINGS_MANAGER doesn't know about
+    // — likely a sub-project that's not currently loaded in any editor.
+    // Loading lazily would have surprising side effects (we'd be holding
+    // the project open after the request returns), so fall back to the
+    // active project and let the caller observe the mismatch in the
+    // resulting NetClassesResponse.
+    return mgr.Prj();
+}
+
+
 HANDLER_RESULT<NetClassesResponse> API_HANDLER_COMMON::handleGetNetClasses(
         const HANDLER_CONTEXT<GetNetClasses>& aCtx )
 {
     NetClassesResponse reply;
 
     std::shared_ptr<NET_SETTINGS>& netSettings =
-            Pgm().GetSettingsManager().Prj().GetProjectFile().m_NetSettings;
+            resolveProjectFromDocument( aCtx.Request ).GetProjectFile().m_NetSettings;
 
     google::protobuf::Any any;
 
@@ -129,7 +169,7 @@ HANDLER_RESULT<Empty> API_HANDLER_COMMON::handleSetNetClasses(
         const HANDLER_CONTEXT<SetNetClasses>& aCtx )
 {
     std::shared_ptr<NET_SETTINGS>& netSettings =
-            Pgm().GetSettingsManager().Prj().GetProjectFile().m_NetSettings;
+            resolveProjectFromDocument( aCtx.Request ).GetProjectFile().m_NetSettings;
 
     if( aCtx.Request.merge_mode() == MapMergeMode::MMM_REPLACE )
         netSettings->ClearNetclasses();
@@ -167,7 +207,7 @@ HANDLER_RESULT<CreateNetClassResponse> API_HANDLER_COMMON::handleCreateNetClass(
     CreateNetClassResponse reply;
 
     std::shared_ptr<NET_SETTINGS>& netSettings =
-            Pgm().GetSettingsManager().Prj().GetProjectFile().m_NetSettings;
+            resolveProjectFromDocument( aCtx.Request ).GetProjectFile().m_NetSettings;
 
     wxString name = wxString::FromUTF8( aCtx.Request.net_class().name() );
 
@@ -216,7 +256,7 @@ HANDLER_RESULT<DeleteNetClassResponse> API_HANDLER_COMMON::handleDeleteNetClass(
     DeleteNetClassResponse reply;
 
     std::shared_ptr<NET_SETTINGS>& netSettings =
-            Pgm().GetSettingsManager().Prj().GetProjectFile().m_NetSettings;
+            resolveProjectFromDocument( aCtx.Request ).GetProjectFile().m_NetSettings;
 
     wxString name = wxString::FromUTF8( aCtx.Request.name() );
 
@@ -494,7 +534,7 @@ HANDLER_RESULT<GetNetClassAssignmentsResponse> API_HANDLER_COMMON::handleGetNetC
     GetNetClassAssignmentsResponse response;
 
     std::shared_ptr<NET_SETTINGS>& netSettings =
-            Pgm().GetSettingsManager().Prj().GetProjectFile().m_NetSettings;
+            resolveProjectFromDocument( aCtx.Request ).GetProjectFile().m_NetSettings;
 
     if( !netSettings )
     {
@@ -521,7 +561,7 @@ HANDLER_RESULT<Empty> API_HANDLER_COMMON::handleSetNetClassAssignments(
         const HANDLER_CONTEXT<SetNetClassAssignments>& aCtx )
 {
     std::shared_ptr<NET_SETTINGS>& netSettings =
-            Pgm().GetSettingsManager().Prj().GetProjectFile().m_NetSettings;
+            resolveProjectFromDocument( aCtx.Request ).GetProjectFile().m_NetSettings;
 
     if( !netSettings )
     {

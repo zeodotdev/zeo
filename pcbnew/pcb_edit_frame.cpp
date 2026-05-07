@@ -3770,7 +3770,20 @@ bool PCB_EDIT_FRAME::DetectAgentChanges()
     }
 
     if( !foundNewItems && !m_hasAgentPendingChanges )
+    {
+        // Project-level tool calls (e.g. pcb_setup updating netclasses) take a
+        // BOARD snapshot via BeginAgentSnapshot but don't actually mutate any
+        // BOARD items — only PROJECT_FILE state. Without tearing the snapshot
+        // session down here, we'd accumulate orphaned snapshot files across
+        // calls, and a subsequent real change would revert against a snapshot
+        // taken BEFORE the project mutation rather than the user-visible
+        // baseline. End the session cleanly so the next item-level tool starts
+        // fresh.
+        if( m_snapshotSession )
+            m_snapshotSession->EndSession();
+
         return false;
+    }
 
     m_hasAgentPendingChanges = true;
     m_snapshotSession->SetChangesDetected();

@@ -216,13 +216,14 @@ void MBSCH_EDIT_FRAME::doReCreateMenuBar()
     // -- View menu --
     ACTION_MENU* viewMenu = new ACTION_MENU( false, selTool );
 
-    // Panels submenu — mirrors regular SCH "View > Panels". MBSCH
-    // doesn't expose Hierarchy / Design Blocks / Remote Symbols (none
-    // make sense on a flat cross-board schematic), but Properties and
-    // Net Navigator are both useful and structured the same way as
-    // the regular SCH for muscle-memory consistency.
+    // Panels submenu — mirrors regular SCH "View > Panels". Design
+    // Blocks / Remote Symbols are still hidden (they're library-symbol
+    // affordances with no MBS analogue), but Hierarchy now surfaces
+    // module blocks as the MBSCH's tree-of-children — clicking a block
+    // spawns its sub-project schematic in a peer window.
     ACTION_MENU* panelsMenu = new ACTION_MENU( false, selTool );
     panelsMenu->SetTitle( _( "Panels" ) );
+    panelsMenu->Add( SCH_ACTIONS::showHierarchy,    ACTION_MENU::CHECK );
     panelsMenu->Add( ACTIONS::showProperties,       ACTION_MENU::CHECK );
     panelsMenu->Add( SCH_ACTIONS::showNetNavigator, ACTION_MENU::CHECK );
     viewMenu->Add( panelsMenu );

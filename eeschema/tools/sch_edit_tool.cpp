@@ -2310,6 +2310,19 @@ int SCH_EDIT_TOOL::AutoplaceFields( const TOOL_EVENT& aEvent )
 
 int SCH_EDIT_TOOL::ChangeSymbols( const TOOL_EVENT& aEvent )
 {
+    // Change / Update Symbols operates on library-symbol references —
+    // there are none on a multi-board schematic (only module blocks +
+    // labels + wires), so bail with a clear message rather than open
+    // a dialog that would iterate to zero matches.
+    if( m_frame->IsType( FRAME_MBSCH ) )
+    {
+        m_frame->ShowInfoBarMsg( _( "Change / Update Symbols is only available "
+                                    "on standalone schematics — module blocks "
+                                    "are sub-project placeholders, not library "
+                                    "symbols." ) );
+        return 0;
+    }
+
     SCH_SYMBOL*    selectedSymbol = nullptr;
     SCH_SELECTION& selection = m_selectionTool->RequestSelection( { SCH_SYMBOL_T } );
 

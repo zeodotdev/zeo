@@ -24,8 +24,13 @@
  */
 
 #include <bitmaps.h>
+#include <frame_type.h>
+#include <multi_board_peer_open.h>
 #include <sch_edit_frame.h>
 #include <sch_commit.h>
+#include <sch_module_block.h>
+#include <sch_screen.h>
+#include <schematic.h>
 #include <tool/tool_manager.h>
 #include <tools/sch_actions.h>
 #include <hierarchy_pane.h>
@@ -38,14 +43,31 @@
 #include <wx/msgdlg.h>
 
 /**
- * Store an SCH_SHEET_PATH of each sheet in hierarchy.
+ * Hierarchy-tree row data.
+ *
+ * Holds either an SCH_SHEET_PATH (regular sheet hierarchy node) or a
+ * sub-project UUID (multi-board module-block node — MBSCH editor).
+ * `m_BlockSubProjectUuid != KIID()` discriminates the two.
+ *
+ * Module-block rows surface only on the MBSCH editor: an MBS schematic
+ * has no sheet hierarchy of its own, so the tree shows the container's
+ * sub-projects with click → spawn-peer-schematic in a sibling editor
+ * window.
  */
 class TREE_ITEM_DATA : public wxTreeItemData
 {
 public:
     SCH_SHEET_PATH m_SheetPath;
+    KIID           m_BlockSubProjectUuid;
 
     TREE_ITEM_DATA( SCH_SHEET_PATH& sheet ) : wxTreeItemData(), m_SheetPath( sheet ) {}
+
+    explicit TREE_ITEM_DATA( const KIID& aBlockUuid ) :
+            wxTreeItemData(), m_BlockSubProjectUuid( aBlockUuid )
+    {
+    }
+
+    bool IsModuleBlock() const { return m_BlockSubProjectUuid != KIID(); }
 };
 
 
@@ -323,6 +345,50 @@ void HIERARCHY_PANE::UpdateHierarchyTree( bool aClear )
         }
     }
 
+    // MBSCH adornment: append a sibling subtree of module blocks under
+    // the project root. Module blocks ARE the MBSCH editor's hierarchy
+    // — each one represents a sub-project, and double-clicking spawns
+    // that sub-project's schematic in a peer editor window. We append
+    // *after* the (typically empty) sheet hierarchy so click semantics
+    // for sheet rows on a regular SCH editor are unaffected.
+    if( m_frame->IsType( FRAME_MBSCH ) )
+    {
+        if( SCH_SCREEN* rootScreen = m_frame->Schematic().RootScreen() )
+        {
+            std::vector<SCH_MODULE_BLOCK*> blocks;
+
+            for( SCH_ITEM* item : rootScreen->Items().OfType( SCH_MODULE_BLOCK_T ) )
+                blocks.push_back( static_cast<SCH_MODULE_BLOCK*>( item ) );
+
+            if( !blocks.empty() )
+            {
+                std::sort( blocks.begin(), blocks.end(),
+                           []( SCH_MODULE_BLOCK* a, SCH_MODULE_BLOCK* b )
+                           {
+                               return a->GetMbsReference().CmpNoCase( b->GetMbsReference() ) < 0;
+                           } );
+
+                for( SCH_MODULE_BLOCK* block : blocks )
+                {
+                    wxString label = block->GetMbsReference();
+
+                    if( label.IsEmpty() )
+                        label = block->GetDisplayName();
+
+                    if( !block->GetDisplayName().IsEmpty()
+                        && block->GetDisplayName() != block->GetMbsReference() )
+                    {
+                        label += wxS( " — " ) + block->GetDisplayName();
+                    }
+
+                    wxTreeItemId blockItem = m_tree->AppendItem( projectRoot, label, 0, 1 );
+                    m_tree->SetItemData( blockItem,
+                                         new TREE_ITEM_DATA( block->GetSubProjectUuid() ) );
+                }
+            }
+        }
+    }
+
     UpdateHierarchySelection();
 
     m_tree->ExpandAll();
@@ -380,6 +446,19 @@ void HIERARCHY_PANE::onSelectSheetPath( wxTreeEvent& aEvent )
     if( !itemData )
         return;
 
+    // Module-block row (MBSCH only): spawn the sub-project's schematic
+    // in a peer editor window via the same helper used by the Module
+    // Block Properties dialog. The container project stays active in
+    // the MBSCH window — peer-spawn doesn't replace it.
+    if( itemData->IsModuleBlock() )
+    {
+        SetCursor( wxCURSOR_ARROWWAIT );
+        OpenSubProjectInPeerEditor( m_frame, itemData->m_BlockSubProjectUuid,
+                                    /*aWantPcb=*/false );
+        SetCursor( wxCURSOR_ARROW );
+        return;
+    }
+
     SetCursor( wxCURSOR_ARROWWAIT );
     m_frame->GetToolManager()->RunAction<SCH_SHEET_PATH*>( SCH_ACTIONS::changeSheet, &itemData->m_SheetPath );
     SetCursor( wxCURSOR_ARROW );
@@ -398,6 +477,12 @@ void HIERARCHY_PANE::UpdateLabelsHierarchyTree()
                 TREE_ITEM_DATA* itemData = static_cast<TREE_ITEM_DATA*>( m_tree->GetItemData( id ) );
 
                 if( !itemData )     // happens if not shown in wxTreeCtrl m_tree (virtual sheet)
+                    return;
+
+                // Module-block rows have no sheet — labels are static
+                // and refreshed by UpdateHierarchyTree via Refresh
+                // Module Blocks. Skip the sheet-name path here.
+                if( itemData->IsModuleBlock() )
                     return;
 
                 SCH_SHEET* sheet = itemData->m_SheetPath.Last();

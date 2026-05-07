@@ -614,6 +614,17 @@ bool SCH_EDITOR_CONTROL::rescueProject( RESCUER& aRescuer, bool aRunningOnDemand
 
 int SCH_EDITOR_CONTROL::RemapSymbols( const TOOL_EVENT& aEvent )
 {
+    // Remap Legacy Library Symbols rewrites library symbol references
+    // — concept doesn't apply to multi-board schematics (module blocks
+    // aren't library symbols). Bail gracefully instead of opening a
+    // dialog that would find zero candidates.
+    if( m_frame->IsType( FRAME_MBSCH ) )
+    {
+        m_frame->ShowInfoBarMsg( _( "Remap Legacy Library Symbols only applies "
+                                    "to standalone schematics." ) );
+        return 0;
+    }
+
     DIALOG_SYMBOL_REMAP dlgRemap( m_frame );
 
     dlgRemap.ShowQuasiModal();
@@ -3767,6 +3778,22 @@ int SCH_EDITOR_CONTROL::ExportNetlist( const TOOL_EVENT& aEvent )
 
 int SCH_EDITOR_CONTROL::GenerateBOM( const TOOL_EVENT& aEvent )
 {
+    // BOM aggregation iterates SCH_SYMBOL_T fields via the sheet-path
+    // traversal — those don't exist on a multi-board schematic (the
+    // MBSCH holds module blocks, not library symbols). Each sub-
+    // project has its own BOM via its regular SCH editor; the
+    // container-level aggregated BOM isn't built today and would
+    // require a parallel `GetModuleBlocks` traversal + BOM-preset
+    // schema work. Bail with a friendly message instead of opening a
+    // dialog that would show zero rows.
+    if( m_frame->IsType( FRAME_MBSCH ) )
+    {
+        m_frame->ShowInfoBarMsg( _( "BOM Export aggregates library-symbol fields. "
+                                    "On a multi-board project, run BOM Export from "
+                                    "each sub-project's schematic editor." ) );
+        return 0;
+    }
+
     DIALOG_SYMBOL_FIELDS_TABLE* dlg = m_frame->GetSymbolFieldsTableDialog();
 
     wxCHECK( dlg, 0 );
@@ -3785,6 +3812,14 @@ int SCH_EDITOR_CONTROL::GenerateBOM( const TOOL_EVENT& aEvent )
 
 int SCH_EDITOR_CONTROL::GenerateBOMLegacy( const TOOL_EVENT& aEvent )
 {
+    if( m_frame->IsType( FRAME_MBSCH ) )
+    {
+        m_frame->ShowInfoBarMsg( _( "Legacy BOM Generator aggregates library-symbol "
+                                    "fields. On a multi-board project, run it from "
+                                    "each sub-project's schematic editor." ) );
+        return 0;
+    }
+
     InvokeDialogCreateBOM( m_frame );
     return 0;
 }

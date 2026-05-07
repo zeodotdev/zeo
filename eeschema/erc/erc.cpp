@@ -353,6 +353,37 @@ void ERC_TESTER::TestTextVars( DS_PROXY_VIEW_ITEM* aDrawingSheet )
                     testAssertion( &field, sheet, screen, field.GetText(), field.GetPosition() );
                 }
             }
+            else if( item->Type() == SCH_MODULE_BLOCK_T )
+            {
+                // Module blocks expose three identifying text fields that
+                // can carry `${VAR}` substitutions: display name (often
+                // user-edited), MBS reference (auto-annotated but still
+                // user-editable from the Properties dialog), and sub-
+                // project path (file path, normally var-free but check
+                // anyway). Catch unresolved vars here so MBSCH ERC
+                // surfaces them the same way standalone SCH does for
+                // symbol fields.
+                SCH_MODULE_BLOCK* block = static_cast<SCH_MODULE_BLOCK*>( item );
+
+                auto checkBlockField =
+                        [&]( const wxString& aValue )
+                        {
+                            if( !unresolved( aValue ) )
+                                return;
+
+                            auto ercItem = ERC_ITEM::Create( ERCE_UNRESOLVED_VARIABLE );
+                            ercItem->SetItems( block );
+                            ercItem->SetSheetSpecificPath( sheet );
+
+                            SCH_MARKER* marker =
+                                    new SCH_MARKER( std::move( ercItem ), block->GetPosition() );
+                            screen->Append( marker );
+                        };
+
+                checkBlockField( block->GetDisplayName() );
+                checkBlockField( block->GetMbsReference() );
+                checkBlockField( block->GetSubProjectPath() );
+            }
             else if( item->Type() == SCH_SHEET_T )
             {
                 SCH_SHEET* subSheet = static_cast<SCH_SHEET*>( item );

@@ -325,6 +325,19 @@ int SCH_INSPECTION_TOOL::DiffSymbol( const TOOL_EVENT& aEvent )
 
     wxCHECK( schEditorFrame, 0 );
 
+    // Diff is a library-symbol concept (compare on-canvas instance vs.
+    // its library definition). Module blocks have no library analogue —
+    // they're sub-project placeholders. If invoked from MBSCH (e.g. via
+    // a keyboard accel that bypasses the menu, since MBSCH doesn't
+    // surface this action), bail with a clear message instead of the
+    // misleading "select a symbol" prompt.
+    if( m_frame->IsType( FRAME_MBSCH ) )
+    {
+        m_frame->ShowInfoBarMsg( _( "Diff Symbol is only meaningful for library "
+                                    "symbols on a standalone schematic." ) );
+        return 0;
+    }
+
     SCH_SELECTION& selection = m_selectionTool->RequestSelection( { SCH_SYMBOL_T } );
 
     if( selection.Empty() )

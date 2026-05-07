@@ -624,11 +624,28 @@ void PCB_EDIT_FRAME::SendCrossProbeNetName( const wxString& aNetName )
         }
         else
         {
+            // Same scope-token rationale as SendCrossProbeItem: net names
+            // are project-local in multi-board layouts (each sub-project
+            // has its own VCC/GND/etc.), so unscoped packets cause sibling
+            // sub-project editors to flash the wrong net.
+            wxString    ourProject = Prj().GetProjectFullName();
+            std::string scopedPacket = packet;
+
+            if( !ourProject.IsEmpty() )
+            {
+                scopedPacket += " $PROJECT: \"";
+                scopedPacket += TO_UTF8( ourProject );
+                scopedPacket += '"';
+            }
+
             // Typically ExpressMail is going to be s-expression packets, but since
             // we have existing interpreter of the cross probe packet on the other
             // side in place, we use that here.
-            Kiway().ExpressMail( FRAME_SCH,   MAIL_CROSS_PROBE, packet, this );
-            Kiway().ExpressMail( FRAME_MBSCH, MAIL_CROSS_PROBE, packet, this );
+            std::string sch = scopedPacket;
+            Kiway().ExpressMail( FRAME_SCH, MAIL_CROSS_PROBE, sch, this );
+
+            std::string mbs = scopedPacket;
+            Kiway().ExpressMail( FRAME_MBSCH, MAIL_CROSS_PROBE, mbs, this );
 
             // File-based cross-board fan-out — works whether or not
             // MBSCH is open. See the matching block in
@@ -666,15 +683,36 @@ void PCB_EDIT_FRAME::SendCrossProbeItem( BOARD_ITEM* aSyncItem )
         }
         else
         {
+            // Tag with our project's path so peer SCH editors for other
+            // sub-projects ignore probes that aren't theirs. Without
+            // this, picking footprint J2 in sub-project A's PCB also
+            // highlights J2 in sub-project B's SCH editor — refs
+            // collide because each sub-project annotates from J1
+            // independently. Receivers (SCH ExecuteRemoteCommand /
+            // PCB_EDITOR_FRAME::ExecuteRemoteCommand) honour the
+            // `$PROJECT:` token already.
+            wxString    ourProject = Prj().GetProjectFullName();
+            std::string scopedPacket = packet;
+
+            if( !ourProject.IsEmpty() )
+            {
+                scopedPacket += " $PROJECT: \"";
+                scopedPacket += TO_UTF8( ourProject );
+                scopedPacket += '"';
+            }
+
             // Typically ExpressMail is going to be s-expression packets, but since
             // we have existing interpreter of the cross probe packet on the other
             // side in place, we use that here.
-            Kiway().ExpressMail( FRAME_SCH,   MAIL_CROSS_PROBE, packet, this );
-            Kiway().ExpressMail( FRAME_MBSCH, MAIL_CROSS_PROBE, packet, this );
+            std::string sch = scopedPacket;
+            Kiway().ExpressMail( FRAME_SCH, MAIL_CROSS_PROBE, sch, this );
+
+            std::string mbs = scopedPacket;
+            Kiway().ExpressMail( FRAME_MBSCH, MAIL_CROSS_PROBE, mbs, this );
 
             // 3D viewer mirrors the highlight (assembly mode) or
             // refreshes (single-board mode) on this packet.
-            std::string display3d = packet;
+            std::string display3d = scopedPacket;
             Kiway().ExpressMail( FRAME_PCB_DISPLAY3D, MAIL_CROSS_PROBE, display3d, this );
         }
     }

@@ -594,7 +594,17 @@ void SCH_EDIT_FRAME::SendSelectItemsToPcb( const std::vector<EDA_ITEM*>& aItems,
 
     if( !parts.empty() )
     {
-        std::string cmd = buildCommand( parts, wxEmptyString );
+        // Tag regular cross-probes with our own project's path so peer
+        // editors for other sub-projects (a sibling sub-project's SCH or
+        // PCB also reachable through the shared KIWAY) can ignore them.
+        // Without this scope, refs collide across projects: each sub-
+        // project annotates from J1 independently, so picking J2 in
+        // sub-project A also flashes J2 in sub-project B's editor.
+        // Single-instance editors strip the token before SendCommand
+        // (legacy DDE has no concept of project scope); see broadcast()
+        // above.
+        wxString ourProject = Prj().GetProjectFullName();
+        std::string cmd = buildCommand( parts, ourProject );
         broadcast( cmd );
     }
 
@@ -620,17 +630,39 @@ void SCH_EDIT_FRAME::SendCrossProbeNetName( const wxString& aNetName )
         }
         else
         {
+            // Tag the basic packet with our project so peer editors for
+            // other sub-projects ignore it. The cross-board fan-out
+            // below sends pre-translated packets that already carry their
+            // own scope (or, in the legacy MBSCH path, are intentionally
+            // unscoped because they target a specific sub-project's
+            // editors directly).
+            wxString    ourProject = Prj().GetProjectFullName();
+            std::string scopedPacket = packet;
+
+            if( !ourProject.IsEmpty() )
+            {
+                scopedPacket += " $PROJECT: \"";
+                scopedPacket += TO_UTF8( ourProject );
+                scopedPacket += '"';
+            }
+
             // Typically ExpressMail is going to be s-expression packets, but since
             // we have existing interpreter of the cross probe packet on the other
             // side in place, we use that here.
-            Kiway().ExpressMail( FRAME_PCB_EDITOR, MAIL_CROSS_PROBE, packet, this );
-            Kiway().ExpressMail( FRAME_MBSCH,      MAIL_CROSS_PROBE, packet, this );
+            std::string pcb = scopedPacket;
+            Kiway().ExpressMail( FRAME_PCB_EDITOR, MAIL_CROSS_PROBE, pcb, this );
+
+            std::string mbs = scopedPacket;
+            Kiway().ExpressMail( FRAME_MBSCH, MAIL_CROSS_PROBE, mbs, this );
 
             // MBSCH needs to push net highlight onto sub-project SCH
             // editors so clicks on MBS wires light the matching net in
             // each sub-project schematic.
             if( GetFrameType() == FRAME_MBSCH )
-                Kiway().ExpressMail( FRAME_SCH, MAIL_CROSS_PROBE, packet, this );
+            {
+                std::string sch = scopedPacket;
+                Kiway().ExpressMail( FRAME_SCH, MAIL_CROSS_PROBE, sch, this );
+            }
 
             // File-based cross-board fan-out. Without this, peer
             // sub-project highlights only worked when MBSCH was open
@@ -708,14 +740,31 @@ void SCH_EDIT_FRAME::SetCrossProbeConnection( const SCH_CONNECTION* aConnection 
             SendCommand( MSG_TO_PCB, packet );
         else
         {
+            // Same scoping rationale as SendCrossProbeNetName.
+            wxString    ourProject = Prj().GetProjectFullName();
+            std::string scopedPacket = packet;
+
+            if( !ourProject.IsEmpty() )
+            {
+                scopedPacket += " $PROJECT: \"";
+                scopedPacket += TO_UTF8( ourProject );
+                scopedPacket += '"';
+            }
+
             // Typically ExpressMail is going to be s-expression packets, but since
             // we have existing interpreter of the cross probe packet on the other
             // side in place, we use that here.
-            Kiway().ExpressMail( FRAME_PCB_EDITOR, MAIL_CROSS_PROBE, packet, this );
-            Kiway().ExpressMail( FRAME_MBSCH,      MAIL_CROSS_PROBE, packet, this );
+            std::string pcb = scopedPacket;
+            Kiway().ExpressMail( FRAME_PCB_EDITOR, MAIL_CROSS_PROBE, pcb, this );
+
+            std::string mbs = scopedPacket;
+            Kiway().ExpressMail( FRAME_MBSCH, MAIL_CROSS_PROBE, mbs, this );
 
             if( GetFrameType() == FRAME_MBSCH )
-                Kiway().ExpressMail( FRAME_SCH, MAIL_CROSS_PROBE, packet, this );
+            {
+                std::string sch = scopedPacket;
+                Kiway().ExpressMail( FRAME_SCH, MAIL_CROSS_PROBE, sch, this );
+            }
         }
     }
 }

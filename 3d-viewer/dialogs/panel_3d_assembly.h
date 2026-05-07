@@ -88,12 +88,10 @@ private:
     void onLayoutModeChanged( wxCommandEvent& aEvent );
     void onPositionChanged( wxCommandEvent& aEvent );
     void onRotationChanged( wxCommandEvent& aEvent );
-    void onResetPositions( wxCommandEvent& aEvent );
     void onMateConnectors( wxCommandEvent& aEvent );
     void onExportSTEP( wxCommandEvent& aEvent );
     void onShowAllBoards( wxCommandEvent& aEvent );
     void onHideAllBoards( wxCommandEvent& aEvent );
-    void onTransparencyChanged( wxCommandEvent& aEvent );
 
     // M6.D-phase-2 custom mate handlers
     void onAddCustomMate( wxCommandEvent& aEvent );
@@ -184,14 +182,12 @@ private:
     wxTextCtrl*             m_rotXCtrl;
     wxTextCtrl*             m_rotYCtrl;
     wxTextCtrl*             m_rotZCtrl;
-    wxButton*               m_resetPositionsButton;
-    wxCheckBox*             m_transparentCheck;
 
     // M6.D-phase-2 mates UI. "Mate connectors" toggle moved here so
     // the mate-related controls live together. View toggles below
     // (mate gizmos / collision / contact highlights) are independent
     // of the mate solver state.
-    wxCheckBox*             m_mateConnectorsCheck;
+    wxButton*               m_mateConnectorsButton;
     wxTreeCtrl*             m_matesTree;
     wxButton*               m_addMateButton;
     wxButton*               m_editMateButton;

@@ -172,6 +172,22 @@ EDA_3D_CANVAS::EDA_3D_CANVAS( wxWindow* aParent, const wxGLAttributes& aGLAttrib
 
     for( wxEventType eventType : events )
         Connect( eventType, wxEventHandler( EDA_3D_CANVAS::OnEvent ), nullptr, m_eventDispatcher );
+
+    // MBS mate-highlight: clear the selected mate pair on Escape. Bound
+    // before the GAL dispatcher above so the key event hits us first
+    // and we can decide whether to swallow it (we always Skip() so the
+    // dispatcher still runs for other Escape-bound tools).
+    Bind( wxEVT_CHAR_HOOK, [this]( wxKeyEvent& aEvt )
+    {
+        if( aEvt.GetKeyCode() == WXK_ESCAPE && m_assemblyManager
+            && !m_assemblyManager->GetSelectedMatePair().IsEmpty() )
+        {
+            m_assemblyManager->SetSelectedMatePair( wxEmptyString );
+            Refresh();
+        }
+
+        aEvt.Skip();
+    } );
 }
 
 
@@ -1415,9 +1431,14 @@ void EDA_3D_CANVAS::OnLeftDown( wxMouseEvent& event )
         {
             // Click on empty space → clear selection.
             if( m_assemblyManager )
+            {
                 m_assemblyManager->SetSelectedItem( nullptr );
+                m_assemblyManager->SetSelectedMatePair( wxEmptyString );
+            }
             else if( m_3d_render_opengl )
+            {
                 m_3d_render_opengl->SetCurrentSelectedItem( nullptr );
+            }
 
             Refresh();
         }

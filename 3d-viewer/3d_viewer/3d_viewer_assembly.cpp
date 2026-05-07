@@ -648,8 +648,19 @@ void ASSEMBLY_3D_MANAGER::SetBoardVisible( const KIID& aInstanceUuid, bool aVisi
 {
     if( BOARD_3D_INSTANCE* inst = GetBoardInstance( aInstanceUuid ) )
     {
+        const bool wasVisible = inst->visible;
         inst->visible = aVisible;
         persistInstanceState( *inst );
+
+        // Visibility flip changes the assembly bounding box (boards
+        // entering/leaving the visible set move the centerShared
+        // offset). The camera was framed for the old composite
+        // extent; an enlarged composite can fall outside the view
+        // frustum (MOON-1369: "everything disappears when re-enabling
+        // a board"). Re-fit on every visibility flip so the canvas
+        // always shows the current visible set.
+        if( wasVisible != aVisible )
+            m_cameraFitPending = true;
     }
 }
 
@@ -657,6 +668,11 @@ void ASSEMBLY_3D_MANAGER::SetBoardVisible( const KIID& aInstanceUuid, bool aVisi
 void ASSEMBLY_3D_MANAGER::SetBoardTransparent( const KIID& aInstanceUuid, bool aTransparent,
                                                 float aOpacity )
 {
+    // Transparency UI was removed (the per-instance alpha approach
+    // cleared the canvas instead of fading boards). The state is still
+    // accepted + persisted so existing project files round-trip
+    // cleanly, but it has no visible effect until a working
+    // implementation lands.
     if( BOARD_3D_INSTANCE* inst = GetBoardInstance( aInstanceUuid ) )
     {
         inst->transparent = aTransparent;
@@ -668,15 +684,39 @@ void ASSEMBLY_3D_MANAGER::SetBoardTransparent( const KIID& aInstanceUuid, bool a
 
 void ASSEMBLY_3D_MANAGER::ShowAllBoards()
 {
+    bool anyChange = false;
+
     for( auto& inst : m_boardInstances )
-        inst.visible = true;
+    {
+        if( !inst.visible )
+        {
+            inst.visible = true;
+            persistInstanceState( inst );
+            anyChange = true;
+        }
+    }
+
+    if( anyChange )
+        m_cameraFitPending = true;
 }
 
 
 void ASSEMBLY_3D_MANAGER::HideAllBoards()
 {
+    bool anyChange = false;
+
     for( auto& inst : m_boardInstances )
-        inst.visible = false;
+    {
+        if( inst.visible )
+        {
+            inst.visible = false;
+            persistInstanceState( inst );
+            anyChange = true;
+        }
+    }
+
+    if( anyChange )
+        m_cameraFitPending = true;
 }
 
 

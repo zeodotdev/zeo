@@ -220,17 +220,6 @@ void PANEL_3D_ASSEMBLY::createControls()
 
     posBox->Add( rotSizer, 0, wxEXPAND | wxBOTTOM, 5 );
 
-    m_transparentCheck = new wxCheckBox( m_scrolled, wxID_ANY, _( "Transparent mode" ) );
-    m_transparentCheck->SetToolTip(
-            _( "Render the selected board semi-transparent (so adjacent boards show through)." ) );
-    posBox->Add( m_transparentCheck, 0, wxBOTTOM, 5 );
-
-    m_resetPositionsButton = new wxButton( m_scrolled, wxID_ANY, _( "Reset" ),
-                                            wxDefaultPosition, wxDefaultSize,
-                                            wxBU_EXACTFIT );
-    m_resetPositionsButton->SetToolTip( _( "Reset all sub-board positions and rotations" ) );
-    posBox->Add( m_resetPositionsButton, 0, wxEXPAND );
-
     mainSizer->Add( posBox, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 5 );
 
     // ====================  Mates ====================
@@ -240,9 +229,12 @@ void PANEL_3D_ASSEMBLY::createControls()
     wxStaticBoxSizer* matesBox =
             new wxStaticBoxSizer( wxVERTICAL, m_scrolled, _( "Mates" ) );
 
-    m_mateConnectorsCheck = new wxCheckBox( m_scrolled, wxID_ANY, _( "Mate connectors" ) );
-    m_mateConnectorsCheck->SetToolTip( _( "Auto-align boards at connector pairs" ) );
-    matesBox->Add( m_mateConnectorsCheck, 0, wxBOTTOM, 4 );
+    m_mateConnectorsButton = new wxButton( m_scrolled, wxID_ANY, _( "Mate connectors" ),
+                                            wxDefaultPosition, wxDefaultSize,
+                                            wxBU_EXACTFIT );
+    m_mateConnectorsButton->SetToolTip(
+            _( "Auto-align boards at connector pairs (one-shot)" ) );
+    matesBox->Add( m_mateConnectorsButton, 0, wxEXPAND | wxBOTTOM, 4 );
 
     m_matesTree = new wxTreeCtrl( m_scrolled, wxID_ANY, wxDefaultPosition,
                                    wxSize( -1, 180 ),
@@ -415,6 +407,14 @@ void PANEL_3D_ASSEMBLY::bindEvents()
     // Commit position / rotation on Enter OR when the field loses focus
     // (clicking away, tabbing). Without the focus binding, a user who
     // types a number then clicks the canvas never fires the handler.
+    //
+    // The CHAR_HOOK binding intercepts the keystroke before the 3D
+    // canvas's GAL dispatcher swallows it (the dispatcher hooks
+    // wxEVT_CHAR_HOOK to capture arrow keys etc., which would
+    // otherwise prevent the user from cursor-navigating inside these
+    // text fields). On Enter we trigger the handler directly because
+    // wxEVT_TEXT_ENTER doesn't reliably fire on macOS when the
+    // dispatcher has hooked CHAR_HOOK at the same time.
     auto bindCommit = [this]( wxTextCtrl* aCtrl, void (PANEL_3D_ASSEMBLY::*aHandler)( wxCommandEvent& ) )
     {
         aCtrl->Bind( wxEVT_TEXT_ENTER, aHandler, this );
@@ -423,6 +423,26 @@ void PANEL_3D_ASSEMBLY::bindEvents()
                      {
                          wxCommandEvent dummy;
                          (this->*aHandler)( dummy );
+                         aEvt.Skip();
+                     } );
+        aCtrl->Bind( wxEVT_CHAR_HOOK,
+                     [this, aCtrl, aHandler]( wxKeyEvent& aEvt )
+                     {
+                         const int code = aEvt.GetKeyCode();
+
+                         if( code == WXK_RETURN || code == WXK_NUMPAD_ENTER )
+                         {
+                             wxCommandEvent dummy;
+                             (this->*aHandler)( dummy );
+                             return;     // event consumed
+                         }
+
+                         // Always Skip() so the wxTextCtrl gets the
+                         // key for cursor / selection / typing. The
+                         // canvas's CHAR_HOOK is bound at the canvas
+                         // (not the panel), so as long as we let the
+                         // text ctrl handle the event here, the
+                         // canvas dispatcher never sees it.
                          aEvt.Skip();
                      } );
     };
@@ -435,14 +455,11 @@ void PANEL_3D_ASSEMBLY::bindEvents()
     bindCommit( m_rotYCtrl, &PANEL_3D_ASSEMBLY::onRotationChanged );
     bindCommit( m_rotZCtrl, &PANEL_3D_ASSEMBLY::onRotationChanged );
 
-    m_resetPositionsButton->Bind( wxEVT_BUTTON, &PANEL_3D_ASSEMBLY::onResetPositions, this );
-
     m_positionBoardChoice->Bind( wxEVT_CHOICE,
                                  &PANEL_3D_ASSEMBLY::onPositionBoardChoice, this );
 
-    m_mateConnectorsCheck->Bind( wxEVT_CHECKBOX, &PANEL_3D_ASSEMBLY::onMateConnectors, this );
-    m_transparentCheck->Bind( wxEVT_CHECKBOX, &PANEL_3D_ASSEMBLY::onTransparencyChanged, this );
-
+    m_mateConnectorsButton->Bind( wxEVT_BUTTON,
+                                   &PANEL_3D_ASSEMBLY::onMateConnectors, this );
     m_exportSTEPButton->Bind( wxEVT_BUTTON, &PANEL_3D_ASSEMBLY::onExportSTEP, this );
 
     // M6.D-phase-2 mates UI bindings
@@ -550,8 +567,6 @@ void PANEL_3D_ASSEMBLY::UpdateSelectedBoardControls()
     m_rotXCtrl->SetValue( wxString::Format( "%.1f", inst->rotation.x ) );
     m_rotYCtrl->SetValue( wxString::Format( "%.1f", inst->rotation.y ) );
     m_rotZCtrl->SetValue( wxString::Format( "%.1f", inst->rotation.z ) );
-
-    m_transparentCheck->SetValue( inst->transparent );
 }
 
 
@@ -666,32 +681,16 @@ void PANEL_3D_ASSEMBLY::onRotationChanged( wxCommandEvent& aEvent )
 }
 
 
-void PANEL_3D_ASSEMBLY::onResetPositions( wxCommandEvent& aEvent )
-{
-    if( !m_manager )
-        return;
-
-    m_manager->ResetPositions();
-    UpdateSelectedBoardControls();
-    autoRunCollisionCheck();
-    refresh3DView();
-}
-
-
 void PANEL_3D_ASSEMBLY::onMateConnectors( wxCommandEvent& aEvent )
 {
-    wxLogMessage( wxT( "[MATE] onMateConnectors fired, checked=%d manager=%p" ),
-                  m_mateConnectorsCheck->GetValue() ? 1 : 0,
-                  static_cast<void*>( m_manager ) );
-
     if( !m_manager )
         return;
 
-    if( m_mateConnectorsCheck->GetValue() )
-    {
-        m_manager->MateConnectors();
-        m_layoutModeChoice->SetSelection( 2 );  // Custom
-    }
+    wxLogMessage( wxT( "[MATE] onMateConnectors fired (button), manager=%p" ),
+                  static_cast<void*>( m_manager ) );
+
+    m_manager->MateConnectors();
+    m_layoutModeChoice->SetSelection( 2 );  // Custom
 
     UpdateSelectedBoardControls();
     autoRunCollisionCheck();
@@ -823,17 +822,6 @@ void PANEL_3D_ASSEMBLY::onHideAllBoards( wxCommandEvent& aEvent )
     for( unsigned int i = 0; i < m_boardListBox->GetCount(); i++ )
         m_boardListBox->Check( i, false );
 
-    refresh3DView();
-}
-
-
-void PANEL_3D_ASSEMBLY::onTransparencyChanged( wxCommandEvent& aEvent )
-{
-    if( m_selectedBoardIndex == wxNOT_FOUND || !m_manager )
-        return;
-
-    KIID uuid = m_boardUuids[m_selectedBoardIndex];
-    m_manager->SetBoardTransparent( uuid, m_transparentCheck->GetValue(), 0.5f );
     refresh3DView();
 }
 
@@ -1072,9 +1060,11 @@ void PANEL_3D_ASSEMBLY::updateMateButtons()
     // Add is always available when a project is loaded.
     m_addMateButton->Enable( m_manager && m_manager->GetBoardInstances().size() >= 2 );
 
-    // Edit works on any leaf — AUTO rows promote to a fresh CUSTOM
-    // override on save; CUSTOM rows update in place.
-    m_editMateButton->Enable( haveSelection );
+    // Edit only applies to existing CUSTOM rows — AUTO rows have no
+    // CUSTOM_MATE record to edit (they're derived from netlist
+    // topology). Greyed out on AUTO so the user isn't tempted to
+    // expect a no-op edit dialog. (Use Disable to override an AUTO.)
+    m_editMateButton->Enable( isCustomLeaf );
 
     // Up/Down reorder pairs within their edge — head of the edge is
     // the primary. Enabled on any leaf; the manager no-ops when at
@@ -1082,8 +1072,9 @@ void PANEL_3D_ASSEMBLY::updateMateButtons()
     m_moveMateUpButton->Enable( haveSelection );
     m_moveMateDownButton->Enable( haveSelection );
 
-    // Disable creates a CUSTOM DISABLED for an AUTO leaf, or flips a
-    // CUSTOM mate's role to DISABLED.
+    // Disable works on EITHER auto or custom rows: AUTO becomes a new
+    // CUSTOM DISABLED override (so the user can suppress a derived
+    // mate without editing the schematic); CUSTOM flips its role.
     m_disableMateButton->Enable( haveSelection );
 
     // Delete only on CUSTOM rows (AUTO can't be deleted, only disabled).

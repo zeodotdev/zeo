@@ -864,6 +864,99 @@ int SCH_EDITOR_CONTROL::MbsShowTerminal( const TOOL_EVENT& aEvent )
 }
 
 
+int SCH_EDITOR_CONTROL::MbsAnnotateBlocks( const TOOL_EVENT& aEvent )
+{
+    if( !m_frame->IsType( FRAME_MBSCH ) )
+    {
+        m_frame->ShowInfoBarMsg( _( "Annotate Module Blocks is only available "
+                                    "on the multi-board schematic editor." ) );
+        return 0;
+    }
+
+    SCH_SCREEN* rootScreen = m_frame->Schematic().RootScreen();
+
+    if( !rootScreen )
+        return 0;
+
+    // Two-pass annotator: first walk collects every existing valid
+    // B<N> ref and flags duplicates / empties for renumbering. Second
+    // walk assigns the next-free B<N> in display order. Mirrors the
+    // safety-net in MBSCH_EDIT_FRAME::onSchematicSaved but triggered
+    // explicitly so the user can run it on a fresh container without
+    // having to save first.
+    std::set<int>                  usedRefs;
+    std::vector<SCH_MODULE_BLOCK*> needsRef;
+    std::set<wxString>             seenRefs;
+
+    auto parseBxN = []( const wxString& aRef ) -> std::optional<int>
+    {
+        if( !aRef.StartsWith( wxT( "B" ) ) )
+            return std::nullopt;
+
+        long n = 0;
+
+        if( aRef.Mid( 1 ).ToLong( &n ) && n > 0 )
+            return static_cast<int>( n );
+
+        return std::nullopt;
+    };
+
+    // Pass 1: claim refs that are valid B<N> AND not duplicated.
+    // Duplicates lose the second-and-later occurrences (those go on
+    // the renumber list).
+    for( SCH_ITEM* item : rootScreen->Items().OfType( SCH_MODULE_BLOCK_T ) )
+    {
+        SCH_MODULE_BLOCK* b   = static_cast<SCH_MODULE_BLOCK*>( item );
+        const wxString&   ref = b->GetMbsReference();
+
+        if( ref.IsEmpty() )
+        {
+            needsRef.push_back( b );
+            continue;
+        }
+
+        // Custom ref (not B<N>) — keep as-is, but track for uniqueness.
+        std::optional<int> n = parseBxN( ref );
+
+        if( !seenRefs.insert( ref ).second )
+        {
+            // Duplicate: re-annotate this one.
+            needsRef.push_back( b );
+            continue;
+        }
+
+        if( n )
+            usedRefs.insert( *n );
+    }
+
+    if( needsRef.empty() )
+    {
+        m_frame->ShowInfoBarMsg( _( "All module blocks already have unique annotations." ) );
+        return 0;
+    }
+
+    // Pass 2: assign next-free B<N> per block in encounter order.
+    int candidate = 1;
+
+    for( SCH_MODULE_BLOCK* b : needsRef )
+    {
+        while( usedRefs.count( candidate ) )
+            candidate++;
+
+        b->SetMbsReference( wxString::Format( wxT( "B%d" ), candidate ) );
+        usedRefs.insert( candidate );
+    }
+
+    m_frame->OnModify();
+    m_frame->GetCanvas()->Refresh( true );
+
+    wxString msg = wxString::Format(
+            _( "Annotated %zu module block reference(s)." ), needsRef.size() );
+    m_frame->ShowInfoBarMsg( msg );
+    return 0;
+}
+
+
 
 
 int SCH_EDITOR_CONTROL::MbsSyncCrossBoardNets( const TOOL_EVENT& aEvent )
@@ -4299,6 +4392,8 @@ void SCH_EDITOR_CONTROL::setTransitions()
         SCH_ACTIONS::mbsCrossBoardRules.MakeEvent() );
     Go( &SCH_EDITOR_CONTROL::MbsShowTerminal,
         SCH_ACTIONS::mbsShowTerminal.MakeEvent() );
+    Go( &SCH_EDITOR_CONTROL::MbsAnnotateBlocks,
+        SCH_ACTIONS::mbsAnnotateBlocks.MakeEvent() );
 
     Go( &SCH_EDITOR_CONTROL::CrossProbeToPcb, EVENTS::PointSelectedEvent );
     Go( &SCH_EDITOR_CONTROL::CrossProbeToPcb, EVENTS::SelectedEvent );

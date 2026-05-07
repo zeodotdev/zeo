@@ -265,6 +265,7 @@ void MBSCH_EDIT_FRAME::doReCreateMenuBar()
     // discovery.
     ACTION_MENU* toolsMenu = new ACTION_MENU( false, selTool );
     toolsMenu->Add( SCH_ACTIONS::refreshMbsFromSubProjects );
+    toolsMenu->Add( SCH_ACTIONS::mbsAnnotateBlocks );
     toolsMenu->AppendSeparator();
     toolsMenu->Add( SCH_ACTIONS::mbsManageSubBoards );
 

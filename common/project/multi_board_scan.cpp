@@ -1036,6 +1036,15 @@ wxFileName EnsureMbsFile( PROJECT_FILE& aContainer, const wxString& aContainerBa
 
     const auto& subProjects = aContainer.GetSubProjects();
 
+    // Sequential MBS reference counter — every emitted block gets a
+    // `(mbs_reference "B<N>")` field so freshly-generated containers
+    // are usable immediately. Without this, the runtime backfill in
+    // MBSCH_EDIT_FRAME::onSchematicSaved is the only thing that
+    // assigns refs, and that fires *after* a save the user has to
+    // initiate. Pre-populating here means the first time the MBSCH
+    // opens, every block already has a unique B<N> identifier.
+    int nextMbsRef = 1;
+
     if( subProjects.empty() )
     {
         blocksSection += wxString::Format(
@@ -1043,10 +1052,11 @@ wxFileName EnsureMbsFile( PROJECT_FILE& aContainer, const wxString& aContainerBa
                      "\t\t(at %.2f %.2f)\n"
                      "\t\t(size %.2f %.2f)\n"
                      "\t\t(name \"%s\")\n"
+                     "\t\t(mbs_reference \"B%d\")\n"
                      "\t\t(uuid \"%s\")\n"
                      "\t)\n" ),
                 cursorX, startY, blockWidth, blockHeight,
-                wxT( "Module" ), KIID().AsString() );
+                wxT( "Module" ), nextMbsRef++, KIID().AsString() );
     }
     else
     {
@@ -1138,12 +1148,13 @@ wxFileName EnsureMbsFile( PROJECT_FILE& aContainer, const wxString& aContainerBa
                              "\t\t(size %.2f %.2f)\n"
                              "\t\t(sub_project \"%s\")\n"
                              "\t\t(component \"%s\")\n"
+                             "\t\t(mbs_reference \"B%d\")\n"
                              "\t\t(name \"%s\")\n"
                              "\t\t(uuid \"%s\")\n"
                              "%s"
                              "\t)\n" ),
                         rowCursorX, cursorY, blockWidth, thisHeight,
-                        info.relativePath, ref, blockDisplayName,
+                        info.relativePath, ref, nextMbsRef++, blockDisplayName,
                         KIID().AsString(), pinsSection );
 
                 rowCursorX += blockWidth + blockSpacing;

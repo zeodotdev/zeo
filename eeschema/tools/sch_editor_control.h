@@ -92,6 +92,12 @@ public:
     /// same Terminal frame KICAD_MANAGER_ACTIONS::showTerminal does.
     int MbsShowTerminal( const TOOL_EVENT& aEvent );
 
+    /// Annotate module blocks: assign sequential B<N> mbs_references
+    /// to any block with an empty ref, and renumber duplicates so the
+    /// final set is unique. Mirrors the safety-net backfill in
+    /// MBSCH_EDIT_FRAME::onSchematicSaved but triggered explicitly.
+    int MbsAnnotateBlocks( const TOOL_EVENT& aEvent );
+
     bool RescueLegacyProject( bool aRunningOnDemand );
     bool RescueSymbolLibTableProject( bool aRunningOnDemand );
 

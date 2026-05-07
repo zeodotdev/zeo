@@ -1238,6 +1238,20 @@ TOOL_ACTION SCH_ACTIONS::mbsShowTerminal( TOOL_ACTION_ARGS()
         .Tooltip( _( "Open Terminal" ) )
         .Icon( BITMAPS::icon_terminal ) );
 
+// Annotate Module Blocks — fills empty `mbs_reference` values and
+// renumbers duplicate B<N> entries so every block on the MBS has a
+// unique identifier. The runtime backfill in
+// MBSCH_EDIT_FRAME::onSchematicSaved already does this on save, but
+// users want a manual trigger (analogous to standard SCH Annotate)
+// for fresh containers and after restructuring.
+TOOL_ACTION SCH_ACTIONS::mbsAnnotateBlocks( TOOL_ACTION_ARGS()
+        .Name( "eeschema.EditorControl.mbsAnnotateBlocks" )
+        .Scope( AS_GLOBAL )
+        .FriendlyName( _( "Annotate Module Blocks" ) )
+        .Tooltip( _( "Assign sequential B<N> references to module blocks "
+                     "with empty or duplicate annotations" ) )
+        .Icon( BITMAPS::annotate ) );
+
 TOOL_ACTION SCH_ACTIONS::nextNetItem( TOOL_ACTION_ARGS()
         .Name( "eeschema.EditorControl.nextNetItem" )
         .Scope( AS_GLOBAL )

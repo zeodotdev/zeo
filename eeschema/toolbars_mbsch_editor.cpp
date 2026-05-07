@@ -152,6 +152,7 @@ std::optional<TOOLBAR_CONFIGURATION> MBSCH_EDIT_TOOLBAR_SETTINGS::DefaultToolbar
         config.AppendSeparator()
               .AppendAction( SCH_ACTIONS::mbsManageSubBoards )
               .AppendAction( SCH_ACTIONS::refreshMbsFromSubProjects )
+              .AppendAction( SCH_ACTIONS::mbsAnnotateBlocks )
               .AppendAction( SCH_ACTIONS::mbsSyncCrossBoardNets )
               .AppendAction( SCH_ACTIONS::mbsOpen3DAssembly );
 

@@ -4203,6 +4203,8 @@ bool CONNECTION_GRAPH::ercCheckLabels( const CONNECTION_SUBGRAPH* aSubgraph )
 
     pinCount = hasPins( aSubgraph );
 
+    bool hasModulePin = false;
+
     for( SCH_ITEM* item : aSubgraph->m_items )
     {
         switch( item->Type() )
@@ -4227,6 +4229,10 @@ bool CONNECTION_GRAPH::ercCheckLabels( const CONNECTION_SUBGRAPH* aSubgraph )
             break;
         }
 
+        case SCH_MODULE_PIN_T:
+            hasModulePin = true;
+            break;
+
         default:
             break;
         }
@@ -4234,6 +4240,16 @@ bool CONNECTION_GRAPH::ercCheckLabels( const CONNECTION_SUBGRAPH* aSubgraph )
 
     if( label_map.empty() )
         return true;
+
+    // A subgraph that includes a SCH_MODULE_PIN names a net that crosses into
+    // another sub-project's schematic. The local connection graph cannot see
+    // off-board pins, so the pin-count heuristic below produces false
+    // positives (LABEL_NOT_CONNECTED / LABEL_SINGLE_PIN) on otherwise-valid
+    // cross-board labels. Cross-board ERC handles connectivity verification
+    // across sub-projects; the per-label IsDangling check above still
+    // catches geometrically floating labels here.
+    if( hasModulePin )
+        return ok;
 
     // No-connects on net neighbors will be noticed before, but to notice them on bus parents we
     // need to walk the graph

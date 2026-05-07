@@ -166,6 +166,15 @@ struct MATE_PAIR
     /// rotational constraint. Empty for non-electrical custom mates
     /// (mounting holes, alignment posts).
     std::vector<std::pair<wxString, wxString>> padPins;
+
+    /// Parallel to `padPins`: each entry is the net-group identifier
+    /// of the pad pair (e.g. "name:GND" for aggregated power nets or
+    /// "uuid:<kiid>" for a uniquely-named signal net). Pad pairs in
+    /// the same group share the same electrical identity, so the
+    /// solver's post-Kabsch ICP step is allowed to re-match A↔B pins
+    /// within a group by world-space proximity. Always the same
+    /// length as `padPins`.
+    std::vector<wxString>                       padPinGroups;
 };
 
 
@@ -928,6 +937,16 @@ private:
     /// head of list is the primary). Adjusted by ShiftPairUp/Down.
     /// Session-only — not persisted across project re-opens yet.
     std::map<wxString, int>         m_pairPriorityBumps;
+
+    /// Cache of post-ICP pad-pair correspondences keyed by canonical
+    /// (instanceA, refA, instanceB, refB). Populated by
+    /// PlaceChildOnParent at the end of its ICP refinement pass and
+    /// read by BuildMateGraph so the gizmo + mates panel see the same
+    /// rematched pairings the placement used. Cleared at the start of
+    /// every MateConnectors call so stale entries from a previous
+    /// schematic don't survive across edits.
+    std::map<std::tuple<KIID, wxString, KIID, wxString>,
+             std::vector<std::pair<wxString, wxString>>> m_lastIcpPadPins;
 };
 
 #endif // VIEWER_3D_ASSEMBLY_H

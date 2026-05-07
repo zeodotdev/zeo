@@ -692,6 +692,7 @@ void ASSEMBLY_3D_MANAGER::MateConnectors()
     }
 
     m_lastMateResiduals.clear();
+    m_lastIcpPadPins.clear();
 
     // M6.D-phase-1 pipeline: aggregate cross-board nets into a board
     // mate graph, then BFS-place every reachable instance from the
@@ -786,32 +787,102 @@ std::vector<MATE_EDGE> ASSEMBLY_3D_MANAGER::BuildMateGraph() const
     using PairKey = std::tuple<KIID, wxString, KIID, wxString>;
     std::map<PairKey, MATE_PAIR> pairMap;
 
-    // Track which (net, footprint-pair) tuples have already produced a
-    // pin-pair correspondence. Multi-endpoint power nets (GND, VCC,
-    // etc.) typically have N pads on one connector and M on the other;
-    // the netlist gives us no information to identify which physical
-    // GND-A pin should mate to which GND-B pin, so contributing all
-    // N*M cross-board combinations to padPins produced a "rats nest"
-    // gizmo and skewed the Kabsch solver (the spurious pin-i↔pin-j
-    // pairings averaged out to a wrong rotation). Dedupe to one
-    // representative pair per (net, footprint-pair) so:
-    //   • the visualizer draws one line per net rather than N*M
-    //   • Kabsch sees one rotational constraint per net (signal nets
-    //     with unique 1↔1 endpoint correspondence dominate; power
-    //     nets contribute one weakly-meaningful constraint)
-    // pinCount is still accumulated per cross-board edge so the
-    // primary-pair-by-pin-weight ordering is unchanged.
-    std::set<std::tuple<KIID, PairKey>> netPairSeen;
+    // For each (cross-board net, footprint-pair) combination, gather
+    // the unique pin numbers on each side of the connector, then
+    // match them 1-to-1 by sorted stored position. Multi-endpoint
+    // power nets (GND, VCC, etc.) commonly have N pads on one
+    // connector and M on the other and the netlist gives no
+    // information to identify which physical GND-A pin should mate to
+    // which GND-B pin — but those pads have a natural 1↔1 mapping by
+    // position (left-A ↔ left-B, right-A ↔ right-B). Sorting by
+    // (X, Y) on each side and pairing in order gives:
+    //   • the visualizer draws min(N, M) parallel lines rather than
+    //     one diagonal or N×M rats-nest;
+    //   • Kabsch sees one constraint per matched pair, all consistent;
+    //   • pinCount keeps accumulating per cross-board edge so primary-
+    //     pair-by-pin-weight ordering is unchanged.
+    //
+    // Pin position lookup table: (instance UUID, footprint ref, pin
+    // number) → stored BIU position. Cached for the matching pass so
+    // we don't refetch the FOOTPRINT/PAD per pair.
+    using PinKey = std::tuple<KIID, wxString, wxString>;
+    std::map<PinKey, VECTOR2I> pinPosCache;
+
+    auto resolvePinPos = [&]( const KIID& aInstUuid,
+                               const wxString& aRef,
+                               const wxString& aPin,
+                               VECTOR2I& aOutPos ) -> bool
+    {
+        PinKey k{ aInstUuid, aRef, aPin };
+        auto   cached = pinPosCache.find( k );
+
+        if( cached != pinPosCache.end() )
+        {
+            aOutPos = cached->second;
+            return true;
+        }
+
+        auto instIt = instBySubProj.end();
+
+        for( auto it = instBySubProj.begin(); it != instBySubProj.end(); ++it )
+        {
+            if( it->second->uuid == aInstUuid )
+            {
+                instIt = it;
+                break;
+            }
+        }
+
+        if( instIt == instBySubProj.end() )
+            return false;
+
+        FOOTPRINT* fp = findFootprintByRef( instIt->second->board.get(), aRef );
+
+        if( !fp )
+            return false;
+
+        PAD* pad = fp->FindPadByNumber( aPin );
+
+        if( !pad )
+            return false;
+
+        aOutPos = pad->GetPosition();
+        pinPosCache.emplace( k, aOutPos );
+        return true;
+    };
+
+    // Per-(net-group, pair-key) candidate gathering. Cross-board nets
+    // are aggregated by NAME rather than UUID so that power rails like
+    // GND — which the user often models as several distinct nets each
+    // named "GND" with 1 pin per side — collapse into one virtual
+    // group with N+M pads. Sort-based matching across the group then
+    // produces parallel lines (left-A↔left-B, right-A↔right-B) instead
+    // of whichever per-net pin assignment the schematic happened to
+    // emit (which often reverses across boards and X-crosses the
+    // gizmo). Empty net names fall back to uuid so unnamed nets stay
+    // distinct.
+    struct NetPairCandidates
+    {
+        std::set<wxString> pinsA;     // distinct pins on the canonical-A side
+        std::set<wxString> pinsB;     // distinct pins on the canonical-B side
+    };
+
+    auto netGroupKey = []( const MB_CROSS_BOARD_NET& aNet ) -> wxString
+    {
+        return aNet.name.IsEmpty()
+                       ? wxT( "uuid:" ) + aNet.uuid.AsString()
+                       : wxT( "name:" ) + aNet.name;
+    };
+
+    std::map<std::tuple<wxString, PairKey>, NetPairCandidates> candidates;
 
     for( const MB_CROSS_BOARD_NET& net : projectFile.GetCrossBoardNets() )
     {
         if( net.endpoints.size() < 2 )
             continue;
 
-        // Multi-endpoint nets (≥3 endpoints) decompose into all
-        // pairwise combinations; primary-mate-wins picks the strongest
-        // per board edge, so over-counting connector pin shares across
-        // mate pairs is fine.
+        const wxString groupKey = netGroupKey( net );
+
         for( size_t i = 0; i < net.endpoints.size(); i++ )
         {
             for( size_t j = i + 1; j < net.endpoints.size(); j++ )
@@ -861,13 +932,114 @@ std::vector<MATE_EDGE> ASSEMBLY_3D_MANAGER::BuildMateGraph() const
 
                 it->second.pinCount++;
 
-                // Only the first cross-board endpoint pair encountered
-                // per net per footprint-pair contributes a padPins
-                // entry. See netPairSeen comment above.
-                if( netPairSeen.insert( std::make_tuple( net.uuid, key ) ).second )
-                    it->second.padPins.emplace_back( pinA, pinB );
+                auto& netCand = candidates[std::make_tuple( groupKey, key )];
+                netCand.pinsA.insert( pinA );
+                netCand.pinsB.insert( pinB );
             }
         }
+    }
+
+    // Resolve the candidates into padPins entries. For each
+    // (net-group, pair-key), sort each side's pin set by stored (X, Y)
+    // lex and pair in order — geometric 1-to-1 matching that handles
+    // multi-pad nets (and aggregated same-named nets like GND) without
+    // producing crossed gizmo lines.
+    for( auto& [netPairKey, cand] : candidates )
+    {
+        const auto& [groupName, pairKey] = netPairKey;
+        auto pairIt = pairMap.find( pairKey );
+
+        if( pairIt == pairMap.end() )
+            continue;
+
+        const KIID&      instA = std::get<0>( pairKey );
+        const wxString&  refA  = std::get<1>( pairKey );
+        const KIID&      instB = std::get<2>( pairKey );
+        const wxString&  refB  = std::get<3>( pairKey );
+
+        // Resolve pin positions; drop any pin we can't look up (e.g.,
+        // schematic references a pin that doesn't exist on the
+        // resolved footprint — bad symbol pinout).
+        std::vector<std::pair<wxString, VECTOR2I>> aPinsResolved;
+        std::vector<std::pair<wxString, VECTOR2I>> bPinsResolved;
+
+        for( const wxString& p : cand.pinsA )
+        {
+            VECTOR2I pos;
+            if( resolvePinPos( instA, refA, p, pos ) )
+                aPinsResolved.emplace_back( p, pos );
+        }
+
+        for( const wxString& p : cand.pinsB )
+        {
+            VECTOR2I pos;
+            if( resolvePinPos( instB, refB, p, pos ) )
+                bPinsResolved.emplace_back( p, pos );
+        }
+
+        auto byXY = []( const std::pair<wxString, VECTOR2I>& a,
+                         const std::pair<wxString, VECTOR2I>& b )
+        {
+            return std::tie( a.second.x, a.second.y )
+                   < std::tie( b.second.x, b.second.y );
+        };
+
+        std::sort( aPinsResolved.begin(), aPinsResolved.end(), byXY );
+        std::sort( bPinsResolved.begin(), bPinsResolved.end(), byXY );
+
+        const size_t n = std::min( aPinsResolved.size(), bPinsResolved.size() );
+
+        for( size_t k = 0; k < n; k++ )
+        {
+            pairIt->second.padPins.emplace_back( aPinsResolved[k].first,
+                                                 bPinsResolved[k].first );
+            pairIt->second.padPinGroups.push_back( groupName );
+        }
+    }
+
+    // Override default sort-based padPins with ICP-rematched cache
+    // when the previous MateConnectors run produced one. This keeps
+    // the gizmo + mates panel consistent with the actual placement
+    // (sort-based pairing can X-cross when Kabsch's chosen θ rotates
+    // the child connector 180° in world; ICP fixed it during
+    // PlaceChildOnParent and stashed the result here).
+    for( auto& [pkey, mp] : pairMap )
+    {
+        auto cached = m_lastIcpPadPins.find( pkey );
+
+        if( cached == m_lastIcpPadPins.end() )
+            continue;
+
+        const auto& icpPairs = cached->second;
+
+        // Only override when the cached set covers the same pin set —
+        // schematic edits that change endpoint counts must fall back
+        // to the fresh sort. We treat any mismatch as cache stale.
+        if( icpPairs.size() != mp.padPins.size() )
+            continue;
+
+        // Build a remap from default-pinB to its group identifier so
+        // we can keep padPinGroups parallel after swaps. Two entries
+        // sharing a pinB on the same edge collapse to the same group
+        // (they're electrically equivalent), so the remap is well-
+        // defined for any rearrangement ICP produces.
+        std::map<wxString, wxString> groupByPinB;
+
+        for( size_t i = 0; i < mp.padPins.size(); i++ )
+            groupByPinB[mp.padPins[i].second] = mp.padPinGroups[i];
+
+        std::vector<wxString> newGroups;
+        newGroups.reserve( icpPairs.size() );
+
+        for( const auto& [pa, pb] : icpPairs )
+        {
+            auto gIt = groupByPinB.find( pb );
+            newGroups.push_back( gIt != groupByPinB.end() ? gIt->second
+                                                          : wxString() );
+        }
+
+        mp.padPins      = icpPairs;
+        mp.padPinGroups = std::move( newGroups );
     }
 
     // M6.D-phase-2: layer user-declared CUSTOM_MATE overrides on top
@@ -1243,13 +1415,27 @@ void ASSEMBLY_3D_MANAGER::SolveMatePoses( const std::vector<MATE_EDGE>& aEdges )
 
             // Orient primary so endpoint A == parent (already placed).
             // The MATE_PAIR is keyed canonically; the parent isn't
-            // necessarily on the A side.
+            // necessarily on the A side. When we swap the instance /
+            // footprint refs we MUST also swap the per-pin entries —
+            // padPins[i].first refers to the canonical-A side, so
+            // post-swap it'd point at the wrong board's pin numbers
+            // and PlaceChildOnParent's pad lookups would silently
+            // return the same-numbered pin on the wrong footprint
+            // (Kabsch then fits to garbage and the child lands at a
+            // bizarre rotation).
             MATE_PAIR primaryOriented = *primary;
 
             if( primaryOriented.instanceA != u )
             {
                 std::swap( primaryOriented.instanceA, primaryOriented.instanceB );
                 std::swap( primaryOriented.footprintRefA, primaryOriented.footprintRefB );
+
+                for( auto& pp : primaryOriented.padPins )
+                    std::swap( pp.first, pp.second );
+
+                // padPinGroups is parallel to padPins but the group
+                // identity is symmetric (same group for both ends of
+                // the same cross-board net), so it doesn't change.
             }
 
             if( PlaceChildOnParent( *parent, *child, primaryOriented ) )
@@ -1397,11 +1583,14 @@ bool ASSEMBLY_3D_MANAGER::PlaceChildOnParent( const BOARD_3D_INSTANCE& aParent,
                   topB, botB, bothB, padBOnTop ? 1 : 0,
                   padCentroidB.x / 1.0e6, padCentroidB.y / 1.0e6 );
 
-    wxLogMessage( wxT( "[MATE]   sameEffectiveSide=%d → child rotation=%s, "
-                       "dz sign=%s" ),
+    // Note: this initial log uses the raw padAOnTop comparison; the
+    // post-TH-detection effective value is logged later alongside the
+    // Kabsch result.
+    wxLogMessage( wxT( "[MATE]   raw sameSide=%d (padAOnTop==padBOnTop) "
+                       "isThA=%d isThB=%d" ),
                   ( padAOnTop == padBOnTop ) ? 1 : 0,
-                  ( padAOnTop == padBOnTop ) ? "180° X" : "0°",
-                  padAOnTop ? "+zGap" : "-zGap" );
+                  ( bothA > topA + botA ) ? 1 : 0,
+                  ( bothB > topB + botB ) ? 1 : 0 );
 
     // Account for parent's existing flip when projecting its mate side
     // into world frame. The check is "does the parent's full rotation
@@ -1414,9 +1603,31 @@ bool ASSEMBLY_3D_MANAGER::PlaceChildOnParent( const BOARD_3D_INSTANCE& aParent,
     R_P = glm::rotate( R_P, glm::radians( aParent.rotation.x ), glm::vec3( 1, 0, 0 ) );
 
     const glm::vec4 zNormalWorld = R_P * glm::vec4( 0.0f, 0.0f, 1.0f, 0.0f );
-    const bool      parentFlipped       = ( zNormalWorld.z < 0.0f );
+    const bool      parentFlipped         = ( zNormalWorld.z < 0.0f );
     const bool      parentEffectivelyOnTop = parentFlipped ? !padAOnTop : padAOnTop;
-    const bool      sameEffectiveSide      = ( parentEffectivelyOnTop == padBOnTop );
+
+    // Through-hole connectors live on both copper layers — every TH
+    // pad makes IsOnLayer(F.Cu) AND IsOnLayer(B.Cu) true, so
+    // dominantSide() reports both connectors as "top" by tiebreak and
+    // sameEffectiveSide ends up true. That triggers an X-flip (R_x=
+    // 180°) on the child, which mirrors render-Y for connectors that
+    // physically mate without flipping (USB-stick into pin header,
+    // edge connector into socket, etc.). With Y mirrored only on one
+    // side, Kabsch sees pad correspondences that no rotation can
+    // align and emits a meaningless compromise θ — visible as the
+    // green-board fan-out tilt.
+    //
+    // Detect "both connectors are predominantly TH" via the existing
+    // top/bot/both pad counters and force sameEffectiveSide=false in
+    // that case so no X-flip applies. The Z-gap direction still uses
+    // the parent's effective side: parentEffectivelyOnTop=true ⇒
+    // child sits +zGap, false ⇒ -zGap.
+    const bool isThA = ( bothA > topA + botA );
+    const bool isThB = ( bothB > topB + botB );
+    bool       sameEffectiveSide = ( parentEffectivelyOnTop == padBOnTop );
+
+    if( isThA && isThB )
+        sameEffectiveSide = false;
 
     const float thicknessA      = GetBoardThickness( aParent.board.get() );
     const float thicknessB      = GetBoardThickness( aChild.board.get()  );
@@ -1457,40 +1668,75 @@ bool ASSEMBLY_3D_MANAGER::PlaceChildOnParent( const BOARD_3D_INSTANCE& aParent,
         wxString  pinB;
         VECTOR2I  posA;       // BIU on A's stored coords
         VECTOR2I  posB;       // BIU on B's stored coords
+        wxString  groupKey;   // electrical group (e.g. "name:GND")
     };
 
     std::vector<PadPairEntry> padPairs;
     padPairs.reserve( aPrimary.padPins.size() );
 
-    for( const auto& [pinA, pinB] : aPrimary.padPins )
+    for( size_t i = 0; i < aPrimary.padPins.size(); i++ )
     {
+        const auto& [pinA, pinB] = aPrimary.padPins[i];
+        const wxString grp = ( i < aPrimary.padPinGroups.size() )
+                                    ? aPrimary.padPinGroups[i]
+                                    : wxString();
+
         PAD* pA = fpA->FindPadByNumber( pinA );
         PAD* pB = fpB->FindPadByNumber( pinB );
 
         if( pA && pB )
-            padPairs.push_back( { pinA, pinB, pA->GetPosition(), pB->GetPosition() } );
+            padPairs.push_back(
+                    { pinA, pinB, pA->GetPosition(), pB->GetPosition(), grp } );
     }
 
-    // Pivot the Kabsch around the FOOTPRINT centroid (the same point
-    // projectFootprintCentroidToWorld will project for the translation
-    // step) rather than the padPin-set centroid. Otherwise, when a
-    // connector has pads that aren't in any cross-board net, the two
-    // centroids diverge — Kabsch finds the rotation that aligns
-    // padPin centroids while the translation snaps footprint centroids,
-    // and the connectors land offset by the centroid delta.
-    const VECTOR2I& cA = padCentroidA;
-    const VECTOR2I& cB = padCentroidB;
+    // Kabsch is run with the INLIER pad-pair centroid as its pivot —
+    // not the full footprint centroid. Footprint centroid sums all pads
+    // (including unconnected ones), which can sit far from the
+    // correspondence centroid; subtracting it makes a "linear shift"
+    // (e.g. schematic wires pin1↔pin4 instead of pin1↔pin1) look like
+    // a rotation, and Kabsch flips the connector. Using the inlier
+    // centroid lets the translation step absorb the shift naturally
+    // and the rotation reflects only the actual geometric mismatch.
     constexpr double biuPerMm = 1.0e6;
 
-    // Compute the post-X-flip render-frame offset for one pair, used
-    // for both the Kabsch accumulator and the per-pair residual probe
-    // after the fit. Returns (vAx, vAy, vBx, vBy) in mm.
+    // Compute the centroid of an inlier subset in stored BIU. Returns
+    // (cA, cB) — used both to subtract centroids in Kabsch and as the
+    // pivot for the placement translation step. Recomputed after each
+    // RANSAC drop because the inlier set changes.
+    auto inlierCentroids = [&]( const std::vector<size_t>& aIdxs,
+                                 VECTOR2I& aOutCA, VECTOR2I& aOutCB )
+    {
+        if( aIdxs.empty() )
+        {
+            aOutCA = padCentroidA;
+            aOutCB = padCentroidB;
+            return;
+        }
+
+        VECTOR2L sumA( 0, 0 ), sumB( 0, 0 );
+
+        for( size_t k : aIdxs )
+        {
+            sumA.x += padPairs[k].posA.x;
+            sumA.y += padPairs[k].posA.y;
+            sumB.x += padPairs[k].posB.x;
+            sumB.y += padPairs[k].posB.y;
+        }
+
+        const int N = static_cast<int>( aIdxs.size() );
+        aOutCA = VECTOR2I( static_cast<int>( sumA.x / N ), static_cast<int>( sumA.y / N ) );
+        aOutCB = VECTOR2I( static_cast<int>( sumB.x / N ), static_cast<int>( sumB.y / N ) );
+    };
+
+    // Compute the post-X-flip render-frame offset for one pair around
+    // the supplied centroids. Returns (vAx, vAy, vBx, vBy) in mm.
     auto pairVectors = [&]( const PadPairEntry& aEntry,
+                             const VECTOR2I& aCA, const VECTOR2I& aCB,
                              double& aOutVAx, double& aOutVAy,
                              double& aOutVBx, double& aOutVBy )
     {
-        const double aLocalX =  static_cast<double>( aEntry.posA.x - cA.x ) / biuPerMm;
-        const double aLocalY = -static_cast<double>( aEntry.posA.y - cA.y ) / biuPerMm;
+        const double aLocalX =  static_cast<double>( aEntry.posA.x - aCA.x ) / biuPerMm;
+        const double aLocalY = -static_cast<double>( aEntry.posA.y - aCA.y ) / biuPerMm;
 
         const glm::vec4 aRot = R_P * glm::vec4( static_cast<float>( aLocalX ),
                                                  static_cast<float>( aLocalY ),
@@ -1498,39 +1744,40 @@ bool ASSEMBLY_3D_MANAGER::PlaceChildOnParent( const BOARD_3D_INSTANCE& aParent,
         aOutVAx = aRot.x;
         aOutVAy = aRot.y;
 
-        const double bLocalX =  static_cast<double>( aEntry.posB.x - cB.x ) / biuPerMm;
-        const double bLocalY = -static_cast<double>( aEntry.posB.y - cB.y ) / biuPerMm;
+        const double bLocalX =  static_cast<double>( aEntry.posB.x - aCB.x ) / biuPerMm;
+        const double bLocalY = -static_cast<double>( aEntry.posB.y - aCB.y ) / biuPerMm;
         aOutVBx = bLocalX;
         aOutVBy = sameEffectiveSide ? -bLocalY : bLocalY;
     };
 
-    // Closed-form 2D Kabsch over the supplied indexes. Returns θ in
-    // degrees and writes the cross/dot sums for diagnostic logs.
+    // Closed-form 2D Kabsch over the supplied indexes around the
+    // supplied centroids. Returns θ in degrees.
     auto fitKabsch = [&]( const std::vector<size_t>& aActiveIdxs,
-                           double& aOutSumCross, double& aOutSumDot ) -> float
+                           const VECTOR2I& aCA, const VECTOR2I& aCB ) -> float
     {
-        aOutSumCross = 0.0;
-        aOutSumDot   = 0.0;
+        double sumCross = 0.0;
+        double sumDot   = 0.0;
 
         for( size_t k : aActiveIdxs )
         {
             double vAx, vAy, vBx, vBy;
-            pairVectors( padPairs[k], vAx, vAy, vBx, vBy );
+            pairVectors( padPairs[k], aCA, aCB, vAx, vAy, vBx, vBy );
 
-            aOutSumCross += vAy * vBx - vAx * vBy;
-            aOutSumDot   += vAx * vBx + vAy * vBy;
+            sumCross += vAy * vBx - vAx * vBy;
+            sumDot   += vAx * vBx + vAy * vBy;
         }
 
         return static_cast<float>(
-                glm::degrees( std::atan2( aOutSumCross, aOutSumDot ) ) );
+                glm::degrees( std::atan2( sumCross, sumDot ) ) );
     };
 
-    // Per-pair residual after applying θ to vB_after_xflip. In world
-    // mm: |R_z(θ)*vB - vA|. Lower is better; outliers stand out.
-    auto perPairResidual = [&]( const PadPairEntry& aEntry, float aThetaZDeg ) -> double
+    // Per-pair residual after applying θ to vB_after_xflip around the
+    // supplied centroids. In world mm: |R_z(θ)*vB - vA|.
+    auto perPairResidual = [&]( const PadPairEntry& aEntry, float aThetaZDeg,
+                                 const VECTOR2I& aCA, const VECTOR2I& aCB ) -> double
     {
         double vAx, vAy, vBx, vBy;
-        pairVectors( aEntry, vAx, vAy, vBx, vBy );
+        pairVectors( aEntry, aCA, aCB, vAx, vAy, vBx, vBy );
 
         const double t  = glm::radians( static_cast<double>( aThetaZDeg ) );
         const double c  = std::cos( t );
@@ -1553,6 +1800,11 @@ bool ASSEMBLY_3D_MANAGER::PlaceChildOnParent( const BOARD_3D_INSTANCE& aParent,
     for( size_t i = 0; i < padPairs.size(); i++ )
         inliers.push_back( i );
 
+    // Final inlier centroid used for placement; falls back to footprint
+    // centroid when there's no usable correspondence data.
+    VECTOR2I cA_inlier = padCentroidA;
+    VECTOR2I cB_inlier = padCentroidB;
+
     if( inliers.size() >= 2 )
     {
         // Tunables. Pin spacing is typically 1.27–2.54 mm; 0.5 mm is a
@@ -1566,23 +1818,22 @@ bool ASSEMBLY_3D_MANAGER::PlaceChildOnParent( const BOARD_3D_INSTANCE& aParent,
         constexpr double  k_outlierRatio    = 3.0;
         const size_t      k_maxDrops        = std::max<size_t>( 1, inliers.size() / 3 );
 
-        double sumCross = 0.0, sumDot = 0.0;
-        thetaZDeg = fitKabsch( inliers, sumCross, sumDot );
+        inlierCentroids( inliers, cA_inlier, cB_inlier );
+        thetaZDeg = fitKabsch( inliers, cA_inlier, cB_inlier );
 
         for( size_t drop = 0; drop < k_maxDrops && inliers.size() > 2; drop++ )
         {
-            // Score the current inliers under the current θ.
+            // Score the current inliers under the current θ + centroid.
             std::vector<double> resi( inliers.size() );
 
             for( size_t k = 0; k < inliers.size(); k++ )
-                resi[k] = perPairResidual( padPairs[inliers[k]], thetaZDeg );
+                resi[k] = perPairResidual( padPairs[inliers[k]], thetaZDeg,
+                                            cA_inlier, cB_inlier );
 
-            // Median (sort copy, take middle).
             std::vector<double> sorted = resi;
             std::sort( sorted.begin(), sorted.end() );
             const double median = sorted[sorted.size() / 2];
 
-            // Worst pair.
             size_t worstK = 0;
             double worstR = resi[0];
 
@@ -1611,8 +1862,317 @@ bool ASSEMBLY_3D_MANAGER::PlaceChildOnParent( const BOARD_3D_INSTANCE& aParent,
             outliers.push_back( inliers[worstK] );
             inliers.erase( inliers.begin() + worstK );
 
-            thetaZDeg = fitKabsch( inliers, sumCross, sumDot );
+            // Recompute centroid + θ for the shrunken inlier set.
+            inlierCentroids( inliers, cA_inlier, cB_inlier );
+            thetaZDeg = fitKabsch( inliers, cA_inlier, cB_inlier );
         }
+    }
+    else if( !padPairs.empty() )
+    {
+        // Single pad pair: no rotation constraint; centroid is just
+        // that pad's position. Translation will land that pad exactly.
+        inlierCentroids( inliers, cA_inlier, cB_inlier );
+    }
+
+    // ----- Post-Kabsch ICP: re-match electrically-equivalent pads -----
+    //
+    // BuildMateGraph's sort-based 1-to-1 matching can only see stored
+    // positions, but Kabsch's chosen θ may rotate the child connector
+    // 180° in world (signal pads dictate this when their schematic
+    // mapping is "reversed"). The aggregated GND group on the same
+    // connector then sits with its sort-asc-asc pairing X-crossed in
+    // world. Re-pair within each electrical group by world-space
+    // proximity using the current pose, then re-fit Kabsch. Two
+    // iterations is plenty in practice — pad sets are small (typically
+    // ≤8 pads per group) so greedy NN converges immediately for
+    // physical layouts.
+    constexpr int     k_maxIcpIters = 4;
+    constexpr double  k_icpSwapEpsilonMm = 0.01;
+
+    for( int icpIter = 0; icpIter < k_maxIcpIters; icpIter++ )
+    {
+        // Group inliers by their electrical group key.
+        std::map<wxString, std::vector<size_t>> groupedInliers;
+
+        for( size_t k : inliers )
+        {
+            if( !padPairs[k].groupKey.IsEmpty() )
+                groupedInliers[padPairs[k].groupKey].push_back( k );
+        }
+
+        bool anyChange = false;
+
+        for( auto& [grp, idxsInGroup] : groupedInliers )
+        {
+            if( idxsInGroup.size() < 2 )
+                continue;     // nothing to re-match
+
+            // Compute parent and child pad world offsets (XY, in mm,
+            // centroid-relative) under the current θ. The world centroids
+            // cancel out for matching purposes since both sides share the
+            // same target centroid after placement.
+            const double t  = glm::radians( static_cast<double>( thetaZDeg ) );
+            const double cs = std::cos( t );
+            const double sn = std::sin( t );
+
+            std::vector<glm::vec2> aWorld;
+            std::vector<glm::vec2> bWorld;
+            aWorld.reserve( idxsInGroup.size() );
+            bWorld.reserve( idxsInGroup.size() );
+
+            for( size_t k : idxsInGroup )
+            {
+                double vAx, vAy, vBx, vBy;
+                pairVectors( padPairs[k], cA_inlier, cB_inlier,
+                             vAx, vAy, vBx, vBy );
+
+                // Apply Z-rotation to the child offset.
+                const double rx = cs * vBx - sn * vBy;
+                const double ry = sn * vBx + cs * vBy;
+
+                aWorld.emplace_back( static_cast<float>( vAx ),
+                                     static_cast<float>( vAy ) );
+                bWorld.emplace_back( static_cast<float>( rx ),
+                                     static_cast<float>( ry ) );
+            }
+
+            // Greedy NN: for each A pad in the group, pair with the
+            // closest unused B pad. Snapshots of the original B side
+            // info indexed by the within-group position so we can swap
+            // freely without invalidating later iterations.
+            std::vector<wxString> savedPinB( idxsInGroup.size() );
+            std::vector<VECTOR2I> savedPosB( idxsInGroup.size() );
+
+            for( size_t i = 0; i < idxsInGroup.size(); i++ )
+            {
+                savedPinB[i] = padPairs[idxsInGroup[i]].pinB;
+                savedPosB[i] = padPairs[idxsInGroup[i]].posB;
+            }
+
+            std::vector<bool> bUsed( idxsInGroup.size(), false );
+
+            for( size_t i = 0; i < idxsInGroup.size(); i++ )
+            {
+                size_t bestJ    = SIZE_MAX;
+                double bestDist = std::numeric_limits<double>::max();
+
+                for( size_t j = 0; j < idxsInGroup.size(); j++ )
+                {
+                    if( bUsed[j] )
+                        continue;
+
+                    const double dx = aWorld[i].x - bWorld[j].x;
+                    const double dy = aWorld[i].y - bWorld[j].y;
+                    const double d  = std::sqrt( dx * dx + dy * dy );
+
+                    if( d < bestDist )
+                    {
+                        bestDist = d;
+                        bestJ    = j;
+                    }
+                }
+
+                if( bestJ == SIZE_MAX )
+                    continue;
+
+                bUsed[bestJ] = true;
+
+                // If the new pairing differs from the current one, swap
+                // the B-side fields. We compare via the saved snapshot
+                // so we don't get confused by an earlier swap in the
+                // same iteration.
+                const wxString& targetPinB = savedPinB[bestJ];
+
+                if( padPairs[idxsInGroup[i]].pinB != targetPinB )
+                {
+                    wxLogMessage( wxT( "[MATE]   ICP iter=%d group=%s "
+                                       "swap A=%s: B %s → %s" ),
+                                  icpIter, grp,
+                                  padPairs[idxsInGroup[i]].pinA,
+                                  padPairs[idxsInGroup[i]].pinB,
+                                  targetPinB );
+
+                    padPairs[idxsInGroup[i]].pinB = targetPinB;
+                    padPairs[idxsInGroup[i]].posB = savedPosB[bestJ];
+                    anyChange                     = true;
+                }
+            }
+        }
+
+        if( !anyChange )
+            break;
+
+        // Re-fit Kabsch with the updated pairings.
+        inlierCentroids( inliers, cA_inlier, cB_inlier );
+        thetaZDeg = fitKabsch( inliers, cA_inlier, cB_inlier );
+    }
+
+    // ----- Crossings-minimization refinement -----
+    //
+    // Kabsch finds the L2-optimal θ, which produces parallel pin-pair
+    // lines for clean, consistent data. When subtle inconsistencies
+    // remain (mixed forward/reverse correspondences across nets, or a
+    // connector with degenerate-rank pad layout) the L2 optimum can
+    // still leave lines crossing — visually obvious, geometrically a
+    // local minimum. Sample θ on a coarse grid and refine to the
+    // candidate with the fewest pin-pair line crossings (tiebreak by
+    // total line length so among "no-crossings" winners we pick the
+    // one with the shortest pad-to-pad displacements). The centroid
+    // translation step is unchanged — only θ shifts.
+    if( inliers.size() >= 2 )
+    {
+        auto countCrossingsAt = [&]( float aThetaDeg, double& aOutTotalLen ) -> int
+        {
+            const double t  = glm::radians( static_cast<double>( aThetaDeg ) );
+            const double cs = std::cos( t );
+            const double sn = std::sin( t );
+
+            std::vector<glm::vec2> aW( inliers.size() );
+            std::vector<glm::vec2> bW( inliers.size() );
+
+            for( size_t i = 0; i < inliers.size(); i++ )
+            {
+                double vAx, vAy, vBx, vBy;
+                pairVectors( padPairs[inliers[i]], cA_inlier, cB_inlier,
+                             vAx, vAy, vBx, vBy );
+
+                const double rx = cs * vBx - sn * vBy;
+                const double ry = sn * vBx + cs * vBy;
+
+                aW[i] = glm::vec2( static_cast<float>( vAx ),
+                                    static_cast<float>( vAy ) );
+                bW[i] = glm::vec2( static_cast<float>( rx ),
+                                    static_cast<float>( ry ) );
+            }
+
+            int    crossings = 0;
+            double totalLen  = 0.0;
+
+            // Standard 2D segment intersection — works on the centroid-
+            // relative offsets (the world centroid cancels for both
+            // sides since translation aligns them).
+            auto segCross = []( glm::vec2 a1, glm::vec2 a2,
+                                 glm::vec2 b1, glm::vec2 b2 ) -> bool
+            {
+                auto crossXY = []( glm::vec2 p, glm::vec2 q )
+                { return p.x * q.y - p.y * q.x; };
+
+                glm::vec2 r = a2 - a1;
+                glm::vec2 s = b2 - b1;
+                const float rxs = crossXY( r, s );
+
+                if( std::abs( rxs ) < 1e-9f )
+                    return false;     // parallel
+
+                const float t  = crossXY( b1 - a1, s ) / rxs;
+                const float u2 = crossXY( b1 - a1, r ) / rxs;
+
+                return ( t > 1e-3f && t < 1.0f - 1e-3f
+                         && u2 > 1e-3f && u2 < 1.0f - 1e-3f );
+            };
+
+            for( size_t i = 0; i < inliers.size(); i++ )
+            {
+                totalLen += glm::length( aW[i] - bW[i] );
+
+                for( size_t j = i + 1; j < inliers.size(); j++ )
+                {
+                    if( segCross( aW[i], bW[i], aW[j], bW[j] ) )
+                        crossings++;
+                }
+            }
+
+            aOutTotalLen = totalLen;
+            return crossings;
+        };
+
+        double bestLen       = 0.0;
+        int    bestCrossings = countCrossingsAt( thetaZDeg, bestLen );
+        float  bestTheta     = thetaZDeg;
+
+        // Only search if the L2-optimal θ has at least one crossing —
+        // otherwise Kabsch's answer is already as parallel as possible
+        // and the search is wasted work.
+        if( bestCrossings > 0 )
+        {
+            for( int delta = -180; delta <= 180; delta += 5 )
+            {
+                if( delta == 0 )
+                    continue;
+
+                float candTheta = thetaZDeg + delta;
+
+                while( candTheta > 180.0f )
+                    candTheta -= 360.0f;
+
+                while( candTheta < -180.0f )
+                    candTheta += 360.0f;
+
+                double candLen;
+                int    candCross = countCrossingsAt( candTheta, candLen );
+
+                const bool fewerCrossings = candCross < bestCrossings;
+                const bool sameCrossingsShorter = candCross == bestCrossings
+                                                  && candLen < bestLen - 1e-3;
+
+                if( fewerCrossings || sameCrossingsShorter )
+                {
+                    bestCrossings = candCross;
+                    bestLen       = candLen;
+                    bestTheta     = candTheta;
+                }
+            }
+
+            if( std::abs( bestTheta - thetaZDeg ) > 0.5f )
+            {
+                wxLogMessage( wxT( "[MATE]   crossings refine: θ %.1f° "
+                                   "(crossings=%d) → %.1f° (crossings=%d, "
+                                   "totalLen=%.2fmm)" ),
+                              thetaZDeg,
+                              countCrossingsAt( thetaZDeg, bestLen ),
+                              bestTheta, bestCrossings, bestLen );
+                thetaZDeg = bestTheta;
+            }
+        }
+    }
+
+    // Cache the post-ICP padPins so subsequent BuildMateGraph calls
+    // (panel + gizmo) see the same rematched pairings the placement
+    // used. The cache key is canonical (lower-UUID-first), matching
+    // BuildMateGraph's pair-key construction. If SolveMatePoses
+    // swapped parent onto the A side, we un-swap when caching so the
+    // canonical lookup in BuildMateGraph hits.
+    {
+        const bool needSwapBack =
+                ( aChild.uuid < aParent.uuid )
+                || ( aParent.uuid == aChild.uuid
+                     && aPrimary.footprintRefB < aPrimary.footprintRefA );
+
+        std::vector<std::pair<wxString, wxString>> finalPadPins;
+        finalPadPins.reserve( padPairs.size() );
+
+        for( const auto& pe : padPairs )
+        {
+            if( needSwapBack )
+                finalPadPins.emplace_back( pe.pinB, pe.pinA );
+            else
+                finalPadPins.emplace_back( pe.pinA, pe.pinB );
+        }
+
+        KIID     canonInstA = aParent.uuid;
+        KIID     canonInstB = aChild.uuid;
+        wxString canonRefA  = aPrimary.footprintRefA;
+        wxString canonRefB  = aPrimary.footprintRefB;
+
+        if( needSwapBack )
+        {
+            std::swap( canonInstA, canonInstB );
+            std::swap( canonRefA, canonRefB );
+        }
+
+        m_lastIcpPadPins[std::make_tuple( canonInstA, canonRefA,
+                                           canonInstB, canonRefB )] =
+                std::move( finalPadPins );
     }
 
     // Surface dropped pairs as residuals so the validation panel can
@@ -1626,7 +2186,8 @@ bool ASSEMBLY_3D_MANAGER::PlaceChildOnParent( const BOARD_3D_INSTANCE& aParent,
         r.pair.padPins.clear();
         r.pair.padPins.emplace_back( padPairs[k].pinA, padPairs[k].pinB );
         r.residualMm  = static_cast<float>(
-                perPairResidual( padPairs[k], thetaZDeg ) );
+                perPairResidual( padPairs[k], thetaZDeg,
+                                  cA_inlier, cB_inlier ) );
         r.residualDeg = 0.0f;
         m_lastMateResiduals.push_back( r );
     }
@@ -1678,14 +2239,58 @@ bool ASSEMBLY_3D_MANAGER::PlaceChildOnParent( const BOARD_3D_INSTANCE& aParent,
     if( !adapterA || !adapterB )
         return false;
 
-    glm::vec3 worldA;
-
-    if( !projectFootprintCentroidToWorld( aParent, *adapterA,
-                                           aPrimary.footprintRefA, worldA ) )
-        return false;
-
     const float biuPerMmF = 1.0e6f;
     const float sharedF   = static_cast<float>( m_sharedBiuTo3Dunits );
+
+    // Project parent's INLIER centroid (the same pivot Kabsch used) to
+    // world. This is the point we want the child's matching pivot to
+    // land on (offset by zGap in Z). Inline the same pose math
+    // projectFootprintCentroidToWorld uses but for an arbitrary stored
+    // BIU point.
+    auto projectStoredBIUToWorld = [&]( const BOARD_3D_INSTANCE& aInst,
+                                         const BOARD_ADAPTER&     aAdapter,
+                                         const VECTOR2I&          aStoredBIU ) -> glm::vec3
+    {
+        const double  localFactor = aAdapter.BiuTo3dUnits();
+        const double  scaleFactor = ( localFactor != 0.0 )
+                                            ? m_sharedBiuTo3Dunits / localFactor
+                                            : 1.0;
+
+        const glm::vec3 local3D( static_cast<float>( aStoredBIU.x ) * localFactor,
+                                 -static_cast<float>( aStoredBIU.y ) * localFactor,
+                                 0.0f );
+        const glm::vec3 localShared = local3D * static_cast<float>( scaleFactor );
+
+        const SFVEC3F   lc = aAdapter.GetBoardCenter();
+        const glm::vec3 localCenterShared( lc.x * static_cast<float>( scaleFactor ),
+                                           lc.y * static_cast<float>( scaleFactor ),
+                                           lc.z * static_cast<float>( scaleFactor ) );
+
+        glm::mat4 R( 1.0f );
+        R = glm::rotate( R, glm::radians( aInst.rotation.z ), glm::vec3( 0, 0, 1 ) );
+        R = glm::rotate( R, glm::radians( aInst.rotation.y ), glm::vec3( 0, 1, 0 ) );
+        R = glm::rotate( R, glm::radians( aInst.rotation.x ), glm::vec3( 1, 0, 0 ) );
+
+        const glm::vec3 shifted  = localShared - localCenterShared;
+        const glm::vec4 rotated  = R * glm::vec4( shifted, 1.0f );
+        const glm::vec3 replaced = glm::vec3( rotated ) + localCenterShared;
+
+        const glm::vec3 instShared(  aInst.position.x * biuPerMmF * sharedF,
+                                    -aInst.position.y * biuPerMmF * sharedF,
+                                     aInst.position.z * biuPerMmF * sharedF );
+
+        SFVEC3F bboxMin, bboxMax;
+        GetAssemblyBoundingBox( bboxMin, bboxMax );
+        const SFVEC3F   centerMm = ( bboxMin + bboxMax ) * 0.5f;
+        const glm::vec3 centerShared(  centerMm.x * biuPerMmF * sharedF,
+                                      -centerMm.y * biuPerMmF * sharedF,
+                                       centerMm.z * biuPerMmF * sharedF );
+
+        return replaced + instShared - centerShared;
+    };
+
+    const glm::vec3 worldA = projectStoredBIUToWorld( aParent, *adapterA, cA_inlier );
+
     const float zGapShared = zGapMm * biuPerMmF * sharedF
                              * ( parentEffectivelyOnTop ? 1.0f : -1.0f );
 
@@ -1709,11 +2314,14 @@ bool ASSEMBLY_3D_MANAGER::PlaceChildOnParent( const BOARD_3D_INSTANCE& aParent,
                                         ? m_sharedBiuTo3Dunits / localFactorB
                                         : 1.0;
 
-    // Child connector centroid in board-local 3D-units (Y inverted to
-    // match render-frame, Z=0 for the centroid plane).
-    const glm::vec3 localB( static_cast<float>( padCentroidB.x )
+    // Child INLIER centroid in board-local 3D-units (Y inverted to
+    // match render-frame, Z=0 for the centroid plane). Using the
+    // inlier centroid here keeps Kabsch's rotation pivot consistent
+    // with the placement target — the same point we projected to
+    // world above for the parent.
+    const glm::vec3 localB( static_cast<float>( cB_inlier.x )
                                     * static_cast<float>( localFactorB ),
-                            -static_cast<float>( padCentroidB.y )
+                            -static_cast<float>( cB_inlier.y )
                                     * static_cast<float>( localFactorB ),
                             0.0f );
     const glm::vec3 localBshared = localB * static_cast<float>( scaleFactorB );

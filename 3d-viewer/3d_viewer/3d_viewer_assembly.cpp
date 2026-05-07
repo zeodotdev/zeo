@@ -1784,65 +1784,67 @@ bool ASSEMBLY_3D_MANAGER::PlaceChildOnParent( const BOARD_3D_INSTANCE& aParent,
     VECTOR2I cA_inlier = padCentroidA;
     VECTOR2I cB_inlier = padCentroidB;
 
+    // Identify "anchor" pad pairs: those whose electrical group key
+    // appears exactly once on this connector, i.e. unique signal nets
+    // with unambiguous 1↔1 schematic correspondence. Power/GND nets
+    // (aggregated by name) typically have N pads on each side — their
+    // sort-based pre-pairing is a guess, and feeding it into Kabsch
+    // alongside signal pads biases θ toward whatever local minimum
+    // those guessed pairings sit at. Computing initial θ from anchors
+    // only sidesteps that bias; the multi-pad groups then rematch via
+    // ICP under the anchor-derived θ.
+    std::map<wxString, int> groupCounts;
+
+    for( const PadPairEntry& pe : padPairs )
+    {
+        if( !pe.groupKey.IsEmpty() )
+            groupCounts[pe.groupKey]++;
+    }
+
+    std::vector<size_t> anchorIdx;
+
+    for( size_t i = 0; i < padPairs.size(); i++ )
+    {
+        if( !padPairs[i].groupKey.IsEmpty()
+            && groupCounts[padPairs[i].groupKey] == 1 )
+        {
+            anchorIdx.push_back( i );
+        }
+    }
+
+    // Tunables. Pin spacing is typically 1.27–2.54 mm; 0.5 mm is a
+    // reasonable absolute floor for "actually misaligned" — below
+    // it we're in the noise of stackup/router rounding. Ratio 3×
+    // catches pads that are clearly worse than the population while
+    // staying tolerant of natural spread on connectors with a
+    // wide pin layout. Cap drops at 1/3 of the pairs so we can't
+    // drop the entire connector to chase noise.
+    constexpr double  k_outlierAbsMinMm = 0.5;
+    constexpr double  k_outlierRatio    = 3.0;
+
     if( inliers.size() >= 2 )
     {
-        // Tunables. Pin spacing is typically 1.27–2.54 mm; 0.5 mm is a
-        // reasonable absolute floor for "actually misaligned" — below
-        // it we're in the noise of stackup/router rounding. Ratio 3×
-        // catches pads that are clearly worse than the population while
-        // staying tolerant of natural spread on connectors with a
-        // wide pin layout. Cap iterations at 1/3 of the pairs so we
-        // can't drop the entire connector to chase noise.
-        constexpr double  k_outlierAbsMinMm = 0.5;
-        constexpr double  k_outlierRatio    = 3.0;
-        const size_t      k_maxDrops        = std::max<size_t>( 1, inliers.size() / 3 );
-
         inlierCentroids( inliers, cA_inlier, cB_inlier );
-        thetaZDeg = fitKabsch( inliers, cA_inlier, cB_inlier );
 
-        for( size_t drop = 0; drop < k_maxDrops && inliers.size() > 2; drop++ )
+        if( anchorIdx.size() >= 2 )
         {
-            // Score the current inliers under the current θ + centroid.
-            std::vector<double> resi( inliers.size() );
+            // Bootstrap θ from anchors. Their centroid is the
+            // appropriate Kabsch pivot for *this* sub-fit — multi-pad
+            // groups will get rematched in the ICP pass below before
+            // Kabsch sees them again.
+            VECTOR2I cA_anchor = padCentroidA;
+            VECTOR2I cB_anchor = padCentroidB;
+            inlierCentroids( anchorIdx, cA_anchor, cB_anchor );
+            thetaZDeg = fitKabsch( anchorIdx, cA_anchor, cB_anchor );
 
-            for( size_t k = 0; k < inliers.size(); k++ )
-                resi[k] = perPairResidual( padPairs[inliers[k]], thetaZDeg,
-                                            cA_inlier, cB_inlier );
-
-            std::vector<double> sorted = resi;
-            std::sort( sorted.begin(), sorted.end() );
-            const double median = sorted[sorted.size() / 2];
-
-            size_t worstK = 0;
-            double worstR = resi[0];
-
-            for( size_t k = 1; k < resi.size(); k++ )
-            {
-                if( resi[k] > worstR )
-                {
-                    worstR = resi[k];
-                    worstK = k;
-                }
-            }
-
-            const bool isOutlier =
-                    ( worstR > k_outlierAbsMinMm )
-                    && ( worstR > k_outlierRatio * std::max( median, 1e-3 ) );
-
-            if( !isOutlier )
-                break;
-
-            wxLogMessage( wxT( "[MATE]   robust: dropping pin pair %s↔%s "
-                               "residual=%.3fmm (median=%.3fmm) θ_before=%.2f°" ),
-                          padPairs[inliers[worstK]].pinA,
-                          padPairs[inliers[worstK]].pinB,
-                          worstR, median, thetaZDeg );
-
-            outliers.push_back( inliers[worstK] );
-            inliers.erase( inliers.begin() + worstK );
-
-            // Recompute centroid + θ for the shrunken inlier set.
-            inlierCentroids( inliers, cA_inlier, cB_inlier );
+            wxLogMessage( wxT( "[MATE]   anchor-θ: %zu signal pads → "
+                               "θ=%.2f° (multi-pad groups deferred to ICP)" ),
+                          anchorIdx.size(), thetaZDeg );
+        }
+        else
+        {
+            // No anchors (all pads are in multi-pad groups, or only one
+            // anchor) — fall back to all-pad Kabsch.
             thetaZDeg = fitKabsch( inliers, cA_inlier, cB_inlier );
         }
     }
@@ -1984,6 +1986,63 @@ bool ASSEMBLY_3D_MANAGER::PlaceChildOnParent( const BOARD_3D_INSTANCE& aParent,
         // Re-fit Kabsch with the updated pairings.
         inlierCentroids( inliers, cA_inlier, cB_inlier );
         thetaZDeg = fitKabsch( inliers, cA_inlier, cB_inlier );
+    }
+
+    // ----- RANSAC outlier rejection (post-ICP) -----
+    //
+    // Now that ICP has rematched multi-pad groups under the anchor θ,
+    // the inlier set's correspondences are as consistent as the data
+    // allows. Drop the worst-residual pad pairs that still don't fit:
+    // these are *genuine* schematic errors (wrong port-pin mapping in
+    // the netlist), not just sort-pairing artifacts. Outliers go to
+    // m_lastMateResiduals so the validation panel surfaces them.
+    if( inliers.size() >= 3 )
+    {
+        const size_t k_maxDrops = std::max<size_t>( 1, inliers.size() / 3 );
+
+        for( size_t drop = 0; drop < k_maxDrops && inliers.size() > 2; drop++ )
+        {
+            std::vector<double> resi( inliers.size() );
+
+            for( size_t k = 0; k < inliers.size(); k++ )
+                resi[k] = perPairResidual( padPairs[inliers[k]], thetaZDeg,
+                                            cA_inlier, cB_inlier );
+
+            std::vector<double> sorted = resi;
+            std::sort( sorted.begin(), sorted.end() );
+            const double median = sorted[sorted.size() / 2];
+
+            size_t worstK = 0;
+            double worstR = resi[0];
+
+            for( size_t k = 1; k < resi.size(); k++ )
+            {
+                if( resi[k] > worstR )
+                {
+                    worstR = resi[k];
+                    worstK = k;
+                }
+            }
+
+            const bool isOutlier =
+                    ( worstR > k_outlierAbsMinMm )
+                    && ( worstR > k_outlierRatio * std::max( median, 1e-3 ) );
+
+            if( !isOutlier )
+                break;
+
+            wxLogMessage( wxT( "[MATE]   robust: dropping pin pair %s↔%s "
+                               "residual=%.3fmm (median=%.3fmm) θ_before=%.2f°" ),
+                          padPairs[inliers[worstK]].pinA,
+                          padPairs[inliers[worstK]].pinB,
+                          worstR, median, thetaZDeg );
+
+            outliers.push_back( inliers[worstK] );
+            inliers.erase( inliers.begin() + worstK );
+
+            inlierCentroids( inliers, cA_inlier, cB_inlier );
+            thetaZDeg = fitKabsch( inliers, cA_inlier, cB_inlier );
+        }
     }
 
     // ----- Crossings-minimization refinement -----

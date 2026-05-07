@@ -246,8 +246,12 @@ def cmd_tool(args):
 
         def compose(self) -> ComposeResult:
             tc = self.tool_call
+            # Escape tool_name defensively — names are slugs in normal cases
+            # but a stray bracket (e.g. registry display names) would crash
+            # the TUI's compositor with MarkupError.
+            safe_name = str(tc.tool_name or '').replace('[', '\\[')
             yield Static(
-                f"{tc.time_str()} {tc.status_str()}\n [dim]{tc.tool_name}[/dim]",
+                f"{tc.time_str()} {tc.status_str()}\n [dim]{safe_name}[/dim]",
                 markup=True
             )
 
@@ -284,7 +288,10 @@ def cmd_tool(args):
             else:
                 escaped_result = '[dim](no output yet)[/dim]'
 
-            content = f"""[bold]{tc.tool_name}[/bold] - {status_line}
+            # Defensive escape on tool_name — same reason as ToolListItem.
+            safe_name = str(tc.tool_name or '').replace('[', '\\[')
+
+            content = f"""[bold]{safe_name}[/bold] - {status_line}
 
 {escaped_result}"""
 
@@ -909,14 +916,24 @@ def cmd_monitor(args):
             else:
                 status_line = f"[red]Failed[/red] ({tc.duration_ms}ms)"
 
-            # Escape brackets in JSON to prevent Rich markup interpretation
-            # Use backslash escape: [ -> \[
-            escaped_input = input_formatted.replace('[', '\\[') if input_formatted else '(no input)'
-            escaped_result = result_formatted.replace('[', '\\[') if result_formatted else '(no output yet)'
+            # Escape brackets in any user-derived string to prevent Rich
+            # markup interpretation. Tool descriptions are auto-generated
+            # from tool input (e.g. "Adding label '+3V3'") and frequently
+            # contain literal brackets that Rich would otherwise parse as
+            # tag markers — yielding MarkupError("closing tag does not
+            # match any open tag") at compositor reflow time and crashing
+            # the whole TUI. Apply the same `[ -> \[` Rich escape we use
+            # on input/result JSON to every field interpolated into the
+            # f-string template.
+            def _esc(value):
+                return str(value).replace('[', '\\[') if value else ''
 
-            content = f"""[bold]Tool:[/bold] {tc.tool_name}
-[bold]ID:[/bold] {tc.tool_id}
-[bold]Description:[/bold] {tc.description}
+            escaped_input = _esc(input_formatted) if input_formatted else '(no input)'
+            escaped_result = _esc(result_formatted) if result_formatted else '(no output yet)'
+
+            content = f"""[bold]Tool:[/bold] {_esc(tc.tool_name)}
+[bold]ID:[/bold] {_esc(tc.tool_id)}
+[bold]Description:[/bold] {_esc(tc.description)}
 
 [bold]Input:[/bold]
 [dim]{escaped_input}[/dim]

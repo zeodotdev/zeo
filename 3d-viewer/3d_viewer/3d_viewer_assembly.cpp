@@ -1016,49 +1016,222 @@ std::vector<MATE_EDGE> ASSEMBLY_3D_MANAGER::BuildMateGraph() const
         }
     }
 
-    // Override default sort-based padPins with ICP-rematched cache
-    // when the previous MateConnectors run produced one. This keeps
-    // the gizmo + mates panel consistent with the actual placement
-    // (sort-based pairing can X-cross when Kabsch's chosen θ rotates
-    // the child connector 180° in world; ICP fixed it during
-    // PlaceChildOnParent and stashed the result here).
+    // ----- World-space ICP rematch within electrical groups -----
+    //
+    // Sort-based padPins above pair pads by stored (X, Y), which is
+    // the correct first guess but disagrees with the post-mate world
+    // alignment when same-named nets (e.g. several "GND") have N pads
+    // per side and the mating pose flips the connector's geometry.
+    // For each pair, project all pad-pins of both sides to world XY
+    // under the CURRENT instance poses, then for each electrical group
+    // do greedy nearest-neighbour matching A↔B. This produces the same
+    // correspondence MateConnectors would land at (Kabsch settles to
+    // the world-NN pairing in stable cases) but works on first viewer
+    // open before MateConnectors has been invoked — so the gizmo's pad
+    // lines are correct from the start.
+    //
+    // The cache from a recent MateConnectors run takes precedence over
+    // this fresh rematch (PlaceChildOnParent's Kabsch+RANSAC has more
+    // robust outlier handling than greedy NN), so a cached result wins
+    // and the world-space rematch only fills in for pairs without a
+    // cache entry.
     for( auto& [pkey, mp] : pairMap )
     {
         auto cached = m_lastIcpPadPins.find( pkey );
 
-        if( cached == m_lastIcpPadPins.end() )
-            continue;
-
-        const auto& icpPairs = cached->second;
-
-        // Only override when the cached set covers the same pin set —
-        // schematic edits that change endpoint counts must fall back
-        // to the fresh sort. We treat any mismatch as cache stale.
-        if( icpPairs.size() != mp.padPins.size() )
-            continue;
-
-        // Build a remap from default-pinB to its group identifier so
-        // we can keep padPinGroups parallel after swaps. Two entries
-        // sharing a pinB on the same edge collapse to the same group
-        // (they're electrically equivalent), so the remap is well-
-        // defined for any rearrangement ICP produces.
-        std::map<wxString, wxString> groupByPinB;
-
-        for( size_t i = 0; i < mp.padPins.size(); i++ )
-            groupByPinB[mp.padPins[i].second] = mp.padPinGroups[i];
-
-        std::vector<wxString> newGroups;
-        newGroups.reserve( icpPairs.size() );
-
-        for( const auto& [pa, pb] : icpPairs )
+        if( cached != m_lastIcpPadPins.end()
+            && cached->second.size() == mp.padPins.size() )
         {
-            auto gIt = groupByPinB.find( pb );
-            newGroups.push_back( gIt != groupByPinB.end() ? gIt->second
-                                                          : wxString() );
+            // Use the cached PlaceChildOnParent result. Same group-
+            // remap logic as before so padPinGroups stays parallel.
+            std::map<wxString, wxString> groupByPinB;
+
+            for( size_t i = 0; i < mp.padPins.size(); i++ )
+                groupByPinB[mp.padPins[i].second] = mp.padPinGroups[i];
+
+            std::vector<wxString> newGroups;
+            newGroups.reserve( cached->second.size() );
+
+            for( const auto& [pa, pb] : cached->second )
+            {
+                auto gIt = groupByPinB.find( pb );
+                newGroups.push_back( gIt != groupByPinB.end() ? gIt->second
+                                                              : wxString() );
+            }
+
+            mp.padPins      = cached->second;
+            mp.padPinGroups = std::move( newGroups );
+            continue;
         }
 
-        mp.padPins      = icpPairs;
-        mp.padPinGroups = std::move( newGroups );
+        // No cache — do world-space rematch from current poses.
+        if( mp.padPins.size() < 2 )
+            continue;
+
+        // Lookup parent + child instance + adapter via UUID. Anonymous
+        // / un-loaded instances are skipped — their adapters might not
+        // be initialized yet, in which case we leave the sort defaults
+        // in place.
+        auto findInstAndAdapter = [&]( const KIID& aUuid,
+                                       const BOARD_3D_INSTANCE*& aOutInst,
+                                       const BOARD_ADAPTER*& aOutAdapter )
+        {
+            aOutInst = nullptr;
+            aOutAdapter = nullptr;
+
+            for( size_t i = 0; i < m_boardInstances.size(); i++ )
+            {
+                if( m_boardInstances[i].uuid == aUuid )
+                {
+                    aOutInst = &m_boardInstances[i];
+
+                    if( i < m_instanceAdapters.size() )
+                        aOutAdapter = m_instanceAdapters[i].get();
+
+                    return;
+                }
+            }
+        };
+
+        const BOARD_3D_INSTANCE* instA = nullptr;
+        const BOARD_3D_INSTANCE* instB = nullptr;
+        const BOARD_ADAPTER*     adapterA = nullptr;
+        const BOARD_ADAPTER*     adapterB = nullptr;
+
+        findInstAndAdapter( mp.instanceA, instA, adapterA );
+        findInstAndAdapter( mp.instanceB, instB, adapterB );
+
+        if( !instA || !instB || !adapterA || !adapterB )
+            continue;
+
+        FOOTPRINT* fpA = findFootprintByRef( instA->board.get(),
+                                              mp.footprintRefA );
+        FOOTPRINT* fpB = findFootprintByRef( instB->board.get(),
+                                              mp.footprintRefB );
+
+        if( !fpA || !fpB )
+            continue;
+
+        // Project a stored BIU point into shared world XY using the
+        // same pose math projectFootprintCentroidToWorld applies.
+        auto projectXY = [&]( const BOARD_3D_INSTANCE& aInst,
+                              const BOARD_ADAPTER&     aAdapter,
+                              const VECTOR2I&          aStoredBIU ) -> glm::vec2
+        {
+            const double localFactor = aAdapter.BiuTo3dUnits();
+            const double scaleFactor = ( localFactor != 0.0 )
+                                                ? m_sharedBiuTo3Dunits / localFactor
+                                                : 1.0;
+            const float  sharedF     = static_cast<float>( m_sharedBiuTo3Dunits );
+            const float  biuPerMm    = 1.0e6f;
+
+            const glm::vec3 local3D( static_cast<float>( aStoredBIU.x ) * localFactor,
+                                     -static_cast<float>( aStoredBIU.y ) * localFactor,
+                                     0.0f );
+            const glm::vec3 localShared = local3D * static_cast<float>( scaleFactor );
+
+            const SFVEC3F   lc = aAdapter.GetBoardCenter();
+            const glm::vec3 localCenterShared( lc.x * static_cast<float>( scaleFactor ),
+                                               lc.y * static_cast<float>( scaleFactor ),
+                                               lc.z * static_cast<float>( scaleFactor ) );
+
+            glm::mat4 R( 1.0f );
+            R = glm::rotate( R, glm::radians( aInst.rotation.z ),
+                             glm::vec3( 0, 0, 1 ) );
+            R = glm::rotate( R, glm::radians( aInst.rotation.y ),
+                             glm::vec3( 0, 1, 0 ) );
+            R = glm::rotate( R, glm::radians( aInst.rotation.x ),
+                             glm::vec3( 1, 0, 0 ) );
+
+            const glm::vec3 shifted  = localShared - localCenterShared;
+            const glm::vec4 rotated  = R * glm::vec4( shifted, 1.0f );
+            const glm::vec3 replaced = glm::vec3( rotated ) + localCenterShared;
+
+            const glm::vec3 instShared(  aInst.position.x * biuPerMm * sharedF,
+                                        -aInst.position.y * biuPerMm * sharedF,
+                                         aInst.position.z * biuPerMm * sharedF );
+
+            return glm::vec2( replaced.x + instShared.x,
+                              replaced.y + instShared.y );
+        };
+
+        // Group padPin indexes by electrical group key. Single-entry
+        // groups need no rematching (unique signal correspondence).
+        std::map<wxString, std::vector<size_t>> idxByGroup;
+
+        for( size_t i = 0; i < mp.padPins.size(); i++ )
+        {
+            const wxString& g = ( i < mp.padPinGroups.size() )
+                                        ? mp.padPinGroups[i]
+                                        : wxString();
+
+            if( !g.IsEmpty() )
+                idxByGroup[g].push_back( i );
+        }
+
+        for( auto& [grp, idxs] : idxByGroup )
+        {
+            if( idxs.size() < 2 )
+                continue;
+
+            // Snapshot the original A pin / B pin / B world XY so
+            // greedy NN can swap freely.
+            const size_t           N = idxs.size();
+            std::vector<wxString>  originalPinB( N );
+            std::vector<glm::vec2> aWorld( N );
+            std::vector<glm::vec2> bWorld( N );
+
+            for( size_t k = 0; k < N; k++ )
+            {
+                const auto& pp = mp.padPins[idxs[k]];
+                originalPinB[k] = pp.second;
+
+                PAD* padA = fpA->FindPadByNumber( pp.first );
+                PAD* padB = fpB->FindPadByNumber( pp.second );
+
+                if( !padA || !padB )
+                {
+                    aWorld[k] = glm::vec2( 0.0f );
+                    bWorld[k] = glm::vec2( 1e9f, 1e9f );    // sentinel
+                    continue;
+                }
+
+                aWorld[k] = projectXY( *instA, *adapterA, padA->GetPosition() );
+                bWorld[k] = projectXY( *instB, *adapterB, padB->GetPosition() );
+            }
+
+            // Greedy NN: each A pad picks its closest unused B pad.
+            std::vector<bool> used( N, false );
+
+            for( size_t k = 0; k < N; k++ )
+            {
+                size_t bestJ = SIZE_MAX;
+                float  bestD = std::numeric_limits<float>::max();
+
+                for( size_t j = 0; j < N; j++ )
+                {
+                    if( used[j] )
+                        continue;
+
+                    const float d = glm::length( aWorld[k] - bWorld[j] );
+
+                    if( d < bestD )
+                    {
+                        bestD = d;
+                        bestJ = j;
+                    }
+                }
+
+                if( bestJ == SIZE_MAX )
+                    continue;
+
+                used[bestJ] = true;
+
+                // Write the rematched pinB back into padPins. pinA
+                // stays put — we only swap the B side.
+                mp.padPins[idxs[k]].second = originalPinB[bestJ];
+            }
+        }
     }
 
     // M6.D-phase-2: layer user-declared CUSTOM_MATE overrides on top

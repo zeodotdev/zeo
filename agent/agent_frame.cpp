@@ -4125,59 +4125,79 @@ void AGENT_FRAME::QueryPendingChanges()
         return;
     }
 
-    // Query both regular schematic AND multi-board schematic editors for
-    // pending changes. They share the SCH_EDIT_FRAME hierarchy and respond
-    // to the same MAIL_AGENT_HAS_CHANGES mail; without the FRAME_MBSCH
-    // arm, MBS-canvas edits show their diff overlay but never surface
-    // the agent's Accept/Reject UI.
+    // Query every open SCH/MBSCH/PCB player for pending changes. In
+    // multi-board projects each sub-project hosts its own peer editor
+    // window; KIWAY::ExpressMail broadcasts to all peers but only the
+    // LAST recipient's payload is reflected back to the caller, which
+    // means a sub-board's pending-changes response gets clobbered by
+    // any quieter peer that runs after it. Iterate GetAllPlayerFrames
+    // ourselves and dispatch a fresh KIWAY_MAIL_EVENT to each player
+    // so every peer's response reaches the aggregator.
     auto queryFrameForChanges = [this]( FRAME_T aFrameType )
     {
-        KIWAY_PLAYER* player = Kiway().Player( aFrameType, false );
+        std::vector<KIWAY_PLAYER*> players = Kiway().GetAllPlayerFrames( aFrameType );
 
-        if( !player )
-            return;
-
-        std::string response;
-        Kiway().ExpressMail( aFrameType, MAIL_AGENT_HAS_CHANGES, response );
-
-        try
+        for( KIWAY_PLAYER* player : players )
         {
-            nlohmann::json j = nlohmann::json::parse( response );
-            bool hasChanges = j.value( "has_changes", false );
+            if( !player )
+                continue;
 
-            if( hasChanges && j.contains( "affected_sheets" ) && j["affected_sheets"].is_array() )
+            std::string      response;
+            KIWAY_MAIL_EVENT mail( aFrameType, MAIL_AGENT_HAS_CHANGES, response );
+            player->GetEventHandler()->ProcessEvent( mail );
+            response = mail.GetPayload();
+
+            try
             {
-                for( const auto& sheet : j["affected_sheets"] )
+                nlohmann::json j = nlohmann::json::parse( response );
+                bool hasChanges = j.value( "has_changes", false );
+
+                if( hasChanges && j.contains( "affected_sheets" )
+                    && j["affected_sheets"].is_array() )
                 {
-                    if( sheet.is_string() )
+                    for( const auto& sheet : j["affected_sheets"] )
                     {
-                        wxString sheetPath = wxString::FromUTF8( sheet.get<std::string>() );
-                        if( !sheetPath.IsEmpty() )
-                            m_pendingSchSheets.insert( sheetPath );
+                        if( sheet.is_string() )
+                        {
+                            wxString sheetPath = wxString::FromUTF8( sheet.get<std::string>() );
+                            if( !sheetPath.IsEmpty() )
+                                m_pendingSchSheets.insert( sheetPath );
+                        }
                     }
                 }
             }
-        }
-        catch( const std::exception& e )
-        {
-            wxLogInfo( "AGENT_FRAME: Failed to parse schematic response (frame %d): %s",
-                       static_cast<int>( aFrameType ), e.what() );
+            catch( const std::exception& e )
+            {
+                wxLogInfo( "AGENT_FRAME: Failed to parse schematic response (frame %d): %s",
+                           static_cast<int>( aFrameType ), e.what() );
+            }
         }
     };
 
     queryFrameForChanges( FRAME_SCH );
     queryFrameForChanges( FRAME_MBSCH );
 
-    // Query PCB editor for pending changes
-    KIWAY_PLAYER* pcbPlayer = Kiway().Player( FRAME_PCB_EDITOR, false );
-    if( pcbPlayer )
-    {
-        std::string response;
-        Kiway().ExpressMail( FRAME_PCB_EDITOR, MAIL_AGENT_HAS_CHANGES, response );
-        m_hasPcbChanges = ( response == "true" );
+    // Same per-peer iteration for PCB editors; the response is "true"/"false"
+    // (not JSON), so any peer reporting "true" sets the global has-PCB flag.
+    std::vector<KIWAY_PLAYER*> pcbPlayers = Kiway().GetAllPlayerFrames( FRAME_PCB_EDITOR );
 
-        if( m_hasPcbChanges )
-            m_pcbFilename = "PCB";
+    for( KIWAY_PLAYER* pcbPlayer : pcbPlayers )
+    {
+        if( !pcbPlayer )
+            continue;
+
+        std::string      response;
+        KIWAY_MAIL_EVENT mail( FRAME_PCB_EDITOR, MAIL_AGENT_HAS_CHANGES, response );
+        pcbPlayer->GetEventHandler()->ProcessEvent( mail );
+        response = mail.GetPayload();
+
+        if( response == "true" )
+        {
+            m_hasPcbChanges = true;
+
+            if( m_pcbFilename.IsEmpty() )
+                m_pcbFilename = "PCB";
+        }
     }
 
     // Build JSON data for the webview pending changes panel

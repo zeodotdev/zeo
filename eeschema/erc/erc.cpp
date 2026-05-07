@@ -1396,9 +1396,10 @@ int ERC_TESTER::TestCrossBoardConnectivity()
                         return nullptr;
 
                     wxFileName proFile = projectFile.ResolveSubProjectPath( *info );
+                    wxFileName schFile = MultiBoardMainSchematic( proFile );
                     wxFileName pcbFile = MultiBoardMainPcb( proFile );
 
-                    auto pads = MultiBoardScanConnectorPads( pcbFile );
+                    auto pads = MultiBoardScanConnectorPads( schFile, pcbFile );
                     auto result = padsBySubProject.emplace( aSubProjectUuid, std::move( pads ) );
 
                     return &result.first->second;

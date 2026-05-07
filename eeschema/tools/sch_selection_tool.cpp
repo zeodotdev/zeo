@@ -3955,6 +3955,82 @@ void SCH_SELECTION_TOOL::syncSelectionWithAgent()
                 jItem["uuid"] = item->m_Uuid.AsString();
                 selectionArray.push_back( jItem );
             }
+            else if( item->Type() == SCH_MODULE_BLOCK_T )
+            {
+                // MBS module block: surface its MBS reference (e.g. "B1")
+                // as the chip label `ref`, plus the metadata the LLM needs
+                // to reason about a cross-board connector — display name,
+                // source connector ref, sub-project path, and pin set.
+                SCH_MODULE_BLOCK* block = static_cast<SCH_MODULE_BLOCK*>( item );
+                nlohmann::json    jItem;
+                jItem["type"] = "module_block";
+                jItem["uuid"] = item->m_Uuid.AsString();
+                jItem["ref"] = block->GetMbsReference().ToStdString();
+                jItem["display_name"] = block->GetDisplayName().ToStdString();
+                jItem["component_ref"] = block->GetComponentRef().ToStdString();
+                jItem["sub_project_path"] = block->GetSubProjectPath().ToStdString();
+                jItem["sub_project_uuid"] = block->GetSubProjectUuid().AsString();
+
+                nlohmann::json pinsArray = nlohmann::json::array();
+
+                for( SCH_MODULE_PIN* pin : block->GetPins() )
+                {
+                    if( !pin )
+                        continue;
+
+                    nlohmann::json pinObj;
+                    pinObj["pin_number"] = pin->GetPinNumber().ToStdString();
+                    pinObj["text"] = pin->GetText().ToStdString();
+                    pinObj["component_ref"] = pin->GetComponentRef().ToStdString();
+                    pinsArray.push_back( pinObj );
+                }
+
+                jItem["pins"] = pinsArray;
+                selectionArray.push_back( jItem );
+
+                if( summary.empty() )
+                {
+                    summary = block->GetMbsReference().IsEmpty()
+                                      ? std::string( "module block" )
+                                      : block->GetMbsReference().ToStdString();
+                }
+            }
+            else if( item->Type() == SCH_MODULE_PIN_T )
+            {
+                // MBS module pin: surface pin number + net text plus
+                // parent-block ref so the chip label reads e.g. "B1/3"
+                // and the LLM can correlate this pin with its block.
+                SCH_MODULE_PIN*   pin   = static_cast<SCH_MODULE_PIN*>( item );
+                SCH_MODULE_BLOCK* block = pin->GetParent();
+                nlohmann::json    jItem;
+                jItem["type"] = "module_pin";
+                jItem["uuid"] = item->m_Uuid.AsString();
+                jItem["pin_number"] = pin->GetPinNumber().ToStdString();
+                jItem["text"] = pin->GetText().ToStdString();
+                jItem["component_ref"] = pin->GetComponentRef().ToStdString();
+
+                if( block )
+                {
+                    jItem["parent_ref"] = block->GetMbsReference().ToStdString();
+                    jItem["parent_uuid"] = block->m_Uuid.AsString();
+                    jItem["sub_project_path"] = block->GetSubProjectPath().ToStdString();
+                }
+
+                // Build a chip label like "B1/3" that the agent UI's
+                // selection-pill code can pick up via the `ref` field.
+                wxString chipLabel;
+
+                if( block && !block->GetMbsReference().IsEmpty() )
+                    chipLabel = block->GetMbsReference() + wxT( "/" ) + pin->GetPinNumber();
+                else
+                    chipLabel = wxT( "pin " ) + pin->GetPinNumber();
+
+                jItem["ref"] = chipLabel.ToStdString();
+                selectionArray.push_back( jItem );
+
+                if( summary.empty() )
+                    summary = chipLabel.ToStdString();
+            }
             else
             {
                 // Generic fallback

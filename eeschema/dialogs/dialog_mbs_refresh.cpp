@@ -24,6 +24,8 @@
 #include <sch_draw_panel.h>
 #include <project.h>
 #include <reporter.h>
+#include <tool/actions.h>
+#include <tool/tool_manager.h>
 #include <view/view.h>
 #include <widgets/wx_html_report_panel.h>
 
@@ -242,6 +244,16 @@ void DIALOG_MBS_REFRESH::onUpdate( wxCommandEvent& aEvent )
         m_messagePanel->Flush( false );
         return;
     }
+
+    // Clear the canvas selection before mutating the screen. The previous
+    // RefreshMbsFromSubProjects controller auto-selects newly-added blocks
+    // and posts a move action — those blocks remain in the selection
+    // VIEW_GROUP after the move ends. If a subsequent refresh deletes any
+    // of those blocks (REMOVE_BLOCK / empty-block sweep / placeholder pin
+    // teardown that empties the block) the SELECTION VIEW_GROUP is left
+    // with dangling pointers and crashes on the next ViewDraw walk.
+    if( TOOL_MANAGER* toolMgr = m_frame->GetToolManager() )
+        toolMgr->RunAction( ACTIONS::selectionClear );
 
     m_result = ApplyMbsRefreshChanges( *screen, m_changes, view,
                                         &m_messagePanel->Reporter() );

@@ -20,6 +20,7 @@
 
 #include "multi_board_mbs_refresh.h"
 
+#include "multi_board_sch_pad_scan.h"
 #include "sch_module_block.h"
 #include "sch_module_pin.h"
 #include "sch_screen.h"
@@ -338,8 +339,17 @@ std::vector<MBS_CHANGE> ComputeMbsRefreshDiff( SCH_SCREEN& aMbsScreen,
                    info.name, info.uuid.AsString(),
                    info.relativePath, proFile.GetFullPath(),
                    connectors.size() );
+        // Schematic-loader-based scan resolves real net names via the
+        // CONNECTION_GRAPH (e.g. "+3V3" / "JTAG_TDI") rather than the
+        // placeholder `J1.1` from a plain regex scan. Fall back to the
+        // regex-based MultiBoardScanConnectorPads if the loader couldn't
+        // produce results (corrupt schematic, missing file, etc.) so we
+        // still surface the connector with at least its pin set.
         std::map<wxString, std::vector<MULTI_BOARD_PAD_INFO>> padsByRef =
-                MultiBoardScanConnectorPads( pcbFile );
+                MultiBoardLoadConnectorPadsFromSch( schFile );
+
+        if( padsByRef.empty() )
+            padsByRef = MultiBoardScanConnectorPads( schFile, pcbFile );
 
         wxString displayName = subProjectDisplay( info );
 

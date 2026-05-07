@@ -306,6 +306,217 @@ scanConnectorPads( const wxFileName& aPcbFile )
 
 
 /**
+ * Scan a single .kicad_sch for connector symbol instances and harvest each
+ * one's pin numbers. Pin existence is a schematic concept (the connector
+ * symbol defines its pins); this function is the authoritative source for
+ * the per-connector pin SET. Net names + electrical types are not present
+ * on schematic pin instances — those come from the PCB scan and get layered
+ * on top by mergeConnectorPads().
+ *
+ * Schematic format (instance-side, *not* lib_symbols definitions):
+ *   (symbol
+ *       (lib_id "Connector:Conn_01x05_Pin")
+ *       (property "Reference" "J1" ...)
+ *       ...
+ *       (pin "1" (uuid ...))
+ *       (pin "2" (uuid ...))
+ *       ...)
+ *
+ * lib_symbols definitions look like `(pin <electrical_type> <shape> ...)`
+ * with the number further down inside `(number "<n>" ...)`. They use a
+ * placeholder reference like "J" without a digit, which isConnectorRef
+ * rejects — so they're filtered automatically.
+ *
+ * Does NOT recurse — caller walks hierarchical sub-sheets.
+ */
+void scanOneSchForConnectorPins( const wxFileName& aSchFile,
+                                  std::map<wxString, std::vector<MULTI_BOARD_PAD_INFO>>& aOut,
+                                  std::vector<wxFileName>& aSubSheetsOut )
+{
+    if( !aSchFile.FileExists() )
+        return;
+
+    wxFFile f( aSchFile.GetFullPath(), wxT( "r" ) );
+
+    if( !f.IsOpened() )
+        return;
+
+    wxString text;
+
+    if( !f.ReadAll( &text ) )
+        return;
+
+    f.Close();
+
+    static wxRegEx refRe( wxT( "\\(property[[:space:]]+\"Reference\"[[:space:]]+\"([^\"]*)\"" ),
+                          wxRE_DEFAULT );
+    static wxRegEx pinRe( wxT( "\\(pin[[:space:]]+\"([^\"]*)\"" ), wxRE_DEFAULT );
+
+    if( !refRe.IsValid() || !pinRe.IsValid() )
+        return;
+
+    size_t pos = 0;
+    const wxString symOpen = wxT( "(symbol" );
+
+    while( pos < text.length() )
+    {
+        size_t symStart = text.find( symOpen, pos );
+
+        if( symStart == wxString::npos )
+            break;
+
+        size_t symEnd = findMatchingClose( text, symStart );
+
+        if( symEnd == wxString::npos )
+            break;
+
+        wxString block = text.Mid( symStart, symEnd - symStart + 1 );
+        pos = symEnd + 1;
+
+        if( !refRe.Matches( block ) )
+            continue;
+
+        wxString ref = refRe.GetMatch( block, 1 );
+
+        if( !isConnectorRef( ref ) )
+            continue;
+
+        // First-set-wins across the recursion: a connector ref already
+        // populated from the main sheet shouldn't get overwritten by a
+        // collision on a sub-sheet (rare, but possible after a copy/paste).
+        if( aOut.count( ref ) )
+            continue;
+
+        std::vector<MULTI_BOARD_PAD_INFO>& pads = aOut[ref];
+        size_t scan = 0;
+
+        while( scan < block.length() )
+        {
+            wxString remaining = block.Mid( scan );
+
+            if( !pinRe.Matches( remaining ) )
+                break;
+
+            size_t matchStart, matchLen;
+            pinRe.GetMatch( &matchStart, &matchLen, 0 );
+
+            size_t pinAbsStart = scan + matchStart;
+            size_t pinAbsEnd   = findMatchingClose( block, pinAbsStart );
+
+            if( pinAbsEnd == wxString::npos )
+                break;
+
+            wxString pinNum = pinRe.GetMatch( remaining, 1 );
+
+            // Mirror scanConnectorPads's per-ref dedup (tied pins).
+            auto existing = std::find_if( pads.begin(), pads.end(),
+                                          [&]( const MULTI_BOARD_PAD_INFO& p )
+                                          { return p.padNumber == pinNum; } );
+
+            if( existing == pads.end() )
+            {
+                MULTI_BOARD_PAD_INFO info;
+                info.padNumber = pinNum;
+                pads.push_back( info );
+            }
+
+            scan = pinAbsEnd + 1;
+        }
+    }
+
+    std::vector<wxFileName> subSheets = findHierarchicalSubSheets( aSchFile, text );
+    aSubSheetsOut.insert( aSubSheetsOut.end(), subSheets.begin(), subSheets.end() );
+}
+
+
+/**
+ * Schematic-primary connector pin scan. Walks the main schematic and any
+ * hierarchical sub-sheets it references, harvesting pin numbers for every
+ * connector symbol instance. Output is keyed by connector reference (e.g.
+ * "J1") with one MULTI_BOARD_PAD_INFO per pin (padNumber populated, netName
+ * empty, electricalType PT_PASSIVE). PCB enrichment happens in
+ * mergeConnectorPads().
+ */
+std::map<wxString, std::vector<MULTI_BOARD_PAD_INFO>>
+scanConnectorPinsFromSch( const wxFileName& aSchFile )
+{
+    std::map<wxString, std::vector<MULTI_BOARD_PAD_INFO>> result;
+    std::vector<wxFileName>                              queue{ aSchFile };
+    std::set<wxString>                                   visited;
+
+    while( !queue.empty() )
+    {
+        wxFileName cur = queue.back();
+        queue.pop_back();
+
+        wxString abs = cur.GetFullPath();
+
+        if( visited.count( abs ) )
+            continue;
+
+        visited.insert( abs );
+
+        std::vector<wxFileName> subs;
+        scanOneSchForConnectorPins( cur, result, subs );
+
+        for( const wxFileName& sub : subs )
+            queue.push_back( sub );
+    }
+
+    return result;
+}
+
+
+/**
+ * Merge schematic-derived pin set with PCB-derived pad info.
+ *
+ * Schematic owns the pin SET (which connectors exist, which pins they have).
+ * PCB owns net assignments + electrical types when it's been synced from
+ * the schematic. For a brand-new sub-board where the user has drawn the
+ * schematic but not yet run "Update PCB from Schematic", the PCB map is
+ * empty and we return the schematic-only set — pins surface in the MBS
+ * with placeholder labels (J1.1, J1.2, ...) and a follow-up refresh after
+ * a PCB sync turns them into real net names via RENAME_PIN.
+ *
+ * For each schematic pin: if the PCB has a pad with the same number on the
+ * same connector, copy over netName + electricalType. Pads on the PCB that
+ * have no matching schematic pin are dropped (they shouldn't exist in a
+ * well-formed design — a footprint should only have pads from its symbol's
+ * pins). Connectors on the PCB that the schematic doesn't list are dropped
+ * too, for the same reason.
+ */
+std::map<wxString, std::vector<MULTI_BOARD_PAD_INFO>>
+mergeConnectorPads( const std::map<wxString, std::vector<MULTI_BOARD_PAD_INFO>>& aSchPads,
+                    const std::map<wxString, std::vector<MULTI_BOARD_PAD_INFO>>& aPcbPads )
+{
+    std::map<wxString, std::vector<MULTI_BOARD_PAD_INFO>> out = aSchPads;
+
+    for( auto& [ref, pins] : out )
+    {
+        auto pcbIt = aPcbPads.find( ref );
+
+        if( pcbIt == aPcbPads.end() )
+            continue;
+
+        for( MULTI_BOARD_PAD_INFO& pin : pins )
+        {
+            for( const MULTI_BOARD_PAD_INFO& pcbPad : pcbIt->second )
+            {
+                if( pcbPad.padNumber == pin.padNumber )
+                {
+                    pin.netName        = pcbPad.netName;
+                    pin.electricalType = pcbPad.electricalType;
+                    break;
+                }
+            }
+        }
+    }
+
+    return out;
+}
+
+
+/**
  * Scan a single .kicad_sch for Reference properties matching the connector
  * heuristic. Does NOT recurse — caller handles sub-sheets.
  */
@@ -422,10 +633,21 @@ std::vector<wxString> MultiBoardScanConnectorReferences( const wxFileName& aSchF
 }
 
 
-std::map<wxString, std::vector<MULTI_BOARD_PAD_INFO>>
-MultiBoardScanConnectorPads( const wxFileName& aPcbFile )
+bool MultiBoardIsConnectorRef( const wxString& aRef )
 {
-    return scanConnectorPads( aPcbFile );
+    return isConnectorRef( aRef );
+}
+
+
+std::map<wxString, std::vector<MULTI_BOARD_PAD_INFO>>
+MultiBoardScanConnectorPads( const wxFileName& aSchFile, const wxFileName& aPcbFile )
+{
+    // Schematic owns the pin set. PCB enriches net names + electrical
+    // types when it's been synced. See mergeConnectorPads() for the
+    // semantics; the design rationale lives in the comment there.
+    auto schPads = scanConnectorPinsFromSch( aSchFile );
+    auto pcbPads = scanConnectorPads( aPcbFile );
+    return mergeConnectorPads( schPads, pcbPads );
 }
 
 
@@ -1089,8 +1311,13 @@ wxFileName EnsureMbsFile( PROJECT_FILE& aContainer, const wxString& aContainerBa
             if( connectors.empty() )
                 continue;
 
+            // Schematic-primary pin set + PCB-side net/electrical-type
+            // enrichment, same as MultiBoardScanConnectorPads (which lives
+            // outside this anonymous namespace, hence the inlined glue).
+            auto schPads = scanConnectorPinsFromSch( schFile );
+            auto pcbPads = scanConnectorPads( pcbFile );
             std::map<wxString, std::vector<MULTI_BOARD_PAD_INFO>> pads =
-                    scanConnectorPads( pcbFile );
+                    mergeConnectorPads( schPads, pcbPads );
 
             double rowCursorX  = startX;
             double rowMaxHeight = 0;

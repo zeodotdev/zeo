@@ -166,7 +166,7 @@ findModulePin( SCH_EDIT_FRAME* aFrame, const KIID& aPinId )
 
         for( SCH_MODULE_PIN* pin : b->GetPins() )
         {
-            if( pin && pin->GetPinUuid() == aPinId )
+            if( pin && pin->m_Uuid == aPinId )
                 return { pin, b };
         }
     }
@@ -426,7 +426,13 @@ API_HANDLER_MBS_SCH::handleGetModuleBlocks(
                 continue;
 
             kiapi::schematic::types::ModuleBlockPin* pinMsg = msg->add_pins();
-            pinMsg->mutable_id()->set_value( pin->GetPinUuid().AsStdString() );
+            // pin->m_Uuid is the unique SCH_ITEM identifier for this module pin,
+            // assigned at construction. pin->GetPinUuid() is metadata pointing
+            // at the source connector pin in the sub-project — it's NOT unique
+            // (and is nil for pins built fresh by RefreshMbsFromSubProjects,
+            // which never calls SetPinUuid). Using m_Uuid here gives the agent
+            // a stable round-trip identifier for UpdateModulePin / DeleteModulePin.
+            pinMsg->mutable_id()->set_value( pin->m_Uuid.AsStdString() );
             pinMsg->set_component_ref( pin->GetComponentRef().ToStdString() );
             pinMsg->set_pin_number( pin->GetPinNumber().ToStdString() );
             pinMsg->set_text( pin->GetText().ToStdString() );

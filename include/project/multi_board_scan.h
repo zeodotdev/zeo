@@ -73,11 +73,37 @@ KICOMMON_API std::vector<wxString>
 MultiBoardScanConnectorReferences( const wxFileName& aSchFile );
 
 /**
- * Scan a sub-project's .kicad_pcb for connector footprints and return
- * { reference → [pad info] }. Order preserves PCB order.
+ * Heuristic: is this reference designator a connector?
+ *
+ * Matches refs starting with J / P / CN / CON (case-insensitive) followed
+ * by a digit sequence (possibly with a trailing letter, to accommodate
+ * multi-unit symbols like `J1A`) OR a single `?` for unannotated symbols.
+ *
+ * Exposed for reuse outside the multi_board_scan unit (the schematic-
+ * loader-based pad scanner in eeschema needs the same heuristic).
+ */
+KICOMMON_API bool MultiBoardIsConnectorRef( const wxString& aRef );
+
+
+/**
+ * Scan a sub-project for its connector pin set, merging schematic-derived
+ * pin existence with PCB-derived net names + electrical types.
+ *
+ * The schematic is the source of truth for which pins each connector has
+ * (the symbol the user placed defines them). The PCB is consulted only to
+ * enrich each pin with its assigned net name + electrical type, which only
+ * exist after "Update PCB from Schematic" has run. For boards where the
+ * PCB hasn't been synced yet, every connector still surfaces its full
+ * pin set with placeholder labels (`J1.1`, `J1.2`, …); a follow-up refresh
+ * after PCB sync converts them to real net names via RENAME_PIN.
+ *
+ * Pads on the PCB whose number doesn't appear on the schematic-side
+ * connector are dropped (anomalous design state). Connectors only on the
+ * PCB but not the schematic are dropped for the same reason.
  */
 KICOMMON_API std::map<wxString, std::vector<MULTI_BOARD_PAD_INFO>>
-MultiBoardScanConnectorPads( const wxFileName& aPcbFile );
+MultiBoardScanConnectorPads( const wxFileName& aSchFile,
+                             const wxFileName& aPcbFile );
 
 
 class PROJECT_FILE;

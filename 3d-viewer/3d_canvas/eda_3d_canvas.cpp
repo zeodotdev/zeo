@@ -1749,6 +1749,16 @@ void EDA_3D_CANVAS::RenderEngineChanged()
         }
     }
 
+    // In MBS mode the multi-instance descriptor list is consumed by every
+    // raytracer Reload (m_pendingInstances is std::move'd into
+    // ReloadMultiInstance, then cleared). The sig gate in DoRePaint
+    // suppresses re-staging when poses haven't changed — but on engine
+    // toggle we DO need a re-stage, otherwise the raytracer's next
+    // Reload sees an empty pending list and falls through to the
+    // single-board path (m_boardAdapter), rendering only one board.
+    if( m_assemblyManager )
+        m_lastRaytraceInstanceSig = 0;
+
     if( m_3d_render )
         m_3d_render->ReloadRequest();
 

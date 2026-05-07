@@ -90,7 +90,6 @@ private:
     void onRotationChanged( wxCommandEvent& aEvent );
     void onResetPositions( wxCommandEvent& aEvent );
     void onMateConnectors( wxCommandEvent& aEvent );
-    void onRunCollisionCheck( wxCommandEvent& aEvent );
     void onExportSTEP( wxCommandEvent& aEvent );
     void onShowAllBoards( wxCommandEvent& aEvent );
     void onHideAllBoards( wxCommandEvent& aEvent );

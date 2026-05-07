@@ -374,8 +374,7 @@ void PANEL_3D_ASSEMBLY::createControls()
     mainSizer->Add( viewBox, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 5 );
 
     // ====================  Validation ====================
-    // Status only — collision check auto-runs on every position change
-    // (previous "Run Collision Check" button retired).
+    // Collision check auto-runs on every position change.
     wxStaticBoxSizer* validationBox =
             new wxStaticBoxSizer( wxVERTICAL, m_scrolled, _( "Validation" ) );
 
@@ -698,18 +697,6 @@ void PANEL_3D_ASSEMBLY::onMateConnectors( wxCommandEvent& aEvent )
     autoRunCollisionCheck();
     refresh3DView();
     RefreshMatesTree();
-}
-
-
-void PANEL_3D_ASSEMBLY::onRunCollisionCheck( wxCommandEvent& aEvent )
-{
-    // Vestigial: the manual "Run Collision Check" button retired in
-    // favour of auto-run on every position change. Kept so existing
-    // bindings (none in current code) wouldn't break if a future caller
-    // wires it up — and so the handler signature stays around for
-    // anyone reading old comments.
-    (void) aEvent;
-    autoRunCollisionCheck();
 }
 
 

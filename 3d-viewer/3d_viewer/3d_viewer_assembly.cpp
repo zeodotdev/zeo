@@ -701,32 +701,11 @@ void ASSEMBLY_3D_MANAGER::MateConnectors()
     // in m_lastMateResiduals (consumed by M6.E DRC panel).
     std::vector<MATE_EDGE> edges = BuildMateGraph();
 
-    wxLogMessage( wxT( "[MATE] BuildMateGraph returned %zu edges, "
+    wxLogMessage( wxT( "[MATE] BuildMateGraph: %zu edges, "
                        "cross_board_nets=%zu, custom_mates=%zu" ),
                   edges.size(),
                   m_project->GetProjectFile().GetCrossBoardNets().size(),
                   m_project->GetProjectFile().GetCustomMates().size() );
-
-    for( size_t i = 0; i < edges.size(); i++ )
-    {
-        wxLogMessage( wxT( "[MATE]   edge[%zu]: instA=%s instB=%s pairs=%zu weight=%d" ),
-                      i,
-                      edges[i].instanceA.AsString(),
-                      edges[i].instanceB.AsString(),
-                      edges[i].pairs.size(),
-                      edges[i].totalWeight );
-
-        for( size_t k = 0; k < edges[i].pairs.size(); k++ )
-        {
-            const MATE_PAIR& p = edges[i].pairs[k];
-            wxLogMessage( wxT( "[MATE]     pair[%zu]: %s↔%s pinCount=%d "
-                               "forced=%d alignOnly=%d nonElec=%d" ),
-                          k, p.footprintRefA, p.footprintRefB, p.pinCount,
-                          p.forcedPrimary ? 1 : 0,
-                          p.alignmentOnly ? 1 : 0,
-                          p.nonElectrical ? 1 : 0 );
-        }
-    }
 
     if( edges.empty() )
     {

@@ -29,8 +29,6 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
-#include <wx/log.h>
-
 
 namespace
 {
@@ -157,21 +155,6 @@ void MATE_GIZMO::Render( const glm::mat4& aCameraView, const glm::mat4& aCameraP
 {
     if( m_entries.empty() && m_overlapBoxes.empty() )
         return;
-
-    static int s_renderLog = 0;
-    if( s_renderLog < 4 )
-    {
-        wxLogMessage( wxT( "[GIZMO-RENDER] entries=%zu camera.view[3]=(%.3f,%.3f,%.3f,%.3f)" ),
-                      m_entries.size(),
-                      aCameraView[3][0], aCameraView[3][1], aCameraView[3][2], aCameraView[3][3] );
-        for( size_t i = 0; i < m_entries.size(); i++ )
-        {
-            const ENTRY& e = m_entries[i];
-            wxLogMessage( wxT( "[GIZMO-RENDER]   entry[%zu] posA=(%.3f,%.3f,%.3f) posB=(%.3f,%.3f,%.3f)" ),
-                          i, e.posA.x, e.posA.y, e.posA.z, e.posB.x, e.posB.y, e.posB.z );
-        }
-        s_renderLog++;
-    }
 
     glPushAttrib( GL_ALL_ATTRIB_BITS );
 

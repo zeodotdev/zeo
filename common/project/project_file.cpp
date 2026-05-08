@@ -124,6 +124,113 @@ PROJECT_FILE::PROJECT_FILE( const wxString& aFullPath ) :
             "multi_board.assembly_3d.collision_threshold_mm",
             &m_collisionThresholdMm, 0.5 ) );
 
+    // Per-project 3D viewer state. Three independent params under
+    // `viewer3d.*` so each can be missing / present independently and
+    // an empty override set serialises as `{}` (no diff vs. defaults).
+    // ClearUnknownKeys = true on the maps so an in-memory replace
+    // doesn't retain stale keys from disk after a deep-merge save.
+    {
+        auto* colorParam = new PARAM_LAMBDA<nlohmann::json>( "viewer3d.color_overrides",
+                [&]() -> nlohmann::json
+                {
+                    nlohmann::json ret = nlohmann::json::object();
+
+                    for( const auto& [layer, c] : m_3DViewerColorOverrides )
+                        ret[ std::to_string( layer ) ] = c.ToCSSString().ToStdString();
+
+                    return ret;
+                },
+                [&]( const nlohmann::json& aJson )
+                {
+                    m_3DViewerColorOverrides.clear();
+
+                    if( !aJson.is_object() )
+                        return;
+
+                    for( const auto& [k, v] : aJson.items() )
+                    {
+                        if( !v.is_string() )
+                            continue;
+
+                        try
+                        {
+                            int layer = std::stoi( k );
+                            KIGFX::COLOR4D c;
+                            c.SetFromWxString(
+                                    wxString::FromUTF8( v.get<std::string>().c_str() ) );
+                            m_3DViewerColorOverrides[layer] = c;
+                        }
+                        catch( ... )
+                        {
+                            // Bad key/value — drop it. Project-file edit
+                            // by hand or a forward-compat write from a
+                            // newer version. No reason to refuse to load.
+                        }
+                    }
+                },
+                nlohmann::json::object() );
+
+        colorParam->SetClearUnknownKeys( true );
+        m_params.emplace_back( colorParam );
+
+        auto* visParam = new PARAM_LAMBDA<nlohmann::json>( "viewer3d.visibility_overrides",
+                [&]() -> nlohmann::json
+                {
+                    nlohmann::json ret = nlohmann::json::object();
+
+                    for( const auto& [layer, vis] : m_3DViewerVisibilityOverrides )
+                        ret[ std::to_string( layer ) ] = vis;
+
+                    return ret;
+                },
+                [&]( const nlohmann::json& aJson )
+                {
+                    m_3DViewerVisibilityOverrides.clear();
+
+                    if( !aJson.is_object() )
+                        return;
+
+                    for( const auto& [k, v] : aJson.items() )
+                    {
+                        if( !v.is_boolean() )
+                            continue;
+
+                        try
+                        {
+                            int layer = std::stoi( k );
+                            m_3DViewerVisibilityOverrides[layer] = v.get<bool>();
+                        }
+                        catch( ... )
+                        {
+                        }
+                    }
+                },
+                nlohmann::json::object() );
+
+        visParam->SetClearUnknownKeys( true );
+        m_params.emplace_back( visParam );
+
+        // Optional bool: null means "user hasn't chosen — fall through
+        // to app-wide cfg." JSON null serialises as absence of key, so
+        // unset projects get no entry on disk.
+        m_params.emplace_back( new PARAM_LAMBDA<nlohmann::json>( "viewer3d.use_stackup_colors",
+                [&]() -> nlohmann::json
+                {
+                    if( m_3DViewerUseStackupColors.has_value() )
+                        return *m_3DViewerUseStackupColors;
+
+                    return nullptr;
+                },
+                [&]( const nlohmann::json& aJson )
+                {
+                    if( aJson.is_boolean() )
+                        m_3DViewerUseStackupColors = aJson.get<bool>();
+                    else
+                        m_3DViewerUseStackupColors.reset();
+                },
+                nullptr ) );
+    }
+
     // M5.2: sub-project back-reference to the enclosing container
     // .kicad_pro (relative path). Empty for standalone or container
     // projects. Container-aware code prefers this O(1) ref over the
@@ -1931,6 +2038,27 @@ void PROJECT_FILE::SetCollisionThresholdMm( double aMm )
 
     m_collisionThresholdMm = aMm;
     NotifyMultiBoardChanged( MULTI_BOARD_FIELD::COLLISION_THRESHOLD );
+}
+
+
+void PROJECT_FILE::Set3DViewerColorOverrides( std::map<int, KIGFX::COLOR4D> aOverrides )
+{
+    // PARAM_LAMBDA getters return m_3DViewer* verbatim, so the next
+    // SaveToFile sees the values diverging from disk and persists. No
+    // observer notification needed — nothing else listens.
+    m_3DViewerColorOverrides = std::move( aOverrides );
+}
+
+
+void PROJECT_FILE::Set3DViewerVisibilityOverrides( std::map<int, bool> aOverrides )
+{
+    m_3DViewerVisibilityOverrides = std::move( aOverrides );
+}
+
+
+void PROJECT_FILE::Set3DViewerUseStackupColors( std::optional<bool> aValue )
+{
+    m_3DViewerUseStackupColors = aValue;
 }
 
 

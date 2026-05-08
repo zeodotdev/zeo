@@ -30,6 +30,7 @@
 #include "3d_viewer_assembly.h"
 
 #include "3d_canvas/board_adapter.h"
+#include "3d_viewer/eda_3d_viewer_settings.h"
 #include "3d_canvas/eda_3d_canvas.h"
 #include "3d_rendering/opengl/mate_gizmo.h"
 #include "3d_rendering/opengl/render_3d_opengl.h"
@@ -76,6 +77,24 @@ BOARD_3D_INSTANCE::BOARD_3D_INSTANCE() :
 BOARD_3D_INSTANCE::~BOARD_3D_INSTANCE() = default;
 BOARD_3D_INSTANCE::BOARD_3D_INSTANCE( BOARD_3D_INSTANCE&& ) noexcept = default;
 BOARD_3D_INSTANCE& BOARD_3D_INSTANCE::operator=( BOARD_3D_INSTANCE&& ) noexcept = default;
+
+
+// Copy the user-visible substructs from the canvas-wide settings into a
+// per-board cfg. EDA_3D_VIEWER_SETTINGS itself isn't copyable (its
+// JSON_SETTINGS base owns vector<unique_ptr<JSON_PARAM>> with
+// addresses bound to the OWNER's member fields), but each substruct
+// is plain-data and assigns cleanly. Callers don't Save() through the
+// per-instance cfg — it's render-state only.
+static void copyRenderState( EDA_3D_VIEWER_SETTINGS&       aDst,
+                             const EDA_3D_VIEWER_SETTINGS& aSrc )
+{
+    aDst.m_AuiPanels        = aSrc.m_AuiPanels;
+    aDst.m_Render           = aSrc.m_Render;
+    aDst.m_Camera           = aSrc.m_Camera;
+    aDst.m_UseStackupColors = aSrc.m_UseStackupColors;
+    aDst.m_LayerPresets     = aSrc.m_LayerPresets;
+    aDst.m_CurrentPreset    = aSrc.m_CurrentPreset;
+}
 
 
 glm::mat4 BOARD_3D_INSTANCE::GetTransformMatrix() const
@@ -5263,7 +5282,80 @@ void ASSEMBLY_3D_MANAGER::InitRenderers( EDA_3D_CANVAS* aCanvas, CAMERA& aCamera
                                        : a3DCache;
             m_instanceAdapters[i]->Set3dCacheManager( cache );
 
-            m_instanceAdapters[i]->m_Cfg = sharedCfg;
+            // Each per-instance adapter gets its OWN settings copy so
+            // appearance / visibility / engine toggles don't bleed
+            // across boards inside the MBS composite (or back into the
+            // app-wide cfg the local single-board viewer uses).
+            //
+            // Initialised first by deep-copying the canvas's main
+            // settings (the sane defaults), then layered with
+            // per-sub-project overrides loaded from the sub-project's
+            // own .kicad_pro (`viewer3d.color_overrides`,
+            // `viewer3d.visibility_overrides`,
+            // `viewer3d.use_stackup_colors`). That second layer is
+            // what makes board A's local-viewer F.Mask=red survive
+            // through to MBS without bleeding into board B.
+            if( !inst.perInstanceCfg )
+            {
+                inst.perInstanceCfg = std::make_unique<EDA_3D_VIEWER_SETTINGS>();
+                copyRenderState( *inst.perInstanceCfg, *sharedCfg );
+
+                if( inst.subProject )
+                {
+                    const PROJECT_FILE& pf = inst.subProject->GetProjectFile();
+
+                    if( std::optional<bool> useStackup =
+                                pf.Get3DViewerUseStackupColors() )
+                    {
+                        inst.perInstanceCfg->m_UseStackupColors = *useStackup;
+                    }
+
+                    // Visibility overrides: m_Render flags only flip
+                    // for layers the user touched in the sub-project's
+                    // local viewer. We round-trip through the bitset
+                    // helper so the layer→flag mapping stays in one
+                    // place (BOARD_ADAPTER::SetVisibleLayers).
+                    const auto& visOverrides = pf.Get3DViewerVisibilityOverrides();
+
+                    if( !visOverrides.empty() )
+                    {
+                        // Stash on the cfg now; applied to the adapter
+                        // immediately below once m_Cfg is wired.
+                    }
+                }
+            }
+            m_instanceAdapters[i]->m_Cfg = inst.perInstanceCfg.get();
+
+            // Pre-InitSettings overrides: colour overrides feed
+            // directly into BOARD_ADAPTER::m_ColorOverrides which
+            // GetLayerColors applies as the LAST step on top of
+            // theme + stackup. Visibility overrides go through the
+            // bitset helper so a partial map merges with current
+            // flags rather than blanking unseen layers.
+            if( inst.subProject )
+            {
+                const PROJECT_FILE& pf = inst.subProject->GetProjectFile();
+
+                m_instanceAdapters[i]->m_ColorOverrides =
+                        pf.Get3DViewerColorOverrides();
+
+                const auto& visOverrides = pf.Get3DViewerVisibilityOverrides();
+
+                if( !visOverrides.empty() )
+                {
+                    std::bitset<LAYER_3D_END> bits =
+                            m_instanceAdapters[i]->GetVisibleLayers();
+
+                    for( const auto& [layer, vis] : visOverrides )
+                    {
+                        if( layer >= 0 && layer < LAYER_3D_END )
+                            bits.set( layer, vis );
+                    }
+
+                    m_instanceAdapters[i]->SetVisibleLayers( bits );
+                }
+            }
+
             // InitSettings builds layer polygons / BVH containers and is
             // the expensive step (~100-500ms per board). We do it once
             // per load, not per frame.

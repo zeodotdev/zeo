@@ -33,6 +33,7 @@
 #include <vector>
 
 class BOARD;
+class EDA_3D_VIEWER_SETTINGS;
 class BOARD_ADAPTER;
 class BOARD_ITEM;
 class CAMERA;
@@ -76,6 +77,15 @@ struct BOARD_3D_INSTANCE
     bool                    visible;          ///< Whether this board is visible
     bool                    transparent;      ///< Whether to render with transparency
     float                   opacity;          ///< Opacity level (0.0 - 1.0)
+
+    /// Per-board copy of the EDA_3D_VIEWER_SETTINGS struct. The
+    /// per-instance BOARD_ADAPTER's m_Cfg points here so layer
+    /// visibility / colours / engine settings can diverge between
+    /// boards in MBS mode without affecting the app-wide settings
+    /// or each other. Initialised on viewer open by deep-copying
+    /// the canvas's main settings; per-board persistence (loading
+    /// from each sub-project's own file) is a follow-up.
+    std::unique_ptr<EDA_3D_VIEWER_SETTINGS> perInstanceCfg;
 
     // Movable, not copyable: BOARD ownership is unique per instance.
     // Special members are out-of-line so unique_ptr<BOARD> can be

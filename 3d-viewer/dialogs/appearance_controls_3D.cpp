@@ -33,6 +33,7 @@
 #include <3d_viewer/3d_viewer_assembly.h>
 #include <pcbnew_settings.h>
 #include <project.h>
+#include <project/project_file.h>
 #include <board.h>
 #include <tool/tool_manager.h>
 #include <tools/pcb_actions.h>
@@ -179,6 +180,19 @@ APPEARANCE_CONTROLS_3D::APPEARANCE_CONTROLS_3D( EDA_3D_VIEWER_FRAME* aParent, wx
             {
                 EDA_3D_VIEWER_SETTINGS* cfg = m_frame->GetAdapter().m_Cfg;
                 cfg->m_UseStackupColors = aEvent.IsChecked();
+
+                // Per-project persistence — keep this scoped to the
+                // current project so toggling stackup colours in
+                // board A's local viewer doesn't bleed to board B
+                // or to the MBS composite.
+                if( BOARD* board = m_frame->GetBoard() )
+                {
+                    if( PROJECT* project = board->GetProject() )
+                    {
+                        project->GetProjectFile().Set3DViewerUseStackupColors(
+                                aEvent.IsChecked() );
+                    }
+                }
 
                 UpdateLayerCtls();
 

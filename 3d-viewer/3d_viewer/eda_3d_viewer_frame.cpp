@@ -889,6 +889,48 @@ void EDA_3D_VIEWER_FRAME::LoadSettings( APP_SETTINGS_BASE *aCfg )
 
         m_boardAdapter.SetBoard( GetBoard() );
 
+        // Per-project overrides — what the user previously set in
+        // THIS project's local 3D viewer (colours, visibility, the
+        // use-stackup-colours toggle). Layered AFTER cfg so the
+        // app-wide singleton remains the fallback for projects with
+        // no recorded preferences yet.
+        //
+        // Without this layer, theme writes from board A's local
+        // viewer (`SetLayerColors` → `DEFAULT_THEME` historically)
+        // bled to board B's local viewer and to every per-instance
+        // in the MBS composite. See PROJECT_FILE::Get3DViewerColorOverrides.
+        if( BOARD* board = GetBoard() )
+        {
+            if( PROJECT* project = board->GetProject() )
+            {
+                const PROJECT_FILE& pf = project->GetProjectFile();
+
+                m_boardAdapter.m_ColorOverrides = pf.Get3DViewerColorOverrides();
+
+                if( std::optional<bool> useStackup =
+                            pf.Get3DViewerUseStackupColors() )
+                {
+                    cfg->m_UseStackupColors = *useStackup;
+                }
+
+                const auto& visOverrides = pf.Get3DViewerVisibilityOverrides();
+
+                if( !visOverrides.empty() )
+                {
+                    std::bitset<LAYER_3D_END> bits =
+                            m_boardAdapter.GetVisibleLayers();
+
+                    for( const auto& [layer, vis] : visOverrides )
+                    {
+                        if( layer >= 0 && layer < LAYER_3D_END )
+                            bits.set( layer, vis );
+                    }
+
+                    m_boardAdapter.SetVisibleLayers( bits );
+                }
+            }
+        }
+
         // When opening the 3D viewer, we use the OpenGL mode, never the ray tracing engine
         // because the ray tracing is very time consuming, and can be seen as not working
         // (freeze window) with large boards.

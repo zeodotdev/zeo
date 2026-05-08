@@ -23,8 +23,10 @@
 #define KICAD_PROJECT_FILE_H
 
 #include <common.h> // needed for wxstring hash template
+#include <gal/color4d.h>
 #include <kiid.h>
 #include <math/vector3.h>
+#include <optional>
 #include <project/board_project_settings.h>
 #include <project/project_file_observer.h>   // T3: MULTI_BOARD_FIELD enum + observer interface
 #include <settings/json_settings.h>
@@ -673,6 +675,44 @@ public:
 
     void SetAssemblyInstances( std::vector<ASSEMBLY_INSTANCE_STATE> aStates );
 
+    /// Per-project 3D viewer state — colour overrides, visibility flag
+    /// overrides, and the use-stackup-colours toggle that survive
+    /// close/reopen and stay scoped to THIS project. Without these,
+    /// theme writes from board A's local viewer (`SetLayerColors` →
+    /// `DEFAULT_THEME`) bled to board B and to every per-instance in
+    /// the MBS composite.
+    ///
+    /// Layer-id keys index into the `LAYER_3D_*` enum (board.h /
+    /// layer_ids.h). Empty maps mean "no overrides — fall back to the
+    /// app-wide singleton + theme".
+    std::map<int, KIGFX::COLOR4D>& Get3DViewerColorOverrides()
+    {
+        return m_3DViewerColorOverrides;
+    }
+    const std::map<int, KIGFX::COLOR4D>& Get3DViewerColorOverrides() const
+    {
+        return m_3DViewerColorOverrides;
+    }
+    void Set3DViewerColorOverrides( std::map<int, KIGFX::COLOR4D> aOverrides );
+
+    std::map<int, bool>& Get3DViewerVisibilityOverrides()
+    {
+        return m_3DViewerVisibilityOverrides;
+    }
+    const std::map<int, bool>& Get3DViewerVisibilityOverrides() const
+    {
+        return m_3DViewerVisibilityOverrides;
+    }
+    void Set3DViewerVisibilityOverrides( std::map<int, bool> aOverrides );
+
+    /// std::optional so "user hasn't set this" is distinct from
+    /// "user explicitly chose false".
+    std::optional<bool> Get3DViewerUseStackupColors() const
+    {
+        return m_3DViewerUseStackupColors;
+    }
+    void Set3DViewerUseStackupColors( std::optional<bool> aValue );
+
     /// Mesh-overlap thickness threshold for the COLLISION-vs-CONTACT
     /// verdict in the 3D assembly viewer. Persisted alongside the rest
     /// of `multi_board.assembly_3d.*` so per-project tuning (different
@@ -997,6 +1037,13 @@ private:
     /// For container projects: collision-vs-contact threshold (mm) for
     /// the 3D assembly viewer's mesh-overlap verdict. Default 0.5.
     double m_collisionThresholdMm = 0.5;
+
+    /// Per-project 3D viewer state — see the public accessors for
+    /// rationale. Empty maps / nullopt mean "fall back to the app-wide
+    /// cfg + theme".
+    std::map<int, KIGFX::COLOR4D> m_3DViewerColorOverrides;
+    std::map<int, bool> m_3DViewerVisibilityOverrides;
+    std::optional<bool> m_3DViewerUseStackupColors;
 
     /// For container projects: filename of the multi-board schematic.
     wxString m_mbsFileName;

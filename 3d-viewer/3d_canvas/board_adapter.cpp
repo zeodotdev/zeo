@@ -30,6 +30,8 @@
 #include <board_stackup_manager/stackup_predefined_prms.h>
 #include <3d_rendering/raytracing/shapes2D/polygon_2d.h>
 #include <board.h>
+#include <project.h>
+#include <project/project_file.h>
 #include <dialogs/dialog_color_picker.h>
 #include <layer_range.h>
 #include <3d_math.h>
@@ -751,17 +753,35 @@ std::map<int, COLOR4D> BOARD_ADAPTER::GetLayerColors() const
 
 void BOARD_ADAPTER::SetLayerColors( const std::map<int, COLOR4D>& aColors )
 {
-    COLOR_SETTINGS* settings = ::GetColorSettings( DEFAULT_THEME );
+    // Per-board scope: writes go to THIS board's project file, never
+    // to the app-wide DEFAULT_THEME. Without this, board A's local
+    // viewer colour edits bled to board B and to every per-instance
+    // in the MBS composite.
+    //
+    // m_ColorOverrides is the runtime hot path — GetLayerColors applies
+    // it last, so the swatch change reflects on the next reload even
+    // if stackup colours are on. Persistence is a side-channel write
+    // to the project file for next-open.
+    PROJECT* project = m_board ? m_board->GetProject() : nullptr;
 
-    for( const auto& [ layer, color ] : aColors )
+    for( const auto& [layer, color] : aColors )
     {
-        settings->SetColor( layer, color );
+        m_ColorOverrides[layer] = color;
 
         if( layer >= LAYER_3D_USER_1 && layer <= LAYER_3D_USER_45 )
-            m_UserDefinedLayerColor[ layer - LAYER_3D_USER_1 ] = GetColor( color );
+            m_UserDefinedLayerColor[layer - LAYER_3D_USER_1] = GetColor( color );
     }
 
-    Pgm().GetSettingsManager().SaveColorSettings( settings, "3d_viewer" );
+    if( project )
+    {
+        PROJECT_FILE& pf = project->GetProjectFile();
+        std::map<int, COLOR4D> overrides = pf.Get3DViewerColorOverrides();
+
+        for( const auto& [layer, color] : aColors )
+            overrides[layer] = color;
+
+        pf.Set3DViewerColorOverrides( std::move( overrides ) );
+    }
 }
 
 
@@ -798,6 +818,48 @@ void BOARD_ADAPTER::SetVisibleLayers( const std::bitset<LAYER_3D_END>& aLayers )
     m_Cfg->m_Render.show_model_bbox                = aLayers.test( LAYER_3D_BOUNDING_BOXES );
     m_Cfg->m_Render.show_off_board_silk            = aLayers.test( LAYER_3D_OFF_BOARD_SILK );
     m_Cfg->m_Render.show_navigator                 = aLayers.test( LAYER_3D_NAVIGATOR );
+
+    // Mirror to the project file so this state survives reopen and
+    // doesn't bleed across boards via the app-wide cfg singleton. We
+    // record only the layers the bitset is asked to control (the
+    // user-visible ones) — the *internal* `m_Render` fields above
+    // stay app-wide because the appearance panel doesn't expose them
+    // to per-project override semantics.
+    //
+    // The load-side path in EDA_3D_VIEWER_FRAME / ASSEMBLY_3D_MANAGER
+    // ALSO calls SetVisibleLayers when applying overrides — that
+    // round-trip is a no-op in the project-file PARAM_LAMBDA's
+    // MatchesFile check (same bytes back), so no spurious dirty.
+    PROJECT* project = m_board ? m_board->GetProject() : nullptr;
+
+    if( project )
+    {
+        std::map<int, bool> overrides;
+
+        const int relevantLayers[] = {
+                LAYER_3D_BOARD,             LAYER_3D_PLATED_BARRELS,
+                LAYER_3D_COPPER_TOP,        LAYER_3D_COPPER_BOTTOM,
+                LAYER_3D_SILKSCREEN_TOP,    LAYER_3D_SILKSCREEN_BOTTOM,
+                LAYER_3D_SOLDERMASK_TOP,    LAYER_3D_SOLDERMASK_BOTTOM,
+                LAYER_3D_SOLDERPASTE,       LAYER_3D_ADHESIVE,
+                LAYER_3D_USER_COMMENTS,     LAYER_3D_USER_DRAWINGS,
+                LAYER_3D_USER_ECO1,         LAYER_3D_USER_ECO2,
+                LAYER_3D_TH_MODELS,         LAYER_3D_SMD_MODELS,
+                LAYER_3D_VIRTUAL_MODELS,    LAYER_3D_MODELS_NOT_IN_POS,
+                LAYER_3D_MODELS_MARKED_DNP, LAYER_FP_REFERENCES,
+                LAYER_FP_VALUES,            LAYER_FP_TEXT,
+                LAYER_3D_BOUNDING_BOXES,    LAYER_3D_OFF_BOARD_SILK,
+                LAYER_3D_NAVIGATOR
+        };
+
+        for( int layer : relevantLayers )
+            overrides[layer] = aLayers.test( layer );
+
+        for( int layer = LAYER_3D_USER_1; layer <= LAYER_3D_USER_45; ++layer )
+            overrides[layer] = aLayers.test( layer );
+
+        project->GetProjectFile().Set3DViewerVisibilityOverrides( std::move( overrides ) );
+    }
 }
 
 

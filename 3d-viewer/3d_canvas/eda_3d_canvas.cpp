@@ -29,6 +29,9 @@
 #include <cstring>
 
 #include <wx/tokenzr.h>
+#include <wx/textctrl.h>
+#include <wx/combobox.h>
+#include <wx/spinctrl.h>
 
 #include "../common_ogl/ogl_utils.h"
 #include "eda_3d_canvas.h"
@@ -994,6 +997,34 @@ void EDA_3D_CANVAS::SetEventDispatcher( TOOL_DISPATCHER* aEventDispatcher )
 
 void EDA_3D_CANVAS::OnEvent( wxEvent& aEvent )
 {
+    // Belt-and-braces: if a text-input widget currently has the
+    // keyboard focus, route key events past the GAL dispatcher so
+    // the user can type / use arrow keys to navigate the cursor
+    // inside the field. The text ctrls in PANEL_3D_ASSEMBLY also
+    // carry wxWANTS_CHARS for the same reason; this layer of the
+    // defense catches any focus chain that bypasses the wx
+    // traversal protection. Mouse events are unaffected — only
+    // keyboard event types are rerouted.
+    const wxEventType type = aEvent.GetEventType();
+    const bool        isKeyEvent =
+            ( type == wxEVT_CHAR_HOOK
+              || type == wxEVT_CHAR
+              || type == wxEVT_KEY_DOWN
+              || type == wxEVT_KEY_UP );
+
+    if( isKeyEvent )
+    {
+        wxWindow* focus = wxWindow::FindFocus();
+
+        if( dynamic_cast<wxTextCtrl*>( focus )
+            || dynamic_cast<wxComboBox*>( focus )
+            || dynamic_cast<wxSpinCtrl*>( focus ) )
+        {
+            aEvent.Skip();
+            return;
+        }
+    }
+
     if( !m_eventDispatcher )
         aEvent.Skip();
     else

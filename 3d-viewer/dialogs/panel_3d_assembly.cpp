@@ -159,8 +159,17 @@ void PANEL_3D_ASSEMBLY::createControls()
     // sets a floor the panel can't go below.
     auto makeNumCtrl = [&]( wxTextCtrl** aOut, const wxString& aInit )
     {
+        // wxTE_PROCESS_ENTER  → Enter fires wxEVT_TEXT_ENTER (commit).
+        // wxWANTS_CHARS       → tells wx to NOT route arrow keys
+        //                       through tab-traversal / parent
+        //                       handlers. Without this, the parent
+        //                       wxScrolledWindow / canvas dispatcher
+        //                       chain intercepts unmodified Left/Right
+        //                       on macOS before the text widget sees
+        //                       them, leaving the cursor stuck.
         *aOut = new wxTextCtrl( m_scrolled, wxID_ANY, aInit, wxDefaultPosition,
-                                 wxDefaultSize, wxTE_PROCESS_ENTER );
+                                 wxDefaultSize,
+                                 wxTE_PROCESS_ENTER | wxWANTS_CHARS );
         ( *aOut )->SetMinSize( wxSize( FromDIP( 40 ), -1 ) );
     };
 
@@ -425,8 +434,12 @@ void PANEL_3D_ASSEMBLY::bindEvents()
                          (this->*aHandler)( dummy );
                          aEvt.Skip();
                      } );
+        // Catch Return on CHAR_HOOK so the commit fires even when
+        // wxEVT_TEXT_ENTER doesn't propagate (macOS sometimes
+        // converts Enter to a command event before the text ctrl's
+        // standard handlers).
         aCtrl->Bind( wxEVT_CHAR_HOOK,
-                     [this, aCtrl, aHandler]( wxKeyEvent& aEvt )
+                     [this, aHandler]( wxKeyEvent& aEvt )
                      {
                          const int code = aEvt.GetKeyCode();
 
@@ -434,17 +447,56 @@ void PANEL_3D_ASSEMBLY::bindEvents()
                          {
                              wxCommandEvent dummy;
                              (this->*aHandler)( dummy );
-                             return;     // event consumed
+                             return;
                          }
 
-                         // Always Skip() so the wxTextCtrl gets the
-                         // key for cursor / selection / typing. The
-                         // canvas's CHAR_HOOK is bound at the canvas
-                         // (not the panel), so as long as we let the
-                         // text ctrl handle the event here, the
-                         // canvas dispatcher never sees it.
                          aEvt.Skip();
                      } );
+
+        // wxOSX delivers Left arrow only as wxEVT_CHAR (no CHAR_HOOK,
+        // no KEY_DOWN), and the native cursor-movement command path
+        // doesn't fire for it on this control combination — Right
+        // moves natively via KEY_DOWN, Left needs an explicit handler
+        // here to actually advance the insertion point. We drive the
+        // cursor manually for unmodified arrow / Home / End on the
+        // CHAR event and consume it so no double-move can happen.
+        // Other characters (typing) still Skip() so the text ctrl's
+        // native insert-text path runs.
+        aCtrl->Bind( wxEVT_CHAR, [aCtrl]( wxKeyEvent& aEvt )
+        {
+            const int code = aEvt.GetKeyCode();
+
+            if( !aEvt.HasModifiers() && !aEvt.ShiftDown() )
+            {
+                const long pos = aCtrl->GetInsertionPoint();
+                const long len = aCtrl->GetLastPosition();
+
+                if( code == WXK_LEFT )
+                {
+                    if( pos > 0 )
+                        aCtrl->SetInsertionPoint( pos - 1 );
+                    return;     // consumed
+                }
+                if( code == WXK_RIGHT )
+                {
+                    if( pos < len )
+                        aCtrl->SetInsertionPoint( pos + 1 );
+                    return;
+                }
+                if( code == WXK_HOME )
+                {
+                    aCtrl->SetInsertionPoint( 0 );
+                    return;
+                }
+                if( code == WXK_END )
+                {
+                    aCtrl->SetInsertionPointEnd();
+                    return;
+                }
+            }
+
+            aEvt.Skip();
+        } );
     };
 
     bindCommit( m_posXCtrl, &PANEL_3D_ASSEMBLY::onPositionChanged );

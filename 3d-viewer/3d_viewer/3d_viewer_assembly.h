@@ -519,6 +519,14 @@ public:
     void  SetCollisionThresholdMm( float aMm );
     float GetCollisionThresholdMm() const      { return m_collisionThresholdMm; }
 
+    /// True until the manager has run its one-shot post-InitRenderers
+    /// collision recompute. Panel polls this in a wxIdle handler so
+    /// the validation count refreshes once adapters are ready.
+    bool IsInitialCollisionCheckPending() const
+    {
+        return m_initialCollisionCheckPending;
+    }
+
     /**
      * True iff the project file has any persisted per-instance pose
      * (read by `applyPersistedInstanceStates`). The panel uses this to
@@ -908,6 +916,16 @@ private:
     /// per-instance reloads each call SetBoardLookAtPos); cleared after
     /// we override with the assembly center.
     bool                            m_cameraFitPending = false;
+
+    /// One-shot: run the collision/contact compute on the FIRST
+    /// `RedrawAll` after the per-instance adapters are wired. The
+    /// panel constructor's `autoRunCollisionCheck` runs too early —
+    /// before `InitRenderers` populates `m_instanceAdapters` — so
+    /// `buildShape`/`buildFpMeshTris` see a null adapter, fall back
+    /// to wrong board-center pivots, and produce no overlapping
+    /// triangles. Cleared after the first successful pass; subsequent
+    /// recomputes are user-driven from the panel's move handlers.
+    bool                            m_initialCollisionCheckPending = true;
 
     /// Shared BIU→3D-unit factor. Each BOARD_ADAPTER::InitSettings
     /// computes its own per-board factor to fit that one board in

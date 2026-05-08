@@ -117,6 +117,11 @@ private:
      */
     void autoRunCollisionCheck();
 
+    /// Latched once we've successfully run autoRunCollisionCheck
+    /// against ready instance adapters. Gates the wxIdle one-shot
+    /// hook in the constructor so it fires exactly once.
+    bool m_initialCollisionCheckDone = false;
+
     /**
      * Rebuild the mates tree from the manager's current mate graph
      * + custom mates list. Called after any mutation.

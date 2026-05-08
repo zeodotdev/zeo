@@ -5659,6 +5659,24 @@ bool ASSEMBLY_3D_MANAGER::RedrawAll( bool aIsMoving, REPORTER* aStatusReporter,
                               || m_showContactHighlights
                               || m_showBroadAabbDebug;
 
+    // One-shot initial collision check — `!firstPass` means at least
+    // one per-instance Redraw ran, which means InitRenderers populated
+    // `m_instanceAdapters`. Now `buildShape` / `buildFpMeshTris` can
+    // see real adapters and compute the right footprint world poses,
+    // so the mesh-tri test produces actual overlap geometry. Without
+    // this, the panel ctor's earlier `RunCollisionCheck` saw null
+    // adapters and produced an empty box list; user had to nudge a
+    // board to retrigger.
+    //
+    // Run regardless of overlay toggles so the panel's validation
+    // count refreshes on every viewer open even when no overlays are
+    // visible. The cost is one-time-per-session.
+    if( m_initialCollisionCheckPending && !firstPass )
+    {
+        RunCollisionCheck();
+        m_initialCollisionCheckPending = false;
+    }
+
     if( anyOverlayOn && !firstPass && m_camera )
     {
         if( !m_mateGizmo )

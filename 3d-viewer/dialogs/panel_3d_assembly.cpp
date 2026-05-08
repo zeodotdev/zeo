@@ -61,10 +61,30 @@ PANEL_3D_ASSEMBLY::PANEL_3D_ASSEMBLY( EDA_3D_VIEWER_FRAME* aParent,
     RefreshMatesTree();
     updateMateButtons();
 
-    // Run collision check once on open so the gizmo has data for its
-    // first paint. Without this, collision/contact highlights stay
-    // blank until the user nudges a position field.
-    autoRunCollisionCheck();
+    // Run collision check on the FIRST idle event after construction —
+    // by which point the canvas has painted at least once and the
+    // manager's `InitRenderers` has populated `m_instanceAdapters`.
+    // Calling earlier (in this ctor) saw null adapters and produced
+    // an empty result, leaving collision/contact highlights blank
+    // until the user nudged a board.
+    Bind( wxEVT_IDLE,
+          [this]( wxIdleEvent& aEvent )
+          {
+              if( m_initialCollisionCheckDone )
+                  return;
+
+              // Adapters are populated by the canvas's first paint
+              // (which calls ASSEMBLY_3D_MANAGER::InitRenderers). The
+              // manager-side `RedrawAll` clears the pending flag once
+              // it has run RunCollisionCheck against ready adapters.
+              // Mirror that here so the panel's status label refreshes
+              // with the correct count, not the empty placeholder.
+              if( m_manager && m_manager->IsInitialCollisionCheckPending() )
+                  return;
+
+              autoRunCollisionCheck();
+              m_initialCollisionCheckDone = true;
+          } );
 }
 
 

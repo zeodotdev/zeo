@@ -1300,8 +1300,27 @@ std::vector<MATE_EDGE> ASSEMBLY_3D_MANAGER::BuildMateGraph() const
         switch( cm.role )
         {
         case CUSTOM_MATE_ROLE::DISABLED:
-            pairMap.erase( key );
+        {
+            // Don't erase — the panel needs the row to remain so the
+            // user can flip the disable back off. Just mark it. If
+            // there's no auto pair (the override applies to a footprint
+            // pair the netlist doesn't connect), insert one so the
+            // disabled state is visible regardless.
+            auto [it, inserted] = pairMap.emplace( key, MATE_PAIR{} );
+
+            if( inserted )
+            {
+                it->second.instanceA     = instA;
+                it->second.instanceB     = instB;
+                it->second.footprintRefA = refA;
+                it->second.footprintRefB = refB;
+                it->second.pinCount      = 0;
+            }
+
+            it->second.disabled       = true;
+            it->second.customMateUuid = cm.uuid;
             break;
+        }
 
         case CUSTOM_MATE_ROLE::PRIMARY:
         case CUSTOM_MATE_ROLE::SECONDARY:
@@ -1503,8 +1522,8 @@ const MATE_PAIR* ASSEMBLY_3D_MANAGER::PickPrimaryPair( const MATE_EDGE& aEdge ) 
 
     for( const MATE_PAIR& p : aEdge.pairs )
     {
-        if( p.alignmentOnly )
-            continue;   // SECONDARY custom mates never win primary
+        if( p.alignmentOnly || p.disabled )
+            continue;   // SECONDARY custom mates never win primary; ditto disabled
 
         if( !p.forcedPrimary )
             continue;
@@ -1522,8 +1541,8 @@ const MATE_PAIR* ASSEMBLY_3D_MANAGER::PickPrimaryPair( const MATE_EDGE& aEdge ) 
 
     for( const MATE_PAIR& p : aEdge.pairs )
     {
-        if( p.alignmentOnly )
-            continue;   // skip SECONDARY-only pairs even without a forced primary
+        if( p.alignmentOnly || p.disabled )
+            continue;   // skip SECONDARY-only and disabled pairs
 
         if( !best )
         {
@@ -5966,6 +5985,9 @@ void ASSEMBLY_3D_MANAGER::rebuildMateGizmoEntries()
 
         for( const MATE_PAIR& p : edge.pairs )
         {
+            if( p.disabled )
+                continue;   // suppressed by user — keep tree row, drop gizmo
+
             const auto itA = adapterIndexByInst.find( p.instanceA );
             const auto itB = adapterIndexByInst.find( p.instanceB );
 

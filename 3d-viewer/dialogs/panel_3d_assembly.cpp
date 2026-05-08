@@ -939,14 +939,24 @@ void PANEL_3D_ASSEMBLY::RefreshMatesTree()
         {
             wxString badge;
 
-            if( &pair == primary )
+            if( pair.disabled )
+                badge << "[DISABLED]";
+            else if( &pair == primary )
                 badge << "[PRIMARY]";
             else if( pair.alignmentOnly )
                 badge << "[SECONDARY]";
 
-            const bool isCustom = !( pair.customMateUuid == KIID( 0 ) );
+            // A pair tagged with a CUSTOM_MATE uuid is "custom" only
+            // when its presence comes from that override (PRIMARY /
+            // SECONDARY decoration on top of an auto pair, OR a pure
+            // user-added mate). DISABLED rows decorate an auto pair —
+            // the row should still read as AUTO (the override is just
+            // a suppression flag, not a user-authored mate).
+            const bool isCustom = !( pair.customMateUuid == KIID( 0 ) ) && !pair.disabled;
 
-            if( isCustom )
+            if( pair.disabled )
+                badge << " [AUTO]";
+            else if( isCustom )
                 badge << " [CUSTOM]";
             else
                 badge << " [AUTO]";
@@ -959,9 +969,19 @@ void PANEL_3D_ASSEMBLY::RefreshMatesTree()
 
             wxTreeItemId pairNode = m_matesTree->AppendItem( edgeNode, label );
 
+            // Visual cue: grey the disabled rows so the user can see
+            // at a glance that they're suppressed without having to
+            // read the badge.
+            if( pair.disabled )
+            {
+                m_matesTree->SetItemTextColour( pairNode,
+                        wxSystemSettings::GetColour( wxSYS_COLOUR_GRAYTEXT ) );
+            }
+
             MATE_TREE_ROW row{};
             row.isEdgeNode     = false;
             row.isAuto         = !isCustom;
+            row.disabled       = pair.disabled;
             row.customMateUuid = pair.customMateUuid;
             row.instanceA      = pair.instanceA;
             row.instanceB      = pair.instanceB;
@@ -1018,6 +1038,16 @@ void PANEL_3D_ASSEMBLY::updateMateButtons()
         }
     }
 
+    bool isDisabled = false;
+
+    if( sel.IsOk() )
+    {
+        auto it = m_mateTreeRows.find( sel.GetID() );
+
+        if( it != m_mateTreeRows.end() && !it->second.isEdgeNode )
+            isDisabled = it->second.disabled;
+    }
+
     // Add is always available when a project is loaded.
     m_addMateButton->Enable( m_manager && m_manager->GetBoardInstances().size() >= 2 );
 
@@ -1025,21 +1055,24 @@ void PANEL_3D_ASSEMBLY::updateMateButtons()
     // CUSTOM_MATE record to edit (they're derived from netlist
     // topology). Greyed out on AUTO so the user isn't tempted to
     // expect a no-op edit dialog. (Use Disable to override an AUTO.)
-    m_editMateButton->Enable( isCustomLeaf );
+    // Disabled rows are also non-editable — user re-enables first.
+    m_editMateButton->Enable( isCustomLeaf && !isDisabled );
 
     // Up/Down reorder pairs within their edge — head of the edge is
     // the primary. Enabled on any leaf; the manager no-ops when at
-    // top/bottom so we don't need to compute index here.
-    m_moveMateUpButton->Enable( haveSelection );
-    m_moveMateDownButton->Enable( haveSelection );
+    // top/bottom so we don't need to compute index here. Disabled
+    // pairs sit out of primary selection so reordering is a no-op.
+    m_moveMateUpButton->Enable( haveSelection && !isDisabled );
+    m_moveMateDownButton->Enable( haveSelection && !isDisabled );
 
-    // Disable works on EITHER auto or custom rows: AUTO becomes a new
-    // CUSTOM DISABLED override (so the user can suppress a derived
-    // mate without editing the schematic); CUSTOM flips its role.
+    // Disable doubles as Enable when the row is already disabled —
+    // toggle semantics. Label flips so the user knows which way it
+    // goes.
     m_disableMateButton->Enable( haveSelection );
+    m_disableMateButton->SetLabel( isDisabled ? _( "Enable" ) : _( "Disable" ) );
 
     // Delete only on CUSTOM rows (AUTO can't be deleted, only disabled).
-    m_deleteMateButton->Enable( isCustomLeaf );
+    m_deleteMateButton->Enable( isCustomLeaf && !isDisabled );
 
     (void) isAutoLeaf;   // currently no UI state branches on this; kept for clarity
 }
@@ -1504,10 +1537,46 @@ void PANEL_3D_ASSEMBLY::onDisableMate( wxCommandEvent& aEvent )
 
     const MATE_TREE_ROW& row = it->second;
 
-    if( row.isAuto )
+    if( row.disabled )
     {
-        // Add a CUSTOM DISABLED override. The next BuildMateGraph()
-        // pass erases the matching auto pair.
+        // Re-enable: find the existing CUSTOM_MATE with role=DISABLED
+        // for this pair and remove it. Without the override, the next
+        // BuildMateGraph re-derives the auto pair as active.
+        const std::vector<CUSTOM_MATE>& mates = m_manager->GetCustomMates();
+        const BOARD_3D_INSTANCE*        iA    = m_manager->GetBoardInstance( row.instanceA );
+        const BOARD_3D_INSTANCE*        iB    = m_manager->GetBoardInstance( row.instanceB );
+
+        if( !iA || !iB )
+            return;
+
+        for( const CUSTOM_MATE& cm : mates )
+        {
+            if( cm.role != CUSTOM_MATE_ROLE::DISABLED )
+                continue;
+
+            const bool same =
+                    ( cm.endA.subProjectUuid == iA->subProjectUuid
+                      && cm.endA.footprintRef == row.footprintRefA
+                      && cm.endB.subProjectUuid == iB->subProjectUuid
+                      && cm.endB.footprintRef == row.footprintRefB );
+
+            const bool swapped =
+                    ( cm.endA.subProjectUuid == iB->subProjectUuid
+                      && cm.endA.footprintRef == row.footprintRefB
+                      && cm.endB.subProjectUuid == iA->subProjectUuid
+                      && cm.endB.footprintRef == row.footprintRefA );
+
+            if( same || swapped )
+            {
+                m_manager->RemoveCustomMate( cm.uuid );
+                break;
+            }
+        }
+    }
+    else if( row.isAuto )
+    {
+        // Add a CUSTOM DISABLED override; next BuildMateGraph pass
+        // marks the matching auto pair as disabled (still visible).
         CUSTOM_MATE override;
         override.role = CUSTOM_MATE_ROLE::DISABLED;
         override.type = CUSTOM_MATE_TYPE::CONNECTOR;

@@ -157,10 +157,20 @@ struct MATE_PAIR
     /// the optional offset for fine adjustment.
     bool        nonElectrical = false;
 
+    /// Suppressed by a CUSTOM_MATE override with role=DISABLED. The
+    /// row stays in the panel tree (greyed out) so the user can flip
+    /// it back on, but the solver, mate-gizmo, and primary-pick all
+    /// skip it as if it weren't in the graph.
+    bool        disabled = false;
+
     /// KIID of the originating `CUSTOM_MATE` row in the container
     /// project file. Null KIID for auto-derived pairs. Lets the UI
     /// trace a graph edge back to the row the user can edit.
-    KIID        customMateUuid;
+    ///
+    /// Explicit `KIID(0)` (nil) — `KIID()` default-constructs to a
+    /// fresh RANDOM UUID, which would falsely tag every auto pair as
+    /// "custom" in the panel and break Edit/Delete gating.
+    KIID        customMateUuid = KIID( 0 );
 
     /// Optional placement offset applied after the auto-computed pose.
     bool        hasOffset = false;

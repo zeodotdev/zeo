@@ -220,9 +220,10 @@ private:
     /// MATE_PAIR / CUSTOM_MATE.
     struct MATE_TREE_ROW
     {
-        bool      isEdgeNode;        ///< true for parent rows (board edges)
-        bool      isAuto;            ///< auto-derived (no customMateUuid)
-        KIID      customMateUuid;    ///< null when isAuto
+        bool      isEdgeNode = false;  ///< true for parent rows (board edges)
+        bool      isAuto = false;      ///< auto-derived (no customMateUuid)
+        bool      disabled = false;    ///< suppressed by a CUSTOM_MATE override
+        KIID      customMateUuid = KIID( 0 );  ///< null when isAuto AND not disabled
         KIID      instanceA;
         KIID      instanceB;
         wxString  footprintRefA;

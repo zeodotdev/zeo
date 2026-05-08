@@ -30,6 +30,7 @@
 #include <eda_list_dialog.h>
 #include <pcb_display_options.h>
 #include <eda_3d_viewer_frame.h>
+#include <3d_viewer/3d_viewer_assembly.h>
 #include <pcbnew_settings.h>
 #include <project.h>
 #include <board.h>
@@ -180,6 +181,11 @@ APPEARANCE_CONTROLS_3D::APPEARANCE_CONTROLS_3D( EDA_3D_VIEWER_FRAME* aParent, wx
                 cfg->m_UseStackupColors = aEvent.IsChecked();
 
                 UpdateLayerCtls();
+
+                // NOTE: in MBS mode, color changes don't propagate to
+                // per-instance renderers without a position move —
+                // RefreshAppearance via per-instance ReloadRequest was
+                // making the model disappear, root cause TBD.
                 m_frame->NewDisplay( true );
             } );
 
@@ -196,12 +202,77 @@ APPEARANCE_CONTROLS_3D::APPEARANCE_CONTROLS_3D( EDA_3D_VIEWER_FRAME* aParent, wx
                 cfg->m_Render.use_board_editor_copper_colors = aEvent.IsChecked();
 
                 UpdateLayerCtls();
+
                 m_frame->NewDisplay( true );
             } );
 
-    m_panelLayersSizer->Add( m_cbUseBoardStackupColors, 0, wxEXPAND | wxTOP | wxLEFT | wxRIGHT, 5 );
-    m_panelLayersSizer->Add( m_cbUseBoardEditorCopperColors, 0,
-                             wxEXPAND | wxALL, 5 );
+    // Both checkboxes are board-specific (they re-pull colors from
+    // a single PCB's stackup / editor). In MBS mode, hide them —
+    // each sub-board's own 3D viewer is the right place to set them.
+    if( m_frame->IsAssemblyMode() )
+    {
+        m_cbUseBoardStackupColors->Hide();
+        m_cbUseBoardEditorCopperColors->Hide();
+
+        // The 4 mate-rendering toggles + colour swatches are inlined
+        // into the layer list (after Off-board Silkscreen) by
+        // rebuildLayers() so they share the same row format as every
+        // other layer entry. Just the tolerance row sits here at the
+        // foot of the panel — no border, matches the user's request
+        // that this remain at the bottom of the RHS.
+        ASSEMBLY_3D_MANAGER* mgr = m_frame->GetAssemblyManager();
+
+        wxBoxSizer* tolRow = new wxBoxSizer( wxHORIZONTAL );
+        wxStaticText* tolLabel =
+                new wxStaticText( m_panelLayers, wxID_ANY, _( "Tolerance (mm):" ) );
+        tolLabel->SetFont( infoFont );
+        tolRow->Add( tolLabel, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 5 );
+
+        const wxString initialThr =
+                mgr ? wxString::Format( "%.2f", mgr->GetCollisionThresholdMm() )
+                    : wxString( "0.5" );
+        m_collisionThresholdCtrl = new wxTextCtrl( m_panelLayers, wxID_ANY, initialThr,
+                                                    wxDefaultPosition, wxDefaultSize,
+                                                    wxTE_PROCESS_ENTER );
+        m_collisionThresholdCtrl->SetMinSize( wxSize( FromDIP( 50 ), -1 ) );
+        m_collisionThresholdCtrl->SetToolTip(
+                _( "Mesh-overlap thickness above which a mated pair is "
+                   "flagged as COLLISION. Below this, mated mesh "
+                   "interpenetration shows as CONTACT." ) );
+        tolRow->Add( m_collisionThresholdCtrl, 1 );
+
+        m_panelLayersSizer->Add( tolRow, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 5 );
+
+        auto commitTolerance = [this]()
+        {
+            if( !m_collisionThresholdCtrl )
+                return;
+
+            double v = 0.5;
+            if( !m_collisionThresholdCtrl->GetValue().ToDouble( &v ) )
+                return;
+
+            if( ASSEMBLY_3D_MANAGER* m = m_frame->GetAssemblyManager() )
+                m->SetCollisionThresholdMm( static_cast<float>( v ) );
+            m_frame->NewDisplay( true );
+        };
+
+        m_collisionThresholdCtrl->Bind( wxEVT_TEXT_ENTER,
+                [commitTolerance]( wxCommandEvent& ) { commitTolerance(); } );
+        m_collisionThresholdCtrl->Bind( wxEVT_KILL_FOCUS,
+                [commitTolerance]( wxFocusEvent& aEvt )
+                {
+                    commitTolerance();
+                    aEvt.Skip();
+                } );
+    }
+    else
+    {
+        m_panelLayersSizer->Add( m_cbUseBoardStackupColors, 0,
+                                  wxEXPAND | wxTOP | wxLEFT | wxRIGHT, 5 );
+        m_panelLayersSizer->Add( m_cbUseBoardEditorCopperColors, 0,
+                                  wxEXPAND | wxALL, 5 );
+    }
 
     m_cbLayerPresets->SetToolTip( wxString::Format( _( "Save and restore color and visibility combinations.\n"
                                                        "Use %s+Tab to activate selector.\n"
@@ -652,23 +723,186 @@ void APPEARANCE_CONTROLS_3D::rebuildLayers()
                 m_layersOuterSizer->AddSpacer( 2 );
             };
 
+    // In MBS mode every per-board layer (Board Body / F.Cu / B.Cu /
+    // F.Mask / Silkscreen / etc.) on the SHARED appearance panel
+    // would either drive the active sub-board (confusing) or all
+    // sub-boards at once (worse). Hide them; per-board appearance is
+    // configured via each sub-board's individual 3D viewer. Layers
+    // from LAYER_3D_TH_MODELS onwards are environment / global
+    // (background, holes, navigator) — keep those visible.
+    const bool isMbs = m_frame->IsAssemblyMode();
+
+    auto isPerBoardLayer = []( int aId )
+    {
+        return ( aId >= LAYER_3D_BOARD && aId <= LAYER_3D_USER_ECO2 )
+               || ( aId >= LAYER_3D_USER_1 && aId <= LAYER_3D_USER_45 );
+    };
+
+    bool prevWasSpacer = true;     // collapse leading + consecutive spacers
+
+    // Helper: emit one mate-rendering row in the same format as
+    // appendLayer (color swatch + visibility eye + label) but
+    // wired to manager flags instead of the layer-color map.
+    enum MateRow { ROW_MATE_GIZMO, ROW_PIN_PAIR, ROW_COLLISION, ROW_CONTACT };
+
+    auto appendMateRow = [&]( MateRow aWhich, const wxString& aLabel,
+                              const wxString& aTooltip )
+    {
+        ASSEMBLY_3D_MANAGER* mgr = m_frame->GetAssemblyManager();
+        if( !mgr )
+            return;
+
+        auto getColor = [&]() -> SFVEC4F
+        {
+            switch( aWhich )
+            {
+            case ROW_MATE_GIZMO: return mgr->GetMateGizmoColor();
+            case ROW_PIN_PAIR:   return mgr->GetPinPairColor();
+            case ROW_COLLISION:  return mgr->GetCollisionColor();
+            case ROW_CONTACT:    return mgr->GetContactColor();
+            }
+            return SFVEC4F( 1, 1, 1, 1 );
+        };
+
+        auto setColor = [&, aWhich]( const COLOR4D& aColor )
+        {
+            ASSEMBLY_3D_MANAGER* m = m_frame->GetAssemblyManager();
+            if( !m )
+                return;
+            const SFVEC4F v( static_cast<float>( aColor.r ), static_cast<float>( aColor.g ),
+                             static_cast<float>( aColor.b ), static_cast<float>( aColor.a ) );
+            switch( aWhich )
+            {
+            case ROW_MATE_GIZMO: m->SetMateGizmoColor( v ); break;
+            case ROW_PIN_PAIR:   m->SetPinPairColor( v );   break;
+            case ROW_COLLISION:  m->SetCollisionColor( v ); break;
+            case ROW_CONTACT:    m->SetContactColor( v );   break;
+            }
+        };
+
+        auto getVisible = [&]() -> bool
+        {
+            ASSEMBLY_3D_MANAGER* m = m_frame->GetAssemblyManager();
+            if( !m )
+                return true;
+            switch( aWhich )
+            {
+            case ROW_MATE_GIZMO: return m->GetShowMateGizmos();
+            case ROW_PIN_PAIR:   return m->GetShowPinPairGizmos();
+            case ROW_COLLISION:  return m->GetShowCollisionHighlights();
+            case ROW_CONTACT:    return m->GetShowContactHighlights();
+            }
+            return true;
+        };
+
+        auto setVisible = [&, aWhich]( bool aVis )
+        {
+            ASSEMBLY_3D_MANAGER* m = m_frame->GetAssemblyManager();
+            if( !m )
+                return;
+            switch( aWhich )
+            {
+            case ROW_MATE_GIZMO: m->SetShowMateGizmos( aVis );         break;
+            case ROW_PIN_PAIR:   m->SetShowPinPairGizmos( aVis );      break;
+            case ROW_COLLISION:  m->SetShowCollisionHighlights( aVis ); break;
+            case ROW_CONTACT:    m->SetShowContactHighlights( aVis );  break;
+            }
+        };
+
+        const SFVEC4F initial = getColor();
+        const COLOR4D initialColor( initial.r, initial.g, initial.b, initial.a );
+        const COLOR4D defaultColor = initialColor;
+
+        wxBoxSizer* sizer = new wxBoxSizer( wxHORIZONTAL );
+
+        COLOR_SWATCH* swatch = new COLOR_SWATCH( m_windowLayers, initialColor, wxID_ANY,
+                                                  COLOR4D::WHITE, defaultColor,
+                                                  SWATCH_SMALL );
+        swatch->SetToolTip( _( "Left double click or middle click to change color" ) );
+        sizer->Add( swatch, 0, wxALIGN_CENTER_VERTICAL, 0 );
+        sizer->AddSpacer( 5 );
+
+        swatch->Bind( COLOR_SWATCH_CHANGED,
+                [this, setColor]( wxCommandEvent& aEvt )
+                {
+                    auto sw = static_cast<COLOR_SWATCH*>( aEvt.GetEventObject() );
+                    setColor( sw->GetSwatchColor() );
+                    m_frame->NewDisplay( true );
+                    passOnFocus();
+                } );
+
+        BITMAP_TOGGLE* btn = new BITMAP_TOGGLE( m_windowLayers, wxID_ANY,
+                                                 KiBitmapBundle( BITMAPS::visibility ),
+                                                 KiBitmapBundle( BITMAPS::visibility_off ),
+                                                 getVisible() );
+        btn->SetToolTip( wxString::Format( _( "Show or hide %s" ), aLabel.Lower() ) );
+        sizer->Add( btn, 0, wxALIGN_CENTER_VERTICAL, 0 );
+
+        btn->Bind( TOGGLE_CHANGED,
+                [this, setVisible]( wxCommandEvent& aEvt )
+                {
+                    setVisible( aEvt.GetInt() != 0 );
+                    m_frame->NewDisplay( true );
+                    passOnFocus();
+                } );
+
+        sizer->AddSpacer( 5 );
+
+        wxStaticText* label = new wxStaticText( m_windowLayers, wxID_ANY, aLabel );
+        label->Wrap( -1 );
+        label->SetToolTip( aTooltip );
+        sizer->Add( label, 0, wxALIGN_CENTER_VERTICAL, 0 );
+
+        m_layersOuterSizer->Add( sizer, 0, wxEXPAND | wxLEFT | wxRIGHT, 5 );
+        m_layersOuterSizer->AddSpacer( 2 );
+    };
+
     for( const APPEARANCE_SETTING_3D& s_setting : s_layerSettings )
     {
+        if( isMbs && !s_setting.m_Spacer && isPerBoardLayer( s_setting.m_Id ) )
+            continue;
+
         m_layerSettings.emplace_back( std::make_unique<APPEARANCE_SETTING_3D>( s_setting ) );
         std::unique_ptr<APPEARANCE_SETTING_3D>& setting = m_layerSettings.back();
 
         if( setting->m_Spacer )
         {
-            m_layersOuterSizer->AddSpacer( m_pointSize );
+            // Don't emit consecutive spacers (we may have just
+            // hidden a chunk between two spacers in MBS mode).
+            if( !prevWasSpacer )
+            {
+                m_layersOuterSizer->AddSpacer( m_pointSize );
+                prevWasSpacer = true;
+            }
         }
         else if( setting->m_Id >= LAYER_3D_USER_1 && setting->m_Id <= LAYER_3D_USER_45 )
         {
             if( enabled.test( Map3DLayerToPCBLayer( setting->m_Id ) ) )
+            {
                 appendLayer( setting );
+                prevWasSpacer = false;
+            }
         }
         else
         {
             appendLayer( setting );
+            prevWasSpacer = false;
+
+            // After Off-board Silkscreen, in MBS mode, slot in the
+            // mate-rendering rows (color + eye + label) so they
+            // visually belong to the same layer list.
+            if( isMbs && setting->m_Id == LAYER_3D_OFF_BOARD_SILK )
+            {
+                appendMateRow( ROW_MATE_GIZMO, _( "Mate gizmos" ),
+                               _( "Coloured rods linking each connector mate pair." ) );
+                appendMateRow( ROW_PIN_PAIR,   _( "Pin pairs" ),
+                               _( "Thin lines drawn between paired pads on each "
+                                  "connector mate." ) );
+                appendMateRow( ROW_COLLISION,  _( "Collisions" ),
+                               _( "Highlight on components that physically overlap." ) );
+                appendMateRow( ROW_CONTACT,    _( "Contacts" ),
+                               _( "Highlight on components that are in expected contact." ) );
+            }
         }
 
         m_layerSettingsMap[setting->m_Id] = setting.get();

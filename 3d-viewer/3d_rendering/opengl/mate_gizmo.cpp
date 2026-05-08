@@ -44,44 +44,35 @@ struct STYLE
 };
 
 
-STYLE styleFor( MATE_GIZMO::SOURCE aSource, MATE_GIZMO::ROLE aRole, bool aSelected )
+STYLE styleFor( MATE_GIZMO::SOURCE aSource, MATE_GIZMO::ROLE aRole, bool aSelected,
+                const glm::vec3& aMateGizmoColor, const glm::vec3& aPinPairColor,
+                const glm::vec3& aCollisionColor )
 {
-    // M6.E collision entries always render in red regardless of role —
-    // the user is supposed to fix the collision, not categorize it as
-    // primary/secondary/disabled.
+    // M6.E collision entries always render in the user-controlled
+    // collision colour regardless of role — they're errors to fix,
+    // not categorise as primary/secondary/disabled.
     if( aSource == MATE_GIZMO::SOURCE::COLLISION )
     {
         STYLE s;
-        glm::vec3 red( 1.0f, 0.20f, 0.20f );
-        s.color        = aSelected ? glm::min( red * 1.4f + glm::vec3( 0.05f ),
+        s.color        = aSelected ? glm::min( aCollisionColor * 1.4f + glm::vec3( 0.05f ),
                                                 glm::vec3( 1.0f ) )
-                                    : red;
+                                    : aCollisionColor;
         s.lineRadius   = aSelected ? 0.10f : 0.06f;
         s.sphereRadius = aSelected ? 0.18f : 0.12f;
         return s;
     }
 
-    // Hue convention:
-    //   • Custom mates lean blue/cyan; auto mates lean green/yellow.
-    //   • Pin-pair lines get a distinct purple/violet hue so they read
-    //     as "supporting diagnostic" against the cooler centroid gizmo
-    //     and against any warm collision/contact reds/yellows — easy
-    //     to tell at a glance which is which when several gizmos
-    //     overlap on the same connector.
-    glm::vec3 base;
+    // Pin-pair lines get the user's "Pin pairs" colour; centroid
+    // mate gizmos get the "Mate gizmos" colour. CUSTOM mates retain
+    // a slight tint shift so the user can still distinguish them
+    // from AUTO at a glance.
+    glm::vec3 base = ( aRole == MATE_GIZMO::ROLE::PIN_PAIR )
+                         ? aPinPairColor
+                         : aMateGizmoColor;
 
-    if( aRole == MATE_GIZMO::ROLE::PIN_PAIR )
-    {
-        base = ( aSource == MATE_GIZMO::SOURCE::CUSTOM )
-                       ? glm::vec3( 0.80f, 0.45f, 1.00f )            // light violet (custom)
-                       : glm::vec3( 0.60f, 0.30f, 0.95f );           // purple (auto)
-    }
-    else
-    {
-        base = ( aSource == MATE_GIZMO::SOURCE::CUSTOM )
-                       ? glm::vec3( 0.20f, 0.80f, 1.00f )            // cyan (custom)
-                       : glm::vec3( 0.30f, 1.00f, 0.40f );           // green (auto)
-    }
+    if( aSource == MATE_GIZMO::SOURCE::CUSTOM )
+        base = glm::min( base * glm::vec3( 0.7f, 0.85f, 1.15f ),
+                         glm::vec3( 1.0f ) );
 
     if( aRole == MATE_GIZMO::ROLE::SECONDARY )
         base *= 0.7f;                                                 // dim
@@ -220,7 +211,8 @@ void MATE_GIZMO::Render( const glm::mat4& aCameraView, const glm::mat4& aCameraP
 
 void MATE_GIZMO::renderEntry( const ENTRY& aEntry )
 {
-    STYLE s = styleFor( aEntry.source, aEntry.role, aEntry.selected );
+    STYLE s = styleFor( aEntry.source, aEntry.role, aEntry.selected,
+                        m_mateGizmoColor, m_pinPairColor, m_collisionColor );
 
     // When the user has selected a mate row, fade non-selected entries
     // so the chosen one stands out. Selected (or no-selection) entries
@@ -291,19 +283,20 @@ void MATE_GIZMO::renderOverlapBox( const OVERLAP_BOX& aBox )
     switch( aBox.kind )
     {
     case OVERLAP_KIND::COLLISION:
-        // Saturated red, ~35% fill so the underlying model still reads
-        // through; brighter red wireframe so the silhouette pops.
-        fillColor = glm::vec3( 1.0f, 0.18f, 0.18f );
-        lineColor = glm::vec3( 1.0f, 0.55f, 0.55f );
+        // ~35% fill so the underlying model still reads through;
+        // brighter wireframe so the silhouette pops.
+        fillColor = m_collisionColor;
+        lineColor = glm::min( m_collisionColor + glm::vec3( 0.35f ),
+                              glm::vec3( 1.0f ) );
         fillAlpha = 0.35f;
         lineAlpha = 0.95f;
         break;
 
     case OVERLAP_KIND::CONTACT:
-        // Yellow proximity highlight — clearly distinct from the red
-        // collision box and from the green/cyan mate-pair gizmos.
-        fillColor = glm::vec3( 1.0f, 0.85f, 0.20f );
-        lineColor = glm::vec3( 1.0f, 1.00f, 0.55f );
+        // Proximity highlight — uses user-controlled contact colour.
+        fillColor = m_contactColor;
+        lineColor = glm::min( m_contactColor + glm::vec3( 0.35f ),
+                              glm::vec3( 1.0f ) );
         fillAlpha = 0.22f;
         lineAlpha = 0.85f;
         break;
@@ -343,10 +336,12 @@ void MATE_GIZMO::renderOverlapBox( const OVERLAP_BOX& aBox )
 
     if( drawTris )
     {
-        // Bright red fill for collisions, yellow for contacts.
-        glm::vec3 triFill = ( aBox.kind == OVERLAP_KIND::COLLISION )
-                              ? glm::vec3( 1.0f, 0.18f, 0.18f )
-                              : glm::vec3( 1.0f, 0.82f, 0.20f );
+        // User-tunable fill: collision colour for COLLISION boxes,
+        // contact colour for CONTACT boxes (set by the appearance
+        // panel's swatches in MBS mode).
+        const glm::vec3 triFill = ( aBox.kind == OVERLAP_KIND::COLLISION )
+                                          ? m_collisionColor
+                                          : m_contactColor;
 
         glColor4f( triFill.r, triFill.g, triFill.b, 0.65f );
         glBegin( GL_TRIANGLES );

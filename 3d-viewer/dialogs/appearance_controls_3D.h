@@ -192,4 +192,11 @@ private:
     GRID_BITMAP_TOGGLE_RENDERER*   m_toggleGridRenderer;
     wxCheckBox*                    m_cbUseBoardStackupColors;
     wxCheckBox*                    m_cbUseBoardEditorCopperColors;
+
+    /// MBS-only tolerance text input at the bottom of the panel.
+    /// The 4 mate-rendering toggles + colour swatches live inline
+    /// in the layer list (rebuildLayers slots them in after
+    /// Off-board Silkscreen) so the LHS of the layer rows reads
+    /// uniformly: [color swatch] [eye] [label].
+    wxTextCtrl*                    m_collisionThresholdCtrl = nullptr;
 };

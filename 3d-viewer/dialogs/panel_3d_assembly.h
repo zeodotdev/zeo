@@ -102,11 +102,6 @@ private:
     void onDeleteCustomMate( wxCommandEvent& aEvent );
     void onMateTreeSelectionChanged( wxTreeEvent& aEvent );
     void onMateTreeActivated( wxTreeEvent& aEvent );    ///< double-click → edit
-    void onShowMatesToggled( wxCommandEvent& aEvent );
-    void onShowPinPairsToggled( wxCommandEvent& aEvent );
-    void onShowCollisionsToggled( wxCommandEvent& aEvent );
-    void onShowContactsToggled( wxCommandEvent& aEvent );
-    void onCollisionThresholdChanged( wxCommandEvent& aEvent );
 
     /**
      * Position section's own board picker — independent of the
@@ -198,6 +193,10 @@ private:
 
     // View / overlay toggles. Independent of the underlying solver
     // and collision state — controls *what* the gizmo pass renders.
+    // Mate-rendering controls moved to RHS APPEARANCE_CONTROLS_3D's
+    // "Mate Rendering" section in MBS mode. The members below are
+    // kept as nullptr so any leftover access guarded by null-checks
+    // doesn't crash; they're never instantiated.
     wxCheckBox*             m_showMatesCheck;
     wxCheckBox*             m_showPinPairsCheck;
     wxCheckBox*             m_showCollisionsCheck;

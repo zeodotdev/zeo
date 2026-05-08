@@ -308,71 +308,16 @@ void PANEL_3D_ASSEMBLY::createControls()
 
     mainSizer->Add( matesBox, 1, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 5 );
 
-    // ====================  View ====================
-    // Three independent toggles for the gizmo overlay pass.
-    wxStaticBoxSizer* viewBox =
-            new wxStaticBoxSizer( wxVERTICAL, m_scrolled, _( "View" ) );
-
-    m_showMatesCheck = new wxCheckBox( m_scrolled, wxID_ANY, _( "Show mate gizmos" ) );
-    m_showMatesCheck->SetValue( true );
-    m_showMatesCheck->SetToolTip(
-            _( "Overlay coloured rods linking each connector mate pair." ) );
-    viewBox->Add( m_showMatesCheck, 0, wxBOTTOM, 3 );
-
-    // Pin-pair lines have their own toggle — they're useful for chasing
-    // wrong-correspondence bugs but noisy on large connectors.
-    m_showPinPairsCheck = new wxCheckBox( m_scrolled, wxID_ANY, _( "Show pin pairs" ) );
-    m_showPinPairsCheck->SetValue( true );
-    m_showPinPairsCheck->SetToolTip(
-            _( "Thin orange lines drawn between paired pads on each "
-                "connector mate. Reveals wrong port-pin mappings — "
-                "lines that cross or fan out indicate the schematic "
-                "endpoints disagree with the physical connector." ) );
-    viewBox->Add( m_showPinPairsCheck, 0, wxBOTTOM, 3 );
-
-    m_showCollisionsCheck = new wxCheckBox( m_scrolled, wxID_ANY, _( "Show collisions" ) );
-    m_showCollisionsCheck->SetValue( true );
-    m_showCollisionsCheck->SetToolTip(
-            _( "Overlay red markers on components that physically overlap. "
-                "Auto-runs on every position change." ) );
-    viewBox->Add( m_showCollisionsCheck, 0, wxBOTTOM, 3 );
-
-    m_showContactsCheck = new wxCheckBox( m_scrolled, wxID_ANY, _( "Show contacts" ) );
-    m_showContactsCheck->SetValue( true );
-    m_showContactsCheck->SetToolTip(
-            _( "Overlay markers on components that are in expected contact (mated). "
-                "Currently aliases the mate-pair gizmo." ) );
-    viewBox->Add( m_showContactsCheck, 0, wxBOTTOM, 6 );
-
-    // Tolerance for the COLLISION-vs-CONTACT verdict on mated mesh
-    // interpenetration: how thick the mesh-overlap can be before
-    // flagging as a real collision. Different connector classes mate
-    // at different depths (FFC ~0.5 mm, headers ~1-2 mm), so let the
-    // user tune it per project.
-    wxBoxSizer* thresholdRow = new wxBoxSizer( wxHORIZONTAL );
-    thresholdRow->Add( new wxStaticText( m_scrolled, wxID_ANY,
-                                          _( "Tolerance (mm):" ) ),
-                       0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 5 );
-    // Initial value from the manager (which reads from project file on
-    // bind), not a hard-coded string — otherwise the dropdown shows
-    // 0.5 even when the user has saved a different threshold.
-    const wxString initialThreshold =
-            m_manager
-                    ? wxString::Format( "%.2f", m_manager->GetCollisionThresholdMm() )
-                    : wxString( "0.5" );
-    m_collisionThresholdCtrl = new wxTextCtrl( m_scrolled, wxID_ANY, initialThreshold,
-                                                wxDefaultPosition, wxDefaultSize,
-                                                wxTE_PROCESS_ENTER );
-    m_collisionThresholdCtrl->SetMinSize( wxSize( FromDIP( 50 ), -1 ) );
-    m_collisionThresholdCtrl->SetToolTip(
-            _( "Mesh-overlap thickness above which a mated pair is flagged as "
-                "COLLISION (red). Below this, mated mesh interpenetration shows "
-                "as CONTACT (yellow). Raise for connectors with deeper natural "
-                "mating depth." ) );
-    thresholdRow->Add( m_collisionThresholdCtrl, 1 );
-    viewBox->Add( thresholdRow, 0, wxEXPAND );
-
-    mainSizer->Add( viewBox, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 5 );
+    // The mate-rendering toggles + tolerance now live on the RHS
+    // appearance panel (APPEARANCE_CONTROLS_3D) under the "Mate
+    // Rendering" section in MBS mode. Keeping null pointers here so
+    // any leftover references that don't reach the new controls
+    // don't crash; the bind code below skips them when null.
+    m_showMatesCheck         = nullptr;
+    m_showPinPairsCheck      = nullptr;
+    m_showCollisionsCheck    = nullptr;
+    m_showContactsCheck      = nullptr;
+    m_collisionThresholdCtrl = nullptr;
 
     // ====================  Validation ====================
     // Collision check auto-runs on every position change.
@@ -526,23 +471,8 @@ void PANEL_3D_ASSEMBLY::bindEvents()
     m_disableMateButton->Bind(  wxEVT_BUTTON, &PANEL_3D_ASSEMBLY::onDisableMate,      this );
     m_deleteMateButton->Bind(   wxEVT_BUTTON, &PANEL_3D_ASSEMBLY::onDeleteCustomMate, this );
 
-    // View toggles control gizmo entry filtering in the manager.
-    m_showMatesCheck->Bind( wxEVT_CHECKBOX, &PANEL_3D_ASSEMBLY::onShowMatesToggled, this );
-    m_showPinPairsCheck->Bind( wxEVT_CHECKBOX,
-                                &PANEL_3D_ASSEMBLY::onShowPinPairsToggled, this );
-    m_showCollisionsCheck->Bind( wxEVT_CHECKBOX,
-                                  &PANEL_3D_ASSEMBLY::onShowCollisionsToggled, this );
-    m_showContactsCheck->Bind( wxEVT_CHECKBOX,
-                                &PANEL_3D_ASSEMBLY::onShowContactsToggled, this );
-    m_collisionThresholdCtrl->Bind( wxEVT_TEXT_ENTER,
-                                     &PANEL_3D_ASSEMBLY::onCollisionThresholdChanged, this );
-    m_collisionThresholdCtrl->Bind( wxEVT_KILL_FOCUS,
-                                     [this]( wxFocusEvent& aEvent )
-                                     {
-                                         wxCommandEvent dummy;
-                                         onCollisionThresholdChanged( dummy );
-                                         aEvent.Skip();
-                                     } );
+    // Mate-rendering view toggles + tolerance moved to RHS appearance
+    // panel; widgets are nullptr here so no bind necessary.
 }
 
 
@@ -761,47 +691,6 @@ void PANEL_3D_ASSEMBLY::autoRunCollisionCheck()
 }
 
 
-void PANEL_3D_ASSEMBLY::onShowCollisionsToggled( wxCommandEvent& aEvent )
-{
-    if( !m_manager )
-        return;
-
-    m_manager->SetShowCollisionHighlights( m_showCollisionsCheck->GetValue() );
-    refresh3DView();
-}
-
-
-void PANEL_3D_ASSEMBLY::onShowContactsToggled( wxCommandEvent& aEvent )
-{
-    if( !m_manager )
-        return;
-
-    m_manager->SetShowContactHighlights( m_showContactsCheck->GetValue() );
-    refresh3DView();
-}
-
-
-void PANEL_3D_ASSEMBLY::onCollisionThresholdChanged( wxCommandEvent& aEvent )
-{
-    (void) aEvent;
-
-    if( !m_manager )
-        return;
-
-    double v = 0.0;
-
-    if( !m_collisionThresholdCtrl->GetValue().ToDouble( &v ) || v < 0.0 )
-    {
-        // Bad input — restore the manager's current value.
-        m_collisionThresholdCtrl->SetValue(
-                wxString::Format( "%.2f", m_manager->GetCollisionThresholdMm() ) );
-        return;
-    }
-
-    m_manager->SetCollisionThresholdMm( static_cast<float>( v ) );
-    autoRunCollisionCheck();
-    refresh3DView();
-}
 
 
 void PANEL_3D_ASSEMBLY::onExportSTEP( wxCommandEvent& aEvent )
@@ -1166,26 +1055,6 @@ void PANEL_3D_ASSEMBLY::onMateTreeSelectionChanged( wxTreeEvent& aEvent )
     }
 
     aEvent.Skip();
-}
-
-
-void PANEL_3D_ASSEMBLY::onShowMatesToggled( wxCommandEvent& aEvent )
-{
-    if( !m_manager )
-        return;
-
-    m_manager->SetShowMateGizmos( m_showMatesCheck->GetValue() );
-    refresh3DView();
-}
-
-
-void PANEL_3D_ASSEMBLY::onShowPinPairsToggled( wxCommandEvent& aEvent )
-{
-    if( !m_manager )
-        return;
-
-    m_manager->SetShowPinPairGizmos( m_showPinPairsCheck->GetValue() );
-    refresh3DView();
 }
 
 

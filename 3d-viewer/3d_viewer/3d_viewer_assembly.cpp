@@ -5507,6 +5507,7 @@ bool ASSEMBLY_3D_MANAGER::RedrawAll( bool aIsMoving, REPORTER* aStatusReporter,
 
         bool wants = m_instanceRenderers[i]->Redraw( aIsMoving, aStatusReporter,
                                                       aWarningReporter );
+
         requestAnother = requestAnother || wants;
 
         if( doLog )
@@ -5561,6 +5562,7 @@ bool ASSEMBLY_3D_MANAGER::RedrawAll( bool aIsMoving, REPORTER* aStatusReporter,
     // collisions" alone is enough to keep collision markers visible
     // when the user has hidden mate gizmos.
     const bool anyOverlayOn = m_showMateGizmos
+                              || m_showPinPairGizmos
                               || m_showCollisionHighlights
                               || m_showContactHighlights
                               || m_showBroadAabbDebug;
@@ -5767,6 +5769,17 @@ void ASSEMBLY_3D_MANAGER::rebuildMateGizmoEntries()
 
     if( !m_mateGizmo )
         return;
+
+    // Push current user colour selections to the gizmo so the next
+    // Render uses them. Cheap (just stores 4 vec3s).
+    m_mateGizmo->SetMateGizmoColor(
+            glm::vec3( m_mateGizmoColor.r, m_mateGizmoColor.g, m_mateGizmoColor.b ) );
+    m_mateGizmo->SetPinPairColor(
+            glm::vec3( m_pinPairColor.r, m_pinPairColor.g, m_pinPairColor.b ) );
+    m_mateGizmo->SetCollisionColor(
+            glm::vec3( m_collisionColor.r, m_collisionColor.g, m_collisionColor.b ) );
+    m_mateGizmo->SetContactColor(
+            glm::vec3( m_contactColor.r, m_contactColor.g, m_contactColor.b ) );
 
     std::vector<MATE_EDGE> edges = BuildMateGraph();
 

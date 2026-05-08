@@ -139,6 +139,16 @@ public:
     /// the next Render call.
     void SetOverlapBoxes( std::vector<OVERLAP_BOX> aBoxes );
 
+    /// Per-render-class colour overrides — the appearance panel
+    /// drives these in MBS mode so users can recolour the four
+    /// rendering overlays. Defaults match the legacy hard-coded
+    /// values; rebuildMateGizmoEntries pushes the manager's current
+    /// colour settings each rebuild.
+    void SetMateGizmoColor( const glm::vec3& aColor )      { m_mateGizmoColor = aColor; }
+    void SetPinPairColor( const glm::vec3& aColor )        { m_pinPairColor = aColor; }
+    void SetCollisionColor( const glm::vec3& aColor )      { m_collisionColor = aColor; }
+    void SetContactColor( const glm::vec3& aColor )        { m_contactColor = aColor; }
+
     /// Render every entry. Caller must have a live GL context.
     /// The gizmo manages its own modelview matrix (sets it from the
     /// supplied camera view + projection; preserves the prior matrix
@@ -162,6 +172,14 @@ private:
 
     std::vector<ENTRY>       m_entries;
     std::vector<OVERLAP_BOX> m_overlapBoxes;
+
+    /// User-tunable colours pushed in by ASSEMBLY_3D_MANAGER each
+    /// time it rebuilds the entry list. Defaults reproduce the
+    /// previous hard-coded styleFor() colours.
+    glm::vec3                m_mateGizmoColor = glm::vec3( 0.30f, 1.00f, 0.40f );
+    glm::vec3                m_pinPairColor   = glm::vec3( 0.60f, 0.30f, 0.95f );
+    glm::vec3                m_collisionColor = glm::vec3( 1.00f, 0.18f, 0.18f );
+    glm::vec3                m_contactColor   = glm::vec3( 1.00f, 0.85f, 0.20f );
 };
 
 #endif // MATE_GIZMO_H

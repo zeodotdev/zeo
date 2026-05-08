@@ -369,6 +369,7 @@ public:
      */
     void HideAllBoards();
 
+
     // ========== Connector Mating ==========
 
     /**
@@ -475,6 +476,20 @@ public:
     /// component-level contact tinting). Default: on.
     void SetShowContactHighlights( bool aShow ) { m_showContactHighlights = aShow; }
     bool GetShowContactHighlights() const { return m_showContactHighlights; }
+
+    /// Tunable colours for the four MBS rendering overlays. Defaults
+    /// match the previously hard-coded styleFor() values in
+    /// mate_gizmo.cpp. The appearance panel exposes each as a colour
+    /// swatch in MBS mode; mate_gizmo reads them every render so
+    /// changes take effect immediately without a renderer reload.
+    SFVEC4F GetMateGizmoColor() const         { return m_mateGizmoColor; }
+    void    SetMateGizmoColor( const SFVEC4F& aColor )    { m_mateGizmoColor = aColor; }
+    SFVEC4F GetPinPairColor() const           { return m_pinPairColor; }
+    void    SetPinPairColor( const SFVEC4F& aColor )      { m_pinPairColor = aColor; }
+    SFVEC4F GetCollisionColor() const         { return m_collisionColor; }
+    void    SetCollisionColor( const SFVEC4F& aColor )    { m_collisionColor = aColor; }
+    SFVEC4F GetContactColor() const           { return m_contactColor; }
+    void    SetContactColor( const SFVEC4F& aColor )      { m_contactColor = aColor; }
 
     /**
      * Debug: blue wireframe boxes for every pair that survives the
@@ -907,6 +922,12 @@ private:
     bool                            m_showPinPairGizmos       = true;
     bool                            m_showCollisionHighlights = true;
     bool                            m_showContactHighlights   = true;
+
+    /// Default colours match the previous hard-coded styleFor() values.
+    SFVEC4F                         m_mateGizmoColor = SFVEC4F( 0.30f, 1.00f, 0.40f, 1.0f );
+    SFVEC4F                         m_pinPairColor   = SFVEC4F( 0.60f, 0.30f, 0.95f, 1.0f );
+    SFVEC4F                         m_collisionColor = SFVEC4F( 1.00f, 0.18f, 0.18f, 1.0f );
+    SFVEC4F                         m_contactColor   = SFVEC4F( 1.00f, 0.85f, 0.20f, 1.0f );
     /// Debug: render broad-phase AABB-overlap boxes (blue wireframe)
     /// alongside the confirmed COLLISION/CONTACT boxes so the user
     /// can compare what the AABB pre-filter is finding vs what the
@@ -947,6 +968,7 @@ private:
     /// schematic don't survive across edits.
     std::map<std::tuple<KIID, wxString, KIID, wxString>,
              std::vector<std::pair<wxString, wxString>>> m_lastIcpPadPins;
+
 };
 
 #endif // VIEWER_3D_ASSEMBLY_H

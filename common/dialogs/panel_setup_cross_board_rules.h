@@ -46,7 +46,7 @@ class wxNotebook;
  * harmless: populate sees empty rule maps and apply writes back empty
  * maps, leaving the project untouched.
  */
-class KICOMMON_API PANEL_SETUP_CROSS_BOARD_RULES : public wxPanel
+class PANEL_SETUP_CROSS_BOARD_RULES : public wxPanel
 {
 public:
     /**

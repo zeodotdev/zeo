@@ -71,6 +71,9 @@ struct BOARD_SYNC_STATUS
 /**
  * Cross-board connection validation result.
  */
+#ifdef ERROR
+#undef ERROR  // Windows wingdi.h defines ERROR as 0, conflicting with the enumerator below.
+#endif
 struct CROSS_BOARD_VALIDATION_RESULT
 {
     enum class Severity { INFO, WARNING, ERROR };

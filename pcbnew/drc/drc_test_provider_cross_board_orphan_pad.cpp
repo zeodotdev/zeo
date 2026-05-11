@@ -155,7 +155,7 @@ bool DRC_TEST_PROVIDER_CROSS_BOARD_ORPHAN_PAD::Run()
             continue;
         }
 
-        const wxString ref       = parentFp ? parentFp->GetReference() : wxT( "?" );
+        const wxString ref       = parentFp ? parentFp->GetReference() : wxString( wxT( "?" ) );
         const wxString pinNumber = pad->GetNumber();
 
         if( wiredEndpoints.count( { ref, pinNumber } ) )

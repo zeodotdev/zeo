@@ -418,7 +418,7 @@ void DRC_ENGINE_CROSS_BOARD::CheckNetCompleteness()
             if( !pad )
                 continue;
 
-            const wxString ref = parentFp ? parentFp->GetReference() : wxT( "?" );
+            const wxString ref = parentFp ? parentFp->GetReference() : wxString( wxT( "?" ) );
             const wxString pinNumber = pad->GetNumber();
 
             bool hasEndpoint = false;

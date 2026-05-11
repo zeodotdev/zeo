@@ -2682,7 +2682,7 @@ HANDLER_RESULT<RunDRCResponse> API_HANDLER_PCB::handleRunDRC(
                   "board=%p board_proj='%s' req_proj='%s' "
                   "drcTool=%p engine=%p engine_board=%p",
                   this, frame(), frame()->GetCurrentFileName(),
-                  board, board->GetProject() ? board->GetProject()->GetProjectFullName() : "(null)",
+                  board, board->GetProject() ? board->GetProject()->GetProjectFullName() : wxString( "(null)" ),
                   aCtx.Request.board().project().path(),
                   drcTool, engine.get(), engine ? engine->GetBoard() : nullptr );
 

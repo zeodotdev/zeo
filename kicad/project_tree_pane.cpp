@@ -760,7 +760,7 @@ void PROJECT_TREE_PANE::onArchiveDirectory( wxCommandEvent& event )
 
     wxFileName srcDirFn( srcDir, wxEmptyString );
     wxString   baseName = srcDirFn.GetDirs().IsEmpty()
-                                ? wxT( "archive" )
+                                ? wxString( wxT( "archive" ) )
                                 : srcDirFn.GetDirs().Last();
 
     wxString defaultZipName =

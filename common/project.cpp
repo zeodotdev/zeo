@@ -916,7 +916,7 @@ wxString PROJECT::GetContainerProjectPath() const
     cursor.Normalize( wxPATH_NORM_ABSOLUTE | wxPATH_NORM_DOTS );
 
     constexpr int kMaxDepth = 6;
-    wxString pattern = wxT( "*." ) + FILEEXT::ProjectFileExtension;
+    wxString pattern = wxString( wxT( "*." ) ) + FILEEXT::ProjectFileExtension;
 
     for( int depth = 0; depth < kMaxDepth; ++depth )
     {

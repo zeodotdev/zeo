@@ -5786,10 +5786,10 @@ void AGENT_FRAME::OnChatError( wxThreadEvent& aEvent )
             "</div>",
             ZEO_BASE_URL,
             ( data->canRetry && !m_lastSentText.IsEmpty() )
-                ? wxS( "<a href=\"agent:retry\" style=\"display:inline-block; "
+                ? wxString( wxS( "<a href=\"agent:retry\" style=\"display:inline-block; "
                        "padding:4px 14px; border-radius:6px; font-size:12px; font-weight:500; "
                        "text-decoration:none; cursor:pointer; "
-                       "background:rgba(232,85,85,0.15); color:var(--accent-red);\">Retry</a>" )
+                       "background:rgba(232,85,85,0.15); color:var(--accent-red);\">Retry</a>" ) )
                 : wxString() );
     }
     else if( data->canRetry && !m_lastSentText.IsEmpty() )

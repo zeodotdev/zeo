@@ -39,6 +39,9 @@ class REPORTER;
 /**
  * Severity levels for cross-board DRC violations.
  */
+#ifdef ERROR
+#undef ERROR  // Windows wingdi.h defines ERROR as 0, conflicting with the enumerator below.
+#endif
 enum class CROSS_BOARD_DRC_SEVERITY
 {
     INFO,

@@ -48,6 +48,7 @@ std::optional<TOOLBAR_CONFIGURATION> KICAD_MANAGER_TOOLBAR_SETTINGS::DefaultTool
         config.AppendAction( KICAD_MANAGER_ACTIONS::showAiAssistant )
               .AppendAction( KICAD_MANAGER_ACTIONS::editSymbols )
               .AppendAction( KICAD_MANAGER_ACTIONS::editFootprints )
+              .AppendAction( KICAD_MANAGER_ACTIONS::viewGerbers )
               .AppendAction( KICAD_MANAGER_ACTIONS::convertImage )
               .AppendAction( KICAD_MANAGER_ACTIONS::showCalculator )
               .AppendAction( KICAD_MANAGER_ACTIONS::editDrawingSheet )

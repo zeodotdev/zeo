@@ -1398,6 +1398,81 @@ int KICAD_MANAGER_CONTROL::ShowTerminal( const TOOL_EVENT& aEvent )
     return ShowPlayer( aEvent );
 }
 
+int KICAD_MANAGER_CONTROL::openSubBoardEditorViaPicker( int aPlayerType )
+{
+    PROJECT_FILE* multi = m_frame->GetMultiBoardProject();
+    wxCHECK( multi, -1 );
+
+    const auto& subs = multi->GetSubProjects();
+
+    if( subs.empty() )
+    {
+        wxMessageBox( _( "This multi-board project has no sub-boards yet.\n"
+                         "Use 'Manage Sub-Boards...' to add one." ),
+                      _( "No Sub-Boards" ), wxOK | wxICON_INFORMATION, m_frame );
+        return 0;
+    }
+
+    bool     wantPcb  = ( aPlayerType == FRAME_PCB_EDITOR );
+    wxString title    = wantPcb ? _( "Open Sub-Board PCB" ) : _( "Open Sub-Board Schematic" );
+
+    KIID picked = niluuid;
+
+    if( subs.size() == 1 )
+    {
+        // Fast path: a one-sub-board container needs no choice. Skip the
+        // dialog so the launcher button (or its hotkey) opens the only
+        // editor in a single keystroke.
+        picked = subs.front().uuid;
+    }
+    else
+    {
+        wxArrayString     choices;
+        std::vector<KIID> uuids;
+
+        for( const SUB_PROJECT_INFO& info : subs )
+        {
+            wxString label = info.displayName.IsEmpty() ? info.name : info.displayName;
+            label += wxT( "   " );
+            label += info.relativePath;
+            choices.Add( label );
+            uuids.push_back( info.uuid );
+        }
+
+        // wxSingleChoiceDialog defaults selection to row 0 and binds the
+        // expected keyboard semantics on every platform: up/down arrows
+        // move, Enter accepts, Esc cancels — so the user can fly through
+        // the picker without ever touching the mouse.
+        wxSingleChoiceDialog dlg( m_frame, _( "Choose the sub-board to open:" ),
+                                  title, choices );
+        dlg.SetSelection( 0 );
+
+        if( dlg.ShowModal() != wxID_OK )
+            return 0;
+
+        int idx = dlg.GetSelection();
+
+        if( idx < 0 || idx >= (int) uuids.size() )
+            return 0;
+
+        picked = uuids[idx];
+    }
+
+    bool ok = wantPcb ? m_frame->SpawnPeerPcbEditor( picked )
+                      : m_frame->SpawnPeerSchematicEditor( picked );
+
+    if( !ok )
+    {
+        wxMessageBox( wantPcb ? _( "Failed to open the selected sub-board's PCB." )
+                              : _( "Failed to open the selected sub-board's schematic." ),
+                      _( "Open Failed" ), wxOK | wxICON_ERROR, m_frame );
+        return -1;
+    }
+
+    return 0;
+}
+
+
 int KICAD_MANAGER_CONTROL::ShowPlayer( const TOOL_EVENT& aEvent )
 {
     FRAME_T       playerType = aEvent.Parameter<FRAME_T>();
@@ -1414,6 +1489,18 @@ int KICAD_MANAGER_CONTROL::ShowPlayer( const TOOL_EVENT& aEvent )
     {
         DisplayInfoMessage( m_frame, _( "Create (or open) a project to edit a pcb." ), wxEmptyString );
         return -1;
+    }
+
+    // Multi-board container: the launcher's "Edit Schematic" / "Edit PCB"
+    // buttons (and their Ctrl+E / Ctrl+R hotkeys) need to choose which
+    // sub-board to open, since the container itself has no editable
+    // schematic or PCB of its own. Route through the sub-board picker;
+    // SpawnPeer* opens the sub-project in a peer KIWAY_PLAYER without
+    // disturbing the active container PROJECT.
+    if( ( playerType == FRAME_SCH || playerType == FRAME_PCB_EDITOR )
+        && m_frame->GetMultiBoardProject() )
+    {
+        return openSubBoardEditorViaPicker( playerType );
     }
 
     if( m_inShowPlayer )

@@ -94,6 +94,15 @@ private:
 
     wxFileName newProjectDirectory( wxString* aFileName = nullptr, bool isRepo = false );
 
+    /**
+     * Multi-board launcher dispatch: show the sub-board picker (matching
+     * the MBS toolbar's "Open Sub-Board Schematic / PCB") and route the
+     * chosen sub-board through SpawnPeerSchematicEditor / SpawnPeerPcbEditor.
+     * If only one sub-board exists the picker is skipped. Returns 0 on
+     * success or user-cancel, -1 on failure.
+     */
+    int openSubBoardEditorViaPicker( int aPlayerType );
+
 private:
     KICAD_MANAGER_FRAME* m_frame;        ///< Pointer to the currently used edit/draw frame.
     bool                 m_inShowPlayer; ///< Re-entrancy guard

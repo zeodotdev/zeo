@@ -60,14 +60,21 @@ public:
     SCH_SHEET_PATH m_SheetPath;
     KIID           m_BlockSubProjectUuid;
 
-    TREE_ITEM_DATA( SCH_SHEET_PATH& sheet ) : wxTreeItemData(), m_SheetPath( sheet ) {}
+    // KIID's default constructor generates a fresh random UUID, so we must
+    // explicitly initialize m_BlockSubProjectUuid to niluuid for sheet rows.
+    // Otherwise IsModuleBlock() compares two random UUIDs and always returns
+    // true, sending every hierarchy click down the module-block branch.
+    TREE_ITEM_DATA( SCH_SHEET_PATH& sheet ) :
+            wxTreeItemData(), m_SheetPath( sheet ), m_BlockSubProjectUuid( niluuid )
+    {
+    }
 
     explicit TREE_ITEM_DATA( const KIID& aBlockUuid ) :
             wxTreeItemData(), m_BlockSubProjectUuid( aBlockUuid )
     {
     }
 
-    bool IsModuleBlock() const { return m_BlockSubProjectUuid != KIID(); }
+    bool IsModuleBlock() const { return m_BlockSubProjectUuid != niluuid; }
 };
 
 

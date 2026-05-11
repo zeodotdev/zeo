@@ -27,6 +27,8 @@
 
 #include <kiway_player.h>
 
+#include <vector>
+
 class ACTION_TOOLBAR;
 class BITMAP_BUTTON;
 class EDA_BASE_FRAME;
@@ -226,6 +228,25 @@ public:
     void OpenJobsFile( const wxFileName& aFileName, bool aCreate = false,
                        bool aResaveProjectPreferences = true );
 
+    /**
+     * Detach a closing JOBSET_FRAME from the tracking list and persist
+     * the updated open-jobsets list. Invoked by JOBSET_FRAME::onClose.
+     */
+    void NotifyJobsetFrameClosing( class JOBSET_FRAME* aFrame );
+
+    /**
+     * Close every standalone jobset window owned by this manager,
+     * honoring each panel's GetCanClose() gate. Returns true if all
+     * frames consented to close, false if any of them vetoed (typically
+     * the user picked Cancel on an unsaved-changes prompt).
+     */
+    bool CloseAllJobsetFrames();
+
+    /// Number of standalone jobset windows currently open for this
+    /// session. Used by the UI condition for "View Jobsets" so the menu
+    /// item enables only when there's something to surface.
+    size_t OpenJobsetFrameCount() const;
+
 
     void LoadSettings( APP_SETTINGS_BASE* aCfg ) override;
 
@@ -314,6 +335,11 @@ private:
     LOCAL_HISTORY_PANE*   m_historyPane;
     wxAuiNotebook*        m_notebook;
     int                   m_lastToolbarIconSize;
+
+    /// Live standalone JOBSET_FRAME windows. Maintained by OpenJobsFile
+    /// (insert) and NotifyJobsetFrameClosing (erase); never owns the
+    /// frames — they auto-destroy on close.
+    std::vector<class JOBSET_FRAME*> m_jobsetFrames;
 
     std::shared_ptr<PLUGIN_CONTENT_MANAGER> m_pcm;
     BITMAP_BUTTON*                          m_pcmButton;

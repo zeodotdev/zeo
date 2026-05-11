@@ -1210,6 +1210,63 @@ int KICAD_MANAGER_CONTROL::OpenJobsetFile( const TOOL_EVENT& aEvent )
 }
 
 
+int KICAD_MANAGER_CONTROL::ViewJobsets( const TOOL_EVENT& aEvent )
+{
+    if( !m_frame->IsProjectActive() )
+    {
+        DisplayInfoMessage( m_frame, _( "Open or create a project first." ), wxEmptyString );
+        return -1;
+    }
+
+    // Scan the project root for existing .kicad_jobs files. We
+    // deliberately don't recurse: jobsets are project-level artifacts
+    // and putting them inside sub-folders would already be unusual.
+    wxString projectPath = Prj().GetProjectPath();
+    wxArrayString files;
+    wxDir::GetAllFiles( projectPath, &files,
+                        wxT( "*." ) + wxString::FromUTF8( FILEEXT::KiCadJobSetFileExtension ),
+                        wxDIR_FILES );
+
+    if( files.IsEmpty() )
+    {
+        wxMessageBox( _( "No jobset files (.kicad_jobs) were found in this project.\n"
+                         "Use 'New Jobset File...' to create one." ),
+                      _( "No Jobsets" ), wxOK | wxICON_INFORMATION, m_frame );
+        return 0;
+    }
+
+    files.Sort();
+
+    wxArrayString choices;
+
+    for( const wxString& path : files )
+    {
+        wxFileName fn( path );
+        fn.MakeRelativeTo( projectPath );
+        choices.Add( fn.GetFullPath() );
+    }
+
+    // wxSingleChoiceDialog default-selects row 0 and binds standard
+    // keyboard semantics — up/down to move, Enter to accept, Esc to
+    // cancel — across every platform.
+    wxSingleChoiceDialog dlg( m_frame, _( "Choose a jobset to open:" ),
+                              _( "View Jobsets" ), choices );
+    dlg.SetSelection( 0 );
+
+    if( dlg.ShowModal() != wxID_OK )
+        return 0;
+
+    int idx = dlg.GetSelection();
+
+    if( idx < 0 || idx >= (int) files.GetCount() )
+        return 0;
+
+    m_frame->OpenJobsFile( files[idx], false );
+
+    return 0;
+}
+
+
 int KICAD_MANAGER_CONTROL::CloseProject( const TOOL_EVENT& aEvent )
 {
     m_frame->CloseProject( true );
@@ -1773,6 +1830,7 @@ void KICAD_MANAGER_CONTROL::setTransitions()
     Go( &KICAD_MANAGER_CONTROL::OpenAssemblyViewer,
         KICAD_MANAGER_ACTIONS::openAssemblyViewer.MakeEvent() );
     Go( &KICAD_MANAGER_CONTROL::NewJobsetFile, KICAD_MANAGER_ACTIONS::newJobsetFile.MakeEvent() );
+    Go( &KICAD_MANAGER_CONTROL::ViewJobsets, KICAD_MANAGER_ACTIONS::viewJobsets.MakeEvent() );
     Go( &KICAD_MANAGER_CONTROL::OpenDemoProject, KICAD_MANAGER_ACTIONS::openDemoProject.MakeEvent() );
     Go( &KICAD_MANAGER_CONTROL::OpenProject, KICAD_MANAGER_ACTIONS::openProject.MakeEvent() );
     Go( &KICAD_MANAGER_CONTROL::OpenJobsetFile, KICAD_MANAGER_ACTIONS::openJobsetFile.MakeEvent() );

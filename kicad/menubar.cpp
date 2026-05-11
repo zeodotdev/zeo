@@ -100,6 +100,7 @@ void KICAD_MANAGER_FRAME::doReCreateMenuBar()
     fileMenu->Add( KICAD_MANAGER_ACTIONS::openAssemblyViewer );
 
     fileMenu->AppendSeparator();
+    fileMenu->Add( KICAD_MANAGER_ACTIONS::viewJobsets );
     fileMenu->Add( KICAD_MANAGER_ACTIONS::newJobsetFile );
     fileMenu->Add( KICAD_MANAGER_ACTIONS::openJobsetFile );
 

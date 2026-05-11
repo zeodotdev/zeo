@@ -48,6 +48,7 @@ public:
     static TOOL_ACTION openSubProjectPcbById;
     static TOOL_ACTION openAssemblyViewer;
     static TOOL_ACTION newJobsetFile;
+    static TOOL_ACTION viewJobsets;
     static TOOL_ACTION openDemoProject;
     static TOOL_ACTION openProject;
     static TOOL_ACTION openJobsetFile;

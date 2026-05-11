@@ -59,6 +59,13 @@ TOOL_ACTION KICAD_MANAGER_ACTIONS::newJobsetFile( TOOL_ACTION_ARGS()
                                                           .FriendlyName( _( "New Jobset File..." ) )
                                                           .Icon( BITMAPS::jobset ) );
 
+TOOL_ACTION KICAD_MANAGER_ACTIONS::viewJobsets( TOOL_ACTION_ARGS()
+                                                        .Name( "kicad.Control.viewJobsets" )
+                                                        .Scope( AS_GLOBAL )
+                                                        .FriendlyName( _( "View Jobsets..." ) )
+                                                        .Tooltip( _( "Browse jobsets defined in this project and open one in its own window" ) )
+                                                        .Icon( BITMAPS::jobset_open ) );
+
 TOOL_ACTION KICAD_MANAGER_ACTIONS::openDemoProject( TOOL_ACTION_ARGS()
                                                             .Name( "kicad.Control.openDemoProject" )
                                                             .Scope( AS_GLOBAL )

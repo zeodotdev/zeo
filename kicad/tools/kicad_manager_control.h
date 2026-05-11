@@ -58,6 +58,7 @@ public:
     int OpenProject( const TOOL_EVENT& aEvent );
     int OpenDemoProject( const TOOL_EVENT& aEvent );
     int OpenJobsetFile( const TOOL_EVENT& aEvent );
+    int ViewJobsets( const TOOL_EVENT& aEvent );
     int CloseProject( const TOOL_EVENT& aEvent );
     int SaveProjectAs( const TOOL_EVENT& aEvent );
     int LoadProject( const TOOL_EVENT& aEvent );

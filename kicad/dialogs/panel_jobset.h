@@ -68,7 +68,12 @@ protected:
 class PANEL_JOBSET : public PANEL_JOBSET_BASE
 {
 public:
-    PANEL_JOBSET( wxAuiNotebook* aParent, KICAD_MANAGER_FRAME* aFrame,
+    // Accepts either a wxAuiNotebook (legacy hosting, tab title is
+    // re-synced via FindPage/SetPageText) or any other wxWindow such as
+    // a JOBSET_FRAME (standalone window, title is re-synced via the
+    // top-level wxFrame's SetTitle). The discriminator is a runtime
+    // dynamic_cast inside UpdateTitle().
+    PANEL_JOBSET( wxWindow* aParent, KICAD_MANAGER_FRAME* aFrame,
                   std::unique_ptr<JOBSET> aJobsFile );
 
     ~PANEL_JOBSET();
@@ -87,6 +92,13 @@ public:
 
     std::vector<PANEL_DESTINATION*> GetDestinationPanels();
 
+    // Promoted from PANEL_NOTEBOOK_BASE's protected interface so the
+    // standalone JOBSET_FRAME can honor the unsaved-changes gate on its
+    // own close path (the notebook-page hosting calls it via the
+    // PAGE_CLOSE event handler; the standalone frame needs direct
+    // access).
+    bool GetCanClose() override;
+
 protected:
     virtual void OnSizeGrid( wxSizeEvent& aEvent ) override;
     virtual void OnAddJobClick( wxCommandEvent& aEvent ) override;
@@ -97,14 +109,14 @@ protected:
     virtual void OnGenerateAllDestinationsClick( wxCommandEvent& event ) override;
     virtual void OnGridCellChange( wxGridEvent& aEvent ) override;
 
-    bool GetCanClose() override;
-
 private:
     void rebuildJobList();
     void buildDestinationList();
     void addDestinationPanel( JOBSET_DESTINATION* aDestination );
 
 private:
+    /// Notebook host for legacy in-notebook display. Null when this
+    /// panel lives inside a standalone JOBSET_FRAME.
     wxAuiNotebook*          m_parentBook;
     KICAD_MANAGER_FRAME*    m_frame;
     std::unique_ptr<JOBSET> m_jobsFile;

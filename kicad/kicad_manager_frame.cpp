@@ -37,6 +37,7 @@
 #include <build_version.h>
 #include <confirm.h>
 #include <dialogs/panel_jobset.h>
+#include <jobset_frame.h>
 #include <dialogs/dialog_edit_cfg.h>
 #include <local_history.h>
 #include <wx/msgdlg.h>
@@ -542,6 +543,7 @@ void KICAD_MANAGER_FRAME::setupUIConditions()
     manager->SetConditions( KICAD_MANAGER_ACTIONS::archiveProject, activeProjectCond );
     manager->SetConditions( KICAD_MANAGER_ACTIONS::newJobsetFile,  activeProjectCond );
     manager->SetConditions( KICAD_MANAGER_ACTIONS::openJobsetFile, activeProjectCond );
+    manager->SetConditions( KICAD_MANAGER_ACTIONS::viewJobsets,    activeProjectCond );
 
     auto multiBoardCond =
             [this]( const SELECTION& )
@@ -759,6 +761,11 @@ bool KICAD_MANAGER_FRAME::canCloseWindow( wxCloseEvent& aEvent )
         }
     }
 
+    // Standalone jobset windows have their own can-close gates (unsaved
+    // changes prompt). Honor each before tearing down the launcher.
+    if( !CloseAllJobsetFrames() )
+        return false;
+
     // CloseProject will recursively ask all the open editors if they need to save changes.
     // If any of them cancel then we need to cancel closing the KICAD_MANAGER_FRAME.
     if( CloseProject( true ) )
@@ -816,17 +823,57 @@ void KICAD_MANAGER_FRAME::SaveOpenJobSetsToLocalSettings( bool aIsExplicitUserSa
 
     cfg.m_OpenJobSets.clear();
 
-    for( size_t i = 0; i < m_notebook->GetPageCount(); i++ )
+    // Standalone jobset frames are the source of truth for "currently
+    // open" since jobsets no longer dock into the launcher notebook.
+    for( JOBSET_FRAME* frame : m_jobsetFrames )
     {
-        if( PANEL_JOBSET* jobset = dynamic_cast<PANEL_JOBSET*>( m_notebook->GetPage( i ) ) )
-        {
-            wxFileName jobsetFn( jobset->GetFilePath() );
-            jobsetFn.MakeRelativeTo( Prj().GetProjectPath() );
-            cfg.m_OpenJobSets.emplace_back( jobsetFn.GetFullPath() );
-        }
+        if( !frame )
+            continue;
+
+        wxFileName jobsetFn( frame->GetFilePath() );
+        jobsetFn.MakeRelativeTo( Prj().GetProjectPath() );
+        cfg.m_OpenJobSets.emplace_back( jobsetFn.GetFullPath() );
     }
 
     cfg.SaveToFile( Prj().GetProjectPath() );
+}
+
+
+void KICAD_MANAGER_FRAME::NotifyJobsetFrameClosing( JOBSET_FRAME* aFrame )
+{
+    auto it = std::find( m_jobsetFrames.begin(), m_jobsetFrames.end(), aFrame );
+
+    if( it != m_jobsetFrames.end() )
+        m_jobsetFrames.erase( it );
+
+    // Persist the now-shorter list so a restart doesn't reopen what the
+    // user just closed.
+    SaveOpenJobSetsToLocalSettings();
+}
+
+
+bool KICAD_MANAGER_FRAME::CloseAllJobsetFrames()
+{
+    // Copy first: Close() will fire NotifyJobsetFrameClosing, which
+    // mutates m_jobsetFrames mid-iteration.
+    std::vector<JOBSET_FRAME*> frames = m_jobsetFrames;
+
+    for( JOBSET_FRAME* frame : frames )
+    {
+        if( !frame )
+            continue;
+
+        if( !frame->Close( false ) )
+            return false;
+    }
+
+    return true;
+}
+
+
+size_t KICAD_MANAGER_FRAME::OpenJobsetFrameCount() const
+{
+    return m_jobsetFrames.size();
 }
 
 
@@ -902,6 +949,11 @@ bool KICAD_MANAGER_FRAME::CloseProject( bool aSave )
 
     SetStatusText( "" );
 
+    // Standalone jobset windows belong to the current project. Tear them
+    // down so the next project doesn't see leftover .kicad_jobs editors
+    // from the old one.
+    CloseAllJobsetFrames();
+
     // Traverse pages in reverse order so deleting them doesn't mess up our iterator.
     for( int i = (int) m_notebook->GetPageCount() - 1; i >= 0; i-- )
     {
@@ -923,15 +975,14 @@ bool KICAD_MANAGER_FRAME::CloseProject( bool aSave )
 
 void KICAD_MANAGER_FRAME::OpenJobsFile( const wxFileName& aFileName, bool aCreate, bool aResaveProjectPreferences )
 {
-    for( size_t i = 0; i < m_notebook->GetPageCount(); i++ )
+    // Refocus an existing standalone window rather than opening a duplicate.
+    for( JOBSET_FRAME* existing : m_jobsetFrames )
     {
-        if( PANEL_JOBSET* panel = dynamic_cast<PANEL_JOBSET*>( m_notebook->GetPage( i ) ) )
+        if( existing && existing->GetFilePath() == aFileName.GetFullPath() )
         {
-            if( aFileName.GetFullPath() == panel->GetFilePath() )
-            {
-                m_notebook->SetSelection( i );
-                return;
-            }
+            existing->Raise();
+            existing->SetFocus();
+            return;
         }
     }
 
@@ -948,21 +999,11 @@ void KICAD_MANAGER_FRAME::OpenJobsFile( const wxFileName& aFileName, bool aCreat
             jobsFile->SaveToFile( wxEmptyString, true );
         }
 
-        PANEL_JOBSET* jobPanel = new PANEL_JOBSET( m_notebook, this, std::move( jobsFile ) );
-        jobPanel->SetProjectTied( true );
-        jobPanel->SetClosable( true );
-        m_notebook->AddPage( jobPanel, aFileName.GetFullName(), true );
-        HideTabsIfNeeded();
+        JOBSET_FRAME* frame = new JOBSET_FRAME( this, std::move( jobsFile ) );
+        m_jobsetFrames.push_back( frame );
 
-        // AddPage doesn't fire the PAGE_COUNT_CHANGED event, so poke the
-        // visibility manually: the notebook pane starts hidden.
-        wxAuiPaneInfo& notebookPane = m_auimgr.GetPane( m_notebook );
-
-        if( notebookPane.IsOk() && !notebookPane.IsShown() )
-        {
-            notebookPane.Show( true );
-            m_auimgr.Update();
-        }
+        frame->Show( true );
+        frame->Raise();
 
         if( aResaveProjectPreferences )
             SaveOpenJobSetsToLocalSettings();
@@ -1094,8 +1135,9 @@ bool KICAD_MANAGER_FRAME::LoadProject( const wxFileName& aProjectFileName )
             OpenJobsFile( jobsetFn.GetFullPath(), false, false );
     }
 
-    // Always start with the apps page
-    m_notebook->SetSelection( 0 );
+    // Jobsets are no longer notebook pages; the notebook stays hidden
+    // unless some other transient page is added. Selecting page 0 here
+    // would no-op (or assert) on an empty notebook.
 
     // Rebuild the list of watched paths.
     // however this is possible only when the main loop event handler is running,

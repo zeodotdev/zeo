@@ -34,6 +34,7 @@ set( KICAD_SRCS
     dialogs/panel_jobset.cpp
     files-io.cpp
     jobs_runner.cpp
+    jobset_frame.cpp
     import_proj.cpp
     import_project.cpp
     kicad_manager_frame.cpp

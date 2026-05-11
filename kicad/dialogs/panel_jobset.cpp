@@ -510,10 +510,10 @@ bool JOBS_GRID_TRICKS::handleDoubleClick( wxGridEvent& aEvent )
 }
 
 
-PANEL_JOBSET::PANEL_JOBSET( wxAuiNotebook* aParent, KICAD_MANAGER_FRAME* aFrame,
+PANEL_JOBSET::PANEL_JOBSET( wxWindow* aParent, KICAD_MANAGER_FRAME* aFrame,
                             std::unique_ptr<JOBSET> aJobsFile ) :
         PANEL_JOBSET_BASE( aParent ),
-        m_parentBook( aParent ),
+        m_parentBook( dynamic_cast<wxAuiNotebook*>( aParent ) ),
         m_frame( aFrame ),
         m_jobsFile( std::move( aJobsFile ) )
 {
@@ -606,10 +606,25 @@ void PANEL_JOBSET::UpdateTitle()
     if( m_jobsFile->GetDirty() )
         tabName = wxS( "*" ) + tabName;
 
-    int pageIdx = m_parentBook->FindPage( this );
+    if( m_parentBook )
+    {
+        int pageIdx = m_parentBook->FindPage( this );
 
-    if( pageIdx >= 0 )
-        m_parentBook->SetPageText( pageIdx, tabName );
+        if( pageIdx >= 0 )
+            m_parentBook->SetPageText( pageIdx, tabName );
+
+        return;
+    }
+
+    // Standalone JOBSET_FRAME hosting: walk up to the owning wxFrame and
+    // update its caption. wxGetTopLevelParent is null-safe but defensive
+    // — guard the cast in case the panel ever sits inside a non-frame
+    // container.
+    if( wxWindow* top = wxGetTopLevelParent( this ) )
+    {
+        if( wxFrame* frame = dynamic_cast<wxFrame*>( top ) )
+            frame->SetTitle( tabName );
+    }
 }
 
 

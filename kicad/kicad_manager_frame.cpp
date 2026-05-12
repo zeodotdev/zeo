@@ -888,6 +888,35 @@ bool KICAD_MANAGER_FRAME::CloseProject( bool aSave )
     if( !Kiway().PlayersClose( false ) )
         return false;
 
+    // PlayersClose above only walks the primary FRAME_T slot. Peer SCH
+    // and PCB frames opened for multi-board sub-boards (registered via
+    // RegisterPeerPlayer) survive — and they keep their SetPrjOverride
+    // sub-projects alive in SETTINGS_MANAGER. After UnloadProject pops
+    // the container off m_projects_list the next sub-project becomes
+    // Prj(), so the launcher re-renders that sub-board as the active
+    // project, and each subsequent close walks down the next survivor.
+    // Drain the peers + sub-projects here so the multi-board session
+    // collapses in a single close.
+    auto closeSubBoardPeers = [this]( FRAME_T aFrameType )
+    {
+        for( KIWAY_PLAYER* peer : Kiway().GetAllPlayerFrames( aFrameType ) )
+        {
+            // The primary frame was already handled by PlayersClose;
+            // peers are identified by carrying a project override.
+            if( !peer->GetPrjOverride() )
+                continue;
+
+            // Drop the override before close so the deferred-destroy
+            // event (Destroy() schedules wxPendingDelete) can't deref a
+            // sub-project PROJECT* that we're about to unload below.
+            peer->SetPrjOverride( nullptr );
+            peer->NonUserClose( true );
+        }
+    };
+
+    closeSubBoardPeers( FRAME_SCH );
+    closeSubBoardPeers( FRAME_PCB_EDITOR );
+
     // Reset multi-board tracking at every close; the next LoadMultiBoardProject
     // will re-set it if appropriate.
     setMultiBoardContainer( nullptr );
@@ -945,6 +974,18 @@ bool KICAD_MANAGER_FRAME::CloseProject( bool aSave )
         Kiway().LocalHistory().UnregisterSaver( &Prj() );
 
         mgr.UnloadProject( &Prj() );
+
+        // After the container is unloaded, sub-projects loaded as peers
+        // (aSetActive=false) remain in m_projects_list — SETTINGS_MANAGER's
+        // active-project eviction only touches the front. Drain them so the
+        // next LoadProject starts from an empty list; otherwise Prj()
+        // returns the surviving sub-project at the front and the launcher
+        // renders it instead of the new project.
+        for( const wxString& path : mgr.GetOpenProjects() )
+        {
+            if( PROJECT* p = mgr.GetProject( path ) )
+                mgr.UnloadProject( p, /*aSave=*/false );
+        }
     }
 
     SetStatusText( "" );

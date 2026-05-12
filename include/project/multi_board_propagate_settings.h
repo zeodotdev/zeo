@@ -24,6 +24,7 @@
 #include <kicommon.h>
 
 #include <functional>
+#include <map>
 #include <memory>
 #include <vector>
 #include <wx/string.h>
@@ -200,6 +201,71 @@ KICOMMON_API MULTI_BOARD_PROPAGATE_RESULT MultiBoardPropagateNetSettings(
  */
 MULTI_BOARD_PROPAGATE_RESULT MultiBoardPropagateNetSettingsWithDialog(
         class PROJECT& aContainer, class wxWindow* aDialogParent );
+
+
+/// Classification for a container net class in the aggregated MBS view.
+/// Sub-project-only classes are represented separately via
+/// `MULTI_BOARD_NETCLASS_LOCAL_ROW`, so this enum only covers the three
+/// container-side cases.
+enum class MULTI_BOARD_NETCLASS_VIEW_STATUS
+{
+    SOURCE,      ///< No sub-project defines a class with this name.
+    SHARED,      ///< Every sub-project that has this class matches the container.
+    CONFLICT,    ///< At least one sub-project's same-name class diverges.
+};
+
+
+/// One row representing a class that exists on a sub-project but NOT on the
+/// container. Surfaced in the MBS Setup → Net Classes panel as a read-only
+/// "Only on <board>" row so the user can see every cross-board class in one
+/// place.
+struct KICOMMON_API MULTI_BOARD_NETCLASS_LOCAL_ROW
+{
+    /// Owned clone (not shared with the transient sub-project PROJECT_FILE
+    /// that produced it — that transient is destroyed before this row is
+    /// returned). Safe for the panel to hold for its full lifetime.
+    std::shared_ptr<class NETCLASS> netclass;
+
+    /// Sub-project's display name (or short name if no display set). Used to
+    /// format the status cell as "Only on <name>".
+    wxString subProjectDisplayName;
+};
+
+
+/// Aggregated view of net classes across a multi-board container and its
+/// sub-projects, as the MBS Setup → Net Classes panel needs to display
+/// them.
+struct KICOMMON_API MULTI_BOARD_NETCLASS_VIEW
+{
+    /// For each container class name: how it compares against the sub-projects.
+    /// Includes the Default class.
+    std::map<wxString, MULTI_BOARD_NETCLASS_VIEW_STATUS> containerStatusByName;
+
+    /// Sub-project classes whose name is NOT present on the container. One
+    /// row per (sub-project × class) occurrence: if two sub-projects each
+    /// define a class not on the container with the same name, both appear
+    /// here as separate rows so the user can see each board's local copy.
+    std::vector<MULTI_BOARD_NETCLASS_LOCAL_ROW> localOnlyRows;
+};
+
+
+/**
+ * Build the aggregated cross-board net class view consumed by the MBS
+ * Setup → Net Classes panel.
+ *
+ * Walks every sub-project listed on `aContainer`, loading each one's
+ * `.kicad_pro` into a transient `PROJECT_FILE` long enough to read its
+ * `net_settings`. Classifies each container class as SOURCE / SHARED /
+ * CONFLICT based on what (if anything) the sub-projects say about it, and
+ * collects any sub-project classes the container hasn't adopted into
+ * `localOnlyRows` (cloned, so they outlive the transients).
+ *
+ * Returns an empty view when `aContainer` is not a multi-board container.
+ * Sub-projects that fail to load are logged and skipped — the rest of the
+ * view still builds.
+ */
+KICOMMON_API MULTI_BOARD_NETCLASS_VIEW
+BuildMultiBoardNetclassView( PROJECT_FILE& aContainer );
 
 
 #endif // MULTI_BOARD_PROPAGATE_SETTINGS_H

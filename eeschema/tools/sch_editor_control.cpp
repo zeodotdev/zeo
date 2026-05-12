@@ -27,6 +27,7 @@
 #include "multi_board_mbs_refresh.h"
 #include "multi_board_peer_open.h"
 #include "dialogs/dialog_mbs_refresh.h"
+#include "dialogs/dialog_mbs_sync_pcb.h"
 #include <eda_base_frame.h>
 #include <project/project_file.h>
 #include <project/cross_board_pcb_sync.h>
@@ -1007,12 +1008,30 @@ int SCH_EDITOR_CONTROL::MbsSyncCrossBoardNets( const TOOL_EVENT& aEvent )
         return 0;
     }
 
-    MB_CROSS_BOARD_SYNC_RESULT result = ApplyCrossBoardNetsToSubProjectPCBs( container );
+    // Dry-run first so the user can review the per-board pad assignments
+    // and (especially) the bulk net renames before any .kicad_pcb is
+    // touched on disk. The renamer is a whole-file string replace and
+    // can affect pads beyond the connector if the local name happens to
+    // appear elsewhere — so a preview is required, not optional.
+    MB_CROSS_BOARD_SYNC_RESULT preview =
+            ApplyCrossBoardNetsToSubProjectPCBs( container, /* aDryRun */ true );
 
-    container.SaveToFile( containerDir );
+    // Build the apply callback the dialog runs on click. Captures the
+    // already-resolved container directory so save semantics stay
+    // identical to the prior fire-and-forget flow.
+    auto applyFn = [&container, containerDir]() -> MB_CROSS_BOARD_SYNC_RESULT
+    {
+        MB_CROSS_BOARD_SYNC_RESULT r =
+                ApplyCrossBoardNetsToSubProjectPCBs( container, /* aDryRun */ false );
 
-    wxMessageBox( result.summary, _( "Cross-Board Net Sync" ),
-                  wxOK | wxICON_INFORMATION, m_frame );
+        container.SaveToFile( containerDir );
+        return r;
+    };
+
+    DIALOG_MBS_SYNC_PCB dlg( m_frame, preview, applyFn );
+
+    dlg.ShowModal();
+
     return 0;
 }
 

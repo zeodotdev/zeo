@@ -311,3 +311,137 @@ MULTI_BOARD_PROPAGATE_RESULT MultiBoardPropagateNetSettings(
 // MultiBoardPropagateNetSettingsWithDialog() lives in libcommon
 // (common/dialogs/multi_board_propagate_settings_ui.cpp) because it
 // depends on DIALOG_SHIM, which can't be in kicommon (layering).
+
+
+MULTI_BOARD_NETCLASS_VIEW BuildMultiBoardNetclassView( PROJECT_FILE& aContainer )
+{
+    MULTI_BOARD_NETCLASS_VIEW view;
+
+    if( !aContainer.IsMultiBoardContainer() )
+        return view;
+
+    std::shared_ptr<NET_SETTINGS> containerNS = aContainer.NetSettings();
+
+    if( !containerNS )
+        return view;
+
+    // Load every sub-project's NetSettings via a transient PROJECT_FILE.
+    // Transients are scoped to this function: any sub-project class we need
+    // to keep (the LOCAL_ONLY rows) is cloned before the transient dies.
+    struct SubProjectAccess
+    {
+        wxString                       displayName;
+        std::unique_ptr<PROJECT_FILE>  transient;
+        std::shared_ptr<NET_SETTINGS>  netSettings;
+    };
+
+    std::vector<SubProjectAccess> subProjects;
+    subProjects.reserve( aContainer.GetSubProjects().size() );
+
+    for( const SUB_PROJECT_INFO& info : aContainer.GetSubProjects() )
+    {
+        wxFileName resolved = aContainer.ResolveSubProjectPath( info );
+        resolved.Normalize( wxPATH_NORM_ABSOLUTE | wxPATH_NORM_DOTS );
+        wxString absPath = resolved.GetFullPath();
+
+        SubProjectAccess access;
+        access.displayName = info.displayName.IsEmpty() ? info.name : info.displayName;
+        access.transient   = std::make_unique<PROJECT_FILE>( absPath );
+
+        wxFileName fn( absPath );
+
+        if( !access.transient->LoadFromFile( fn.GetPath() ) )
+        {
+            wxLogWarning( wxT( "BuildMultiBoardNetclassView: failed to load '%s' — "
+                               "sub-project skipped from aggregate view" ),
+                          absPath );
+            continue;
+        }
+
+        access.netSettings = access.transient->NetSettings();
+
+        if( !access.netSettings )
+            continue;
+
+        subProjects.push_back( std::move( access ) );
+    }
+
+    auto classifyContainerClass = [&]( const NETCLASS& aContainerNc )
+            -> MULTI_BOARD_NETCLASS_VIEW_STATUS
+    {
+        const wxString& name = aContainerNc.GetName();
+        bool seenInSub    = false;
+        bool conflictSeen = false;
+
+        for( const SubProjectAccess& sp : subProjects )
+        {
+            std::shared_ptr<NETCLASS> subNc;
+
+            if( aContainerNc.IsDefault() )
+            {
+                subNc = sp.netSettings->GetDefaultNetclass();
+            }
+            else
+            {
+                const auto& subClasses = sp.netSettings->GetNetclasses();
+                auto        it         = subClasses.find( name );
+
+                if( it != subClasses.end() )
+                    subNc = it->second;
+            }
+
+            if( !subNc )
+                continue;
+
+            seenInSub = true;
+
+            if( !MultiBoardNetclassesEquivalent( aContainerNc, *subNc ) )
+            {
+                conflictSeen = true;
+                break;
+            }
+        }
+
+        if( !seenInSub )
+            return MULTI_BOARD_NETCLASS_VIEW_STATUS::SOURCE;
+
+        if( conflictSeen )
+            return MULTI_BOARD_NETCLASS_VIEW_STATUS::CONFLICT;
+
+        return MULTI_BOARD_NETCLASS_VIEW_STATUS::SHARED;
+    };
+
+    if( const std::shared_ptr<NETCLASS>& def = containerNS->GetDefaultNetclass() )
+        view.containerStatusByName[def->GetName()] = classifyContainerClass( *def );
+
+    for( const auto& [name, nc] : containerNS->GetNetclasses() )
+    {
+        if( nc )
+            view.containerStatusByName[name] = classifyContainerClass( *nc );
+    }
+
+    // Collect classes that live ONLY on sub-projects (not on container).
+    // One row per (sub-project, class) occurrence — if the same name shows
+    // up on multiple sub-boards without being adopted into the container,
+    // each board's copy gets its own row so the user can compare.
+    const auto& containerClasses = containerNS->GetNetclasses();
+
+    for( const SubProjectAccess& sp : subProjects )
+    {
+        for( const auto& [name, nc] : sp.netSettings->GetNetclasses() )
+        {
+            if( !nc )
+                continue;
+
+            if( containerClasses.find( name ) != containerClasses.end() )
+                continue;
+
+            MULTI_BOARD_NETCLASS_LOCAL_ROW row;
+            row.netclass              = cloneNetclass( *nc );
+            row.subProjectDisplayName = sp.displayName;
+            view.localOnlyRows.push_back( std::move( row ) );
+        }
+    }
+
+    return view;
+}

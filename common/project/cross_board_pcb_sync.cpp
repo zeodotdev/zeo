@@ -310,7 +310,8 @@ scanPadCurrentNets( const wxString& aText )
  * Mutates aProject in place. Returns the number of nets renamed.
  */
 int resolveCrossBoardNetNames( PROJECT_FILE& aProject,
-                               std::vector<MB_NET_NAME_CONFLICT>& aConflictsOut )
+                               std::vector<MB_NET_NAME_CONFLICT>& aConflictsOut,
+                               bool aDryRun )
 {
     // Cache per-sub-project pad nets so we don't re-parse each PCB per endpoint.
     std::map<KIID, std::map<std::pair<wxString, wxString>, wxString>> perSub;
@@ -395,34 +396,78 @@ int resolveCrossBoardNetNames( PROJECT_FILE& aProject,
         }
     }
 
-    aProject.SetCrossBoardNets( std::move( nets ) );
+    // Dry-run mode (preview pass): leave the on-disk + in-memory state
+    // alone. The caller will re-invoke with aDryRun=false to commit. Without
+    // this guard, opening the sync dialog and cancelling would silently
+    // overwrite auto-generated names with sub-project local names — a
+    // user-visible mutation with no apply click.
+    if( !aDryRun )
+        aProject.SetCrossBoardNets( std::move( nets ) );
+
     return renamed;
 }
 
 
 /**
  * Apply all endpoints targeting a single .kicad_pcb file. Returns stats.
+ *
+ * @param aDryRun         When true, performs every read + per-pad lookup,
+ *                        records descriptive preview lines, but skips the
+ *                        file write at the end. Stats still reflect what
+ *                        would have been applied.
+ * @param aSubProjectName Display name attached to every preview line
+ *                        produced for this sub-project.
+ * @param aLinesOut       Receives info lines for each pad assignment, a
+ *                        warning line for each bulk net rename (the
+ *                        whole-file string replace is the risky operation
+ *                        we want the user to confirm before applying), and
+ *                        error lines for missing footprints / pads.
  */
 std::pair<int, int> applyEndpointsToOnePcb(
         const wxFileName& aPcbFile,
-        const std::vector<std::pair<MB_CROSS_BOARD_NET_ENDPOINT, wxString>>& aEndpointsAndNetNames )
+        const std::vector<std::pair<MB_CROSS_BOARD_NET_ENDPOINT, wxString>>& aEndpointsAndNetNames,
+        bool aDryRun,
+        const wxString& aSubProjectName,
+        std::vector<MB_SYNC_PREVIEW_LINE>& aLinesOut )
 {
     int applied = 0;
     int missing = 0;
 
+    auto pushLine = [&]( const wxString& aText, MB_SYNC_PREVIEW_LINE::SEVERITY aSeverity )
+    {
+        MB_SYNC_PREVIEW_LINE line;
+        line.subProjectDisplayName = aSubProjectName;
+        line.text                  = aText;
+        line.severity              = aSeverity;
+        aLinesOut.push_back( std::move( line ) );
+    };
+
     if( !aPcbFile.FileExists() )
+    {
+        pushLine( wxString::Format( _( "PCB file not found: %s" ),
+                                    aPcbFile.GetFullPath() ),
+                  MB_SYNC_PREVIEW_LINE::SEVERITY::ERR );
         return { applied, (int) aEndpointsAndNetNames.size() };
+    }
 
     wxFFile in( aPcbFile.GetFullPath(), wxT( "r" ) );
 
     if( !in.IsOpened() )
+    {
+        pushLine( wxString::Format( _( "Cannot open PCB for read: %s" ),
+                                    aPcbFile.GetFullPath() ),
+                  MB_SYNC_PREVIEW_LINE::SEVERITY::ERR );
         return { applied, (int) aEndpointsAndNetNames.size() };
+    }
 
     wxString text;
 
     if( !in.ReadAll( &text ) )
     {
         in.Close();
+        pushLine( wxString::Format( _( "Read failed on PCB: %s" ),
+                                    aPcbFile.GetFullPath() ),
+                  MB_SYNC_PREVIEW_LINE::SEVERITY::ERR );
         return { applied, (int) aEndpointsAndNetNames.size() };
     }
 
@@ -454,6 +499,10 @@ std::pair<int, int> applyEndpointsToOnePcb(
         if( fpBegin == wxString::npos )
         {
             missing += padList.size();
+            pushLine( wxString::Format( _( "Footprint '%s' not found on this PCB "
+                                            "(%zu endpoint(s) skipped)" ),
+                                        ref, padList.size() ),
+                      MB_SYNC_PREVIEW_LINE::SEVERITY::ERR );
             continue;
         }
 
@@ -464,6 +513,10 @@ std::pair<int, int> applyEndpointsToOnePcb(
             if( padBegin == wxString::npos )
             {
                 missing++;
+                pushLine( wxString::Format( _( "Pad %s.%s not found "
+                                                "(endpoint for net '%s')" ),
+                                            ref, padNum, netName ),
+                          MB_SYNC_PREVIEW_LINE::SEVERITY::ERR );
                 continue;
             }
 
@@ -481,6 +534,26 @@ std::pair<int, int> applyEndpointsToOnePcb(
             int delta = (int) newPadEnd - (int) padEnd;
             fpEnd = (size_t) ( (int) fpEnd + delta );
             applied++;
+
+            if( oldNet.IsEmpty() )
+            {
+                pushLine( wxString::Format( _( "Set %s.%s net = '%s' (was unset)" ),
+                                            ref, padNum, netName ),
+                          MB_SYNC_PREVIEW_LINE::SEVERITY::INFO );
+            }
+            else if( oldNet == netName )
+            {
+                pushLine( wxString::Format( _( "Pad %s.%s already on net '%s' "
+                                                "(no change)" ),
+                                            ref, padNum, netName ),
+                          MB_SYNC_PREVIEW_LINE::SEVERITY::INFO );
+            }
+            else
+            {
+                pushLine( wxString::Format( _( "Set %s.%s net: '%s' → '%s'" ),
+                                            ref, padNum, oldNet, netName ),
+                          MB_SYNC_PREVIEW_LINE::SEVERITY::INFO );
+            }
 
             // Only propagate rename when the old net was *shared* in the sense
             // that it might appear on other pads. Empty + nothing-to-rename.
@@ -509,13 +582,38 @@ std::pair<int, int> applyEndpointsToOnePcb(
         // extremely unlikely within .kicad_pcb content.
         wxString needle      = wxT( "\"" ) + oldNet + wxT( "\"" );
         wxString replacement = wxT( "\"" ) + newNet + wxT( "\"" );
+
+        // Count occurrences so the preview can convey the blast radius of
+        // this bulk replace — this is the "danger" call-out for the user.
+        int occurrences = 0;
+        size_t pos = 0;
+
+        while( ( pos = text.find( needle, pos ) ) != wxString::npos )
+        {
+            ++occurrences;
+            pos += needle.length();
+        }
+
         text.Replace( needle, replacement );
+
+        pushLine( wxString::Format( _( "Bulk rename '%s' → '%s' (%d occurrence(s) "
+                                        "in this PCB)" ),
+                                    oldNet, newNet, occurrences ),
+                  MB_SYNC_PREVIEW_LINE::SEVERITY::WARNING );
     }
+
+    if( aDryRun )
+        return { applied, missing };
 
     wxFFile out( aPcbFile.GetFullPath(), wxT( "w" ) );
 
     if( !out.IsOpened() )
+    {
+        pushLine( wxString::Format( _( "Cannot open PCB for write: %s" ),
+                                    aPcbFile.GetFullPath() ),
+                  MB_SYNC_PREVIEW_LINE::SEVERITY::ERR );
         return { applied, missing };
+    }
 
     out.Write( text );
     out.Close();
@@ -528,14 +626,39 @@ std::pair<int, int> applyEndpointsToOnePcb(
 
 
 MB_CROSS_BOARD_SYNC_RESULT
-ApplyCrossBoardNetsToSubProjectPCBs( PROJECT_FILE& aProject )
+ApplyCrossBoardNetsToSubProjectPCBs( PROJECT_FILE& aProject, bool aDryRun )
 {
     MB_CROSS_BOARD_SYNC_RESULT result;
 
     // Reverse propagation: if any endpoint's current PCB pad already has a
     // meaningful net name, adopt it as the cross-board net's canonical name
-    // so every endpoint on every board ends up with the same name.
-    result.netsRenamed = resolveCrossBoardNetNames( aProject, result.conflicts );
+    // so every endpoint on every board ends up with the same name. In
+    // dry-run mode the in-memory mutation is suppressed; conflicts and
+    // rename counts are still computed.
+    result.netsRenamed = resolveCrossBoardNetNames( aProject, result.conflicts, aDryRun );
+
+    // Surface every conflict as a project-level warning line so the user
+    // sees them at the top of the report panel.
+    for( const MB_NET_NAME_CONFLICT& c : result.conflicts )
+    {
+        wxString rejected;
+
+        for( size_t i = 0; i < c.rejected.size(); ++i )
+        {
+            if( i > 0 )
+                rejected += wxT( ", " );
+
+            rejected += c.rejected[i];
+        }
+
+        MB_SYNC_PREVIEW_LINE line;
+        line.text = wxString::Format( _( "Naming conflict: chose '%s' "
+                                          "(also seen: %s). Place a label on "
+                                          "the MBS wire to override." ),
+                                      c.chosen, rejected );
+        line.severity = MB_SYNC_PREVIEW_LINE::SEVERITY::WARNING;
+        result.previewLines.push_back( std::move( line ) );
+    }
 
     // Bucket endpoints by sub-project uuid → list of (endpoint, net name).
     std::map<KIID, std::vector<std::pair<MB_CROSS_BOARD_NET_ENDPOINT, wxString>>> perSub;
@@ -553,14 +676,24 @@ ApplyCrossBoardNetsToSubProjectPCBs( PROJECT_FILE& aProject )
         if( !info )
         {
             result.endpointsMissing += endpoints.size();
+
+            MB_SYNC_PREVIEW_LINE line;
+            line.text = wxString::Format(
+                    _( "Unknown sub-project UUID — %zu endpoint(s) skipped" ),
+                    endpoints.size() );
+            line.severity = MB_SYNC_PREVIEW_LINE::SEVERITY::ERR;
+            result.previewLines.push_back( std::move( line ) );
             continue;
         }
+
+        wxString subName = info->displayName.IsEmpty() ? info->name : info->displayName;
 
         wxFileName proFile = aProject.ResolveSubProjectPath( *info );
         wxFileName pcbFile = proFile;
         pcbFile.SetExt( wxT( "kicad_pcb" ) );
 
-        auto [applied, missing] = applyEndpointsToOnePcb( pcbFile, endpoints );
+        auto [applied, missing] = applyEndpointsToOnePcb( pcbFile, endpoints, aDryRun,
+                                                          subName, result.previewLines );
 
         result.endpointsApplied += applied;
         result.endpointsMissing += missing;
@@ -570,9 +703,14 @@ ApplyCrossBoardNetsToSubProjectPCBs( PROJECT_FILE& aProject )
     }
 
     result.summary = wxString::Format(
-            wxT( "Updated %d sub-project PCB(s); applied %d pad net assignment(s); "
-                 "%d missing; %d net(s) renamed from local PCB nets; "
-                 "%zu naming conflict(s) detected." ),
+            aDryRun
+                ? _( "Would update %d sub-project PCB(s); would apply %d pad "
+                     "net assignment(s); %d missing; %d net(s) would be "
+                     "renamed from local PCB nets; %zu naming conflict(s) "
+                     "detected." )
+                : _( "Updated %d sub-project PCB(s); applied %d pad net "
+                     "assignment(s); %d missing; %d net(s) renamed from "
+                     "local PCB nets; %zu naming conflict(s) detected." ),
             result.subProjectsTouched,
             result.endpointsApplied,
             result.endpointsMissing,

@@ -28,9 +28,11 @@
 #include <atomic>
 #include <functional>
 #include <memory>
+#include <set>
 #include <widgets/unit_binder.h>
 #include <widgets/paged_dialog.h>
 #include <panel_setup_netclasses_base.h>
+#include <project/multi_board_propagate_settings.h>
 #include <nlohmann/json_fwd.hpp>
 
 class NET_SETTINGS;
@@ -140,6 +142,19 @@ private:
     // without re-loading the container's PROJECT_FILE per row. Empty when
     // m_statusCol == -1 (single-project) or when this IS the container.
     std::map<wxString, std::shared_ptr<NETCLASS>> m_containerNetclassesByName;
+
+    // Aggregated cross-board view for the MBS container case. Empty unless
+    // this panel is editing a multi-board container project. Drives both
+    // the Status column population (Source / Shared / Conflict for the
+    // container's own classes) and the read-only "Only on <board>" rows
+    // appended below the user classes.
+    MULTI_BOARD_NETCLASS_VIEW m_mbsAggregateView;
+
+    // Names of read-only sub-project-only classes currently in the grid.
+    // Used to skip them in TransferDataFromWindow (so they don't get
+    // promoted into the container's NetSettings on save) and to refuse
+    // remove-clicks. Built from m_mbsAggregateView.localOnlyRows.
+    std::set<wxString> m_readOnlySubProjectClassNames;
 };
 
 #endif //PANEL_SETUP_NETCLASSES_H

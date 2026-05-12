@@ -143,6 +143,7 @@ set( EESCHEMA_DLGS
     dialogs/dialog_line_properties.cpp
     dialogs/dialog_line_properties_base.cpp
     dialogs/dialog_mbs_refresh.cpp
+    dialogs/dialog_mbs_sync_pcb.cpp
     dialogs/dialog_migrate_buses.cpp
     dialogs/dialog_migrate_buses_base.cpp
     dialogs/dialog_pin_properties.cpp

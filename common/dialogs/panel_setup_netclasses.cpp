@@ -231,6 +231,41 @@ PANEL_SETUP_NETCLASSES::PANEL_SETUP_NETCLASSES( wxWindow* aParentWindow, EDA_DRA
                     m_containerNetclassesByName = containerFile.NetSettings()->GetNetclasses();
             }
         }
+        else
+        {
+            // Container side: aggregate sub-project net classes so the
+            // panel can show each container class's true cross-board
+            // status (Shared / Conflict / Source) AND surface classes
+            // that only live on one sub-project as read-only rows tagged
+            // "Only on <board>".
+            m_mbsAggregateView = BuildMultiBoardNetclassView( project.GetProjectFile() );
+
+            for( const MULTI_BOARD_NETCLASS_LOCAL_ROW& lr : m_mbsAggregateView.localOnlyRows )
+            {
+                if( lr.netclass )
+                    m_readOnlySubProjectClassNames.insert( lr.netclass->GetName() );
+            }
+
+            // Widen the Status column to fit "Only on <longest-display-name>".
+            int widest = statusColWidth;
+
+            for( const MULTI_BOARD_NETCLASS_LOCAL_ROW& lr : m_mbsAggregateView.localOnlyRows )
+            {
+                wxString label = wxString::Format( _( "Only on %s" ),
+                                                    lr.subProjectDisplayName );
+                int w = m_netclassGrid->GetTextExtent( label ).x + 24;
+
+                if( w > widest )
+                    widest = w;
+            }
+
+            if( widest > statusColWidth )
+            {
+                statusColWidth = widest;
+                m_netclassGrid->SetColSize( m_statusCol, statusColWidth );
+                m_originalColWidths[ m_statusCol ] = statusColWidth;
+            }
+        }
     }
 
     m_shownColumns = m_netclassGrid->GetShownColumns();
@@ -412,17 +447,68 @@ void PANEL_SETUP_NETCLASSES::loadNetclasses()
 
                 setNetclassRowNullableEditors( aRow, nc->IsDefault() );
 
-                // M7.2 — populate the multi-board Status column when present.
-                // Container side: every row is "Source". Sub-project side:
-                // compare against the container's same-named class to decide
-                // Shared / Conflict / Local.
+                // Populate the multi-board Status column.
+                //
+                // Container side: aggregated view — look up each container
+                // class's classification from m_mbsAggregateView. Rows that
+                // came from the LOCAL_ONLY list (sub-project-only classes
+                // we appended below the user classes) get labeled with the
+                // sub-project they belong to.
+                //
+                // Sub-project side: compare each row against the container's
+                // same-named class — Shared / Conflict / Local. (Unchanged.)
                 if( m_statusCol >= 0 )
                 {
                     wxString status;
 
                     if( m_frame->Prj().GetProjectFile().IsMultiBoardContainer() )
                     {
-                        status = _( "Source" );
+                        if( m_readOnlySubProjectClassNames.count( nc->GetName() ) )
+                        {
+                            // LOCAL_ONLY row — find the matching entry to get
+                            // the sub-project name. Identity by NETCLASS
+                            // pointer disambiguates the (rare) case of two
+                            // sub-projects each defining the same unadopted
+                            // class name.
+                            wxString boardName;
+
+                            for( const MULTI_BOARD_NETCLASS_LOCAL_ROW& lr :
+                                 m_mbsAggregateView.localOnlyRows )
+                            {
+                                if( lr.netclass.get() == nc )
+                                {
+                                    boardName = lr.subProjectDisplayName;
+                                    break;
+                                }
+                            }
+
+                            status = wxString::Format( _( "Only on %s" ), boardName );
+                        }
+                        else
+                        {
+                            auto sit = m_mbsAggregateView.containerStatusByName.find(
+                                    nc->GetName() );
+
+                            if( sit == m_mbsAggregateView.containerStatusByName.end() )
+                            {
+                                status = _( "Source" );
+                            }
+                            else
+                            {
+                                switch( sit->second )
+                                {
+                                case MULTI_BOARD_NETCLASS_VIEW_STATUS::SOURCE:
+                                    status = _( "Source" );
+                                    break;
+                                case MULTI_BOARD_NETCLASS_VIEW_STATUS::SHARED:
+                                    status = _( "Shared" );
+                                    break;
+                                case MULTI_BOARD_NETCLASS_VIEW_STATUS::CONFLICT:
+                                    status = _( "Conflict" );
+                                    break;
+                                }
+                            }
+                        }
                     }
                     else
                     {
@@ -462,6 +548,23 @@ void PANEL_SETUP_NETCLASSES::loadNetclasses()
 
     for( const NETCLASS* nc : netclasses )
         netclassToGridRow( row++, nc );
+
+    // Container view only: append read-only rows for sub-project classes
+    // that the container hasn't adopted. These sit between the container's
+    // user classes and the Default row.
+    for( const MULTI_BOARD_NETCLASS_LOCAL_ROW& lr : m_mbsAggregateView.localOnlyRows )
+    {
+        if( !lr.netclass )
+            continue;
+
+        m_netclassGrid->AppendRows( 1 );
+        netclassToGridRow( row, lr.netclass.get() );
+
+        for( int col = 0; col < m_netclassGrid->GetNumberCols(); ++col )
+            m_netclassGrid->SetReadOnly( row, col );
+
+        ++row;
+    }
 
     // Enter the Default netclass.
     m_netclassGrid->AppendRows( 1 );
@@ -523,6 +626,23 @@ void PANEL_SETUP_NETCLASSES::checkReload()
                            "Do you wish to reload them?" ) ) )
     {
         m_lastLoaded = m_netSettings->GetNetclasses();
+
+        // Container view: re-aggregate so a sub-project edit that landed
+        // while this dialog was open shows up after the reload.
+        if( m_frame && !m_frame->Prj().IsNullProject()
+            && m_frame->Prj().GetProjectFile().IsMultiBoardContainer() )
+        {
+            m_mbsAggregateView = BuildMultiBoardNetclassView( m_frame->Prj().GetProjectFile() );
+
+            m_readOnlySubProjectClassNames.clear();
+
+            for( const MULTI_BOARD_NETCLASS_LOCAL_ROW& lr : m_mbsAggregateView.localOnlyRows )
+            {
+                if( lr.netclass )
+                    m_readOnlySubProjectClassNames.insert( lr.netclass->GetName() );
+            }
+        }
+
         loadNetclasses();
     }
 }
@@ -644,7 +764,17 @@ bool PANEL_SETUP_NETCLASSES::TransferDataFromWindow()
     // Copy other NetClasses:
     for( int row = 0; row < m_netclassGrid->GetNumberRows() - 1; ++row )
     {
-        auto nc = std::make_shared<NETCLASS>( m_netclassGrid->GetCellValue( row, GRID_NAME ), false );
+        wxString rowName = m_netclassGrid->GetCellValue( row, GRID_NAME );
+
+        // Container view: skip read-only rows that represent classes only
+        // present on a sub-project. They're surfaced in the grid for
+        // visibility, but they live on the sub-project's NetSettings —
+        // committing them here would silently promote them to the
+        // container, which is exactly what we don't want.
+        if( m_readOnlySubProjectClassNames.count( rowName ) )
+            continue;
+
+        auto nc = std::make_shared<NETCLASS>( rowName, false );
         gridRowToNetclass( row, nc );
         m_netSettings->SetNetclass( nc->GetName(), nc );
     }
@@ -920,6 +1050,17 @@ void PANEL_SETUP_NETCLASSES::OnRemoveNetclassClick( wxCommandEvent& event )
                 if( row == m_netclassGrid->GetNumberRows() - 1 )
                 {
                     DisplayErrorMessage( wxGetTopLevelParent( this ), _( "The default net class is required." ) );
+                    return false;
+                }
+
+                wxString rowName = m_netclassGrid->GetCellValue( row, GRID_NAME );
+
+                if( m_readOnlySubProjectClassNames.count( rowName ) )
+                {
+                    DisplayErrorMessage( wxGetTopLevelParent( this ),
+                            _( "This net class is defined on a sub-board, not the "
+                               "container. Open that sub-board's Schematic Setup "
+                               "to edit or remove it." ) );
                     return false;
                 }
 

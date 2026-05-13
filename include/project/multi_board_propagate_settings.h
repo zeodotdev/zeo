@@ -91,7 +91,13 @@ enum class MULTI_BOARD_NET_CLASS_RESOLUTION
 {
     USE_CONTAINER,    ///< Overwrite the sub-project's class with the container's.
     KEEP_SUB_PROJECT, ///< Leave the sub-project's class alone.
-    SKIP              ///< Don't apply this class on this sub-project at all.
+    SKIP,             ///< Don't apply this class on this sub-project at all.
+    MERGE             ///< Field-union: for each field, take whichever side has
+                      ///< it set (both unset → unset; both set + equal → keep;
+                      ///< both set + different → caller must have checked
+                      ///< CanMergeMultiBoardNetclasses first). Writes the
+                      ///< merged class to BOTH sub-project and container so
+                      ///< the next save doesn't re-detect the conflict.
 };
 
 
@@ -127,6 +133,37 @@ KICOMMON_API bool MultiBoardNetclassesEquivalent( const class NETCLASS& aA,
                                                    const class NETCLASS& aB );
 
 
+/**
+ * Field-union mergeability check for two NETCLASS instances.
+ *
+ * Returns `true` when, for every field, at most one side has it set OR
+ * both sides have the same value — i.e. a merge would not need to
+ * overwrite anything. Returns `false` when at least one field is set on
+ * both sides with different values (a real, user-decision-required
+ * conflict).
+ *
+ * Used by the conflict dialog to gate the "Merge values" button: enabled
+ * only when the merge is well-defined.
+ */
+KICOMMON_API bool CanMergeMultiBoardNetclasses( const class NETCLASS& aA,
+                                                 const class NETCLASS& aB );
+
+
+/**
+ * Field-union merge for two NETCLASS instances. For each field:
+ *   - Both unset → result is unset.
+ *   - One set    → result takes the set value.
+ *   - Both set + equal → result keeps the value.
+ *   - Both set + different → result takes `aA`'s value (defensive
+ *     fallback; callers should consult `CanMergeMultiBoardNetclasses`
+ *     first to avoid this branch).
+ *
+ * Name comes from `aA`. Priority is not merged (per-project metadata).
+ */
+KICOMMON_API std::shared_ptr<class NETCLASS>
+MergeMultiBoardNetclasses( const class NETCLASS& aA, const class NETCLASS& aB );
+
+
 /// Aggregated outcome of one propagation pass.
 struct KICOMMON_API MULTI_BOARD_PROPAGATE_RESULT
 {
@@ -148,6 +185,11 @@ struct KICOMMON_API MULTI_BOARD_PROPAGATE_RESULT
 
     /// Conflicts the user explicitly skipped (SKIP).
     int classesSkipped = 0;
+
+    /// Conflicts resolved via field-union merge. When non-zero, the
+    /// container's NET_SETTINGS was mutated and the caller must save the
+    /// container too (the UI wrapper does this automatically).
+    int classesMerged = 0;
 
     /// Sub-project paths whose `.kicad_pro` was mutated. Caller should
     /// SaveToFile each of these (ideally inside a SUSPEND_NOTIFY guard).

@@ -80,7 +80,7 @@ DIALOG_MULTI_BOARD_NET_CLASS_CONFLICT::DIALOG_MULTI_BOARD_NET_CLASS_CONFLICT(
             _( "Apply this choice to all remaining conflicts in this sync" ) );
     mainSizer->Add( m_applyToAllCheckbox, 0, wxALL | wxALIGN_LEFT, 12 );
 
-    // Action buttons — three custom verbs (no OK/Cancel; Cancel maps to
+    // Action buttons — four custom verbs (no OK/Cancel; Cancel maps to
     // SKIP via the dialog's close-box, see below).
     wxBoxSizer* btnSizer = new wxBoxSizer( wxHORIZONTAL );
 
@@ -89,6 +89,7 @@ DIALOG_MULTI_BOARD_NET_CLASS_CONFLICT::DIALOG_MULTI_BOARD_NET_CLASS_CONFLICT(
     wxButton* keepSubBtn =
             new wxButton( this, wxID_ANY, _( "Keep sub-project value" ) );
     wxButton* skipBtn = new wxButton( this, wxID_ANY, _( "Skip this class" ) );
+    wxButton* mergeBtn = new wxButton( this, wxID_ANY, _( "Merge values" ) );
 
     useContainerBtn->Bind( wxEVT_BUTTON,
                            &DIALOG_MULTI_BOARD_NET_CLASS_CONFLICT::onUseContainer,
@@ -99,11 +100,46 @@ DIALOG_MULTI_BOARD_NET_CLASS_CONFLICT::DIALOG_MULTI_BOARD_NET_CLASS_CONFLICT(
     skipBtn->Bind( wxEVT_BUTTON,
                    &DIALOG_MULTI_BOARD_NET_CLASS_CONFLICT::onSkip,
                    this );
+    mergeBtn->Bind( wxEVT_BUTTON,
+                    &DIALOG_MULTI_BOARD_NET_CLASS_CONFLICT::onMerge,
+                    this );
 
-    useContainerBtn->SetDefault();   // Enter accepts the recommended choice
+    // Gate the Merge button on a real field-union being possible. If both
+    // sides have the same field set with different values, the merge is
+    // ambiguous — disable the button and tell the user why so they pick a
+    // side manually.
+    bool mergeable = aConflict.containerNetClass
+                     && aConflict.subProjectNetClass
+                     && CanMergeMultiBoardNetclasses( *aConflict.containerNetClass,
+                                                      *aConflict.subProjectNetClass );
+
+    if( mergeable )
+    {
+        mergeBtn->SetToolTip(
+                _( "Combine the fields from both sides: each field takes "
+                   "whichever side has it set. Writes the merged class to "
+                   "the sub-project AND the container so the next save "
+                   "doesn't re-detect this conflict." ) );
+
+        // When a clean merge is available, suggest it as the default
+        // action — Enter accepts the non-destructive resolution.
+        mergeBtn->SetDefault();
+    }
+    else
+    {
+        mergeBtn->Disable();
+        mergeBtn->SetToolTip(
+                _( "At least one field is set on both sides with different "
+                   "values, so a field-union merge isn't well-defined. "
+                   "Pick a side manually (or edit one of the panels to "
+                   "remove the conflicting value first)." ) );
+
+        useContainerBtn->SetDefault();
+    }
 
     btnSizer->Add( skipBtn,         0, wxALL, 6 );
     btnSizer->AddStretchSpacer();
+    btnSizer->Add( mergeBtn,        0, wxALL, 6 );
     btnSizer->Add( keepSubBtn,      0, wxALL, 6 );
     btnSizer->Add( useContainerBtn, 0, wxALL, 6 );
     mainSizer->Add( btnSizer, 0, wxALL | wxEXPAND, 6 );
@@ -204,6 +240,14 @@ void DIALOG_MULTI_BOARD_NET_CLASS_CONFLICT::onKeepSubProject( wxCommandEvent& )
 void DIALOG_MULTI_BOARD_NET_CLASS_CONFLICT::onSkip( wxCommandEvent& )
 {
     m_resolution = MULTI_BOARD_NET_CLASS_RESOLUTION::SKIP;
+    m_applyToAll = m_applyToAllCheckbox && m_applyToAllCheckbox->GetValue();
+    EndModal( wxID_OK );
+}
+
+
+void DIALOG_MULTI_BOARD_NET_CLASS_CONFLICT::onMerge( wxCommandEvent& )
+{
+    m_resolution = MULTI_BOARD_NET_CLASS_RESOLUTION::MERGE;
     m_applyToAll = m_applyToAllCheckbox && m_applyToAllCheckbox->GetValue();
     EndModal( wxID_OK );
 }

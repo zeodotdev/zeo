@@ -134,6 +134,110 @@ bool MultiBoardNetclassesEquivalent( const NETCLASS& a, const NETCLASS& b )
 }
 
 
+bool CanMergeMultiBoardNetclasses( const NETCLASS& a, const NETCLASS& b )
+{
+    // For each optional field, the merge is OK if either side is unset OR
+    // both sides agree. Anything else is a real conflict that the caller
+    // has to decide — we can't synthesize one value out of two.
+    auto safeOpt = [&]( const std::optional<int>& xa, const std::optional<int>& xb ) -> bool
+    {
+        if( !xa.has_value() || !xb.has_value() )
+            return true;
+        return xa == xb;
+    };
+
+    if( !safeOpt( a.GetClearanceOpt(),     b.GetClearanceOpt() ) )     return false;
+    if( !safeOpt( a.GetTrackWidthOpt(),    b.GetTrackWidthOpt() ) )    return false;
+    if( !safeOpt( a.GetViaDiameterOpt(),   b.GetViaDiameterOpt() ) )   return false;
+    if( !safeOpt( a.GetViaDrillOpt(),      b.GetViaDrillOpt() ) )      return false;
+    if( !safeOpt( a.GetuViaDiameterOpt(),  b.GetuViaDiameterOpt() ) )  return false;
+    if( !safeOpt( a.GetuViaDrillOpt(),     b.GetuViaDrillOpt() ) )     return false;
+    if( !safeOpt( a.GetDiffPairWidthOpt(), b.GetDiffPairWidthOpt() ) ) return false;
+    if( !safeOpt( a.GetDiffPairGapOpt(),   b.GetDiffPairGapOpt() ) )   return false;
+    if( !safeOpt( a.GetDiffPairViaGapOpt(), b.GetDiffPairViaGapOpt() ) ) return false;
+    if( !safeOpt( a.GetWireWidthOpt(),     b.GetWireWidthOpt() ) )     return false;
+    if( !safeOpt( a.GetBusWidthOpt(),      b.GetBusWidthOpt() ) )      return false;
+
+    // Line style: not optional<int>; uses HasLineStyle.
+    if( a.HasLineStyle() && b.HasLineStyle()
+        && a.GetLineStyle() != b.GetLineStyle() )
+        return false;
+
+    // Tuning profile: both non-empty + different = conflict.
+    if( !a.GetTuningProfile().IsEmpty() && !b.GetTuningProfile().IsEmpty()
+        && a.GetTuningProfile() != b.GetTuningProfile() )
+        return false;
+
+    // Colors: both set explicitly + different = conflict. UNSPECIFIED is
+    // the "unset" sentinel here (same as in MultiBoardNetclassesEquivalent).
+    auto colorSet = []( const KIGFX::COLOR4D& c )
+    { return c != KIGFX::COLOR4D::UNSPECIFIED; };
+
+    const KIGFX::COLOR4D& aPcb = a.GetPcbColor( true );
+    const KIGFX::COLOR4D& bPcb = b.GetPcbColor( true );
+    if( colorSet( aPcb ) && colorSet( bPcb ) && aPcb != bPcb )
+        return false;
+
+    const KIGFX::COLOR4D& aSch = a.GetSchematicColor( true );
+    const KIGFX::COLOR4D& bSch = b.GetSchematicColor( true );
+    if( colorSet( aSch ) && colorSet( bSch ) && aSch != bSch )
+        return false;
+
+    return true;
+}
+
+
+std::shared_ptr<NETCLASS> MergeMultiBoardNetclasses( const NETCLASS& a, const NETCLASS& b )
+{
+    auto out = std::make_shared<NETCLASS>( a.GetName(), false );
+
+    // Optional-int merge: pick whichever side has it set. When both are
+    // set with different values, prefer aA — callers should have gated
+    // this with CanMergeMultiBoardNetclasses to avoid that branch.
+    auto mergeOpt = [&]( const std::optional<int>& xa,
+                          const std::optional<int>& xb ) -> std::optional<int>
+    {
+        if( xa.has_value() ) return xa;
+        if( xb.has_value() ) return xb;
+        return std::nullopt;
+    };
+
+    out->SetClearance(      mergeOpt( a.GetClearanceOpt(),     b.GetClearanceOpt() ) );
+    out->SetTrackWidth(     mergeOpt( a.GetTrackWidthOpt(),    b.GetTrackWidthOpt() ) );
+    out->SetViaDiameter(    mergeOpt( a.GetViaDiameterOpt(),   b.GetViaDiameterOpt() ) );
+    out->SetViaDrill(       mergeOpt( a.GetViaDrillOpt(),      b.GetViaDrillOpt() ) );
+    out->SetuViaDiameter(   mergeOpt( a.GetuViaDiameterOpt(),  b.GetuViaDiameterOpt() ) );
+    out->SetuViaDrill(      mergeOpt( a.GetuViaDrillOpt(),     b.GetuViaDrillOpt() ) );
+    out->SetDiffPairWidth(  mergeOpt( a.GetDiffPairWidthOpt(), b.GetDiffPairWidthOpt() ) );
+    out->SetDiffPairGap(    mergeOpt( a.GetDiffPairGapOpt(),   b.GetDiffPairGapOpt() ) );
+    out->SetDiffPairViaGap( mergeOpt( a.GetDiffPairViaGapOpt(), b.GetDiffPairViaGapOpt() ) );
+    out->SetWireWidth(      mergeOpt( a.GetWireWidthOpt(),     b.GetWireWidthOpt() ) );
+    out->SetBusWidth(       mergeOpt( a.GetBusWidthOpt(),      b.GetBusWidthOpt() ) );
+
+    if( a.HasLineStyle() )
+        out->SetLineStyle( a.GetLineStyle() );
+    else if( b.HasLineStyle() )
+        out->SetLineStyle( b.GetLineStyle() );
+
+    if( !a.GetTuningProfile().IsEmpty() )
+        out->SetTuningProfile( a.GetTuningProfile() );
+    else if( !b.GetTuningProfile().IsEmpty() )
+        out->SetTuningProfile( b.GetTuningProfile() );
+
+    auto colorSet = []( const KIGFX::COLOR4D& c )
+    { return c != KIGFX::COLOR4D::UNSPECIFIED; };
+
+    out->SetPcbColor( colorSet( a.GetPcbColor( true ) ) ? a.GetPcbColor( true )
+                                                         : b.GetPcbColor( true ) );
+
+    out->SetSchematicColor( colorSet( a.GetSchematicColor( true ) )
+                                    ? a.GetSchematicColor( true )
+                                    : b.GetSchematicColor( true ) );
+
+    return out;
+}
+
+
 MULTI_BOARD_PROPAGATE_RESULT MultiBoardPropagateNetSettings(
         PROJECT&                                       aContainer,
         const MULTI_BOARD_NET_CLASS_CONFLICT_RESOLVER& aResolver )
@@ -298,6 +402,30 @@ MULTI_BOARD_PROPAGATE_RESULT MultiBoardPropagateNetSettings(
             case MULTI_BOARD_NET_CLASS_RESOLUTION::SKIP:
                 result.classesSkipped++;
                 break;
+
+            case MULTI_BOARD_NET_CLASS_RESOLUTION::MERGE:
+            {
+                // Field-union: container + sub-project agree on the
+                // class's full shape. Write the merged class to both
+                // sides so the next save doesn't re-detect this as a
+                // conflict. The caller (UI wrapper) is responsible for
+                // flushing the container to disk when classesMerged > 0.
+                std::shared_ptr<NETCLASS> merged =
+                        MergeMultiBoardNetclasses( *containerClass, *existing );
+
+                subNS->SetNetclass( className, merged );
+
+                // Mutate the container too. std::map's insert-on-existing-key
+                // doesn't invalidate iterators (it updates the stored value
+                // in place), so the surrounding range-for over containerClasses
+                // stays valid. The `containerClass` binding still points
+                // into the same map slot, which now holds `merged`.
+                containerNS->SetNetclass( className, merged );
+
+                result.classesMerged++;
+                subMutated = true;
+                break;
+            }
             }
         }
 

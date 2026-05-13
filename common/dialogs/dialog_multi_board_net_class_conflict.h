@@ -64,6 +64,7 @@ private:
     void onUseContainer( wxCommandEvent& aEvent );
     void onKeepSubProject( wxCommandEvent& aEvent );
     void onSkip( wxCommandEvent& aEvent );
+    void onMerge( wxCommandEvent& aEvent );
 
     wxCheckBox*                      m_applyToAllCheckbox = nullptr;
     MULTI_BOARD_NET_CLASS_RESOLUTION m_resolution = MULTI_BOARD_NET_CLASS_RESOLUTION::USE_CONTAINER;

@@ -52,8 +52,24 @@ MULTI_BOARD_PROPAGATE_RESULT MultiBoardPropagateNetSettingsWithDialog(
     auto resolver = [&]( const MULTI_BOARD_NET_CLASS_CONFLICT& aConflict )
             -> MULTI_BOARD_NET_CLASS_RESOLUTION
     {
+        // Sticky MERGE only applies to genuinely mergeable cases. For any
+        // subsequent conflict where a field is set on both sides with
+        // different values, fall through and re-prompt — silently
+        // overwriting via the propagator's defensive fallback inside
+        // MergeMultiBoardNetclasses would surprise the user. (USE_CONTAINER /
+        // KEEP_SUB_PROJECT / SKIP are unconditional and re-apply cleanly.)
         if( sticky.has_value() )
-            return *sticky;
+        {
+            bool stickyApplicable =
+                    *sticky != MULTI_BOARD_NET_CLASS_RESOLUTION::MERGE
+                    || ( aConflict.containerNetClass && aConflict.subProjectNetClass
+                         && CanMergeMultiBoardNetclasses(
+                                 *aConflict.containerNetClass,
+                                 *aConflict.subProjectNetClass ) );
+
+            if( stickyApplicable )
+                return *sticky;
+        }
 
         DIALOG_MULTI_BOARD_NET_CLASS_CONFLICT dlg( aDialogParent, aConflict );
         dlg.ShowModal();
@@ -69,13 +85,28 @@ MULTI_BOARD_PROPAGATE_RESULT MultiBoardPropagateNetSettingsWithDialog(
     MULTI_BOARD_PROPAGATE_RESULT result =
             MultiBoardPropagateNetSettings( aContainer, resolver );
 
+    SETTINGS_MANAGER& sm = Pgm().GetSettingsManager();
+
+    // MERGE writes the unioned class to the container's NetSettings as
+    // well as the sub-project's, so the container needs flushing whenever
+    // at least one conflict was merged. (USE_CONTAINER / KEEP_SUB_PROJECT
+    // / SKIP don't touch the container, so the existing path is fine for
+    // those.) The caller saved the container before invoking us, so this
+    // is the only re-save that's needed.
+    if( result.classesMerged > 0 )
+    {
+        wxLogMessage( wxT( "[M7.2-PROPAGATE] %d class(es) merged — re-saving container" ),
+                      result.classesMerged );
+
+        sm.SaveProject( aContainer.GetProjectFullName(), &aContainer );
+    }
+
     // Flush each mutated sub-project to disk. The propagator only mutates
     // in-memory NET_SETTINGS; persistence is the caller's job. Wrapping
     // each save in PROJECT_FILE_SUSPEND_NOTIFY would coalesce observers,
     // but we don't have that fan-out for net_settings yet — the per-save
     // cost is one .kicad_pro JSON write per affected sub-project, and we
     // expect the count to be small (one per peer window).
-    SETTINGS_MANAGER& sm = Pgm().GetSettingsManager();
 
     for( const wxString& subPath : result.mutatedSubProjectPaths )
     {

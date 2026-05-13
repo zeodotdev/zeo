@@ -24,6 +24,39 @@ AGENT_CLOUD_SYNC::AGENT_CLOUD_SYNC() :
 
 AGENT_CLOUD_SYNC::~AGENT_CLOUD_SYNC()
 {
+    // Signal in-flight workers to stop, then wait for them. Without this,
+    // a detached background thread could reach into `m_syncStateMutex` or
+    // `m_syncState` after their backing memory is freed — `pthread_mutex_lock`
+    // on a destroyed mutex returns `EINVAL`, which libc++ converts to a
+    // `std::system_error` throw → terminate → SIGABRT.
+    m_stopping.store( true );
+
+    // Move the vector out under the lock so we can join without holding it
+    // (any straggler `spawnWorker` calls from another thread would otherwise
+    // deadlock against this join).
+    std::vector<std::thread> toJoin;
+    {
+        std::lock_guard<std::mutex> lock( m_workersMutex );
+        toJoin.swap( m_workers );
+    }
+
+    for( std::thread& t : toJoin )
+    {
+        if( t.joinable() )
+            t.join();
+    }
+}
+
+
+void AGENT_CLOUD_SYNC::spawnWorker( std::function<void()> aWork )
+{
+    // Refuse to spawn after shutdown has started. Catches the rare race
+    // where a UI event queues a sync just as the destructor begins.
+    if( m_stopping.load() )
+        return;
+
+    std::lock_guard<std::mutex> lock( m_workersMutex );
+    m_workers.emplace_back( std::move( aWork ) );
 }
 
 
@@ -92,8 +125,11 @@ void AGENT_CLOUD_SYNC::UploadChat( const std::string& aConversationId,
     std::string supabaseUrl = m_supabaseUrl;
     std::string anonKey = m_anonKey;
 
-    std::thread( [this, prefix, convId, content, key, auth, supabaseUrl, anonKey]()
+    spawnWorker( [this, prefix, convId, content, key, auth, supabaseUrl, anonKey]()
     {
+        if( m_stopping.load() )
+            return;
+
         std::string storagePath = prefix + "/chats/" + convId + ".json";
 
         wxLogTrace( "Agent", "CLOUD_SYNC: Uploading chat %s (%zu bytes)",
@@ -102,6 +138,9 @@ void AGENT_CLOUD_SYNC::UploadChat( const std::string& aConversationId,
         if( UploadToStorageWithToken( storagePath, content, auth.accessToken,
                                        supabaseUrl, anonKey ) )
         {
+            if( m_stopping.load() )
+                return;
+
             MarkUploaded( key, content.size() );
             wxLogTrace( "Agent", "CLOUD_SYNC: Chat %s uploaded successfully", convId.c_str() );
         }
@@ -109,7 +148,7 @@ void AGENT_CLOUD_SYNC::UploadChat( const std::string& aConversationId,
         {
             wxLogTrace( "Agent", "CLOUD_SYNC: Chat %s upload failed", convId.c_str() );
         }
-    } ).detach();
+    } );
 }
 
 
@@ -156,8 +195,11 @@ void AGENT_CLOUD_SYNC::UploadLog( const std::string& aLogFilePath )
     std::string supabaseUrl = m_supabaseUrl;
     std::string anonKey = m_anonKey;
 
-    std::thread( [this, prefix, filename, content, key, auth, supabaseUrl, anonKey]()
+    spawnWorker( [this, prefix, filename, content, key, auth, supabaseUrl, anonKey]()
     {
+        if( m_stopping.load() )
+            return;
+
         std::string storagePath = prefix + "/logs/" + filename;
 
         wxLogTrace( "Agent", "CLOUD_SYNC: Uploading log %s (%zu bytes)",
@@ -166,6 +208,9 @@ void AGENT_CLOUD_SYNC::UploadLog( const std::string& aLogFilePath )
         if( UploadToStorageWithToken( storagePath, content, auth.accessToken,
                                        supabaseUrl, anonKey ) )
         {
+            if( m_stopping.load() )
+                return;
+
             MarkUploaded( key, content.size() );
             wxLogTrace( "Agent", "CLOUD_SYNC: Log %s uploaded successfully", filename.c_str() );
         }
@@ -173,7 +218,7 @@ void AGENT_CLOUD_SYNC::UploadLog( const std::string& aLogFilePath )
         {
             wxLogTrace( "Agent", "CLOUD_SYNC: Log %s upload failed", filename.c_str() );
         }
-    } ).detach();
+    } );
 }
 
 
@@ -192,8 +237,11 @@ void AGENT_CLOUD_SYNC::SyncAll()
     std::string supabaseUrl = m_supabaseUrl;
     std::string anonKey = m_anonKey;
 
-    std::thread( [this, prefix, auth, supabaseUrl, anonKey]()
+    spawnWorker( [this, prefix, auth, supabaseUrl, anonKey]()
     {
+        if( m_stopping.load() )
+            return;
+
         wxLogTrace( "Agent", "CLOUD_SYNC: Starting full sync for %s", prefix.c_str() );
 
         // 1. Upload all chat files
@@ -207,6 +255,9 @@ void AGENT_CLOUD_SYNC::SyncAll()
 
             while( cont )
             {
+                if( m_stopping.load() )
+                    return;
+
                 wxString fullPath = wxString::FromUTF8( chatDir ) + wxFileName::GetPathSeparator()
                                     + filename;
                 std::string convId = wxFileName( filename ).GetName().ToStdString();
@@ -227,6 +278,9 @@ void AGENT_CLOUD_SYNC::SyncAll()
                     if( UploadToStorageWithToken( storagePath, content, auth.accessToken,
                                                    supabaseUrl, anonKey ) )
                     {
+                        if( m_stopping.load() )
+                            return;
+
                         MarkUploaded( key, content.size() );
                     }
                 }
@@ -234,6 +288,9 @@ void AGENT_CLOUD_SYNC::SyncAll()
                 cont = dir.GetNext( &filename );
             }
         }
+
+        if( m_stopping.load() )
+            return;
 
         // 2. Upload all log files
         std::string logDir = GetLogDir();
@@ -246,6 +303,9 @@ void AGENT_CLOUD_SYNC::SyncAll()
 
             while( cont )
             {
+                if( m_stopping.load() )
+                    return;
+
                 wxString fullPath = wxString::FromUTF8( logDir ) + wxFileName::GetPathSeparator()
                                     + filename;
                 std::string fname = filename.ToStdString();
@@ -271,6 +331,9 @@ void AGENT_CLOUD_SYNC::SyncAll()
                         if( UploadToStorageWithToken( storagePath, content, auth.accessToken,
                                                        supabaseUrl, anonKey ) )
                         {
+                            if( m_stopping.load() )
+                                return;
+
                             MarkUploaded( key, content.size() );
                         }
                     }
@@ -280,11 +343,14 @@ void AGENT_CLOUD_SYNC::SyncAll()
             }
         }
 
+        if( m_stopping.load() )
+            return;
+
         // 3. Download remote-only chats to local storage
         DownloadChatsWithToken( auth.accessToken, supabaseUrl, anonKey );
 
         wxLogTrace( "Agent", "CLOUD_SYNC: Full sync complete" );
-    } ).detach();
+    } );
 }
 
 

@@ -4,6 +4,9 @@
 #include <string>
 #include <mutex>
 #include <atomic>
+#include <functional>
+#include <thread>
+#include <vector>
 #include <nlohmann/json.hpp>
 
 class AGENT_AUTH;
@@ -160,6 +163,14 @@ private:
                                   const std::string& aSupabaseUrl,
                                   const std::string& aAnonKey );
 
+    /// Spawn a background worker thread that's tracked in `m_workers` so
+    /// the destructor can join it. Replaces fire-and-forget `.detach()`
+    /// which would let the thread outlive `this` and dereference
+    /// destroyed members (use-after-free on `m_syncStateMutex` was
+    /// hitting `pthread_mutex_lock` → `EINVAL` → `std::system_error`
+    /// throw → terminate).
+    void spawnWorker( std::function<void()> aWork );
+
     AGENT_AUTH*        m_auth;
     std::mutex         m_authMutex;      // Protects m_auth access across threads
     std::string        m_supabaseUrl;
@@ -168,6 +179,19 @@ private:
     nlohmann::json     m_syncState;      // Tracks uploaded files { "chats": {}, "logs": {} }
     std::mutex         m_syncStateMutex; // Protects m_syncState reads/writes
     std::atomic<bool>  m_configured;
+
+    /// Workers in flight. The destructor joins all of them after setting
+    /// `m_stopping`, so the threads can never reach into destroyed member
+    /// state. Guarded by `m_workersMutex` because `UploadChat` / `UploadLog`
+    /// can be called from any thread.
+    std::vector<std::thread> m_workers;
+    std::mutex               m_workersMutex;
+
+    /// Set by the destructor (and by any future "abandon in-flight uploads"
+    /// API). Workers must check this at loop tops and before slow network
+    /// calls so a quitting app doesn't have to wait for the entire backlog
+    /// to drain before Zeo can exit.
+    std::atomic<bool>        m_stopping{ false };
 
     // Snapshot auth credentials on the main thread for use by background threads.
     // This avoids accessing m_auth from detached threads (use-after-free risk).

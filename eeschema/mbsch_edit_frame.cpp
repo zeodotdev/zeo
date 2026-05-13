@@ -238,6 +238,12 @@ void MBSCH_EDIT_FRAME::doReCreateMenuBar()
     viewMenu->Add( ACTIONS::toggleGrid,     ACTION_MENU::CHECK );
     viewMenu->Add( ACTIONS::gridProperties );
 
+    // 3D Assembly viewer — the MBS analogue of the PCB editor's
+    // View → 3D Viewer entry. Same action that's already on the MBSCH
+    // toolbar, surfaced here so it's discoverable from the menubar.
+    viewMenu->AppendSeparator();
+    viewMenu->Add( SCH_ACTIONS::mbsOpen3DAssembly );
+
     // -- Place menu -- (restricted to what makes sense on an MBS)
     ACTION_MENU* placeMenu = new ACTION_MENU( false, selTool );
     placeMenu->Add( SCH_ACTIONS::drawWire );
@@ -266,6 +272,7 @@ void MBSCH_EDIT_FRAME::doReCreateMenuBar()
     ACTION_MENU* toolsMenu = new ACTION_MENU( false, selTool );
     toolsMenu->Add( SCH_ACTIONS::refreshMbsFromSubProjects );
     toolsMenu->Add( SCH_ACTIONS::mbsAnnotateBlocks );
+    toolsMenu->Add( SCH_ACTIONS::mbsSyncCrossBoardNets );
     toolsMenu->AppendSeparator();
     toolsMenu->Add( SCH_ACTIONS::mbsManageSubBoards );
 

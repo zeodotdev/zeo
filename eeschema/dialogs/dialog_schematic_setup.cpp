@@ -46,7 +46,11 @@
 
 
 DIALOG_SCHEMATIC_SETUP::DIALOG_SCHEMATIC_SETUP( SCH_EDIT_FRAME* aFrame ) :
-        PAGED_DIALOG( aFrame, _( "Schematic Setup" ), true, false,
+        PAGED_DIALOG( aFrame,
+                      aFrame->Prj().GetProjectFile().IsMultiBoardContainer()
+                              ? _( "Multi-Board Schematic Setup" )
+                              : _( "Schematic Setup" ),
+                      true, false,
                       _( "Import Settings from Another Project..." ), wxSize( 920, 460 ) ),
         m_frame( aFrame )
 {
@@ -58,63 +62,96 @@ DIALOG_SCHEMATIC_SETUP::DIALOG_SCHEMATIC_SETUP( SCH_EDIT_FRAME* aFrame ) :
      * WARNING: If you change page names you MUST update calls to ShowSchematicSetupDialog().
      */
 
+    // Detect MBS container up front: a handful of pages are sub-project
+    // schematic concerns and either crash or silently corrupt state when
+    // shown on a multi-board container. See per-page comments below.
+    const bool isMbsContainer =
+            m_frame->Prj().GetProjectFile().IsMultiBoardContainer();
+
     m_treebook->AddPage( new wxPanel( GetTreebook() ), _( "General" ) );
 
-    m_formattingPage = m_treebook->GetPageCount();
-    m_treebook->AddLazySubPage(
-            [this]( wxWindow* aParent ) -> wxWindow*
-            {
-                return new PANEL_SETUP_FORMATTING( aParent, m_frame );
-            }, _( "Formatting" ) );
+    // Formatting, Annotation, Field Name Templates, BOM Presets all read
+    // and write back through `m_frame->Schematic().Settings()`. That
+    // accessor falls back to a static `defaultSettings` when the
+    // container's `m_SchematicSettings` is null (it is — the MBSCH
+    // frame's SCHEMATIC binding doesn't reliably reach the init branch
+    // in `SCHEMATIC::SetProject`). Edits would land in the static
+    // instead of the .kicad_pro: silent corruption, no persistence.
+    //
+    // None of these are conceptually meaningful for MBSCH content
+    // either: the MBSCH canvas hosts module blocks (not symbols with
+    // refdes), so annotation / field templates / BOM presets don't
+    // apply, and Formatting is per-sub-project anyway. Hide them.
+    if( !isMbsContainer )
+    {
+        m_formattingPage = m_treebook->GetPageCount();
+        m_treebook->AddLazySubPage(
+                [this]( wxWindow* aParent ) -> wxWindow*
+                {
+                    return new PANEL_SETUP_FORMATTING( aParent, m_frame );
+                }, _( "Formatting" ) );
 
-    m_annotationPage = m_treebook->GetPageCount();
-    m_treebook->AddLazySubPage(
-            [this]( wxWindow* aParent ) -> wxWindow*
-            {
-                return new PANEL_EESCHEMA_ANNOTATION_OPTIONS( aParent, m_frame );
-            }, _( "Annotation" ) );
+        m_annotationPage = m_treebook->GetPageCount();
+        m_treebook->AddLazySubPage(
+                [this]( wxWindow* aParent ) -> wxWindow*
+                {
+                    return new PANEL_EESCHEMA_ANNOTATION_OPTIONS( aParent, m_frame );
+                }, _( "Annotation" ) );
 
-    m_fieldNameTemplatesPage = m_treebook->GetPageCount();
-    m_treebook->AddLazySubPage(
-            [this]( wxWindow* aParent ) -> wxWindow*
-            {
-                SCHEMATIC_SETTINGS& settings = m_frame->Schematic().Settings();
-                return new PANEL_TEMPLATE_FIELDNAMES( aParent, &settings.m_TemplateFieldNames );
-            }, _( "Field Name Templates" ) );
+        m_fieldNameTemplatesPage = m_treebook->GetPageCount();
+        m_treebook->AddLazySubPage(
+                [this]( wxWindow* aParent ) -> wxWindow*
+                {
+                    SCHEMATIC_SETTINGS& settings = m_frame->Schematic().Settings();
+                    return new PANEL_TEMPLATE_FIELDNAMES( aParent, &settings.m_TemplateFieldNames );
+                }, _( "Field Name Templates" ) );
 
-    m_bomPresetsPage = m_treebook->GetPageCount();
-    m_treebook->AddLazySubPage(
-            [this]( wxWindow* aParent ) -> wxWindow*
-            {
-                SCHEMATIC_SETTINGS& settings = m_frame->Schematic().Settings();
-                return new PANEL_BOM_PRESETS( aParent, settings );
-            }, _( "BOM Presets" ) );
+        m_bomPresetsPage = m_treebook->GetPageCount();
+        m_treebook->AddLazySubPage(
+                [this]( wxWindow* aParent ) -> wxWindow*
+                {
+                    SCHEMATIC_SETTINGS& settings = m_frame->Schematic().Settings();
+                    return new PANEL_BOM_PRESETS( aParent, settings );
+                }, _( "BOM Presets" ) );
+    }
 
 
     m_treebook->AddPage( new wxPanel( GetTreebook() ), _( "Electrical Rules" ) );
 
-    m_severitiesPage = m_treebook->GetPageCount();
-    m_treebook->AddLazySubPage(
-            [this]( wxWindow* aParent ) -> wxWindow*
-            {
-                ERC_SETTINGS& ercSettings = m_frame->Schematic().ErcSettings();
-                return new PANEL_SETUP_SEVERITIES( aParent, ERC_ITEM::GetItemsWithSeverities(),
-                                                   ercSettings.m_ERCSeverities, m_pinToPinError.get() );
-            }, _( "Violation Severity" ) );
+    // Violation Severity + Pin Conflicts Map are sub-project schematic
+    // concerns — they edit `ERC_SETTINGS::m_ERCSeverities` and `m_PinMap`
+    // respectively, both reached via `SCHEMATIC::ErcSettings()`. On a
+    // multi-board container the container's `PROJECT_FILE::m_ErcSettings`
+    // is null (the container's PROJECT_FILE isn't bound to a SCHEMATIC
+    // that runs the standard ERC init flow), so opening either page would
+    // hit `*nullptr` and crash. Cross-Board Rules (below) is the
+    // container-side analogue.
 
-    m_pinMapPage = m_treebook->GetPageCount();
-    m_treebook->AddLazySubPage(
-            [this]( wxWindow* aParent ) -> wxWindow*
-            {
-                return new PANEL_SETUP_PINMAP( aParent, m_frame );
-            }, _( "Pin Conflicts Map" ) );
+    if( !isMbsContainer )
+    {
+        m_severitiesPage = m_treebook->GetPageCount();
+        m_treebook->AddLazySubPage(
+                [this]( wxWindow* aParent ) -> wxWindow*
+                {
+                    ERC_SETTINGS& ercSettings = m_frame->Schematic().ErcSettings();
+                    return new PANEL_SETUP_SEVERITIES( aParent, ERC_ITEM::GetItemsWithSeverities(),
+                                                       ercSettings.m_ERCSeverities, m_pinToPinError.get() );
+                }, _( "Violation Severity" ) );
+
+        m_pinMapPage = m_treebook->GetPageCount();
+        m_treebook->AddLazySubPage(
+                [this]( wxWindow* aParent ) -> wxWindow*
+                {
+                    return new PANEL_SETUP_PINMAP( aParent, m_frame );
+                }, _( "Pin Conflicts Map" ) );
+    }
 
     // Cross-board ERC/DRC rules — only meaningful when the open project
     // is a multi-board container. The panel works against PROJECT_FILE
     // setters that are no-ops on non-container projects, so technically
     // it would be harmless to always show it; we hide it on regular
     // schematics to keep the tree uncluttered for the common case.
-    if( m_frame->Prj().GetProjectFile().IsMultiBoardContainer() )
+    if( isMbsContainer )
     {
         m_crossBoardRulesPage = m_treebook->GetPageCount();
         m_treebook->AddLazySubPage(
@@ -292,25 +329,25 @@ void DIALOG_SCHEMATIC_SETUP::onAuxiliaryAction( wxCommandEvent& event )
 
     file.m_SchematicSettings->LoadFromFile();
 
-    if( importDlg.m_FormattingOpt->GetValue() )
+    if( importDlg.m_FormattingOpt->GetValue() && m_formattingPage != 0 )
     {
         static_cast<PANEL_SETUP_FORMATTING*>( m_treebook->ResolvePage( m_formattingPage ) )
                 ->ImportSettingsFrom( *file.m_SchematicSettings );
     }
 
-    if( importDlg.m_FieldNameTemplatesOpt->GetValue() )
+    if( importDlg.m_FieldNameTemplatesOpt->GetValue() && m_fieldNameTemplatesPage != 0 )
     {
         static_cast<PANEL_TEMPLATE_FIELDNAMES*>( m_treebook->ResolvePage( m_fieldNameTemplatesPage ) )
                 ->ImportSettingsFrom( &otherSch.Settings().m_TemplateFieldNames );
     }
 
-    if( importDlg.m_PinMapOpt->GetValue() )
+    if( importDlg.m_PinMapOpt->GetValue() && m_pinMapPage != 0 )
     {
         static_cast<PANEL_SETUP_PINMAP*>( m_treebook->ResolvePage( m_pinMapPage ) )
                 ->ImportSettingsFrom( file.m_ErcSettings->m_PinMap );
     }
 
-    if( importDlg.m_SeveritiesOpt->GetValue() )
+    if( importDlg.m_SeveritiesOpt->GetValue() && m_severitiesPage != 0 )
     {
         static_cast<PANEL_SETUP_SEVERITIES*>( m_treebook->ResolvePage( m_severitiesPage ) )
                 ->ImportSettingsFrom( file.m_ErcSettings->m_ERCSeverities );
@@ -322,13 +359,13 @@ void DIALOG_SCHEMATIC_SETUP::onAuxiliaryAction( wxCommandEvent& event )
                 ->ImportSettingsFrom( file.m_NetSettings );
     }
 
-    if( importDlg.m_BomPresetsOpt->GetValue() )
+    if( importDlg.m_BomPresetsOpt->GetValue() && m_bomPresetsPage != 0 )
     {
         static_cast<PANEL_BOM_PRESETS*>( m_treebook->ResolvePage( m_bomPresetsPage ) )
                 ->ImportBomPresetsFrom( *file.m_SchematicSettings );
     }
 
-    if( importDlg.m_BomFmtPresetsOpt->GetValue() )
+    if( importDlg.m_BomFmtPresetsOpt->GetValue() && m_bomPresetsPage != 0 )
     {
         static_cast<PANEL_BOM_PRESETS*>( m_treebook->ResolvePage( m_bomPresetsPage ) )
                 ->ImportBomFmtPresetsFrom( *file.m_SchematicSettings );

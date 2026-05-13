@@ -50,15 +50,15 @@ protected:
 
     std::shared_ptr<ERC_ITEM> m_pinToPinError;
 
-    size_t                    m_formattingPage;
-    size_t                    m_annotationPage;
-    size_t                    m_fieldNameTemplatesPage;
-    size_t                    m_bomPresetsPage;
-    size_t                    m_pinMapPage;
+    size_t                    m_formattingPage = 0;        ///< 0 if not added (MBS container)
+    size_t                    m_annotationPage = 0;        ///< 0 if not added (MBS container)
+    size_t                    m_fieldNameTemplatesPage = 0; ///< 0 if not added (MBS container)
+    size_t                    m_bomPresetsPage = 0;        ///< 0 if not added (MBS container)
+    size_t                    m_pinMapPage = 0;            ///< 0 if not added (MBS container)
     size_t                    m_busesPage;
     size_t                    m_textVarsPage;
-    size_t                    m_severitiesPage;
+    size_t                    m_severitiesPage = 0;        ///< 0 if not added (MBS container)
     size_t                    m_netclassesPage;
     size_t                    m_embeddedFilesPage;
-    size_t                    m_crossBoardRulesPage = 0;  ///< 0 if not added
+    size_t                    m_crossBoardRulesPage = 0;   ///< 0 if not added
 };

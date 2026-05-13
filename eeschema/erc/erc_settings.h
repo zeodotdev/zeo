@@ -95,8 +95,12 @@ enum ERCE_T
                                   ///< cross-board net it doesn't participate in — the next
                                   ///< sync would silently merge the local net into the
                                   ///< cross-board one (or vice-versa).
+    ERCE_CROSS_BOARD_SUB_PROJECT_ISSUE, ///< MBSCH-aggregated wrapper for an ERC issue found
+                                  ///< by running standard ERC on a sub-project schematic.
+                                  ///< The original code/message are embedded in the detail
+                                  ///< text; only one severity (Warning) is exposed.
 
-    ERCE_LAST = ERCE_CROSS_BOARD_LABEL_SHADOW,
+    ERCE_LAST = ERCE_CROSS_BOARD_SUB_PROJECT_ISSUE,
 
     ERCE_DUPLICATE_PIN_ERROR,
     ERCE_PIN_TO_PIN_WARNING,    // pin connected to an other pin: warning level

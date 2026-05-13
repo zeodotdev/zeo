@@ -178,6 +178,10 @@ ERC_ITEM ERC_ITEM::crossBoardLabelShadow( ERCE_CROSS_BOARD_LABEL_SHADOW,
               "net it doesn't participate in" ),
         wxT( "cross_board_label_shadow" ) );
 
+ERC_ITEM ERC_ITEM::crossBoardSubProjectIssue( ERCE_CROSS_BOARD_SUB_PROJECT_ISSUE,
+        _HKI( "Cross-board: ERC issue surfaced from a sub-project's schematic" ),
+        wxT( "cross_board_sub_project_issue" ) );
+
 ERC_ITEM ERC_ITEM::unresolvedVariable( ERCE_UNRESOLVED_VARIABLE,
         _HKI( "Unresolved text variable" ),
         wxT( "unresolved_variable" ) );
@@ -289,6 +293,7 @@ std::vector<std::reference_wrapper<RC_ITEM>> ERC_ITEM::allItemTypes(
             ERC_ITEM::fieldNameWhitespace,
             ERC_ITEM::crossBoardStalePin,
             ERC_ITEM::crossBoardLabelShadow,
+            ERC_ITEM::crossBoardSubProjectIssue,
             ERC_ITEM::unannotated,
             ERC_ITEM::unresolvedVariable,
             ERC_ITEM::undefinedNetclass,
@@ -376,6 +381,8 @@ std::shared_ptr<ERC_ITEM> ERC_ITEM::Create( int aErrorCode )
     case ERCE_FIELD_NAME_WHITESPACE:   return std::make_shared<ERC_ITEM>( fieldNameWhitespace );
     case ERCE_CROSS_BOARD_STALE_PIN:   return std::make_shared<ERC_ITEM>( crossBoardStalePin );
     case ERCE_CROSS_BOARD_LABEL_SHADOW: return std::make_shared<ERC_ITEM>( crossBoardLabelShadow );
+    case ERCE_CROSS_BOARD_SUB_PROJECT_ISSUE:
+        return std::make_shared<ERC_ITEM>( crossBoardSubProjectIssue );
     case ERCE_UNSPECIFIED:
     default:
         wxFAIL_MSG( wxS( "Unknown ERC error code" ) );

@@ -123,6 +123,7 @@ ERC_SETTINGS::ERC_SETTINGS( JSON_SETTINGS* aParent, const std::string& aPath ) :
     m_ERCSeverities[ERCE_STACKED_PIN_SYNTAX]      = RPT_SEVERITY_WARNING;
     m_ERCSeverities[ERCE_FIELD_NAME_WHITESPACE]   = RPT_SEVERITY_WARNING;
     m_ERCSeverities[ERCE_CROSS_BOARD_STALE_PIN]   = RPT_SEVERITY_WARNING;
+    m_ERCSeverities[ERCE_CROSS_BOARD_LABEL_SHADOW] = RPT_SEVERITY_WARNING;
 
     m_params.emplace_back( new PARAM_LAMBDA<nlohmann::json>( "rule_severities",
             [&]() -> nlohmann::json

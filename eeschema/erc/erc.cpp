@@ -1665,6 +1665,138 @@ int ERC_TESTER::TestCrossBoardConnectivity()
         }
     }
 
+    // ---- Cross-board net name shadowed by an unrelated local net ----
+    // For each cross-board net, find which sub-projects participate as
+    // endpoints. Any OTHER sub-project that has a same-named local net
+    // (declared on its `.kicad_pcb`) would silently merge with the
+    // cross-board net on the next sync — the renamer is a whole-file
+    // string replace, so a local "USB_DP" wire on a board with no USB
+    // cross-board connection would still get its electrical identity
+    // collapsed into the container's "USB_DP" the moment somebody hits
+    // Sync. Flag this case so the user renames before damage.
+    if( m_settings.IsTestEnabled( ERCE_CROSS_BOARD_LABEL_SHADOW ) )
+    {
+        PROJECT_FILE& projectFile = m_schematic->Project().GetProjectFile();
+
+        if( projectFile.IsMultiBoardContainer() )
+        {
+            const auto& crossBoardNets = projectFile.GetCrossBoardNets();
+            const auto& subProjects    = projectFile.GetSubProjects();
+
+            // Cache one set<wxString> of net names per sub-project. The
+            // PCB scan reads every `(net N "NAME")` token in the file
+            // (both top-level declarations and pad references — both
+            // share the same syntax, both are evidence of the name).
+            std::map<KIID, std::set<wxString>> netsBySubProject;
+
+            auto scanNets = [&]( const SUB_PROJECT_INFO& aInfo )
+                    -> const std::set<wxString>*
+            {
+                auto cacheIt = netsBySubProject.find( aInfo.uuid );
+
+                if( cacheIt != netsBySubProject.end() )
+                    return &cacheIt->second;
+
+                wxFileName proFile = projectFile.ResolveSubProjectPath( aInfo );
+                wxFileName pcbFile = MultiBoardMainPcb( proFile );
+
+                std::set<wxString> nets;
+
+                if( pcbFile.FileExists() )
+                {
+                    wxFFile  in( pcbFile.GetFullPath(), wxT( "r" ) );
+                    wxString text;
+
+                    if( in.IsOpened() && in.ReadAll( &text ) )
+                    {
+                        wxRegEx netDecl(
+                                wxT( "\\(net\\s+\\d+\\s+\"([^\"]*)\"\\)" ),
+                                wxRE_ADVANCED );
+
+                        wxString remaining = text;
+
+                        while( netDecl.IsValid() && netDecl.Matches( remaining ) )
+                        {
+                            size_t mStart, mLen;
+                            netDecl.GetMatch( &mStart, &mLen, 0 );
+
+                            wxString name = netDecl.GetMatch( remaining, 1 );
+
+                            if( !name.IsEmpty() )
+                                nets.insert( name );
+
+                            if( mLen == 0 )
+                                break;   // pathological zero-width match
+
+                            remaining = remaining.Mid( mStart + mLen );
+                        }
+                    }
+                }
+
+                auto result = netsBySubProject.emplace( aInfo.uuid, std::move( nets ) );
+                return &result.first->second;
+            };
+
+            for( const MB_CROSS_BOARD_NET& xnet : crossBoardNets )
+            {
+                if( xnet.name.IsEmpty() )
+                    continue;
+
+                std::set<KIID> participating;
+
+                for( const MB_CROSS_BOARD_NET_ENDPOINT& ep : xnet.endpoints )
+                    participating.insert( ep.subProjectUuid );
+
+                for( const SUB_PROJECT_INFO& info : subProjects )
+                {
+                    if( participating.count( info.uuid ) )
+                        continue;
+
+                    const std::set<wxString>* localNets = scanNets( info );
+
+                    if( !localNets || localNets->count( xnet.name ) == 0 )
+                        continue;
+
+                    // Anchor the marker to a module pin on this
+                    // cross-board net (if any) so clicking the marker
+                    // in the ERC report jumps to a visible location.
+                    SCH_MODULE_PIN* anchor = nullptr;
+
+                    auto it = modulePinsByNet.find( xnet.name );
+                    if( it != modulePinsByNet.end() && !it->second.empty() )
+                        anchor = it->second.front();
+
+                    std::shared_ptr<ERC_ITEM> ercItem =
+                            ERC_ITEM::Create( ERCE_CROSS_BOARD_LABEL_SHADOW );
+
+                    wxString boardName = info.displayName.IsEmpty()
+                                                 ? info.name
+                                                 : info.displayName;
+
+                    wxString detail = wxString::Format(
+                            _( "Cross-board net '%s' has no endpoint on sub-board "
+                               "'%s', but that board defines a local net of the "
+                               "same name. The next MBS sync would silently merge "
+                               "the local net into the cross-board net. Rename one "
+                               "before syncing." ),
+                            xnet.name, boardName );
+
+                    if( anchor )
+                        ercItem->SetItems( anchor );
+
+                    ercItem->SetErrorMessage( detail );
+
+                    VECTOR2I pos = anchor ? anchor->GetPosition()
+                                          : VECTOR2I( 0, 0 );
+
+                    SCH_MARKER* marker = new SCH_MARKER( std::move( ercItem ), pos );
+                    rootScreen->Append( marker );
+                    warnings++;
+                }
+            }
+        }
+    }
+
     return warnings;
 }
 
@@ -2558,7 +2690,8 @@ void ERC_TESTER::RunTests( DS_PROXY_VIEW_ITEM* aDrawingSheet, SCH_EDIT_FRAME* aE
         || m_settings.IsTestEnabled( ERCE_POWERPIN_NOT_DRIVEN )
         || m_settings.IsTestEnabled( ERCE_PIN_TO_PIN_ERROR )
         || m_settings.IsTestEnabled( ERCE_PIN_TO_PIN_WARNING )
-        || m_settings.IsTestEnabled( ERCE_CROSS_BOARD_STALE_PIN ) )
+        || m_settings.IsTestEnabled( ERCE_CROSS_BOARD_STALE_PIN )
+        || m_settings.IsTestEnabled( ERCE_CROSS_BOARD_LABEL_SHADOW ) )
     {
         TestCrossBoardConnectivity();
     }

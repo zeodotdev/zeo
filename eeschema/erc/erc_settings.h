@@ -91,8 +91,12 @@ enum ERCE_T
     ERCE_FIELD_NAME_WHITESPACE,   ///< Field name has leading or trailing whitespace.
 
     ERCE_CROSS_BOARD_STALE_PIN,   ///< MBSCH module pin's target sub-project pad is missing.
+    ERCE_CROSS_BOARD_LABEL_SHADOW, ///< Sub-project has a local net with the same name as a
+                                  ///< cross-board net it doesn't participate in — the next
+                                  ///< sync would silently merge the local net into the
+                                  ///< cross-board one (or vice-versa).
 
-    ERCE_LAST = ERCE_CROSS_BOARD_STALE_PIN,
+    ERCE_LAST = ERCE_CROSS_BOARD_LABEL_SHADOW,
 
     ERCE_DUPLICATE_PIN_ERROR,
     ERCE_PIN_TO_PIN_WARNING,    // pin connected to an other pin: warning level

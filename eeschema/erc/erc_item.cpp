@@ -173,6 +173,11 @@ ERC_ITEM ERC_ITEM::crossBoardStalePin( ERCE_CROSS_BOARD_STALE_PIN,
         _HKI( "Cross-board: module pin's target sub-project pad is missing" ),
         wxT( "cross_board_stale_pin" ) );
 
+ERC_ITEM ERC_ITEM::crossBoardLabelShadow( ERCE_CROSS_BOARD_LABEL_SHADOW,
+        _HKI( "Cross-board: sub-project has a local net with the same name as a cross-board "
+              "net it doesn't participate in" ),
+        wxT( "cross_board_label_shadow" ) );
+
 ERC_ITEM ERC_ITEM::unresolvedVariable( ERCE_UNRESOLVED_VARIABLE,
         _HKI( "Unresolved text variable" ),
         wxT( "unresolved_variable" ) );
@@ -283,6 +288,7 @@ std::vector<std::reference_wrapper<RC_ITEM>> ERC_ITEM::allItemTypes(
             ERC_ITEM::stackedPinName,
             ERC_ITEM::fieldNameWhitespace,
             ERC_ITEM::crossBoardStalePin,
+            ERC_ITEM::crossBoardLabelShadow,
             ERC_ITEM::unannotated,
             ERC_ITEM::unresolvedVariable,
             ERC_ITEM::undefinedNetclass,
@@ -369,6 +375,7 @@ std::shared_ptr<ERC_ITEM> ERC_ITEM::Create( int aErrorCode )
     case ERCE_STACKED_PIN_SYNTAX:      return std::make_shared<ERC_ITEM>( stackedPinName );
     case ERCE_FIELD_NAME_WHITESPACE:   return std::make_shared<ERC_ITEM>( fieldNameWhitespace );
     case ERCE_CROSS_BOARD_STALE_PIN:   return std::make_shared<ERC_ITEM>( crossBoardStalePin );
+    case ERCE_CROSS_BOARD_LABEL_SHADOW: return std::make_shared<ERC_ITEM>( crossBoardLabelShadow );
     case ERCE_UNSPECIFIED:
     default:
         wxFAIL_MSG( wxS( "Unknown ERC error code" ) );

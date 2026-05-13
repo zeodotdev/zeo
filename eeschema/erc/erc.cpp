@@ -31,7 +31,6 @@
 #include "kiface_ids.h"
 #include <advanced_config.h>
 #include <common.h>     // for ExpandEnvVarSubstitutions
-#include <eeschema_helpers.h>
 #include <erc/erc.h>
 #include <erc/erc_sch_pin_context.h>
 #include <gal/graphics_abstraction_layer.h>
@@ -1360,7 +1359,122 @@ int ERC_TESTER::TestCrossBoardConnectivity()
     }
 
     if( allModulePins.empty() )
-        return 0;   // nothing MBS-related on this schematic
+    {
+        // No module blocks on this sheet — not an MBSCH. If this project
+        // is a sub-project of an MBS container though, mirror cross-board
+        // DRC's symmetric model: the container's cross-board topology is
+        // consulted during local ERC, so a connector pin that participates
+        // in a cross-board net but is dangling locally gets flagged
+        // alongside the user's normal pin-not-connected checks.
+        if( m_settings.IsTestEnabled( ERCE_CROSS_BOARD_LOCAL_UNCONNECTED ) )
+        {
+            // Container `.kicad_pro` path is cached on PROJECT (set by
+            // M5.2's sub-project metadata read). Empty when this project
+            // isn't a sub-project of any MBS container — skip.
+            wxString containerPath = m_schematic->Project().GetContainerProjectPath();
+
+            if( !containerPath.IsEmpty() && wxFileExists( containerPath ) )
+            {
+                PROJECT_FILE container( containerPath );
+
+                if( container.LoadFromFile() )
+                {
+                    // Resolve THIS sub-project's UUID by matching its
+                    // `.kicad_pro` absolute path against the container's
+                    // sub-project list. Without this we can't filter the
+                    // cross-board endpoints down to the ones on this board.
+                    wxFileName myPro( m_schematic->Project().GetProjectFullName() );
+                    myPro.Normalize( wxPATH_NORM_ABSOLUTE | wxPATH_NORM_DOTS );
+                    wxString myProPath = myPro.GetFullPath();
+
+                    KIID mySubUuid = niluuid;
+
+                    for( const SUB_PROJECT_INFO& info : container.GetSubProjects() )
+                    {
+                        wxFileName resolved = container.ResolveSubProjectPath( info );
+                        resolved.Normalize( wxPATH_NORM_ABSOLUTE | wxPATH_NORM_DOTS );
+
+                        if( resolved.GetFullPath() == myProPath )
+                        {
+                            mySubUuid = info.uuid;
+                            break;
+                        }
+                    }
+
+                    if( mySubUuid != niluuid )
+                    {
+                        // Cache a (componentRef.pinNumber) → SCH_PIN lookup
+                        // built once. The schematic's hierarchy is walked
+                        // for symbols and their pins; sub-sheets contribute
+                        // their own symbols/pins too.
+                        std::map<std::pair<wxString, wxString>, SCH_PIN*> pinByRefNumber;
+
+                        for( const SCH_SHEET_PATH& path : m_schematic->Hierarchy() )
+                        {
+                            SCH_SCREEN* screen = path.LastScreen();
+
+                            if( !screen )
+                                continue;
+
+                            for( SCH_ITEM* item : screen->Items().OfType( SCH_SYMBOL_T ) )
+                            {
+                                SCH_SYMBOL* sym  = static_cast<SCH_SYMBOL*>( item );
+                                wxString    sref = sym->GetRef( &path );
+
+                                for( SCH_PIN* pin : sym->GetPins( &path ) )
+                                {
+                                    pinByRefNumber[{ sref, pin->GetNumber() }] = pin;
+                                }
+                            }
+                        }
+
+                        for( const MB_CROSS_BOARD_NET& xnet : container.GetCrossBoardNets() )
+                        {
+                            for( const MB_CROSS_BOARD_NET_ENDPOINT& ep : xnet.endpoints )
+                            {
+                                if( ep.subProjectUuid != mySubUuid )
+                                    continue;
+
+                                auto it = pinByRefNumber.find( { ep.componentRef,
+                                                                  ep.pinNumber } );
+
+                                // Pin not found: a different ERC check
+                                // (ERCE_CROSS_BOARD_STALE_PIN on MBSCH
+                                // side) covers this; don't double-report
+                                // from the sub-project view.
+                                if( it == pinByRefNumber.end() )
+                                    continue;
+
+                                SCH_PIN* pin = it->second;
+
+                                if( !pin || !pin->IsDangling() )
+                                    continue;
+
+                                std::shared_ptr<ERC_ITEM> ercItem = ERC_ITEM::Create(
+                                        ERCE_CROSS_BOARD_LOCAL_UNCONNECTED );
+
+                                wxString detail = wxString::Format(
+                                        _( "Connector pin %s.%s is part of cross-board "
+                                           "net '%s' but is not wired to anything on this "
+                                           "sub-project's schematic." ),
+                                        ep.componentRef, ep.pinNumber, xnet.name );
+
+                                ercItem->SetItems( pin );
+                                ercItem->SetErrorMessage( detail );
+
+                                SCH_MARKER* marker = new SCH_MARKER( std::move( ercItem ),
+                                                                      pin->GetPosition() );
+                                rootScreen->Append( marker );
+                                warnings++;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        return warnings;
+    }
 
     // ---- Stale module pin (sub-project pad missing on PCB) ----
     // Each module pin claims to bind to (componentRef, pinNumber) on a
@@ -1793,101 +1907,6 @@ int ERC_TESTER::TestCrossBoardConnectivity()
                     SCH_MARKER* marker = new SCH_MARKER( std::move( ercItem ), pos );
                     rootScreen->Append( marker );
                     warnings++;
-                }
-            }
-        }
-    }
-
-    // ---- Walk each sub-project's schematic and aggregate its standard ERC ----
-    // The cross-board checks above only see what's on the MBSCH canvas: module
-    // pins, cross-board labels, the connector pads' presence on the linked
-    // PCBs. They miss anything local to a sub-project — unwired connector
-    // pins on the sub-project schematic, hierarchical issues inside a sub-
-    // sheet, label-name collisions between cross-board and local nets within
-    // a participating board, pin-type conflicts between two same-board pins,
-    // and so on. (See the audit table in this branch.)
-    //
-    // Mirror the cross-board DRC model (each per-board DRC includes the
-    // cross-board engine): each sub-project's standard ERC is run here
-    // transiently and its findings are wrapped into MBSCH-level markers so
-    // the user can see them without leaving the MBSCH editor. We use
-    // `aForceDefaultProject=true` to load with a synthetic PROJECT so the
-    // transient SCHEMATIC's settings-ownership transitions can't corrupt
-    // the real sub-project's `.kicad_pro` state (see SCHEMATIC::SetProject
-    // teardown at schematic.cpp:191-202).
-    if( m_settings.IsTestEnabled( ERCE_CROSS_BOARD_SUB_PROJECT_ISSUE ) )
-    {
-        PROJECT_FILE& projectFile = m_schematic->Project().GetProjectFile();
-
-        if( projectFile.IsMultiBoardContainer() )
-        {
-            for( const SUB_PROJECT_INFO& info : projectFile.GetSubProjects() )
-            {
-                wxFileName proFile = projectFile.ResolveSubProjectPath( info );
-                wxFileName schFile = MultiBoardMainSchematic( proFile );
-
-                if( !schFile.FileExists() )
-                    continue;
-
-                wxString boardName = info.displayName.IsEmpty()
-                                             ? info.name
-                                             : info.displayName;
-
-                std::unique_ptr<SCHEMATIC> subSch(
-                        EESCHEMA_HELPERS::LoadSchematic(
-                                schFile.GetFullPath(),
-                                /* aSetActive */ false,
-                                /* aForceDefaultProject */ true,
-                                /* aProject */ nullptr,
-                                /* aCalculateConnectivity */ true ) );
-
-                if( !subSch )
-                {
-                    wxLogTrace( wxT( "MBS_ERC" ),
-                                wxT( "Sub-project '%s': failed to load schematic '%s'" ),
-                                boardName, schFile.GetFullPath() );
-                    continue;
-                }
-
-                ERC_TESTER subTester( subSch.get() );
-                subTester.RunTests( nullptr, nullptr, nullptr, &subSch->Project(),
-                                     nullptr );
-
-                // Walk each sub-sheet's screen for markers ERC emitted, wrap
-                // each into a MBSCH-level marker. Original code/message
-                // surface verbatim in the detail line so the user can
-                // recognise the underlying check without leaving MBSCH.
-                for( const SCH_SHEET_PATH& path : subSch->Hierarchy() )
-                {
-                    SCH_SCREEN* subScreen = path.LastScreen();
-
-                    if( !subScreen )
-                        continue;
-
-                    for( SCH_ITEM* item : subScreen->Items().OfType( SCH_MARKER_T ) )
-                    {
-                        SCH_MARKER* subMarker = static_cast<SCH_MARKER*>( item );
-                        std::shared_ptr<RC_ITEM> rcItem = subMarker->GetRCItem();
-
-                        if( !rcItem )
-                            continue;
-
-                        std::shared_ptr<ERC_ITEM> wrapped = ERC_ITEM::Create(
-                                ERCE_CROSS_BOARD_SUB_PROJECT_ISSUE );
-
-                        wxString detail = wxString::Format(
-                                _( "[Sub-board: %s] %s (%s)" ),
-                                boardName,
-                                rcItem->GetErrorMessage( /* aTranslate */ true ),
-                                rcItem->GetSettingsKey() );
-
-                        wrapped->SetErrorMessage( detail );
-
-                        SCH_MARKER* newMarker = new SCH_MARKER( std::move( wrapped ),
-                                                                 VECTOR2I( 0, 0 ) );
-                        rootScreen->Append( newMarker );
-                        warnings++;
-                    }
                 }
             }
         }
@@ -2788,7 +2807,7 @@ void ERC_TESTER::RunTests( DS_PROXY_VIEW_ITEM* aDrawingSheet, SCH_EDIT_FRAME* aE
         || m_settings.IsTestEnabled( ERCE_PIN_TO_PIN_WARNING )
         || m_settings.IsTestEnabled( ERCE_CROSS_BOARD_STALE_PIN )
         || m_settings.IsTestEnabled( ERCE_CROSS_BOARD_LABEL_SHADOW )
-        || m_settings.IsTestEnabled( ERCE_CROSS_BOARD_SUB_PROJECT_ISSUE ) )
+        || m_settings.IsTestEnabled( ERCE_CROSS_BOARD_LOCAL_UNCONNECTED ) )
     {
         TestCrossBoardConnectivity();
     }

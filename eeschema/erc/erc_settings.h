@@ -95,12 +95,14 @@ enum ERCE_T
                                   ///< cross-board net it doesn't participate in — the next
                                   ///< sync would silently merge the local net into the
                                   ///< cross-board one (or vice-versa).
-    ERCE_CROSS_BOARD_SUB_PROJECT_ISSUE, ///< MBSCH-aggregated wrapper for an ERC issue found
-                                  ///< by running standard ERC on a sub-project schematic.
-                                  ///< The original code/message are embedded in the detail
-                                  ///< text; only one severity (Warning) is exposed.
+    ERCE_CROSS_BOARD_LOCAL_UNCONNECTED, ///< Sub-project-side check: a connector pin
+                                  ///< participates in a cross-board net per the container's
+                                  ///< topology, but the sub-project's local schematic
+                                  ///< leaves that pin dangling. The cross-board signal
+                                  ///< terminates at the connector instead of being routed
+                                  ///< to something on this board.
 
-    ERCE_LAST = ERCE_CROSS_BOARD_SUB_PROJECT_ISSUE,
+    ERCE_LAST = ERCE_CROSS_BOARD_LOCAL_UNCONNECTED,
 
     ERCE_DUPLICATE_PIN_ERROR,
     ERCE_PIN_TO_PIN_WARNING,    // pin connected to an other pin: warning level

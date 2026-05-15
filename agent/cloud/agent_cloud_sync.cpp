@@ -1,7 +1,6 @@
 #include "agent_cloud_sync.h"
 #include <zeo/agent_auth.h>
 #include <kicad_curl/kicad_curl_easy.h>
-#include <curl/curl.h>
 #include <wx/log.h>
 #include <wx/filename.h>
 #include <wx/stdpaths.h>
@@ -126,7 +125,8 @@ void AGENT_CLOUD_SYNC::UploadChat( const std::string& aConversationId,
     std::string supabaseUrl = m_supabaseUrl;
     std::string anonKey = m_anonKey;
 
-    spawnWorker( [this, prefix, convId, content, key, auth, supabaseUrl, anonKey]()
+    spawnWorker( [self = shared_from_this(), this, prefix, convId, content, key, auth,
+                  supabaseUrl, anonKey]()
     {
         if( m_stopping.load() )
             return;
@@ -196,7 +196,8 @@ void AGENT_CLOUD_SYNC::UploadLog( const std::string& aLogFilePath )
     std::string supabaseUrl = m_supabaseUrl;
     std::string anonKey = m_anonKey;
 
-    spawnWorker( [this, prefix, filename, content, key, auth, supabaseUrl, anonKey]()
+    spawnWorker( [self = shared_from_this(), this, prefix, filename, content, key, auth,
+                  supabaseUrl, anonKey]()
     {
         if( m_stopping.load() )
             return;
@@ -238,7 +239,7 @@ void AGENT_CLOUD_SYNC::SyncAll()
     std::string supabaseUrl = m_supabaseUrl;
     std::string anonKey = m_anonKey;
 
-    spawnWorker( [this, prefix, auth, supabaseUrl, anonKey]()
+    spawnWorker( [self = shared_from_this(), this, prefix, auth, supabaseUrl, anonKey]()
     {
         if( m_stopping.load() )
             return;
@@ -409,16 +410,6 @@ bool AGENT_CLOUD_SYNC::UploadToStorageWithToken( const std::string& aStoragePath
                     return m_stopping.load() ? 1 : 0;
                 },
                 250000L );
-
-        // Hard time limit so a stuck transfer (e.g. libcurl's POSTFIELDS
-        // body reader falling back to stdin on a redirect — a known
-        // libcurl quirk that pegs `cr_in_read` inside `fread()` where the
-        // SetTransferCallback above can't fire) cannot block the
-        // destructor's join() indefinitely on project switch. Worst case:
-        // the upload fails and is retried on next launch.
-        curl_easy_setopt( curl.GetCurl(), CURLOPT_TIMEOUT, 30L );
-        curl_easy_setopt( curl.GetCurl(), CURLOPT_LOW_SPEED_LIMIT, 1024L );
-        curl_easy_setopt( curl.GetCurl(), CURLOPT_LOW_SPEED_TIME, 10L );
 
         curl.Perform();
 
@@ -793,16 +784,6 @@ json AGENT_CLOUD_SYNC::ListRemoteChatsWith( const std::string& aAccessToken,
                 },
                 250000L );
 
-        // Hard time limit so a stuck transfer (e.g. libcurl's POSTFIELDS
-        // body reader falling back to stdin on a redirect — a known
-        // libcurl quirk that pegs `cr_in_read` inside `fread()` where the
-        // SetTransferCallback above can't fire) cannot block the
-        // destructor's join() indefinitely on project switch. Worst case:
-        // the upload fails and is retried on next launch.
-        curl_easy_setopt( curl.GetCurl(), CURLOPT_TIMEOUT, 30L );
-        curl_easy_setopt( curl.GetCurl(), CURLOPT_LOW_SPEED_LIMIT, 1024L );
-        curl_easy_setopt( curl.GetCurl(), CURLOPT_LOW_SPEED_TIME, 10L );
-
         curl.Perform();
 
         long httpCode = curl.GetResponseStatusCode();
@@ -866,16 +847,6 @@ bool AGENT_CLOUD_SYNC::DownloadFromStorageWithToken( const std::string& aStorage
                     return m_stopping.load() ? 1 : 0;
                 },
                 250000L );
-
-        // Hard time limit so a stuck transfer (e.g. libcurl's POSTFIELDS
-        // body reader falling back to stdin on a redirect — a known
-        // libcurl quirk that pegs `cr_in_read` inside `fread()` where the
-        // SetTransferCallback above can't fire) cannot block the
-        // destructor's join() indefinitely on project switch. Worst case:
-        // the upload fails and is retried on next launch.
-        curl_easy_setopt( curl.GetCurl(), CURLOPT_TIMEOUT, 30L );
-        curl_easy_setopt( curl.GetCurl(), CURLOPT_LOW_SPEED_LIMIT, 1024L );
-        curl_easy_setopt( curl.GetCurl(), CURLOPT_LOW_SPEED_TIME, 10L );
 
         curl.Perform();
 

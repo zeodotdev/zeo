@@ -1,0 +1,4 @@
+[submodule "src/wzWidget"]
+	path = src/wzWidget
+	url = https://github.com/zeodotdev/wzWidget.git
+	branch = kicad/macos-wx-3.2

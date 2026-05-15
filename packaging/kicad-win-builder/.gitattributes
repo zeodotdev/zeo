@@ -1,0 +1,3 @@
+PKGBUILD* text eol=lf
+*.nsi text eol=lf
+*.nsh text eol=lf

@@ -1,0 +1,20 @@
+{
+    "name:": "Zeo 0.2.0",
+    "output_prefix": "zeo-",
+    "package_version": "0.2.0",
+    "train": "stable",
+    "build_mode": "Release",
+    "nsis": {
+        "file": "install.nsi"
+    },
+    "sources": {
+        "kicad": {},
+        "symbols": {},
+        "footprints": {},
+        "3dmodels": {},
+        "templates": {}
+    },
+    "vcpkg": {
+        "manifest_mode": true
+    }
+}

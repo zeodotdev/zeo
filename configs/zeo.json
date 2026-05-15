@@ -1,0 +1,49 @@
+{
+  "description": "Zeo - KiCad Agentic Edition with Agent, Terminal, and Python API",
+  "build_type": "Zeo",
+  "bundle_name": "Zeo",
+  "patches": [
+    "0001-Add-AppImage-to-platform-string.patch",
+    "0002-Remove-dirty-suffix-from-version.patch",
+    "0003-Fix-wchar_t-array-streaming-for-C-20.patch"
+  ],
+  "kicad": {
+    "ref": "local",
+    "source_path": "../../../code/zeo"
+  },
+  "libraries": {
+    "symbols": "local",
+    "footprints": "local",
+    "templates": "local",
+    "packages3d": "local",
+    "source_path": "../../../libraries"
+  },
+  "dependencies": {
+    "wx": "3.2.9",
+    "wxpython": "4.2.4",
+    "occt": "V7_9_1",
+    "ngspice": "45.2"
+  },
+  "cmake_extra_args": [
+    "-DKICAD_BUNDLE_FILENAME=Zeo",
+    "-DKICAD_SCRIPTING=ON",
+    "-DKICAD_SCRIPTING_MODULES=ON",
+    "-DKICAD_SCRIPTING_WXPYTHON=ON",
+    "-DKICAD_IPC_API=ON"
+  ],
+  "python": {
+    "version": "3.11",
+    "extra_packages": [
+      "python3-protobuf",
+      "python3-typing-extensions"
+    ]
+  },
+  "kipy": {
+    "enabled": true,
+    "source_path": "../../../code/zeo-python"
+  },
+  "freerouting": {
+    "enabled": true,
+    "source_path": "../../../tools/freerouting"
+  }
+}

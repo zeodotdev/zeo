@@ -1,0 +1,27 @@
+{
+  "description": "KiCad nightly build from master with wxWidgets 3.3 (X11)",
+  "build_type": "Nightly",
+  "appimage_prefix": "kicad-nightly-wx33",
+  "upload_subdir": "nightly",
+  "patches": [
+    "0001-Add-AppImage-to-platform-string.patch",
+    "0002-Remove-dirty-suffix-from-version.patch",
+    "0003-Fix-wchar_t-array-streaming-for-C-20.patch",
+    "0005-Align-kiglew-version-gate-with-gl_utils.patch"
+  ],
+  "kicad": {
+    "ref": "master"
+  },
+  "libraries": {
+    "symbols": "master",
+    "footprints": "master",
+    "templates": "master",
+    "packages3d": "master"
+  },
+  "dependencies": {
+    "wx": "84a8b816bbc71981586568f3ea0afb15127263d1",
+    "wxpython": "50de9a94e6b6bc450b32253f161ee0e1cd3e109c",
+    "occt": "V7_9_1",
+    "ngspice": "45.2"
+  }
+}

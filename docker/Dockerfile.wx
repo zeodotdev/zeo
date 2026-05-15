@@ -1,0 +1,59 @@
+# Build wxWidgets
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE} AS build
+
+ARG WX_VERSION
+ARG WX_USE_EGL=OFF
+RUN test -n ${WX_VERSION} || (echo "WX_VERSION is not set" && exit 1)
+
+# Install EGL/Wayland dev packages only when building with EGL support
+RUN if [ "$WX_USE_EGL" = "ON" ]; then \
+        apt-get update && apt-get install -y --no-install-recommends \
+            libegl-dev libwayland-dev \
+        && rm -rf /var/lib/apt/lists/*; \
+    fi
+
+# Add metadata
+LABEL description="wxWidgets build for KiCad AppImage"
+LABEL wx.version=${WX_VERSION}
+LABEL wx.egl=${WX_USE_EGL}
+
+# Download release tarball for version-like strings, clone git repo otherwise.
+WORKDIR /tmp
+RUN <<'EOS'
+    set -e
+    if echo "$WX_VERSION" | grep -qE '^[0-9]+\.[0-9]+'; then
+        echo "=== Downloading wxWidgets release tarball ${WX_VERSION} ==="
+        wget -q "https://github.com/wxWidgets/wxWidgets/releases/download/v${WX_VERSION}/wxWidgets-${WX_VERSION}.tar.bz2" -O wxWidgets.tar.bz2
+        mkdir wxWidgets
+        tar xjf wxWidgets.tar.bz2 -C wxWidgets --strip-components=1
+    else
+        echo "=== Cloning wxWidgets at ${WX_VERSION} ==="
+        git clone --filter=blob:none https://github.com/wxWidgets/wxWidgets.git wxWidgets
+        cd wxWidgets
+        git checkout "$WX_VERSION"
+        git submodule update --init
+    fi
+EOS
+
+WORKDIR /tmp/wxWidgets
+RUN cmake -G Ninja -B builddir -DCMAKE_INSTALL_PREFIX=/usr \
+        -DwxBUILD_SHARED=ON \
+        -DwxBUILD_TOOLKIT=gtk3 \
+        -DwxUSE_OPENGL=ON \
+        -DwxUSE_GLCANVAS_EGL=${WX_USE_EGL} \
+        -DCMAKE_BUILD_TYPE=Release
+
+RUN ninja -C builddir -j$(nproc)
+
+# Install, then copy the platform-specific config script to wx-config.
+# wx 3.2.8 installs to lib/wx/config/, wx 3.2.9+ uses lib/x86_64-linux-gnu/wx/config/,
+# wx 3.2 creates a broken absolute symlink in DESTDIR, wx 3.3 creates nothing.
+# A hard copy avoids Docker COPY-from-scratch symlink issues.
+RUN DESTDIR=/tmp/rootfs cmake --install builddir \
+    && wx_config=$(find /tmp/rootfs/usr -path '*/wx/config/gtk3-unicode-*' -type f | head -1) \
+    && rm -f /tmp/rootfs/usr/bin/wx-config \
+    && cp "$wx_config" /tmp/rootfs/usr/bin/wx-config
+
+FROM scratch
+COPY --from=build /tmp/rootfs /

@@ -1,0 +1,45 @@
+# Build OpenCascade Technology (OCCT)
+ARG BASE_IMAGE
+
+FROM ${BASE_IMAGE} AS build
+
+# Add metadata
+LABEL description="OpenCascade Technology (OCCT) build for KiCad AppImage"
+
+# Copy OCCT source from build context
+COPY --from=occt-src . /tmp/occt
+
+WORKDIR /tmp/occt
+RUN <<'EOS'
+    mkdir build
+    cd build
+    # TBB is disabled because older OCCT versions (V7_8_1 and earlier) have broken
+    # TBB detection that can't find modern oneAPI TBB libraries. TBB is optional
+    # and only provides minor performance improvements for multi-threaded operations.
+    # KiCad's usage of OCCT doesn't significantly benefit from TBB.
+    #
+    # Visualization module is required - KiCad needs TKMeshVS, TKOpenGl, TKV3d, TKService.
+    cmake -G Ninja -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_BUILD_TYPE=Release \
+        -DINSTALL_DIR_LIB:PATH=lib/x86_64-linux-gnu \
+        -DINSTALL_DIR_CMAKE:PATH=lib/x86_64-linux-gnu/cmake/opencascade \
+        -DUSE_RAPIDJSON:BOOL=ON \
+        -DUSE_TBB:BOOL=OFF \
+        -DUSE_DRACO:BOOL=OFF \
+        -DUSE_FFMPEG:BOOL=OFF \
+        -DUSE_FREEIMAGE:BOOL=ON \
+        -DUSE_FREETYPE:BOOL=OFF \
+        -DUSE_OPENVR:BOOL=OFF \
+        -DUSE_TK:BOOL=OFF \
+        -DUSE_VTK:BOOL=OFF \
+        -DUSE_XLIB:BOOL=OFF \
+        -DBUILD_RELEASE_DISABLE_EXCEPTIONS:BOOL=ON \
+        -DBUILD_MODULE_Draw:BOOL=OFF \
+        -DBUILD_MODULE_DataExchange:BOOL=ON \
+        ..
+EOS
+
+RUN ninja -C build --quiet -j$(nproc)
+RUN DESTDIR=/tmp/rootfs cmake --install build
+
+FROM scratch
+COPY --from=build /tmp/rootfs /

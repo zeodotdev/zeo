@@ -1,0 +1,45 @@
+diff --git a/qa/qa_utils/include/qa_utils/wx_utils/unit_test_utils.h b/qa/qa_utils/include/qa_utils/wx_utils/unit_test_utils.h
+index 3080ad15e7..084c55cd55 100644
+--- a/qa/qa_utils/include/qa_utils/wx_utils/unit_test_utils.h
++++ b/qa/qa_utils/include/qa_utils/wx_utils/unit_test_utils.h
+@@ -26,6 +26,18 @@
+ 
+ #define BOOST_NO_AUTO_PTR
+ 
++#include <cstddef>
++#include <iosfwd>
++
++// Forward declarations for wchar_t streaming operators.
++// Must be visible before boost includes because lazy_ostream_impl uses operator<<
++// in a dependent context. Two-phase lookup only finds global-namespace overloads
++// via ordinary unqualified lookup at the template definition point; wchar_t is a
++// fundamental type with no associated namespace so ADL alone cannot find them.
++template<std::size_t N>
++std::ostream& operator<<( std::ostream& os, const wchar_t ( &aWs )[N] );
++std::ostream& operator<<( std::ostream& os, const wchar_t* aWs );
++
+ #include <boost/test/unit_test.hpp>
+ #include <turtle/mock.hpp>
+ 
+@@ -51,6 +63,21 @@ inline std::ostream& operator<<( std::ostream& os, const wxString& aStr )
+     return os;
+ }
+ 
++template<std::size_t N>
++inline std::ostream& operator<<( std::ostream& os, const wchar_t ( &aWs )[N] )
++{
++    os << wxString( aWs ).ToUTF8().data();
++    return os;
++}
++
++inline std::ostream& operator<<( std::ostream& os, const wchar_t* aWs )
++{
++    if( aWs )
++        os << wxString( aWs ).ToUTF8().data();
++
++    return os;
++}
++
+ 
+ template<class T>
+ struct PRINTABLE_OPT

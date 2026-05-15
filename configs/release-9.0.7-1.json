@@ -1,0 +1,24 @@
+{
+  "description": "KiCad 9.0.7 stable release (rebuild 1 - fix symbol library paths)",
+  "build_type": "Release",
+  "release_tag": "9.0.7-1",
+  "patches": [
+    "0001-Add-AppImage-to-platform-string.patch",
+    "0002-Remove-dirty-suffix-from-version.patch"
+  ],
+  "kicad": {
+    "ref": "9.0.7"
+  },
+  "libraries": {
+    "symbols": "9.0.7",
+    "footprints": "9.0.7",
+    "templates": "9.0.7",
+    "packages3d": "9.0.7"
+  },
+  "dependencies": {
+    "wx": "3.2.9",
+    "wxpython": "4.2.4",
+    "occt": "V7_8_1",
+    "ngspice": "45.2"
+  }
+}

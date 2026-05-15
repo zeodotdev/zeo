@@ -1,0 +1,36 @@
+# go-appimage configuration for Zeo (KiCad Agentic Edition)
+app_info:
+  id: zeo
+  name: Zeo
+  icon: kicad
+  version: ${ZEO_VERSION}
+  exec: usr/bin/zeo.sh
+
+runtime:
+  env:
+    APPDIR_LIBRARY_PATH: '${APPDIR}/usr/lib:${APPDIR}/usr/lib/x86_64-linux-gnu:${APPDIR}/lib/x86_64-linux-gnu:${APPDIR}/lib/X86_64:${APPDIR}/lib/x86_64:${APPDIR}/usr/lib/x86_64-linux-gnu/gdk-pixbuf-2.0/2.10.0/loaders:${APPDIR}/opt/glibc/lib/x86_64-linux-gnu/'
+    PYTHONPATH: '${APPDIR}/usr/lib/python3/dist-packages:${APPDIR}/usr/local/lib/python3/dist-packages'
+    XDG_DATA_DIRS: '${APPDIR}/usr/share:$XDG_DATA_DIRS'
+    KICAD_STOCK_DATA_HOME: '${APPDIR}/usr/share/kicad'
+    KICAD${KICAD_BUILD_MAJVERSION}_3DMODEL_DIR: '${APPDIR}/usr/share/kicad/3dmodels'
+    KICAD${KICAD_BUILD_MAJVERSION}_DESIGN_BLOCK_DIR: '${APPDIR}/usr/share/kicad/blocks'
+    KICAD${KICAD_BUILD_MAJVERSION}_FOOTPRINT_DIR: '${APPDIR}/usr/share/kicad/footprints'
+    KICAD${KICAD_BUILD_MAJVERSION}_SYMBOL_DIR: '${APPDIR}/usr/share/kicad/symbols'
+    KICAD${KICAD_BUILD_MAJVERSION}_TEMPLATE_DIR: '${APPDIR}/usr/share/kicad/template'
+    # Freerouting autorouter JAR location
+    KICAD_FREEROUTING_JAR: '${APPDIR}/usr/share/kicad/freerouting/freerouting.jar'
+
+files:
+  exclude:
+    - usr/share/man
+    - usr/share/doc/*/README.*
+    - usr/share/doc/*/changelog.*
+    - usr/share/doc/*/NEWS.*
+    - usr/share/doc/*/TODO.*
+    - usr/include
+    - usr/share/opencascade/data
+    - usr/share/opencascade/samples
+    # Exclude ALSA libraries and plugins (not needed for KiCad)
+    - usr/lib/*/alsa-lib
+    - lib/*/alsa-lib
+    - usr/share/alsa

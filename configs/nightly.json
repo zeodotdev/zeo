@@ -1,0 +1,24 @@
+{
+  "description": "KiCad nightly build from master",
+  "build_type": "Nightly",
+  "patches": [
+    "0001-Add-AppImage-to-platform-string.patch",
+    "0002-Remove-dirty-suffix-from-version.patch",
+    "0003-Fix-wchar_t-array-streaming-for-C-20.patch"
+  ],
+  "kicad": {
+    "ref": "master"
+  },
+  "libraries": {
+    "symbols": "master",
+    "footprints": "master",
+    "templates": "master",
+    "packages3d": "master"
+  },
+  "dependencies": {
+    "wx": "3.2.9",
+    "wxpython": "4.2.4",
+    "occt": "V7_9_1",
+    "ngspice": "45.2"
+  }
+}

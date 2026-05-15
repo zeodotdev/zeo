@@ -1,0 +1,26 @@
+# Build ngspice dependency
+ARG BASE_IMAGE
+
+FROM ${BASE_IMAGE} AS build
+
+# Add metadata
+LABEL description="ngspice build for KiCad AppImage"
+
+# Copy ngspice source from build context
+COPY --from=ngspice-src . /tmp/ngspice
+
+WORKDIR /tmp/ngspice
+RUN <<'EOS'
+    ./autogen.sh
+    ./configure --prefix=/usr \
+        --with-ngshared \
+        --enable-xspice \
+        --enable-cider \
+        --disable-debug \
+        --disable-openmp
+EOS
+
+RUN make install -j$(nproc) DESTDIR=/tmp/rootfs
+
+FROM scratch
+COPY --from=build /tmp/rootfs /

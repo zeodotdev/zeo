@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+set -e
+
+# Bundle Python runtime and selected packages into the AppDir.
+# Configuration via environment / build args (export in Dockerfile or GitLab CI variables):
+#  ENABLE_PYTHON_BUNDLE=1            Set to 0 to skip bundling
+#  PYTHON_VERSION=3.11               Major.minor version to bundle (auto-detected if unset)
+#  PYTHON_APT_PACKAGES="python3 python3-minimal libpython3.11-stdlib ..." (space separated list)
+#     You may use the token {PYVER} which will be replaced with ${PYTHON_VERSION}
+#  APPDIR=/tmp/AppDir                Target AppDir root
+#  APT_EXTRA_PACKAGES="python3-numpy ..." Additional runtime packages (optional)
+#  APT_DOWNLOAD_DIR=/tmp/pydebs      Where to stage downloaded .deb files (optional)
+#  APT_GET_OPTIONS="-y --no-install-recommends" Extra options passed to apt-get update/install (not for download)
+#  PYTHON_LD_LAUNCHER=1              If set (default), create python3 launcher that pins dynamic loader similar to Inkscape approach.
+
+if [[ "${ENABLE_PYTHON_BUNDLE:-1}" != "1" ]]; then
+    echo "[bundle_python] Skipping (ENABLE_PYTHON_BUNDLE!=1)"
+    exit 0
+fi
+
+APPDIR=${APPDIR:-/tmp/AppDir}
+APT_DOWNLOAD_DIR=${APT_DOWNLOAD_DIR:-/tmp/pydebs}
+PYTHON_APT_PACKAGES=${PYTHON_APT_PACKAGES:-"python3 python3-minimal libpython{PYVER} libpython{PYVER}-stdlib libpython{PYVER}-minimal python{PYVER} python{PYVER}-minimal"}
+APT_EXTRA_PACKAGES=${APT_EXTRA_PACKAGES:-""}
+PYTHON_VERSION=${PYTHON_VERSION:-}
+PYTHON_LD_LAUNCHER=${PYTHON_LD_LAUNCHER:-1}
+
+mkdir -p "${APPDIR}" "${APT_DOWNLOAD_DIR}" || true
+
+# Discover python version if not provided (prefer already installed interpreter)
+if [[ -z "${PYTHON_VERSION}" ]]; then
+    if command -v python3 >/dev/null 2>&1; then
+        PYTHON_VERSION=$(python3 -c 'import sys;print(f"{sys.version_info[0]}.{sys.version_info[1]}")')
+    else
+        echo "[bundle_python] ERROR: Cannot detect python version (python3 missing and PYTHON_VERSION unset)" >&2
+        exit 1
+    fi
+fi
+
+export PYTHON_VERSION
+
+# Replace {PYVER} placeholders
+PYTHON_APT_PACKAGES_EXPANDED=""
+for pkg in ${PYTHON_APT_PACKAGES} ${APT_EXTRA_PACKAGES}; do
+    pkg=${pkg//\{PYVER\}/${PYTHON_VERSION}}
+    PYTHON_APT_PACKAGES_EXPANDED+=" ${pkg}"
+done
+
+cd "${APT_DOWNLOAD_DIR}"
+echo "[bundle_python] Downloading Python packages: ${PYTHON_APT_PACKAGES_EXPANDED}" >&2
+apt-get update -yqq
+set +e
+for pkg in ${PYTHON_APT_PACKAGES_EXPANDED}; do
+    echo "[bundle_python] apt-get download ${pkg}" >&2
+    if ! apt-get download "${pkg}"; then
+        echo "[bundle_python] WARNING: Failed to download package ${pkg}" >&2
+    fi
+done
+set -e
+
+debs=$(echo ./*.deb || true)
+if ls ./*.deb >/dev/null 2>&1; then
+    for d in ./*.deb; do
+        echo "[bundle_python] Extracting ${d}" >&2
+        dpkg-deb -x "${d}" "${APPDIR}" || { echo "[bundle_python] ERROR extracting ${d}" >&2; exit 1; }
+    done
+    # Clean up debs after successful extraction
+    rm -f ./*.deb
+else
+    echo "[bundle_python] ERROR: No debs downloaded" >&2
+    exit 1
+fi
+
+# Create LD launcher (ensures we use bundled libpython & libs)
+if [[ "${PYTHON_LD_LAUNCHER}" == "1" ]]; then
+    # Prefer versioned interpreter if present
+    PYBIN_NAME="python${PYTHON_VERSION}"
+    [[ -x "${APPDIR}/usr/bin/${PYBIN_NAME}" ]] || PYBIN_NAME="python3"
+
+    # Avoid overwriting the real versioned interpreter (python3.11). Debian normally has
+    # /usr/bin/python3 -> python3.11 (symlink). Writing through the symlink would clobber the
+    # ELF binary and create recursive launcher calls. Remove the symlink first so we place an
+    # independent launcher script at python3 while keeping the original binary intact.
+    if [ -L "${APPDIR}/usr/bin/python3" ]; then
+        rm -f "${APPDIR}/usr/bin/python3"
+    fi
+
+    LAUNCHER_PATH="${APPDIR}/usr/bin/python3"
+    PYBIN_REAL="${APPDIR}/usr/bin/python${PYTHON_VERSION}"
+    if [ ! -x "${PYBIN_REAL}" ]; then
+        echo "[bundle_python] FATAL: Expected versioned interpreter ${PYBIN_REAL} missing" >&2
+        exit 1
+    fi
+    cat > "${LAUNCHER_PATH}" <<'EOF'
+#!/bin/sh
+HERE="$(cd "$(dirname "$0")" && pwd)"
+REAL="$HERE/python__PYVER__"
+if [ ! -x "$REAL" ]; then
+    echo "[python-launcher] ERROR: versioned interpreter missing at $REAL" >&2
+    ls -l "$HERE" >&2 || true
+    exit 1
+fi
+# Set library paths that include OCCT and other critical dependencies
+export LD_LIBRARY_PATH="$HERE/../lib/x86_64-linux-gnu:$HERE/../usr/lib/x86_64-linux-gnu:$HERE/../usr/lib:$HERE/../lib:${LD_LIBRARY_PATH}"
+for ld in "$HERE/../lib64/ld-linux-x86-64.so.2" "$HERE/../lib/ld-linux-x86-64.so.2" "$HERE/../usr/lib/ld-linux-x86-64.so.2"; do
+    if [ -x "$ld" ]; then
+        exec "$ld" "$REAL" "$@"
+    fi
+done
+exec "$REAL" "$@"
+EOF
+    sed -i "s#__PYVER__#${PYTHON_VERSION}#g" "${LAUNCHER_PATH}"
+    chmod +x "${LAUNCHER_PATH}"
+fi
+
+# Adjust PYTHONPATH inside AppDir runtime env snippet if provided
+RUNTIME_ENV_FILE="${APPDIR}/.env-python"
+{
+  echo "# Generated by bundle_python.sh"
+  echo "# Source this file in your wrapper script with: source \"\$APPDIR/.env-python\""
+  echo "export PYTHON_VERSION=${PYTHON_VERSION}";
+  echo "export PYTHONHOME=\"\${APPDIR}/usr\"";
+  echo "export PYTHONPATH=\"\${APPDIR}/usr/lib/python${PYTHON_VERSION}/dist-packages:\${APPDIR}/usr/lib/python${PYTHON_VERSION}/site-packages:\${APPDIR}/usr/local/lib/python${PYTHON_VERSION}/dist-packages:\${PYTHONPATH}\"";
+} > "${RUNTIME_ENV_FILE}"
+
+echo "[bundle_python] Complete (Python ${PYTHON_VERSION})."

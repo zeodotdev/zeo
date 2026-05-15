@@ -26,6 +26,7 @@
 #include <atomic>
 #include <wx/log.h>
 #include <reporter.h>
+#include <usage_sync.h>
 #include <common.h>
 #include <progress_reporter.h>
 #include <string_utils.h>
@@ -936,6 +937,8 @@ void DRC_ENGINE::RunTests( EDA_UNITS aUnits, bool aReportAllTrackErrors, bool aT
     // DRC tests are multi-threaded; anything that causes us to attempt to re-generate the
     // caches while DRC is running is problematic.
     wxASSERT( timestamp == m_board->GetTimeStamp() );
+
+    USAGE_SYNC::Instance()->TrackEvent( "pcb.drc.run", "pcbnew" );
 }
 
 

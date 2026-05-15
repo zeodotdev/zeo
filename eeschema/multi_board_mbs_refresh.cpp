@@ -20,6 +20,8 @@
 
 #include "multi_board_mbs_refresh.h"
 
+#include <usage_sync.h>
+
 #include "multi_board_sch_pad_scan.h"
 #include "sch_module_block.h"
 #include "sch_module_pin.h"
@@ -922,5 +924,9 @@ MBS_REFRESH_RESULT RefreshMbsFromSubProjects( SCH_SCREEN& aMbsScreen,
                                               const PROJECT_FILE& aMultiBoard )
 {
     std::vector<MBS_CHANGE> changes = ComputeMbsRefreshDiff( aMbsScreen, aMultiBoard );
-    return ApplyMbsRefreshChanges( aMbsScreen, changes );
+    MBS_REFRESH_RESULT result = ApplyMbsRefreshChanges( aMbsScreen, changes );
+
+    USAGE_SYNC::Instance()->TrackEvent( "mbs.refresh", "mbsch" );
+
+    return result;
 }

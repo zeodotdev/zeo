@@ -52,6 +52,7 @@
 #include <kiplatform/ui.h>
 #include <kiplatform/policy.h>
 #include <build_version.h>
+#include <usage_sync.h>
 #include <kiway.h>
 #include <kiway_mail.h>
 #include <launch_ext.h>
@@ -1319,6 +1320,7 @@ bool KICAD_MANAGER_FRAME::LoadMultiBoardProject( const wxFileName& aMultiProject
     // start. Also runs the one-time `.kicad_sch` → `.kicad_mbs`
     // migration for projects that predate this convention.
     ::EnsureMbsFile( pf, aMultiProjectFile.GetName() );
+    USAGE_SYNC::Instance()->TrackEvent( "mbs.setup", "kicad" );
     pf.SaveToFile( aMultiProjectFile.GetPath() );
 
     PrintPrjInfo();

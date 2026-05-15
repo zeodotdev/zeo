@@ -125,7 +125,8 @@ void AGENT_CLOUD_SYNC::UploadChat( const std::string& aConversationId,
     std::string supabaseUrl = m_supabaseUrl;
     std::string anonKey = m_anonKey;
 
-    spawnWorker( [this, prefix, convId, content, key, auth, supabaseUrl, anonKey]()
+    spawnWorker( [self = shared_from_this(), this, prefix, convId, content, key, auth,
+                  supabaseUrl, anonKey]()
     {
         if( m_stopping.load() )
             return;
@@ -195,7 +196,8 @@ void AGENT_CLOUD_SYNC::UploadLog( const std::string& aLogFilePath )
     std::string supabaseUrl = m_supabaseUrl;
     std::string anonKey = m_anonKey;
 
-    spawnWorker( [this, prefix, filename, content, key, auth, supabaseUrl, anonKey]()
+    spawnWorker( [self = shared_from_this(), this, prefix, filename, content, key, auth,
+                  supabaseUrl, anonKey]()
     {
         if( m_stopping.load() )
             return;
@@ -237,7 +239,7 @@ void AGENT_CLOUD_SYNC::SyncAll()
     std::string supabaseUrl = m_supabaseUrl;
     std::string anonKey = m_anonKey;
 
-    spawnWorker( [this, prefix, auth, supabaseUrl, anonKey]()
+    spawnWorker( [self = shared_from_this(), this, prefix, auth, supabaseUrl, anonKey]()
     {
         if( m_stopping.load() )
             return;
@@ -395,6 +397,20 @@ bool AGENT_CLOUD_SYNC::UploadToStorageWithToken( const std::string& aStoragePath
         curl.SetHeader( "Content-Type", "application/octet-stream" );
         curl.SetHeader( "x-upsert", "true" );
         curl.SetPostFields( aContent );
+
+        // Abort the transfer promptly if the AGENT_CLOUD_SYNC destructor
+        // sets m_stopping while we're mid-upload. Without this, a large
+        // payload (e.g. 11 MB chat history) over a slow uplink can stall
+        // the destructor's join() for the duration of the entire transfer,
+        // freezing the main thread when the agent frame is torn down (for
+        // example on project switch).
+        curl.SetTransferCallback(
+                [this]( size_t, size_t, size_t, size_t ) -> int
+                {
+                    return m_stopping.load() ? 1 : 0;
+                },
+                250000L );
+
         curl.Perform();
 
         long httpCode = curl.GetResponseStatusCode();
@@ -760,6 +776,14 @@ json AGENT_CLOUD_SYNC::ListRemoteChatsWith( const std::string& aAccessToken,
         curl.SetHeader( "apikey", aAnonKey );
         curl.SetHeader( "Content-Type", "application/json" );
         curl.SetPostFields( body.dump() );
+
+        curl.SetTransferCallback(
+                [this]( size_t, size_t, size_t, size_t ) -> int
+                {
+                    return m_stopping.load() ? 1 : 0;
+                },
+                250000L );
+
         curl.Perform();
 
         long httpCode = curl.GetResponseStatusCode();
@@ -816,6 +840,14 @@ bool AGENT_CLOUD_SYNC::DownloadFromStorageWithToken( const std::string& aStorage
         curl.SetFollowRedirects( true );
         curl.SetHeader( "Authorization", "Bearer " + aAccessToken );
         curl.SetHeader( "apikey", aAnonKey );
+
+        curl.SetTransferCallback(
+                [this]( size_t, size_t, size_t, size_t ) -> int
+                {
+                    return m_stopping.load() ? 1 : 0;
+                },
+                250000L );
+
         curl.Perform();
 
         long httpCode = curl.GetResponseStatusCode();

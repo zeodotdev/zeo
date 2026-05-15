@@ -43,6 +43,7 @@
 #include <set>
 #include <lockfile.h>
 #include <pgm_base.h>
+#include <usage_sync.h>
 #include <core/profile.h>
 #include <project/project_file.h>
 #include <project_rescue.h>
@@ -1607,7 +1608,16 @@ bool SCH_EDIT_FRAME::SaveProject( bool aSaveAs )
         m_infoBar->Dismiss();
 
     if( success )
+    {
         onSchematicSaved();
+
+        // SaveProject is shared by SCH_EDIT_FRAME and its MBSCH_EDIT_FRAME
+        // subclass; differentiate so MBS saves don't blend in with regular
+        // schematic saves in the usage telemetry.
+        bool isMbs = IsType( FRAME_MBSCH );
+        USAGE_SYNC::Instance()->TrackEvent( isMbs ? "mbs.save" : "sch.save",
+                                            isMbs ? "mbsch" : "eeschema" );
+    }
 
     return success;
 }

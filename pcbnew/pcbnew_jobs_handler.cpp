@@ -82,6 +82,7 @@
 #include <pcb_plotter.h>
 #include <pcb_edit_frame.h>
 #include <pgm_base.h>
+#include <usage_sync.h>
 #include <3d_rendering/raytracing/render_3d_raytrace_ram.h>
 #include <3d_rendering/track_ball.h>
 #include <project_pcb.h>
@@ -642,6 +643,7 @@ int PCBNEW_JOBS_HANDLER::JobExportStep( JOB* aJob )
             return CLI::EXIT_CODES::ERR_UNKNOWN;
     }
 
+    USAGE_SYNC::Instance()->TrackEvent( "pcb.export.step", "pcbnew" );
     return CLI::EXIT_CODES::OK;
 }
 
@@ -1188,6 +1190,7 @@ int PCBNEW_JOBS_HANDLER::JobExportPdf( JOB* aJob )
         return CLI::EXIT_CODES::ERR_UNKNOWN;
     }
 
+    USAGE_SYNC::Instance()->TrackEvent( "pcb.export.pdf", "pcbnew" );
     return CLI::EXIT_CODES::OK;
 }
 
@@ -1679,6 +1682,9 @@ int PCBNEW_JOBS_HANDLER::JobExportGerber( JOB* aJob )
     }
 
     delete plotter;
+
+    if( exitCode == CLI::EXIT_CODES::OK )
+        USAGE_SYNC::Instance()->TrackEvent( "pcb.export.gerber", "pcbnew" );
 
     return exitCode;
 }

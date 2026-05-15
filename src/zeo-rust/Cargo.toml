@@ -1,0 +1,48 @@
+[package]
+name = "kicad-api-rs"
+version = "0.1.0"
+edition = "2021"
+description = "Rust bindings for the KiCad IPC API"
+license = "GPL-3.0-or-later"
+readme = "README.md"
+homepage = "https://kicad.org"
+repository = "https://gitlab.com/kicad/code/kicad-rs"
+categories = ["api-bindings", "science"]
+keywords = ["kicad"]
+include = [
+    "kicad/api/proto",
+    "kicad/cmake/KiCadVersion.cmake",
+    "**/*.rs",
+    "Cargo.toml",
+    "LICENSE"
+]
+build = "build/build.rs"
+
+[lib]
+name = "kicad"
+
+[dependencies]
+enum-as-inner = "0.6.0"
+nng = "1.0.1"
+num-derive = "0.4.1"
+num-traits = "0.2.17"
+protobuf = "3.7.2"
+quick-error = "2.0.1"
+rand = "0.9.1"
+
+[build-dependencies]
+prettyplease = "0.2.33"
+proc-macro2 = "1.0.76"
+protobuf-codegen = "3.7.2"
+quote = "1.0.35"
+syn = "2.0.101"
+walkdir = "2.4.0"
+regex = "1.11"
+git2 = "0.20.0"
+
+[dev-dependencies]
+licensesnip = "1.6.0"
+prettytable = "0.10.0"
+rand = "0.9.1"
+sys-info = "0.9.1"
+

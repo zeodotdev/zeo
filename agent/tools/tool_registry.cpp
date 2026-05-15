@@ -1,5 +1,7 @@
 #include "tool_registry.h"
 #include "tool_handler.h"
+
+#include <usage_sync.h>
 #include "../agent_llm_client.h"
 #include "handlers/python_tool_handler.h"
 #include "handlers/pcb_autoroute_handler.h"
@@ -87,7 +89,12 @@ std::string TOOL_REGISTRY::Execute( const std::string& aToolName, const nlohmann
     TOOL_HANDLER* handler = FindHandler( aToolName );
 
     if( handler )
+    {
+        nlohmann::json props;
+        props["tool"] = aToolName;
+        USAGE_SYNC::Instance()->TrackEvent( "agent.tool.invoked", "agent", &props );
         return handler->Execute( aToolName, aInput );
+    }
 
     return "Error: No handler found for tool '" + aToolName + "'";
 }

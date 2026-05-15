@@ -2,6 +2,7 @@
 #include "agent_chat_history.h"
 #include <zeo/agent_auth.h>
 #include <app_monitor.h>
+#include <usage_sync.h>
 #ifndef __WXMAC__
 #include <zeo/auth_callback_server.h>
 #endif
@@ -1750,6 +1751,7 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
             // Sync and save after user message is recorded
             m_chatHistory = m_ccController->GetChatHistory();
             m_chatHistoryDb.Save( m_chatHistory );
+            USAGE_SYNC::Instance()->TrackEvent( "agent.message.sent", "agent" );
 
             // Generate title on first message (same as Zeo agent path)
             if( m_chatHistoryDb.GetTitle().empty() && m_chatController )
@@ -1848,6 +1850,7 @@ void AGENT_FRAME::OnSend( wxCommandEvent& aEvent )
         m_chatHistory = m_chatController->GetChatHistory();
         m_apiContext = m_chatController->GetApiContext();
         m_chatHistoryDb.Save( m_chatHistory );
+        USAGE_SYNC::Instance()->TrackEvent( "agent.message.sent", "agent" );
         UploadCurrentChat();
     }
     else
@@ -7083,6 +7086,7 @@ void AGENT_FRAME::ConfigureCloudSync()
     if( !email.empty() )
     {
         APP_MONITOR::SENTRY::Instance()->SetUser( email );
+        USAGE_SYNC::Instance()->SetUser( email );
     }
 
     // Also configure tool registry with Supabase credentials (for datasheet extraction)

@@ -1,6 +1,7 @@
 #include "agent_cloud_sync.h"
 #include <zeo/agent_auth.h>
 #include <kicad_curl/kicad_curl_easy.h>
+#include <curl/curl.h>
 #include <wx/log.h>
 #include <wx/filename.h>
 #include <wx/stdpaths.h>
@@ -395,6 +396,30 @@ bool AGENT_CLOUD_SYNC::UploadToStorageWithToken( const std::string& aStoragePath
         curl.SetHeader( "Content-Type", "application/octet-stream" );
         curl.SetHeader( "x-upsert", "true" );
         curl.SetPostFields( aContent );
+
+        // Abort the transfer promptly if the AGENT_CLOUD_SYNC destructor
+        // sets m_stopping while we're mid-upload. Without this, a large
+        // payload (e.g. 11 MB chat history) over a slow uplink can stall
+        // the destructor's join() for the duration of the entire transfer,
+        // freezing the main thread when the agent frame is torn down (for
+        // example on project switch).
+        curl.SetTransferCallback(
+                [this]( size_t, size_t, size_t, size_t ) -> int
+                {
+                    return m_stopping.load() ? 1 : 0;
+                },
+                250000L );
+
+        // Hard time limit so a stuck transfer (e.g. libcurl's POSTFIELDS
+        // body reader falling back to stdin on a redirect — a known
+        // libcurl quirk that pegs `cr_in_read` inside `fread()` where the
+        // SetTransferCallback above can't fire) cannot block the
+        // destructor's join() indefinitely on project switch. Worst case:
+        // the upload fails and is retried on next launch.
+        curl_easy_setopt( curl.GetCurl(), CURLOPT_TIMEOUT, 30L );
+        curl_easy_setopt( curl.GetCurl(), CURLOPT_LOW_SPEED_LIMIT, 1024L );
+        curl_easy_setopt( curl.GetCurl(), CURLOPT_LOW_SPEED_TIME, 10L );
+
         curl.Perform();
 
         long httpCode = curl.GetResponseStatusCode();
@@ -760,6 +785,24 @@ json AGENT_CLOUD_SYNC::ListRemoteChatsWith( const std::string& aAccessToken,
         curl.SetHeader( "apikey", aAnonKey );
         curl.SetHeader( "Content-Type", "application/json" );
         curl.SetPostFields( body.dump() );
+
+        curl.SetTransferCallback(
+                [this]( size_t, size_t, size_t, size_t ) -> int
+                {
+                    return m_stopping.load() ? 1 : 0;
+                },
+                250000L );
+
+        // Hard time limit so a stuck transfer (e.g. libcurl's POSTFIELDS
+        // body reader falling back to stdin on a redirect — a known
+        // libcurl quirk that pegs `cr_in_read` inside `fread()` where the
+        // SetTransferCallback above can't fire) cannot block the
+        // destructor's join() indefinitely on project switch. Worst case:
+        // the upload fails and is retried on next launch.
+        curl_easy_setopt( curl.GetCurl(), CURLOPT_TIMEOUT, 30L );
+        curl_easy_setopt( curl.GetCurl(), CURLOPT_LOW_SPEED_LIMIT, 1024L );
+        curl_easy_setopt( curl.GetCurl(), CURLOPT_LOW_SPEED_TIME, 10L );
+
         curl.Perform();
 
         long httpCode = curl.GetResponseStatusCode();
@@ -816,6 +859,24 @@ bool AGENT_CLOUD_SYNC::DownloadFromStorageWithToken( const std::string& aStorage
         curl.SetFollowRedirects( true );
         curl.SetHeader( "Authorization", "Bearer " + aAccessToken );
         curl.SetHeader( "apikey", aAnonKey );
+
+        curl.SetTransferCallback(
+                [this]( size_t, size_t, size_t, size_t ) -> int
+                {
+                    return m_stopping.load() ? 1 : 0;
+                },
+                250000L );
+
+        // Hard time limit so a stuck transfer (e.g. libcurl's POSTFIELDS
+        // body reader falling back to stdin on a redirect — a known
+        // libcurl quirk that pegs `cr_in_read` inside `fread()` where the
+        // SetTransferCallback above can't fire) cannot block the
+        // destructor's join() indefinitely on project switch. Worst case:
+        // the upload fails and is retried on next launch.
+        curl_easy_setopt( curl.GetCurl(), CURLOPT_TIMEOUT, 30L );
+        curl_easy_setopt( curl.GetCurl(), CURLOPT_LOW_SPEED_LIMIT, 1024L );
+        curl_easy_setopt( curl.GetCurl(), CURLOPT_LOW_SPEED_TIME, 10L );
+
         curl.Perform();
 
         long httpCode = curl.GetResponseStatusCode();

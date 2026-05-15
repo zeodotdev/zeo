@@ -28,6 +28,7 @@
 
 #include <api/api_utils.h>
 #include <kiway.h>
+#include <usage_sync.h>
 #include <kiway_player.h>
 #include <frame_type.h>
 #include <pgm_base.h>
@@ -667,6 +668,8 @@ API_HANDLER_MBS_SCH::handleRefreshMbsFromSubProjects(
     NULL_REPORTER reporter;
 
     MBS_REFRESH_RESULT res = ApplyMbsRefreshChanges( *screen, changes, view, &reporter );
+
+    USAGE_SYNC::Instance()->TrackEvent( "mbs.refresh", "mbsch" );
 
     if( m_frame->GetCanvas() )
         m_frame->GetCanvas()->Refresh( true );

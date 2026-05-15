@@ -1,5 +1,7 @@
 #include "pcb_autoroute_handler.h"
 #include "../tool_registry.h"
+
+#include <usage_sync.h>
 #include "../util/kicad_cli_util.h"
 #include "../util/process_util.h"
 #include <frame_type.h>
@@ -228,6 +230,7 @@ std::string PCB_AUTOROUTE_HANDLER::ExecuteAutoroute( const nlohmann::json& aInpu
     if( importResult.contains( "vias_added" ) )
         result["vias_added"] = importResult["vias_added"];
 
+    USAGE_SYNC::Instance()->TrackEvent( "autoroute.run", "agent" );
     return result.dump();
 }
 

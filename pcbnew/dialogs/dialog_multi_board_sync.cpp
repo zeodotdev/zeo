@@ -23,6 +23,8 @@
 
 #include "dialog_multi_board_sync.h"
 
+#include <usage_sync.h>
+
 #include <multi_board/component_assignment.h>
 #include <netlist_reader/pcb_netlist.h>
 #include <pcb_edit_frame.h>
@@ -440,9 +442,14 @@ bool DIALOG_MULTI_BOARD_SYNC::ApplyToAll()
     bool success = m_updater->UpdateAllBoards( *m_netlist );
 
     if( success )
+    {
         m_reportBox->Report( _( "All boards synced successfully." ), RPT_SEVERITY_INFO );
+        USAGE_SYNC::Instance()->TrackEvent( "mbs.sync_to_pcb", "pcbnew" );
+    }
     else
+    {
         m_reportBox->Report( _( "Sync completed with errors." ), RPT_SEVERITY_WARNING );
+    }
 
     // Refresh status
     RunTestSync();

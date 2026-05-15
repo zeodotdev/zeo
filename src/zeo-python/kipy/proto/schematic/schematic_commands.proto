@@ -1,0 +1,1659 @@
+/*
+ * This program source code file is part of KiCad, a free EDA CAD application.
+ *
+ * Copyright (C) 2024 KiCad Developers, see AUTHORS.txt for contributors.
+ *
+ * This program is free software: you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License as published by the
+ * Free Software Foundation, either version 3 of the License, or (at your
+ * option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+
+/*
+ * Commands related to schematic document and sheet management
+ */
+
+syntax = "proto3";
+
+package kiapi.schematic.commands;
+
+import "common/types/base_types.proto";
+import "schematic/schematic_types.proto";
+
+//
+// Sheet Hierarchy Commands
+//
+
+/// Information about a sheet in the hierarchy
+message SheetHierarchyNode
+{
+  kiapi.common.types.KIID      id              = 1;
+  kiapi.common.types.SheetPath path            = 2;
+  string                       name            = 3;
+  string                       filename        = 4;
+  string                       page_number     = 5;
+  repeated SheetHierarchyNode  children        = 6;
+}
+
+/// Retrieves the full sheet hierarchy tree
+message GetSheetHierarchy
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+}
+
+message GetSheetHierarchyResponse
+{
+  SheetHierarchyNode root = 1;
+}
+
+/// Gets the currently displayed sheet
+message GetCurrentSheet
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+}
+
+message GetCurrentSheetResponse
+{
+  kiapi.common.types.SheetPath    current_sheet = 1;
+  kiapi.schematic.types.Sheet     sheet_info    = 2;
+}
+
+/// Navigates to a specific sheet in the hierarchy
+message NavigateToSheet
+{
+  kiapi.common.types.DocumentSpecifier document     = 1;
+  kiapi.common.types.SheetPath         target_sheet = 2;
+}
+
+//
+// Sheet CRUD Commands
+//
+
+/// Creates a new hierarchical sheet in the schematic
+message CreateSheet
+{
+  // Specifies the parent document/sheet where the new sheet will be added
+  kiapi.common.types.ItemHeader header = 1;
+
+  // Sheet properties
+  string                        name     = 2;
+  string                        filename = 3;
+  kiapi.common.types.Vector2    position = 4;
+  kiapi.common.types.Vector2    size     = 5;
+
+  // If true, create the .kicad_sch file on disk
+  bool                          create_file = 6;
+
+  // Human-readable path of the parent sheet (e.g., "/" for root, "/Power Supply/").
+  // If empty, uses the current agent target sheet (existing behavior).
+  optional string               parent_sheet_path = 7;
+}
+
+message CreateSheetResponse
+{
+  kiapi.common.types.KIID      sheet_id       = 1;
+  kiapi.common.types.SheetPath new_sheet_path = 2;
+}
+
+/// Deletes a sheet from the hierarchy
+message DeleteSheet
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  kiapi.common.types.KIID              sheet_id = 2;
+
+  // If true, also delete the .kicad_sch file from disk
+  bool                                 delete_file = 3;
+}
+
+/// Gets properties of a specific sheet
+message GetSheetProperties
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  kiapi.common.types.KIID              sheet_id = 2;
+}
+
+message GetSheetPropertiesResponse
+{
+  kiapi.schematic.types.Sheet sheet = 1;
+}
+
+/// Updates properties of a sheet
+message SetSheetProperties
+{
+  kiapi.common.types.DocumentSpecifier document    = 1;
+  kiapi.common.types.KIID              sheet_id    = 2;
+
+  // Optional fields - only provided fields will be updated
+  optional string                      name        = 3;
+  optional string                      filename    = 4;
+  optional string                      page_number = 5;
+}
+
+//
+// Sheet Pin Commands
+//
+
+/// Creates a new sheet pin on a sheet
+message CreateSheetPin
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  kiapi.common.types.KIID              sheet_id = 2;
+
+  string                               name     = 3;
+  kiapi.schematic.types.LabelShape     shape    = 4;
+  kiapi.schematic.types.SheetPinSide   side     = 5;
+  kiapi.common.types.Vector2           position = 6;
+}
+
+message CreateSheetPinResponse
+{
+  kiapi.common.types.KIID pin_id = 1;
+}
+
+/// Deletes a sheet pin
+message DeleteSheetPin
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  kiapi.common.types.KIID              pin_id   = 2;
+}
+
+/// Gets all pins on a specific sheet
+message GetSheetPins
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  kiapi.common.types.KIID              sheet_id = 2;
+}
+
+message GetSheetPinsResponse
+{
+  repeated kiapi.schematic.types.SheetPin pins = 1;
+}
+
+/// Synchronizes sheet pins with hierarchical labels in the child sheet
+message SyncSheetPins
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+
+  // If empty, sync all sheets in the hierarchy
+  kiapi.common.types.KIID              sheet_id = 2;
+}
+
+message SyncSheetPinsResponse
+{
+  int32 pins_added   = 1;
+  int32 pins_removed = 2;
+}
+
+//
+// Annotation Commands
+//
+
+/// Scope for annotation operations
+enum AnnotateScope
+{
+  AS_UNKNOWN       = 0;
+  AS_ALL           = 1;  // Annotate all sheets
+  AS_CURRENT_SHEET = 2;  // Annotate current sheet only
+  AS_SELECTION     = 3;  // Annotate selected symbols only
+}
+
+/// Sort order for annotation
+enum AnnotateOrder
+{
+  AO_UNKNOWN = 0;
+  AO_X_Y     = 1;  // Sort by X then Y coordinate
+  AO_Y_X     = 2;  // Sort by Y then X coordinate
+}
+
+/// Algorithm for annotation numbering
+enum AnnotateAlgorithm
+{
+  AA_UNKNOWN      = 0;
+  AA_INCREMENTAL  = 1;  // Keep existing numbers, fill gaps
+  AA_RESTART      = 2;  // Restart numbering from start_number
+}
+
+/// Annotates symbols with reference designators
+message AnnotateSymbols
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+
+  // Scope of annotation
+  AnnotateScope scope = 2;
+
+  // Sort order for assigning numbers
+  AnnotateOrder order = 3;
+
+  // Numbering algorithm
+  AnnotateAlgorithm algorithm = 4;
+
+  // Starting number for annotation
+  int32 start_number = 5;
+
+  // If true, clear existing annotation first
+  bool reset_existing = 6;
+
+  // If true, include subsheets when scope is CURRENT_SHEET or SELECTION
+  bool recursive = 7;
+
+  // If true, repair duplicate timestamps
+  bool repair_timestamps = 8;
+}
+
+message AnnotateSymbolsResponse
+{
+  // Number of symbols annotated
+  int32 symbols_annotated = 1;
+
+  // Detailed annotation results
+  repeated AnnotationResult results = 2;
+}
+
+message AnnotationResult
+{
+  kiapi.common.types.KIID symbol_id = 1;
+  string previous_ref = 2;
+  string new_ref = 3;
+}
+
+/// Clears annotation from symbols
+message ClearAnnotation
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+
+  // Scope of annotation clearing
+  AnnotateScope scope = 2;
+
+  // If true, include subsheets when scope is CURRENT_SHEET or SELECTION
+  bool recursive = 3;
+}
+
+message ClearAnnotationResponse
+{
+  // Number of symbols cleared
+  int32 symbols_cleared = 1;
+}
+
+/// Checks for annotation errors (duplicates, missing, etc.)
+message CheckAnnotation
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+
+  // Scope of check
+  AnnotateScope scope = 2;
+
+  // If true, include subsheets when scope is CURRENT_SHEET or SELECTION
+  bool recursive = 3;
+}
+
+message AnnotationError
+{
+  // Type of error (ERCE_DUPLICATE_REFERENCE, ERCE_UNANNOTATED, etc.)
+  string error_type = 1;
+
+  // Human-readable error message
+  string message = 2;
+
+  // Affected symbols
+  repeated kiapi.common.types.KIID symbol_ids = 3;
+}
+
+message CheckAnnotationResponse
+{
+  // Number of errors found
+  int32 error_count = 1;
+
+  // Detailed error list
+  repeated AnnotationError errors = 2;
+}
+
+/// Returns all used reference designators across the full sheet hierarchy
+message GetUsedReferences
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+}
+
+message GetUsedReferencesResponse
+{
+  // All reference strings in use across all sheets (e.g., "R1", "R2", "C1", "#PWR01")
+  repeated string references = 1;
+}
+
+//
+// ERC (Electrical Rules Check) Commands
+//
+
+/// Runs ERC tests on the schematic
+message RunERC
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+
+  // If true, run all tests. If false, only run enabled tests from settings.
+  bool run_all_tests = 2;
+}
+
+/// ERC violation severity
+enum ERCSeverity
+{
+  ERC_SEV_UNKNOWN  = 0;
+  ERC_SEV_ERROR    = 1;
+  ERC_SEV_WARNING  = 2;
+  ERC_SEV_EXCLUDED = 3;
+}
+
+/// An ERC violation
+message ERCViolation
+{
+  // Unique marker ID
+  kiapi.common.types.KIID id = 1;
+
+  // Error code string (e.g., "ERCE_PIN_TO_PIN_ERROR")
+  string error_code = 2;
+
+  // Human-readable description
+  string description = 3;
+
+  // Severity of the violation
+  ERCSeverity severity = 4;
+
+  // Sheet where the violation occurs
+  kiapi.common.types.SheetPath sheet_path = 5;
+
+  // Position of the marker
+  kiapi.common.types.Vector2 position = 6;
+
+  // IDs of items involved in the violation
+  repeated kiapi.common.types.KIID item_ids = 7;
+}
+
+message RunERCResponse
+{
+  // Total number of errors
+  int32 error_count = 1;
+
+  // Total number of warnings
+  int32 warning_count = 2;
+
+  // List of violations
+  repeated ERCViolation violations = 3;
+}
+
+/// Gets current ERC violations without re-running checks
+message GetERCViolations
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+
+  // Optional: filter by severity
+  ERCSeverity filter_severity = 2;
+
+  // Optional: filter by sheet path
+  kiapi.common.types.SheetPath filter_sheet = 3;
+}
+
+message GetERCViolationsResponse
+{
+  repeated ERCViolation violations = 1;
+}
+
+/// Clears/excludes specific ERC markers
+message ClearERCMarkers
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+
+  // If empty, clear all markers. Otherwise, clear only specified markers.
+  repeated kiapi.common.types.KIID marker_ids = 2;
+}
+
+message ClearERCMarkersResponse
+{
+  int32 markers_cleared = 1;
+}
+
+/// Excludes a specific ERC violation (marks it as ignored)
+message ExcludeERCViolation
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+
+  // The marker to exclude
+  kiapi.common.types.KIID marker_id = 2;
+}
+
+//
+// Connectivity Commands
+//
+
+/// Type of connection
+enum ConnectionType
+{
+  CT_UNKNOWN   = 0;
+  CT_NONE      = 1;  // No connection (dangling)
+  CT_NET       = 2;  // Electrical net (single signal)
+  CT_BUS       = 3;  // Bus vector (e.g., D[0..7])
+  CT_BUS_GROUP = 4;  // Bus group (e.g., {DATA, ADDR, CTRL})
+}
+
+/// Information about a net or bus connection
+message ConnectionInfo
+{
+  // Type of connection
+  ConnectionType type = 1;
+
+  // Net or bus name (fully qualified)
+  string name = 2;
+
+  // Sheet path where this connection is defined
+  kiapi.common.types.SheetPath sheet_path = 3;
+
+  // ID of the item that drives this connection (label, pin, etc.)
+  kiapi.common.types.KIID driver_id = 4;
+
+  // For buses: the member net names
+  repeated string bus_members = 5;
+
+  // For bus vectors: prefix and range
+  string vector_prefix = 6;
+  int32 vector_start = 7;
+  int32 vector_end = 8;
+}
+
+/// Information about a net in the schematic
+message NetInfo
+{
+  // Net name (fully qualified)
+  string name = 1;
+
+  // Net code (unique identifier within the schematic)
+  int32 net_code = 2;
+
+  // Number of connection points
+  int32 connection_count = 3;
+
+  // IDs of items connected to this net
+  repeated kiapi.common.types.KIID item_ids = 4;
+}
+
+/// Information about a bus in the schematic
+message BusInfo
+{
+  // Bus name
+  string name = 1;
+
+  // Type: true for bus vector (D[0..7]), false for bus group ({A, B, C})
+  bool is_vector = 2;
+
+  // For vectors: prefix and range
+  string vector_prefix = 3;
+  int32 vector_start = 4;
+  int32 vector_end = 5;
+
+  // Member names (either generated from vector or explicit group members)
+  repeated string members = 6;
+
+  // IDs of bus line segments
+  repeated kiapi.common.types.KIID bus_line_ids = 7;
+}
+
+/// Gets all nets in the schematic
+message GetNets
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+
+  // Optional: filter by sheet path (empty for all sheets)
+  kiapi.common.types.SheetPath filter_sheet = 2;
+}
+
+message GetNetsResponse
+{
+  repeated NetInfo nets = 1;
+}
+
+/// Gets all buses in the schematic
+message GetBuses
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+
+  // Optional: filter by sheet path (empty for all sheets)
+  kiapi.common.types.SheetPath filter_sheet = 2;
+}
+
+message GetBusesResponse
+{
+  repeated BusInfo buses = 1;
+}
+
+/// Gets connectivity information for a specific item
+message GetNetForItem
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+
+  // ID of the item to query
+  kiapi.common.types.KIID item_id = 2;
+
+  // Sheet path context (for items that may have different connections on different sheets)
+  kiapi.common.types.SheetPath sheet_path = 3;
+}
+
+message GetNetForItemResponse
+{
+  // Connection info for the item
+  ConnectionInfo connection = 1;
+
+  // True if the item is connected, false if dangling
+  bool is_connected = 2;
+}
+
+/// Gets members of a specific bus
+message GetBusMembers
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+
+  // Bus name to query
+  string bus_name = 2;
+}
+
+message GetBusMembersResponse
+{
+  // Member net names
+  repeated string members = 1;
+
+  // Whether it's a vector bus
+  bool is_vector = 2;
+
+  // Vector info (if applicable)
+  string vector_prefix = 3;
+  int32 vector_start = 4;
+  int32 vector_end = 5;
+}
+
+/// Gets all items connected to a specific net
+message GetNetItems
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+
+  // Net name to query
+  string net_name = 2;
+}
+
+message GetNetItemsResponse
+{
+  // IDs of all items on this net
+  repeated kiapi.common.types.KIID item_ids = 1;
+
+  // Connection points (positions where items connect)
+  repeated kiapi.common.types.Vector2 connection_points = 2;
+}
+
+
+//
+// Grid Settings Commands
+//
+
+/// Grid settings for the schematic editor
+message GridSettings
+{
+  kiapi.common.types.Vector2 grid_size = 1;    // Grid spacing in nm
+  kiapi.common.types.Vector2 grid_origin = 2;  // Grid origin in nm
+  bool grid_visible = 3;
+  bool snap_to_grid = 4;
+}
+
+/// Gets current grid settings
+message GetGridSettings
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+}
+
+message GetGridSettingsResponse
+{
+  GridSettings settings = 1;
+}
+
+/// Sets grid settings
+message SetGridSettings
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  optional int64 grid_size_x_nm = 2;   // Grid X spacing in nm
+  optional int64 grid_size_y_nm = 3;   // Grid Y spacing in nm
+  optional bool grid_visible = 4;
+  optional bool snap_to_grid = 5;
+}
+
+
+//
+// ERC Settings Commands
+//
+
+/// Individual ERC rule severity setting
+message ERCRuleSeverity
+{
+  string error_code = 1;      // ERC error code (e.g., "ERCE_PIN_NOT_CONNECTED")
+  ERCSeverity severity = 2;   // Severity level
+}
+
+/// ERC settings for the schematic
+message ERCSettingsData
+{
+  repeated ERCRuleSeverity rule_severities = 1;
+  bool check_bus_driver_conflicts = 2;
+  bool check_bus_to_net_conflicts = 3;
+  bool check_bus_entry_conflicts = 4;
+  bool check_similar_labels = 5;
+  bool check_unique_global_labels = 6;
+}
+
+/// Gets current ERC settings
+message GetERCSettings
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+}
+
+message GetERCSettingsResponse
+{
+  ERCSettingsData settings = 1;
+}
+
+/// Sets ERC settings
+message SetERCSettings
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  ERCSettingsData settings = 2;
+}
+
+
+//
+// Net Class Commands
+//
+
+/// Assigns a net to a specific net class
+message AssignNetToClass
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  string net_name = 2;
+  string net_class_name = 3;
+}
+
+
+//
+// Editor Preferences Commands
+//
+
+/// Editor preferences for the schematic editor
+message EditorPreferences
+{
+  // Display settings
+  optional bool show_hidden_pins = 1;
+  optional bool show_hidden_fields = 2;
+  optional bool show_pin_numbers = 3;
+  optional bool show_pin_names = 4;
+  optional bool show_erc_errors = 5;
+  optional bool show_erc_warnings = 6;
+  optional bool show_erc_exclusions = 7;
+
+  // Behavior settings
+  optional bool auto_place_fields = 10;
+  optional bool auto_pan = 11;
+  optional int32 auto_pan_acceleration = 12;
+  optional bool center_on_zoom = 13;
+
+  // Drawing defaults
+  optional int32 default_wire_width_nm = 20;
+  optional int32 default_bus_width_nm = 21;
+  optional int32 default_junction_size_nm = 22;
+  optional int32 default_text_size_nm = 23;
+}
+
+/// Gets editor preferences
+message GetEditorPreferences
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+}
+
+message GetEditorPreferencesResponse
+{
+  EditorPreferences preferences = 1;
+}
+
+/// Sets editor preferences
+message SetEditorPreferences
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  EditorPreferences preferences = 2;
+}
+
+
+//
+// Schematic Formatting Settings Commands
+// (Project-level settings from Schematic Setup -> General -> Formatting)
+//
+
+/// Schematic formatting settings stored in the project file
+message FormattingSettings
+{
+  // Text section
+  optional int32 default_text_size_mils = 1;
+  optional double overbar_offset_ratio = 2;      // Percentage (e.g., 123.0 = 123%)
+  optional double label_offset_ratio = 3;        // Percentage
+  optional double global_label_margin_ratio = 4; // Percentage
+
+  // Symbols section
+  optional int32 default_line_width_mils = 10;
+  optional int32 pin_symbol_size_mils = 11;
+
+  // Connections section
+  optional int32 junction_size_choice = 20;      // 0=none, 1=smallest, 2=small, etc.
+  optional int32 hop_over_size_choice = 21;      // 0=none, 1=smallest, etc.
+  optional int32 connection_grid_mils = 22;
+
+  // Inter-sheet References section
+  optional bool intersheet_refs_show = 30;
+  optional bool intersheet_refs_list_own_page = 31;
+  optional bool intersheet_refs_format_short = 32;  // true=Abbreviated(1..3), false=Standard(1,2,3)
+  optional string intersheet_refs_prefix = 33;
+  optional string intersheet_refs_suffix = 34;
+
+  // Dashed Lines section
+  optional double dashed_line_dash_ratio = 40;   // Ratio of line width
+  optional double dashed_line_gap_ratio = 41;    // Ratio of line width
+
+  // Operating-point Overlay section
+  optional int32 opo_voltage_precision = 50;     // Significant digits
+  optional string opo_voltage_range = 51;        // "Auto", "V", "mV", etc.
+  optional int32 opo_current_precision = 52;     // Significant digits
+  optional string opo_current_range = 53;        // "Auto", "A", "mA", etc.
+}
+
+/// Gets schematic formatting settings
+message GetFormattingSettings
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+}
+
+message GetFormattingSettingsResponse
+{
+  FormattingSettings settings = 1;
+}
+
+/// Sets schematic formatting settings
+message SetFormattingSettings
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  FormattingSettings settings = 2;
+}
+
+
+//
+// Field Name Templates Commands
+// (Project-level settings from Schematic Setup -> General -> Field Name Templates)
+//
+
+/// A single field name template entry
+message FieldNameTemplate
+{
+  string name = 1;           // Field name
+  bool visible = 2;          // Default visibility
+  bool url = 3;              // Has URL/browse button
+}
+
+/// Gets all field name templates
+message GetFieldNameTemplates
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+}
+
+message GetFieldNameTemplatesResponse
+{
+  repeated FieldNameTemplate templates = 1;
+}
+
+/// Sets (replaces) all field name templates
+/// Provide the complete list of templates to replace existing ones
+message SetFieldNameTemplates
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  repeated FieldNameTemplate templates = 2;
+}
+
+
+//
+// Annotation Settings Commands
+// (Project-level settings from Schematic Setup -> General -> Annotation)
+//
+
+/// Symbol unit notation options (subpart separator and first ID)
+/// Maps to combinations of m_SubpartIdSeparator and m_SubpartFirstId
+enum SymbolUnitNotation
+{
+  SUN_A = 0;        // A (no separator, letter)
+  SUN_DOT_A = 1;    // .A (dot separator, letter)
+  SUN_DASH_A = 2;   // -A (dash separator, letter)
+  SUN_UNDER_A = 3;  // _A (underscore separator, letter)
+  SUN_DOT_1 = 4;    // .1 (dot separator, number)
+  SUN_DASH_1 = 5;   // -1 (dash separator, number)
+  SUN_UNDER_1 = 6;  // _1 (underscore separator, number)
+}
+
+/// Annotation sort order
+enum AnnotationSortOrder
+{
+  ASO_X_POSITION = 0;  // Sort symbols by X position
+  ASO_Y_POSITION = 1;  // Sort symbols by Y position
+}
+
+/// Annotation numbering method
+enum AnnotationNumberingMethod
+{
+  ANM_FIRST_FREE = 0;       // Use first free number after start_number
+  ANM_SHEET_X_100 = 1;      // First free after sheet number X 100
+  ANM_SHEET_X_1000 = 2;     // First free after sheet number X 1000
+}
+
+/// Annotation settings stored in the project file
+message AnnotationSettingsData
+{
+  // Units section
+  optional SymbolUnitNotation symbol_unit_notation = 1;
+
+  // Order section
+  optional AnnotationSortOrder sort_order = 10;
+
+  // Numbering section
+  optional AnnotationNumberingMethod numbering_method = 20;
+  optional int32 start_number = 21;             // Starting number for annotation
+  optional bool allow_reference_reuse = 22;     // Allow reusing reference designators
+}
+
+/// Gets annotation settings
+message GetAnnotationSettings
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+}
+
+message GetAnnotationSettingsResponse
+{
+  AnnotationSettingsData settings = 1;
+}
+
+/// Sets annotation settings
+message SetAnnotationSettings
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  AnnotationSettingsData settings = 2;
+}
+
+
+//
+// Simulation Settings Commands
+//
+
+/// SPICE simulation settings
+message SimulationSettings
+{
+  string spice_command = 1;              // Default SPICE command (e.g., ".tran 1u 1m")
+  repeated string include_paths = 2;     // SPICE include paths
+  map<string, string> model_overrides = 3; // Symbol to model mappings
+  optional string simulator = 4;         // Simulator name (e.g., "ngspice")
+}
+
+/// Gets simulation settings
+message GetSimulationSettings
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+}
+
+message GetSimulationSettingsResponse
+{
+  SimulationSettings settings = 1;
+}
+
+/// Sets simulation settings
+message SetSimulationSettings
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  SimulationSettings settings = 2;
+}
+
+
+//
+// Library Query Commands
+//
+
+/// Information about a library symbol
+message SymbolInfo
+{
+  string lib_id = 1;                     // Full library:symbol identifier
+  string name = 2;                       // Symbol name
+  string description = 3;                // Symbol description
+  string keywords = 4;                   // Space-separated keywords
+  repeated string footprint_filters = 5; // Footprint filter patterns
+  int32 unit_count = 6;                  // Number of units
+  repeated PinInfo pins = 7;             // Pin information
+  bool is_power = 8;                     // True if power symbol
+  string datasheet = 9;                  // Datasheet URL or path
+
+  // Bounding box of the symbol body including pins, relative to symbol origin, in nm
+  int64 body_bbox_min_x_nm = 10;
+  int64 body_bbox_min_y_nm = 11;
+  int64 body_bbox_max_x_nm = 12;
+  int64 body_bbox_max_y_nm = 13;
+}
+
+/// Information about a symbol pin
+message PinInfo
+{
+  string number = 1;                     // Pin number (electrical identifier)
+  string name = 2;                       // Pin name
+  kiapi.common.types.Vector2 position = 3;  // Position relative to symbol origin
+  int32 orientation = 4;                 // Orientation in degrees (0, 90, 180, 270)
+  string electrical_type = 5;            // Type: input, output, bidirectional, etc.
+  string graphical_style = 6;            // Style: line, inverted, clock, etc.
+  int32 unit = 7;                        // Unit number (for multi-unit symbols)
+}
+
+/// Gets all symbols in a library
+message GetLibrarySymbols
+{
+  string library_name = 1;               // Library nickname
+}
+
+message GetLibrarySymbolsResponse
+{
+  repeated string symbol_names = 1;      // List of symbol names in the library
+}
+
+/// Searches for symbols across libraries
+message SearchLibrarySymbols
+{
+  string query = 1;                      // Search query (matches name, description, keywords)
+  repeated string libraries = 2;         // Libraries to search (empty = all)
+  int32 max_results = 3;                 // Maximum results (0 = no limit)
+  string pattern_type = 4;              // "substring" (default), "wildcard", or "regex"
+}
+
+message SearchLibrarySymbolsResponse
+{
+  repeated SymbolInfo symbols = 1;
+}
+
+/// Gets detailed information about a specific symbol
+message GetSymbolInfo
+{
+  string lib_id = 1;                     // "Library:SymbolName" format
+}
+
+message GetSymbolInfoResponse
+{
+  SymbolInfo symbol = 1;
+}
+
+/// Gets the transformed position of a specific pin on a placed symbol
+message GetTransformedPinPosition
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  kiapi.common.types.KIID symbol_id = 2;
+  string pin_number = 3;
+}
+
+message GetTransformedPinPositionResponse
+{
+  kiapi.common.types.Vector2 position = 1;  // World position in nm
+  int32 orientation = 2;                     // World orientation in degrees
+}
+
+/// Gets the transformed positions of ALL pins on a placed symbol in a single call.
+/// This is much more efficient than calling GetTransformedPinPosition for each pin,
+/// especially for symbols with many pins (e.g., 600+ pin BGA packages).
+message GetAllTransformedPinPositions
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  kiapi.common.types.KIID symbol_id = 2;
+}
+
+message TransformedPinInfo
+{
+  string pin_number = 1;
+  string pin_name = 2;
+  kiapi.common.types.Vector2 position = 3;  // World position in nm
+  int32 orientation = 4;                     // Pin orientation enum
+}
+
+message GetAllTransformedPinPositionsResponse
+{
+  repeated TransformedPinInfo pins = 1;
+}
+
+
+/// Returns positions where explicit junction dots are needed for the given items.
+/// Items must already be placed on the schematic.  Analyzes each item's connection
+/// points (and interior crossings for wires) using KiCad's AnalyzePoint.
+message GetNeededJunctions
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  repeated kiapi.common.types.KIID item_ids = 2;
+}
+
+message GetNeededJunctionsResponse
+{
+  repeated kiapi.common.types.Vector2 positions = 1;
+}
+
+
+//
+// Simulation Commands
+//
+
+/// Runs SPICE simulation
+message RunSimulation
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  optional string command_override = 2;  // Override default command
+}
+
+/// Simulation trace data
+message SimulationTrace
+{
+  string name = 1;                       // Signal name
+  repeated double time_values = 2;       // Time points
+  repeated double data_values = 3;       // Signal values
+}
+
+message RunSimulationResponse
+{
+  bool success = 1;
+  string error_message = 2;
+  repeated SimulationTrace traces = 3;
+}
+
+/// Gets results from previous simulation
+message GetSimulationResults
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+}
+
+message GetSimulationResultsResponse
+{
+  bool has_results = 1;
+  repeated SimulationTrace traces = 2;
+}
+
+
+//
+// Export Commands
+//
+
+/// Netlist format options
+enum NetlistFormat
+{
+  NF_UNKNOWN = 0;
+  NF_KICAD = 1;       // KiCad native format
+  NF_SPICE = 2;       // SPICE netlist
+  NF_ORCAD = 3;       // OrCAD format
+  NF_CADSTAR = 4;     // CADSTAR format
+  NF_PADS = 5;        // PADS format
+}
+
+/// Exports netlist
+message ExportNetlist
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  NetlistFormat format = 2;
+  string output_path = 3;                // Output file path
+}
+
+message ExportNetlistResponse
+{
+  bool success = 1;
+  string output_path = 2;                // Actual output path
+  string error_message = 3;
+}
+
+/// Exports BOM (Bill of Materials)
+message ExportBOM
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  string output_path = 2;
+  string format = 3;                     // "csv", "xml", "json"
+  repeated string fields = 4;            // Fields to include
+  bool group_references = 5;             // Group identical components
+}
+
+message ExportBOMResponse
+{
+  bool success = 1;
+  string output_path = 2;
+  int32 component_count = 3;
+  string error_message = 4;
+}
+
+/// Plot format options
+enum PlotFormat
+{
+  PF_UNKNOWN = 0;
+  PF_PDF = 1;
+  PF_SVG = 2;
+  PF_HPGL = 3;
+  PF_PS = 4;
+  PF_DXF = 5;
+  PF_PNG = 6;
+}
+
+/// Exports plot (PDF, SVG, etc.)
+message ExportPlot
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  PlotFormat format = 2;
+  string output_path = 3;                // Output file or directory
+  bool plot_all_sheets = 4;              // Plot all sheets vs current only
+  bool black_and_white = 5;              // Black and white mode
+  optional int32 dpi = 6;                // DPI for raster formats
+}
+
+message ExportPlotResponse
+{
+  bool success = 1;
+  repeated string output_files = 2;      // Generated file paths
+  string error_message = 3;
+}
+
+
+//
+// Undo/Redo Commands
+//
+
+/// Information about an undo/redo action
+message UndoRedoInfo
+{
+  string description = 1;                // Human-readable description
+  int32 item_count = 2;                  // Number of items affected
+}
+
+/// Gets undo/redo history
+message GetUndoHistory
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+}
+
+message GetUndoHistoryResponse
+{
+  repeated UndoRedoInfo undo_stack = 1;  // Actions that can be undone
+  repeated UndoRedoInfo redo_stack = 2;  // Actions that can be redone
+}
+
+/// Performs undo operation
+message Undo
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  int32 count = 2;                       // Number of steps to undo (default 1)
+}
+
+message UndoResponse
+{
+  int32 steps_undone = 1;
+}
+
+/// Performs redo operation
+message Redo
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  int32 count = 2;                       // Number of steps to redo (default 1)
+}
+
+message RedoResponse
+{
+  int32 steps_redone = 1;
+}
+
+
+//
+// Viewport Commands
+//
+
+/// Viewport settings
+message ViewportSettings
+{
+  kiapi.common.types.Vector2 center = 1;     // View center in nm
+  double scale = 2;                           // Zoom scale (pixels per IU)
+  kiapi.common.types.Box2 visible_area = 3;  // Currently visible area
+}
+
+/// Gets current viewport
+message GetViewport
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+}
+
+message GetViewportResponse
+{
+  ViewportSettings viewport = 1;
+}
+
+/// Sets viewport
+message SetViewport
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  optional kiapi.common.types.Vector2 center = 2;  // New center position
+  optional double scale = 3;                        // New zoom scale
+}
+
+/// Zooms to fit all content
+message ZoomToFit
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+}
+
+/// Zooms to fit specific items
+message ZoomToItems
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  repeated kiapi.common.types.KIID item_ids = 2;
+  double margin_ratio = 3;               // Margin as ratio of bounds (e.g., 0.1 = 10%)
+}
+
+
+//
+// Highlighting Commands
+//
+
+/// Highlights a net
+message HighlightNet
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  string net_name = 2;
+}
+
+/// Clears all highlighting
+message ClearHighlight
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+}
+
+
+//
+// Cross-Probe Commands
+//
+
+/// Cross-probes items to the PCB editor
+message CrossProbeToBoard
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  repeated kiapi.common.types.KIID item_ids = 2;  // Items to cross-probe
+  bool select_in_board = 3;                        // Select corresponding items in board
+  bool center_view = 4;                            // Center board view on items
+}
+
+message CrossProbeResponse
+{
+  bool board_found = 1;                  // True if board editor is open
+  int32 items_found = 2;                 // Number of items found in board
+}
+
+/// Cross-probes from the PCB editor to the schematic
+message CrossProbeFromBoard
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+
+  // Reference designators to find (e.g., "R1", "U1")
+  repeated string references = 2;
+
+  // Net names to find/highlight
+  repeated string net_names = 3;
+
+  // Actions to perform
+  bool select_items = 4;                 // Select corresponding symbols
+  bool highlight_nets = 5;               // Highlight the specified nets
+  bool center_view = 6;                  // Center schematic view on found items
+  bool clear_existing_selection = 7;     // Clear existing selection first
+}
+
+message CrossProbeFromBoardResponse
+{
+  int32 symbols_found = 1;               // Number of symbols found by reference
+  int32 nets_found = 2;                  // Number of nets found
+  repeated kiapi.common.types.KIID found_symbol_ids = 3;  // IDs of found symbols
+}
+
+
+//
+// ERC Pin Type Matrix Commands
+//
+
+/// Pin error types for the ERC pin matrix
+enum PinErrorType
+{
+  PET_OK          = 0;   // No error
+  PET_WARNING     = 1;   // Warning
+  PET_ERROR       = 2;   // Error
+  PET_UNCONNECTED = 3;   // Unconnected
+}
+
+/// Electrical pin types (must match ELECTRICAL_PINTYPE enum)
+enum ElectricalPinType
+{
+  EPT_INPUT         = 0;
+  EPT_OUTPUT        = 1;
+  EPT_BIDI          = 2;
+  EPT_TRISTATE      = 3;
+  EPT_PASSIVE       = 4;
+  EPT_NIC           = 5;   // Not internally connected
+  EPT_UNSPECIFIED   = 6;
+  EPT_POWER_IN      = 7;
+  EPT_POWER_OUT     = 8;
+  EPT_OPENCOLLECTOR = 9;
+  EPT_OPENEMITTER   = 10;
+  EPT_NC            = 11;  // Not connected
+}
+
+/// A single entry in the ERC pin type matrix
+message PinMatrixEntry
+{
+  ElectricalPinType first_pin_type = 1;
+  ElectricalPinType second_pin_type = 2;
+  PinErrorType error_type = 3;
+}
+
+/// The full ERC pin type matrix
+message PinTypeMatrix
+{
+  repeated PinMatrixEntry entries = 1;
+}
+
+/// Gets the ERC pin type matrix
+message GetPinTypeMatrix
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+}
+
+message GetPinTypeMatrixResponse
+{
+  PinTypeMatrix matrix = 1;
+}
+
+/// Sets entries in the ERC pin type matrix
+message SetPinTypeMatrix
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  repeated PinMatrixEntry entries = 2;  // Entries to set
+  bool reset_to_defaults = 3;           // If true, reset matrix to defaults before applying entries
+}
+
+
+//
+// Design Block Commands
+//
+
+/// Information about a design block
+message DesignBlockInfo
+{
+  string lib_id = 1;                     // "Library:BlockName" format
+  string name = 2;                       // Design block name
+  string description = 3;                // Design block description
+  string keywords = 4;                   // Space-separated keywords
+  string library_nickname = 5;           // Library nickname
+}
+
+/// Gets available design blocks
+message GetDesignBlocks
+{
+  string library_nickname = 1;           // Library to search (empty = all libraries)
+}
+
+message GetDesignBlocksResponse
+{
+  repeated DesignBlockInfo design_blocks = 1;
+}
+
+/// Searches for design blocks
+message SearchDesignBlocks
+{
+  string query = 1;                      // Search query (matches name, description, keywords)
+  repeated string libraries = 2;         // Libraries to search (empty = all)
+  int32 max_results = 3;                 // Maximum results (0 = no limit)
+}
+
+message SearchDesignBlocksResponse
+{
+  repeated DesignBlockInfo design_blocks = 1;
+}
+
+/// Saves the current selection as a design block
+message SaveSelectionAsDesignBlock
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  string library_nickname = 2;           // Target library
+  string name = 3;                       // Design block name
+  string description = 4;                // Optional description
+  string keywords = 5;                   // Optional keywords
+}
+
+message SaveDesignBlockResponse
+{
+  bool success = 1;
+  string lib_id = 2;                     // The created design block ID
+  string error_message = 3;
+}
+
+/// Saves the current sheet as a design block
+message SaveSheetAsDesignBlock
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  string library_nickname = 2;
+  string name = 3;
+  string description = 4;
+  string keywords = 5;
+}
+
+/// Deletes a design block
+message DeleteDesignBlock
+{
+  string lib_id = 1;                     // "Library:BlockName" to delete
+}
+
+message DeleteDesignBlockResponse
+{
+  bool success = 1;
+  string error_message = 2;
+}
+
+/// Places a design block into the schematic
+message PlaceDesignBlock
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  string lib_id = 2;                     // "Library:BlockName" to place
+  kiapi.common.types.Vector2 position = 3;
+}
+
+message PlaceDesignBlockResponse
+{
+  bool success = 1;
+  repeated kiapi.common.types.KIID created_item_ids = 2;  // IDs of created items
+  string error_message = 3;
+}
+
+
+//
+// Net Class Commands
+// (Project-level settings from Schematic Setup -> Project -> Net Classes)
+//
+
+/// Line style for schematic wires/buses
+enum SchematicLineStyle
+{
+  SLS_SOLID = 0;
+  SLS_DASH = 1;
+  SLS_DOT = 2;
+  SLS_DASH_DOT = 3;
+  SLS_DASH_DOT_DOT = 4;
+}
+
+/// A netclass definition for schematic use
+message NetClassData
+{
+  string name = 1;                       // Netclass name (required)
+  optional string description = 2;       // Optional description
+  optional int32 wire_width_mils = 3;    // Wire thickness in mils
+  optional int32 bus_width_mils = 4;     // Bus thickness in mils
+  optional string color = 5;             // Color in hex format (#RRGGBB) or "transparent"
+  optional SchematicLineStyle line_style = 6;  // Line style
+  optional int32 priority = 7;           // Priority for multi-netclass resolution
+}
+
+/// Gets all netclasses
+message GetNetClasses
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+}
+
+message GetNetClassesResponse
+{
+  NetClassData default_netclass = 1;     // The default netclass (always exists)
+  repeated NetClassData netclasses = 2;  // User-defined netclasses
+}
+
+/// Creates or updates a netclass
+message SetNetClass
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  NetClassData netclass = 2;             // Netclass data (name is used as key)
+}
+
+/// Deletes a netclass
+message DeleteNetClass
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  string name = 2;                       // Netclass name to delete (cannot delete "Default")
+}
+
+/// A netclass pattern assignment (pattern -> netclass)
+message NetClassAssignment
+{
+  string pattern = 1;                    // Wildcard pattern to match net names
+  string netclass = 2;                   // Netclass to assign
+}
+
+/// Gets all netclass pattern assignments
+message GetNetClassAssignments
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+}
+
+message GetNetClassAssignmentsResponse
+{
+  repeated NetClassAssignment assignments = 1;
+}
+
+/// Sets all netclass pattern assignments (replaces existing)
+message SetNetClassAssignments
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  repeated NetClassAssignment assignments = 2;
+}
+
+/// Adds a single netclass pattern assignment
+message AddNetClassAssignment
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  NetClassAssignment assignment = 2;
+}
+
+/// Removes a netclass pattern assignment by pattern
+message RemoveNetClassAssignment
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  string pattern = 2;                    // Pattern to remove
+}
+
+
+//
+// Bus Alias Commands
+//
+
+/// Bus alias definition - maps an alias name to a list of member signals
+message BusAliasData
+{
+  string name = 1;                       // Alias name (e.g., "DATA_BUS")
+  repeated string members = 2;            // Member signal names (e.g., ["D0", "D1", "D2", ...])
+}
+
+/// Gets all bus aliases defined in the project
+message GetBusAliases
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+}
+
+message GetBusAliasesResponse
+{
+  repeated BusAliasData aliases = 1;
+}
+
+/// Creates or updates a bus alias
+message SetBusAlias
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  BusAliasData alias = 2;
+}
+
+/// Deletes a bus alias by name
+message DeleteBusAlias
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  string name = 2;
+}
+
+/// Replaces all bus aliases at once
+message SetBusAliases
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+  repeated BusAliasData aliases = 2;
+}
+
+//
+// Multi-board schematic (MBS) commands
+//
+// Document type must be DOCTYPE_MBS_SCHEMATIC. Only handled by API_HANDLER_MBS_SCH
+// (registered by MBSCH_EDIT_FRAME); regular SCH frames return AS_UNHANDLED.
+//
+
+/// Lists all module blocks on the active sheet of the MBS schematic.
+message GetModuleBlocks
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+}
+
+message GetModuleBlocksResponse
+{
+  repeated kiapi.schematic.types.ModuleBlock blocks = 1;
+}
+
+/// Lists all cross-board nets declared in the enclosing multi-board container.
+message GetCrossBoardNets
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+}
+
+message GetCrossBoardNetsResponse
+{
+  repeated kiapi.schematic.types.CrossBoardNet nets = 1;
+}
+
+/// Returns metadata about the multi-board container project that owns the
+/// active MBS schematic: container .kicad_pro path, MBS file name, and
+/// the list of sub-projects.
+message GetMultiBoardContainerInfo
+{
+  kiapi.common.types.DocumentSpecifier document = 1;
+}
+
+message GetMultiBoardContainerInfoResponse
+{
+  string                                       container_pro_path = 1;
+  string                                       mbs_file_path      = 2;
+  string                                       container_name     = 3;
+  repeated kiapi.schematic.types.SubProjectInfo sub_projects      = 4;
+}

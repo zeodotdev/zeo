@@ -1,0 +1,26 @@
+{
+    "$schema": "https://go.kicad.org/api/schemas/v1",
+    "identifier": "com.gitlab.craftyjon.kipy.layer_indicator",
+    "name": "Layer Indicator",
+    "description": "Generates copper layer indicator footprints for the current board stackup",
+    "runtime": {
+        "type": "python",
+        "min_version": "3.10"
+    },
+    "actions": [
+        {
+            "identifier": "place-layer-indicator",
+            "name": "Place Layer Indicator",
+            "description": "Creates a layer indicator footprint",
+            "show-button": true,
+            "scopes": [
+                "pcb"
+            ],
+            "entrypoint": "layer_indicator.py",
+            "icons-light": [
+                "icons/layer_indicator_24.png",
+                "icons/layer_indicator_48.png"
+            ]
+        }
+    ]
+}

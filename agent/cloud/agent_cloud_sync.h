@@ -5,6 +5,7 @@
 #include <mutex>
 #include <atomic>
 #include <functional>
+#include <memory>
 #include <thread>
 #include <vector>
 #include <nlohmann/json.hpp>
@@ -21,7 +22,7 @@ class AGENT_AUTH;
  * Uploads are fire-and-forget on a background thread.
  * Downloads pull remote-only chats to local storage on startup.
  */
-class AGENT_CLOUD_SYNC
+class AGENT_CLOUD_SYNC : public std::enable_shared_from_this<AGENT_CLOUD_SYNC>
 {
 public:
     AGENT_CLOUD_SYNC();

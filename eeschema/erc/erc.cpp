@@ -61,6 +61,7 @@
 #include <progress_reporter.h>
 #include <kiway.h>
 #include <pgm_base.h>
+#include <usage_sync.h>
 #include <libraries/symbol_library_adapter.h>
 
 
@@ -2925,4 +2926,6 @@ void ERC_TESTER::RunTests( DS_PROXY_VIEW_ITEM* aDrawingSheet, SCH_EDIT_FRAME* aE
     }
 
     m_schematic->ResolveERCExclusionsPostUpdate();
+
+    USAGE_SYNC::Instance()->TrackEvent( "sch.erc.run", "eeschema" );
 }

@@ -63,6 +63,7 @@
 #include <settings/settings_manager.h>
 #include <paths.h>
 #include <pgm_base.h>
+#include <usage_sync.h>
 #include <project/project_file.h>
 #include <project_pcb.h>
 #include <project/project_local_settings.h>
@@ -1286,6 +1287,9 @@ bool PCB_EDIT_FRAME::SavePcbFile( const wxString& aFileName, bool addToHistory,
 
     m_autoSavePending = false;
     m_autoSaveRequired = false;
+
+    USAGE_SYNC::Instance()->TrackEvent( "pcb.save", "pcbnew" );
+
     return true;
 }
 

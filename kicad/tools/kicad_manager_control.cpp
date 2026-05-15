@@ -23,6 +23,7 @@
 #include <env_vars.h>
 #include <executable_names.h>
 #include <pgm_base.h>
+#include <usage_sync.h>
 #include <pgm_kicad.h>
 #include <policy_keys.h>
 #include <kiway.h>
@@ -599,6 +600,7 @@ int KICAD_MANAGER_CONTROL::NewProject( const TOOL_EVENT& aEvent )
 
     m_frame->CreateNewProject( fn.GetFullPath() );
     m_frame->LoadProject( fn );
+    USAGE_SYNC::Instance()->TrackEvent( "project.create", "kicad" );
     return 0;
 }
 

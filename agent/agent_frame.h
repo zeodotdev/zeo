@@ -230,7 +230,7 @@ private:
     bool IsCcPromoDismissed();
 
     // ── Cloud Sync ───────────────────────────────────────────────────────
-    std::unique_ptr<AGENT_CLOUD_SYNC> m_cloudSync;
+    std::shared_ptr<AGENT_CLOUD_SYNC> m_cloudSync;
     void ConfigureCloudSync();  // Wire auth + supabase config to cloud sync
     void UploadCurrentChat();   // Upload current conversation (debounced)
 

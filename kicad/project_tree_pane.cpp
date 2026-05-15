@@ -37,6 +37,7 @@
 
 #include <settings/common_settings.h>
 #include <settings/settings_manager.h>
+#include <usage_sync.h>
 #include <advanced_config.h>
 #include <bitmaps.h>
 #include <bitmap_store.h>
@@ -368,6 +369,7 @@ void PROJECT_TREE_PANE::onSwitchToSelectedProject( wxCommandEvent& event )
     wxString prj_filename = tree_data[0]->GetFileName();
 
     m_Parent->LoadProject( prj_filename );
+    USAGE_SYNC::Instance()->TrackEvent( "project.open", "kicad" );
 }
 
 

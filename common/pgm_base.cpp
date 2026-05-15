@@ -68,6 +68,7 @@
 #include <systemdirsappend.h>
 #include <thread_pool.h>
 #include <trace_helpers.h>
+#include <usage_sync.h>
 
 #include <widgets/kistatusbar.h>
 #include <widgets/wx_splash.h>
@@ -185,6 +186,9 @@ PGM_BASE::~PGM_BASE()
 void PGM_BASE::Destroy()
 {
     KICAD_CURL::Cleanup();
+
+    USAGE_SYNC::Instance()->SessionEnd();
+    USAGE_SYNC::Instance()->Cleanup();
 
     APP_MONITOR::SENTRY::Instance()->Cleanup();
 
@@ -348,6 +352,9 @@ bool PGM_BASE::InitPgm( bool aHeadless, bool aSkipPyInit, bool aIsUnitTest )
         pgm_name = wxFileName( App().argv[0] ).GetName().Lower();
 
     APP_MONITOR::SENTRY::Instance()->AddTag( "kicad.app", pgm_name );
+
+    USAGE_SYNC::Instance()->AutoConfigure();
+    USAGE_SYNC::Instance()->SessionStart();
 
     wxInitAllImageHandlers();
 

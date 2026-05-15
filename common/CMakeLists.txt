@@ -224,6 +224,7 @@ set( KICOMMON_SRCS
 
     advanced_config.cpp
     app_monitor.cpp
+    usage_sync.cpp
     asset_archive.cpp
     array_axis.cpp
     array_options.cpp

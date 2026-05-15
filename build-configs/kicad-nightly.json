@@ -1,0 +1,30 @@
+{
+    "name:": "KiCad Nightly",
+    "output_prefix": "kicad-nightly-",
+    "package_version": "8.99",
+    "train": "nightly",
+    "build_mode": "Release",
+    "nsis": {
+        "file": "install.nsi"
+    },
+    "sources": {
+        "kicad": {
+            "ref": "branch/master"
+        },
+        "symbols": {
+            "ref": "branch/master"
+        },
+        "footprints": {
+            "ref": "branch/master"
+        },
+        "3dmodels": {
+            "ref": "branch/master"
+        },
+        "templates": {
+            "ref": "branch/master"
+        }
+    },
+    "vcpkg": {
+        "manifest_mode": true
+    }
+}

@@ -1,0 +1,25 @@
+{
+    "$schema": "https://go.kicad.org/api/schemas/v1",
+    "identifier": "com.gitlab.kicad.kicad-python.round-tracks",
+    "name": "Round Tracks",
+    "description": "Subdivision-based track rounding",
+    "runtime": {
+        "type": "python",
+        "min_version": "3.9"
+    },
+    "actions": [
+        {
+            "identifier": "round-tracks",
+            "name": "Round Tracks",
+            "description": "Rounds all the tracks on the board",
+            "show-button": true,
+            "scopes": [
+                "pcb"
+            ],
+            "entrypoint": "round_tracks_action.py",
+            "icons-light": [
+                "icon.png"
+            ]
+        }
+    ]
+}

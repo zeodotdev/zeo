@@ -1,0 +1,1605 @@
+/*
+ * This program source code file is part of KiCad, a free EDA CAD application.
+ *
+ * Copyright (C) 2024 Jon Evans <jon@craftyjon.com>
+ * Copyright (C) 2024 KiCad Developers, see AUTHORS.txt for contributors.
+ *
+ * This program is free software: you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License as published by the
+ * Free Software Foundation, either version 3 of the License, or (at your
+ * option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+
+syntax = "proto3";
+
+package kiapi.board.commands;
+
+import "google/protobuf/any.proto";
+import "common/types/base_types.proto";
+import "common/types/enums.proto";
+import "common/types/project_settings.proto";
+import "board/board.proto";
+import "board/board_types.proto";
+
+/*
+ * Board stackup and properties
+ */
+
+message GetBoardStackup
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+}
+
+message BoardStackupResponse
+{
+  kiapi.board.BoardStackup stackup = 1;
+}
+
+// Changes the stackup for the given board according to the contents of the message (**not yet implemented**)
+// WARNING: any existing content on layers that are removed by this call is deleted.  This operation cannot be undone.
+// Returns BoardStackupResponse with the updated stackup, in normalized form
+message UpdateBoardStackup
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+  kiapi.board.BoardStackup stackup = 2;
+}
+
+message GetBoardEnabledLayers
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+}
+
+message BoardEnabledLayersResponse
+{
+  // The number of copper layers enabled in this board.
+  uint32 copper_layer_count = 1;
+
+  // A list of all layers enabled in this board, including copper layers and ones which cannot be disabled.
+  repeated kiapi.board.types.BoardLayer layers = 2;
+}
+
+// Changes which layers are enabled in the board stackup
+// WARNING: any existing content on layers that are removed by this call is deleted.  This operation cannot be undone.
+// Returns BoardEnabledLayersResponse with the updated layer set.
+message SetBoardEnabledLayers
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+
+  // The number of copper layers to enable in the board.  Currently, this must be an even number >= 2.
+  uint32 copper_layer_count = 2;
+
+  // The non-copper layers to enable.  Note that any copper layers in this list are ignored; copper layers are enabled
+  // by setting copper_layer_count.  Note that the F/B.Courtyard, Edge.Cuts, and Margin layers cannot be disabled and
+  // will be present in the board even if they are omitted from this list.
+  repeated kiapi.board.types.BoardLayer layers = 3;
+}
+
+/*
+ * Board layer info (name, type, enabled state)
+ */
+
+// Layer type for copper layers (matches LAYER_T enum in KiCad)
+enum BoardLayerType
+{
+  BLT_UNDEFINED = 0;
+  BLT_SIGNAL = 1;     // Signal layer (default for copper)
+  BLT_POWER = 2;      // Power plane
+  BLT_MIXED = 3;      // Mixed signal/power
+  BLT_JUMPER = 4;     // Jumper layer
+  BLT_AUX = 5;        // Auxiliary (for non-copper layers)
+  BLT_FRONT = 6;      // Front layer
+  BLT_BACK = 7;       // Back layer
+}
+
+// Information about a single board layer
+message BoardLayerInfo
+{
+  // The layer ID
+  kiapi.board.types.BoardLayer layer = 1;
+
+  // The canonical layer name (e.g., "F.Cu", "B.Silkscreen")
+  string name = 2;
+
+  // User-customized layer name (empty if using default)
+  string user_name = 3;
+
+  // Layer type (primarily for copper layers)
+  BoardLayerType type = 4;
+
+  // Whether the layer is enabled
+  bool enabled = 5;
+
+  // Whether the layer is visible in the editor
+  bool visible = 6;
+}
+
+// Get information about all board layers
+// Returns BoardLayersInfoResponse
+message GetBoardLayersInfo
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+}
+
+message BoardLayersInfoResponse
+{
+  // Number of copper layers
+  uint32 copper_layer_count = 1;
+
+  // All layer information
+  repeated BoardLayerInfo layers = 2;
+}
+
+// Set a layer's custom name
+// Returns Empty
+message SetLayerName
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+
+  // The layer to rename
+  kiapi.board.types.BoardLayer layer = 2;
+
+  // The new custom name (empty string to reset to default)
+  string name = 3;
+}
+
+// Set a layer's type (for copper layers)
+// Returns Empty
+message SetLayerType
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+
+  // The layer to modify (must be a copper layer)
+  kiapi.board.types.BoardLayer layer = 2;
+
+  // The new layer type
+  BoardLayerType type = 3;
+}
+
+message GetGraphicsDefaults
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+}
+
+message GraphicsDefaultsResponse
+{
+  kiapi.board.GraphicsDefaults defaults = 1;
+}
+
+enum BoardOriginType
+{
+  BOT_UNKNOWN = 0;
+  BOT_GRID = 1;
+  BOT_DRILL = 2;
+}
+
+// Returns a Vector2 with the specified origin point
+message GetBoardOrigin
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+
+  BoardOriginType type = 2;
+}
+
+message SetBoardOrigin
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+
+  BoardOriginType type = 2;
+
+  kiapi.common.types.Vector2 origin = 3;
+}
+
+/*
+ * Net management
+ */
+
+message GetNets
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+
+  // If provided, will only return nets that belong to the given netclass.
+  // If more than one netclass_filter is given, nets belonging to any of the given classes will
+  // be returned.
+  repeated string netclass_filter = 2;
+}
+
+message NetsResponse
+{
+  repeated kiapi.board.types.Net nets = 1;
+}
+
+// Retrieve all the copper items belonging to a certain net or set of nets
+// returns kiapi.common.commands.GetItemsResponse
+message GetItemsByNet
+{
+  // Specifies which document to query, which fields to return, etc.
+  kiapi.common.types.ItemHeader header = 1;
+
+  // List of one or more types of items to retreive
+  repeated kiapi.common.types.KiCadObjectType types = 2;
+
+  // A list of net codes to filter items by
+  repeated kiapi.board.types.NetCode net_codes = 3;
+}
+
+// Retrieve all the copper items belonging to a certain net class or set of net classes
+// returns kiapi.common.commands.GetItemsResponse
+message GetItemsByNetClass
+{
+  // Specifies which document to query, which fields to return, etc.
+  kiapi.common.types.ItemHeader header = 1;
+
+  // List of one or more types of items to retreive
+  repeated kiapi.common.types.KiCadObjectType types = 2;
+
+  // A list of net class names to filter items by
+  repeated string net_classes = 3;
+}
+
+// A net may be part of multiple classes that have a priority ordering, which will result in a
+// composite "effective" netclass containing the merged/overridden properties of all the constituent
+// netclasses it contains.  This message retrieves this effective netclass for a net or list of
+// nets.
+// Returns NetClassForNetsResponse
+message GetNetClassForNets
+{
+  repeated kiapi.board.types.Net net = 1;
+}
+
+message NetClassForNetsResponse
+{
+  // Map of net name to netclass info
+  map<string, kiapi.common.project.NetClass> classes = 1;
+}
+
+/*
+ * Blocking operations
+ */
+
+// Refills some or all zones on the board.
+// This is a blocking operation; it will return Empty immediately, but KiCad will return
+// ApiStatusCode.AS_BUSY to all future API requests until the zone fill has completed.
+message RefillZones
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+
+  // A list of zones to refill.  If empty, all zones are refilled.
+  repeated kiapi.common.types.KIID zones = 2;
+}
+
+/*
+ * Utilities
+ */
+
+// Computes the polygon representation of a pad, merging any custom shapes together.
+// This representation will approximate curves as a series of segments.
+message GetPadShapeAsPolygon
+{
+  // The board to process
+  kiapi.common.types.DocumentSpecifier board = 1;
+
+  // A list of one or more pads to process
+  repeated kiapi.common.types.KIID pads = 2;
+
+  // The layer to process
+  kiapi.board.types.BoardLayer layer = 3;
+}
+
+// Returned from GetPadShapeAsPolygon.  The pads and polygons repeated fields will have the same length
+// and can be treated as a list of tuples.
+message PadShapeAsPolygonResponse
+{
+  // The pads that were processed
+  repeated kiapi.common.types.KIID pads = 1;
+
+  // The polygon representation of each pad
+  repeated kiapi.common.types.PolygonWithHoles polygons = 2;
+}
+
+// Tests if the given set of items with padstacks (pads or vias) has content on the given set of layers.
+// This is a dynamic call rather than a property of the padstack because pads and vias can be set to only include
+// shapes on connected copper layers, and whether or not the pad is connected can't be determined in isolation.
+// To optimize API call performance, multiple items and multiple layers to test may be passed in with this
+// command message.  The return will include the results for each valid item on each valid layer.
+// Note that not all layers make sense for a given item (for example, testing against BL_UNDEFINED never makes
+// sense).  In general, the internal KiCad APIs will not return an error when testing non-sensical layers for a given
+// item, and instead will return a default of "true" for any such layers.
+message CheckPadstackPresenceOnLayers
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+
+  repeated kiapi.common.types.KIID items = 2;
+
+  repeated kiapi.board.types.BoardLayer layers = 3;
+}
+
+enum PadstackPresence
+{
+  PSP_UNKNOWN = 0;
+  PSP_PRESENT = 1;      // The padstack has a shape on a given layer (is flashed)
+  PSP_NOT_PRESENT = 2;  // The padstack has no shape on a given layer (is not flashed)
+}
+
+message PadstackPresenceEntry
+{
+  kiapi.common.types.KIID item = 1;
+  kiapi.board.types.BoardLayer layer = 2;
+  PadstackPresence presence = 3;
+}
+
+message PadstackPresenceResponse
+{
+  repeated PadstackPresenceEntry entries = 1;
+}
+
+// DRC markers
+
+enum DrcSeverity // Since 10.0
+{
+  DRS_UNKNOWN = 0;
+  DRS_WARNING = 1;
+  DRS_ERROR = 2;
+  DRS_EXCLUSION = 3;
+  DRS_IGNORE = 4;
+  DRS_INFO = 5;
+  DRS_ACTION = 6;
+  DRS_DEBUG = 7;
+  DRS_UNDEFINED = 8;
+}
+
+// Returns InjectDrcErrorResponse
+message InjectDrcError
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+
+  DrcSeverity severity = 2;
+
+  string message = 3;
+
+  kiapi.common.types.Vector2 position = 4;
+
+  repeated kiapi.common.types.KIID items = 5;
+}
+
+message InjectDrcErrorResponse
+{
+  kiapi.common.types.KIID marker = 1;
+}
+
+// PCB editor commands
+
+// returns BoardLayers
+message GetVisibleLayers
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+}
+
+message BoardLayerResponse
+{
+  kiapi.board.types.BoardLayer layer = 1;
+}
+
+message BoardLayers
+{
+  repeated kiapi.board.types.BoardLayer layers = 1;
+}
+
+message SetVisibleLayers
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+
+  repeated kiapi.board.types.BoardLayer layers = 2;
+}
+
+// returns BoardLayerResponse
+message GetActiveLayer
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+}
+
+message SetActiveLayer
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+
+  kiapi.board.types.BoardLayer layer = 2;
+}
+
+enum InactiveLayerDisplayMode
+{
+  ILDM_UNKNOWN = 0;
+  // Inactive layers are shown
+  ILDM_NORMAL = 1;
+  // Inactive layers are shown with dimmed colors
+  ILDM_DIMMED = 2;
+  // Inactive layers are hidden
+  ILDM_HIDDEN = 3;
+}
+
+enum NetColorDisplayMode
+{
+  NCDM_UNKNOWN = 0;
+  // Net and netclass colors are shown in the ratsnest and on all copper items
+  NCDM_ALL = 1;
+  // Net and netclass colors are shown in the ratsnest only
+  NCDM_RATSNEST = 2;
+  // Net and netclass colors are not shown
+  NCDM_OFF = 3;
+}
+
+enum BoardFlipMode
+{
+  BFM_UNKNOWN = 0;
+  // Normal ("non-flipped") mode
+  BFM_NORMAL = 1;
+  // "Flipped" mode, viewed from the back and mirrored around the X axis
+  BFM_FLIPPED_X = 2;
+}
+
+enum RatsnestDisplayMode
+{
+  RDM_UNKNOWN = 0;
+  // Ratsnest lines are drawn to objects even if they are on hidden layers
+  RDM_ALL_LAYERS = 1;
+  // Ratsnest lines are hidden when at least one endpoint is an item on a hidden layer
+  RDM_VISIBLE_LAYERS = 2;
+}
+
+message BoardEditorAppearanceSettings
+{
+  InactiveLayerDisplayMode inactive_layer_display = 1;
+
+  NetColorDisplayMode net_color_display = 2;
+
+  BoardFlipMode board_flip = 3;
+
+  RatsnestDisplayMode ratsnest_display = 4;
+}
+
+// Returns BoardEditorAppearanceSettings
+message GetBoardEditorAppearanceSettings
+{
+}
+
+message SetBoardEditorAppearanceSettings
+{
+  BoardEditorAppearanceSettings settings = 1;
+}
+
+//// Interactive commands ////
+// These commands begin an interactive operation in the editor.
+// They return a response immediately, but the editor will become busy
+// and will not reply to further API commands until the user has finished
+// the operation.
+// These commands will return an error if received in a non-interactive context.
+
+// Selects and begins an interactive move of the given item(s).
+// NOTE: Takes ownership of the active commit, if one exists:
+//       the move tool will push the commit when the user confirms the move,
+//       or roll back the commit if the user cancels the move.  Keep this in
+//       mind if using this command in combination with commands that create
+//       or modify items using an explicit commit.
+message InteractiveMoveItems
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+
+  repeated kiapi.common.types.KIID items = 2;
+}
+
+// Shows a diff overlay on the board editor for testing purposes.
+// The overlay will be shown at the specified bounding box location.
+// If no bounding box is provided, uses the board's bounding box.
+message ShowDiffOverlay
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+
+  // Optional bounding box for the overlay. If not provided or has zero size,
+  // the board's bounding box will be used.
+  kiapi.common.types.Box2 bounding_box = 2;
+}
+
+/*
+ * DRC (Design Rule Check) Operations
+ */
+
+// Run design rule checks on the board.
+// This is a blocking operation; returns when DRC is complete.
+// Returns RunDRCResponse with summary of violations found.
+message RunDRC
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+
+  // If true, refill all zones before running DRC
+  bool refill_zones = 2;
+
+  // If true, report all track errors (not just the first per track)
+  bool report_all_track_errors = 3;
+
+  // If true, test footprints against library footprints
+  bool test_footprints = 4;
+}
+
+message RunDRCResponse
+{
+  // Number of errors found
+  int32 error_count = 1;
+
+  // Number of warnings found
+  int32 warning_count = 2;
+
+  // Number of exclusions (user-marked items to ignore)
+  int32 exclusion_count = 3;
+}
+
+// Get all current DRC violations/markers from the board
+// Returns DRCViolationsResponse
+message GetDRCViolations
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+
+  // Optional: filter by severity (if empty, returns all)
+  repeated DrcSeverity severities = 2;
+}
+
+// Represents a single DRC violation
+message DRCViolation
+{
+  // The marker ID
+  kiapi.common.types.KIID id = 1;
+
+  // Severity of the violation
+  DrcSeverity severity = 2;
+
+  // Error type/code
+  int32 error_code = 3;
+
+  // Human-readable error type name
+  string error_type = 4;
+
+  // Detailed error message
+  string message = 5;
+
+  // Position of the violation marker
+  kiapi.common.types.Vector2 position = 6;
+
+  // IDs of items involved in the violation
+  repeated kiapi.common.types.KIID items = 7;
+}
+
+message DRCViolationsResponse
+{
+  repeated DRCViolation violations = 1;
+}
+
+// Clear DRC markers from the board
+// Returns Empty
+message ClearDRCMarkers
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+
+  // If true, clear errors and warnings
+  bool clear_violations = 2;
+
+  // If true, clear exclusions (user-marked items to ignore)
+  bool clear_exclusions = 3;
+}
+
+/*
+ * Design Rules
+ */
+
+// Board design rules/constraints
+message BoardDesignRules
+{
+  // Copper clearances (in nanometers)
+  int64 min_clearance = 1;
+  int64 min_track_width = 2;
+  int64 min_connection = 3;  // For zone connections
+
+  // Via constraints
+  int64 min_via_diameter = 4;
+  int64 min_via_drill = 5;
+  int64 min_via_annular_width = 6;
+
+  // Microvia constraints
+  int64 min_microvia_diameter = 7;
+  int64 min_microvia_drill = 8;
+
+  // Hole constraints
+  int64 min_through_hole = 9;
+  int64 min_hole_to_hole = 10;
+  int64 hole_to_copper_clearance = 11;
+
+  // Silkscreen
+  int64 min_silk_clearance = 12;
+  int64 min_silk_text_height = 13;
+  int64 min_silk_text_thickness = 14;
+
+  // Board edge
+  int64 copper_edge_clearance = 15;
+
+  // Solder mask
+  int64 solder_mask_expansion = 16;
+  int64 solder_mask_min_width = 17;
+  int64 solder_mask_to_copper_clearance = 18;
+  bool allow_soldermask_bridges_in_fps = 22;
+  bool tent_vias_front = 23;
+  bool tent_vias_back = 24;
+
+  // Solder paste
+  int64 solder_paste_margin = 19;
+  double solder_paste_margin_ratio = 20;
+
+  // Minimum resolved spokes for thermals
+  int32 min_resolved_spokes = 21;
+
+  // Arc/Circle Approximations
+  int64 max_error = 25;  // Maximum allowed deviation when approximating arcs/circles (nm)
+
+  // Zone Fill Strategy
+  bool allow_external_fillets = 26;  // Allow fillets/chamfers outside zone outline
+
+  // Length Tuning
+  bool include_stackup_in_length = 27;  // Include stackup height in track length calculations
+}
+
+// Get design rules
+// Returns DesignRulesResponse
+message GetDesignRules
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+}
+
+message DesignRulesResponse
+{
+  BoardDesignRules rules = 1;
+}
+
+// Set design rules
+// Returns DesignRulesResponse with the updated rules
+message SetDesignRules
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+  BoardDesignRules rules = 2;
+}
+
+/*
+ * DRC Settings
+ */
+
+// DRC check severity setting
+message DRCCheckSeverity
+{
+  string check_name = 1;      // DRC check name (e.g., "clearance", "track_width")
+  DrcSeverity severity = 2;   // Severity level
+}
+
+// DRC settings configuration
+message DRCSettingsData
+{
+  // Severity overrides for individual DRC checks
+  repeated DRCCheckSeverity check_severities = 1;
+}
+
+// Get DRC settings
+// Returns DRCSettingsResponse
+message GetDRCSettings
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+}
+
+message DRCSettingsResponse
+{
+  DRCSettingsData settings = 1;
+}
+
+// Set DRC settings
+// Returns Empty
+message SetDRCSettings
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+  DRCSettingsData settings = 2;
+}
+
+/*
+ * Grid Settings
+ */
+
+// Grid style enum
+enum GridStyle
+{
+  GS_UNKNOWN = 0;
+  GS_DOTS = 1;
+  GS_LINES = 2;
+  GS_SMALL_CROSS = 3;
+}
+
+// PCB grid settings
+message PCBGridSettings
+{
+  int64 grid_size_x_nm = 1;   // Grid X spacing in nanometers
+  int64 grid_size_y_nm = 2;   // Grid Y spacing in nanometers
+  bool show_grid = 3;
+  GridStyle style = 4;
+}
+
+// Get PCB grid settings
+// Returns PCBGridSettingsResponse
+message GetPCBGridSettings
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+}
+
+message PCBGridSettingsResponse
+{
+  PCBGridSettings settings = 1;
+}
+
+// Set PCB grid settings
+// Returns Empty
+message SetPCBGridSettings
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+  optional int64 grid_size_x_nm = 2;   // Grid X spacing in nanometers
+  optional int64 grid_size_y_nm = 3;   // Grid Y spacing in nanometers
+  optional bool show_grid = 4;
+  optional GridStyle style = 5;
+}
+
+/*
+ * Graphics Defaults (Set)
+ */
+
+// Set default graphics settings per layer class
+// Returns GraphicsDefaultsResponse with the updated defaults
+message SetGraphicsDefaults
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+  kiapi.board.GraphicsDefaults defaults = 2;
+}
+
+/*
+ * Update PCB from Schematic
+ */
+
+// Options for updating PCB from schematic
+message UpdatePCBFromSchematicOptions
+{
+  // Footprint matching strategy: true = match by UUID, false = match by reference
+  bool lookup_by_timestamp = 1;
+
+  // Footprint handling
+  bool replace_footprints = 2;        // Replace footprints when library ID doesn't match
+  bool delete_unused_footprints = 3;  // Remove footprints not in schematic
+  bool override_locks = 4;            // Allow changes to locked footprints
+
+  // Field synchronization
+  bool update_fields = 5;             // Sync custom field values from schematic
+  bool remove_extra_fields = 6;       // Remove fields not present in schematic
+
+  // Groups (design blocks)
+  bool transfer_groups = 7;           // Copy group membership from schematic
+}
+
+// Request to update PCB from schematic
+// Returns UpdatePCBFromSchematicResponse
+message UpdatePCBFromSchematic
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+
+  // If not specified, uses the schematic associated with the board's project
+  kiapi.common.types.DocumentSpecifier schematic = 2;
+
+  UpdatePCBFromSchematicOptions options = 3;
+
+  // If true, only preview changes without applying
+  bool dry_run = 4;
+}
+
+// Single change item in the update report
+message PCBUpdateChange
+{
+  enum ChangeType
+  {
+    CT_UNKNOWN = 0;
+    CT_FOOTPRINT_ADDED = 1;
+    CT_FOOTPRINT_REPLACED = 2;
+    CT_FOOTPRINT_DELETED = 3;
+    CT_FOOTPRINT_UPDATED = 4;       // Fields/value changed
+    CT_NET_CHANGED = 5;
+    CT_PAD_NET_CHANGED = 6;
+    CT_GROUP_ADDED = 7;
+    CT_WARNING = 8;
+    CT_ERROR = 9;
+  }
+
+  ChangeType type = 1;
+  string reference = 2;              // Component reference (U1, R5, etc.)
+  string message = 3;                // Human-readable description
+  kiapi.common.types.KIID item_id = 4; // Affected item ID (if applicable)
+}
+
+// Response from UpdatePCBFromSchematic
+message UpdatePCBFromSchematicResponse
+{
+  kiapi.common.types.CommandStatus status = 1;
+
+  // Summary counts
+  int32 footprints_added = 2;
+  int32 footprints_replaced = 3;
+  int32 footprints_deleted = 4;
+  int32 footprints_updated = 5;
+  int32 nets_changed = 6;
+  int32 warnings = 7;
+  int32 errors = 8;
+
+  // Detailed change log
+  repeated PCBUpdateChange changes = 9;
+
+  // true if update was applied (false for dry_run)
+  bool changes_applied = 10;
+}
+
+/*
+ * Footprint Library Browsing
+ */
+
+// Basic footprint metadata
+message FootprintInfo
+{
+  string name = 1;              // Footprint name (e.g., "R_0402_1005Metric")
+  string lib_id = 2;            // Full lib_id (e.g., "Resistor_SMD:R_0402_1005Metric")
+  string description = 3;       // Description text
+  string keywords = 4;          // Keywords for searching
+  int32 pad_count = 5;          // Number of pads
+  int32 unique_pad_count = 6;   // Unique pad shapes
+}
+
+// Pad information for detailed footprint view
+message PadInfo
+{
+  string number = 1;                   // Pad number/name
+  string net_name = 2;                 // Net name (empty for library footprint)
+  kiapi.common.types.Vector2 position = 3;  // Relative position
+  kiapi.common.types.Vector2 size = 4;      // Pad size
+  int32 shape = 5;                     // PAD_SHAPE enum
+}
+
+// Get all footprints in a library
+// Returns GetLibraryFootprintsResponse
+message GetLibraryFootprints
+{
+  string library_name = 1;  // Library nickname (e.g., "Resistor_SMD")
+}
+
+message GetLibraryFootprintsResponse
+{
+  repeated FootprintInfo footprints = 1;
+}
+
+// Search footprints across libraries
+// Returns SearchLibraryFootprintsResponse
+message SearchLibraryFootprints
+{
+  string query = 1;                    // Search term
+  repeated string libraries = 2;       // Libraries to search (empty = all)
+  int32 max_results = 3;               // Limit results (0 = unlimited)
+}
+
+message SearchLibraryFootprintsResponse
+{
+  repeated FootprintInfo results = 1;
+}
+
+// Get detailed footprint info
+// Returns GetFootprintInfoResponse
+message GetFootprintInfo
+{
+  string lib_id = 1;  // "Library:Footprint" format
+}
+
+message GetFootprintInfoResponse
+{
+  FootprintInfo info = 1;
+  repeated PadInfo pads = 2;           // Pad details
+  kiapi.common.types.Box2 bounding_box = 3;  // Footprint bounds
+  string doc_link = 4;                 // Documentation URL
+}
+
+/*
+ * Ratsnest Query
+ */
+
+// Individual ratsnest line (unrouted connection)
+message RatsnestLine
+{
+  int32 net_code = 1;
+  string net_name = 2;
+  kiapi.common.types.KIID pad1_id = 3;    // Source pad/via
+  kiapi.common.types.KIID pad2_id = 4;    // Destination pad/via
+  kiapi.common.types.Vector2 start = 5;    // Start position
+  kiapi.common.types.Vector2 end = 6;      // End position
+  int64 length = 7;                        // Manhattan distance (nm)
+}
+
+// Get unrouted connections (ratsnest lines)
+// Returns GetRatsnestResponse
+message GetRatsnest
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+  repeated int32 net_codes = 2;        // Filter by nets (empty = all)
+  bool include_zones = 3;              // Include zone connections
+}
+
+message GetRatsnestResponse
+{
+  repeated RatsnestLine lines = 1;
+  int32 total_unrouted = 2;            // Total unrouted count
+}
+
+// Information about unrouted nets
+message UnroutedNetInfo
+{
+  int32 net_code = 1;
+  string net_name = 2;
+  int32 total_pads = 3;                // Total pads on net
+  int32 routed_connections = 4;        // Completed connections
+  int32 unrouted_connections = 5;      // Remaining connections
+  bool is_complete = 6;                // Fully routed?
+}
+
+// Get nets with incomplete routing
+// Returns GetUnroutedNetsResponse
+message GetUnroutedNets
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+}
+
+message GetUnroutedNetsResponse
+{
+  repeated UnroutedNetInfo nets = 1;
+}
+
+// Connectivity status for a single item
+message ItemConnectivity
+{
+  kiapi.common.types.KIID item_id = 1;
+  int32 net_code = 2;
+  string net_name = 3;
+  repeated kiapi.common.types.KIID connected_items = 4;   // Items electrically connected
+  repeated kiapi.common.types.KIID unconnected_items = 5; // Items on same net but not connected
+}
+
+// Get connectivity status for specific items
+// Returns GetConnectivityStatusResponse
+message GetConnectivityStatus
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+  repeated kiapi.common.types.KIID item_ids = 2;    // Pads/vias to check
+}
+
+message GetConnectivityStatusResponse
+{
+  repeated ItemConnectivity items = 1;
+}
+
+/*
+ * Group Operations
+ */
+
+// Group information
+message GroupInfo
+{
+  kiapi.common.types.KIID id = 1;
+  string name = 2;
+  repeated kiapi.common.types.KIID member_ids = 3;
+  bool locked = 4;
+}
+
+// Get all groups on board
+// Returns GetGroupsResponse
+message GetGroups
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+}
+
+message GetGroupsResponse
+{
+  repeated GroupInfo groups = 1;
+}
+
+// Create a new group
+// Returns CreateGroupResponse
+message CreateGroup
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+  string name = 2;
+  repeated kiapi.common.types.KIID member_ids = 3;  // Items to add to group
+}
+
+message CreateGroupResponse
+{
+  kiapi.common.types.KIID group_id = 1;
+  GroupInfo group = 2;
+}
+
+// Delete a group (does not delete members)
+// Returns DeleteGroupResponse
+message DeleteGroup
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+  kiapi.common.types.KIID group_id = 2;
+  bool ungroup_members = 3;           // If true, remove items from group first
+}
+
+message DeleteGroupResponse
+{
+  bool success = 1;
+}
+
+// Add items to existing group
+// Returns AddToGroupResponse
+message AddToGroup
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+  kiapi.common.types.KIID group_id = 2;
+  repeated kiapi.common.types.KIID item_ids = 3;
+}
+
+message AddToGroupResponse
+{
+  int32 items_added = 1;
+  repeated kiapi.common.types.KIID failed_ids = 2;  // Items that couldn't be added
+}
+
+// Remove items from group
+// Returns RemoveFromGroupResponse
+message RemoveFromGroup
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+  kiapi.common.types.KIID group_id = 2;
+  repeated kiapi.common.types.KIID item_ids = 3;
+}
+
+message RemoveFromGroupResponse
+{
+  int32 items_removed = 1;
+}
+
+// Get members of a specific group
+// Returns GetGroupMembersResponse
+message GetGroupMembers
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+  kiapi.common.types.KIID group_id = 2;
+}
+
+message GetGroupMembersResponse
+{
+  repeated google.protobuf.Any items = 1;  // Full item data
+}
+
+/*
+ * Zone Hatch Offsets
+ * Per-layer hatching offset settings for zone fills (Board Setup -> Zone Hatch Offsets)
+ */
+
+// Get zone hatch offsets for all copper layers
+// Returns ZoneHatchOffsetsResponse
+message GetZoneHatchOffsets
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+}
+
+// Zone hatch offset for a single layer
+message ZoneHatchOffset
+{
+  kiapi.board.types.BoardLayer layer = 1;
+  kiapi.common.types.Vector2 offset = 2;  // Hatching offset X/Y in nanometers
+}
+
+message ZoneHatchOffsetsResponse
+{
+  repeated ZoneHatchOffset layer_offsets = 1;
+}
+
+// Set zone hatch offsets for specific layers
+// Returns ZoneHatchOffsetsResponse with the updated offsets
+message SetZoneHatchOffsets
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+  repeated ZoneHatchOffset layer_offsets = 2;  // Only specified layers are updated
+}
+
+/*
+ * Dimension Defaults
+ * Default settings for new dimension objects (Board Setup -> Text & Graphics -> Defaults)
+ */
+
+// Units mode for dimensions
+enum DimensionUnitsMode
+{
+  DUM_AUTOMATIC = 0;  // Use current editor units
+  DUM_INCHES = 1;
+  DUM_MILS = 2;
+  DUM_MILLIMETERS = 3;
+}
+
+// Units display format for dimensions
+enum DimensionUnitsFormat
+{
+  DUF_NO_SUFFIX = 0;     // 1234.0
+  DUF_BARE_SUFFIX = 1;   // 1234.0 mm
+  DUF_PAREN_SUFFIX = 2;  // 1234.0 (mm)
+}
+
+// Precision (number of decimal places)
+enum DimensionPrecision
+{
+  DP_X = 0;       // 0 digits (integer)
+  DP_X_X = 1;     // 1 digit (0.0)
+  DP_X_XX = 2;    // 2 digits (0.00)
+  DP_X_XXX = 3;   // 3 digits (0.000)
+  DP_X_XXXX = 4;  // 4 digits (0.0000)
+  DP_X_XXXXX = 5; // 5 digits (0.00000)
+  DP_V_VV = 6;    // Variable: 0.00 / 0 / 0.0
+  DP_V_VVV = 7;   // Variable: 0.000 / 0 / 0.00
+  DP_V_VVVV = 8;  // Variable: 0.0000 / 0.0 / 0.000
+  DP_V_VVVVV = 9; // Variable: 0.00000 / 0.00 / 0.0000
+}
+
+// Text position mode for dimensions
+enum DimensionTextPosition
+{
+  DTP_OUTSIDE = 0;  // Text appears outside the dimension line
+  DTP_INLINE = 1;   // Text appears in line with the dimension line
+  DTP_MANUAL = 2;   // Text placement is manually set by user
+}
+
+// Get default settings for new dimension objects
+// Returns DimensionDefaultsResponse
+message GetDimensionDefaults
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+}
+
+message DimensionDefaultsResponse
+{
+  DimensionUnitsMode units_mode = 1;
+  DimensionUnitsFormat units_format = 2;
+  DimensionPrecision precision = 3;
+  bool suppress_zeroes = 4;
+  DimensionTextPosition text_position = 5;
+  bool keep_text_aligned = 6;
+  kiapi.common.types.Distance arrow_length = 7;
+  kiapi.common.types.Distance extension_offset = 8;
+}
+
+// Set default settings for new dimension objects
+// Returns DimensionDefaultsResponse with updated values
+message SetDimensionDefaults
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+  optional DimensionUnitsMode units_mode = 2;
+  optional DimensionUnitsFormat units_format = 3;
+  optional DimensionPrecision precision = 4;
+  optional bool suppress_zeroes = 5;
+  optional DimensionTextPosition text_position = 6;
+  optional bool keep_text_aligned = 7;
+  optional kiapi.common.types.Distance arrow_length = 8;
+  optional kiapi.common.types.Distance extension_offset = 9;
+}
+
+/*
+ * Zone Defaults
+ * Default settings for new zones (Board Setup -> Text & Graphics -> Defaults)
+ */
+
+// Corner smoothing type for zones
+enum ZoneCornerSmoothing
+{
+  ZCS_NONE = 0;     // No smoothing
+  ZCS_CHAMFER = 1;  // Chamfered corners
+  ZCS_FILLET = 2;   // Filleted (rounded) corners
+}
+
+// Pad connection type for zones
+enum ZonePadConnection
+{
+  ZPC_INHERITED = 0;    // Inherit from pad settings
+  ZPC_NONE = 1;         // No connection (pads not covered)
+  ZPC_THERMAL = 2;      // Thermal relief
+  ZPC_SOLID = 3;        // Solid connection (full copper)
+  ZPC_THT_THERMAL = 4;  // Thermal for THT, solid for SMD
+}
+
+// Island removal mode for zones
+enum ZoneIslandRemoval
+{
+  ZIR_ALWAYS = 0;  // Always remove isolated islands
+  ZIR_NEVER = 1;   // Never remove isolated islands
+  ZIR_AREA = 2;    // Remove islands below minimum area
+}
+
+// Get default settings for new zones
+// Returns ZoneDefaultsResponse
+message GetZoneDefaults
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+}
+
+message ZoneDefaultsResponse
+{
+  string name = 1;                              // Default zone name (usually empty)
+  bool locked = 2;                              // Default locked state
+  uint32 priority = 3;                          // Default priority (0 = lowest)
+  ZoneCornerSmoothing corner_smoothing = 4;     // Corner smoothing type
+  kiapi.common.types.Distance corner_radius = 5; // Corner radius for chamfer/fillet
+  kiapi.common.types.Distance clearance = 6;    // Zone clearance
+  kiapi.common.types.Distance min_thickness = 7; // Minimum fill width
+  ZonePadConnection pad_connection = 8;         // Pad connection type
+  kiapi.common.types.Distance thermal_gap = 9;  // Thermal relief gap
+  kiapi.common.types.Distance thermal_spoke_width = 10; // Thermal relief spoke width
+  ZoneIslandRemoval island_removal = 11;        // Island removal mode
+  int64 min_island_area_nm2 = 12;               // Minimum island area (for ZIR_AREA)
+}
+
+// Set default settings for new zones
+// Returns ZoneDefaultsResponse with updated values
+message SetZoneDefaults
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+  optional string name = 2;
+  optional bool locked = 3;
+  optional uint32 priority = 4;
+  optional ZoneCornerSmoothing corner_smoothing = 5;
+  optional kiapi.common.types.Distance corner_radius = 6;
+  optional kiapi.common.types.Distance clearance = 7;
+  optional kiapi.common.types.Distance min_thickness = 8;
+  optional ZonePadConnection pad_connection = 9;
+  optional kiapi.common.types.Distance thermal_gap = 10;
+  optional kiapi.common.types.Distance thermal_spoke_width = 11;
+  optional ZoneIslandRemoval island_removal = 12;
+  optional int64 min_island_area_nm2 = 13;
+}
+
+/*
+ * Pre-defined Sizes
+ * Track widths, via sizes, and differential pair dimensions (Design Rules -> Pre-defined Sizes)
+ */
+
+// A predefined via size (diameter and drill)
+message ViaDimension
+{
+  int64 diameter_nm = 1;  // Via pad diameter in nanometers
+  int64 drill_nm = 2;     // Via drill diameter in nanometers
+}
+
+// A predefined differential pair dimension
+message DiffPairDimension
+{
+  int64 width_nm = 1;     // Track width in nanometers
+  int64 gap_nm = 2;       // Gap between tracks in nanometers
+  int64 via_gap_nm = 3;   // Gap between vias in nanometers
+}
+
+// Collection of all predefined sizes
+message PreDefinedSizes
+{
+  repeated int64 track_widths_nm = 1;           // List of predefined track widths
+  repeated ViaDimension via_sizes = 2;          // List of predefined via dimensions
+  repeated DiffPairDimension diff_pairs = 3;    // List of predefined diff pair dimensions
+}
+
+// Get all predefined sizes
+// Returns PreDefinedSizesResponse
+message GetPreDefinedSizes
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+}
+
+message PreDefinedSizesResponse
+{
+  PreDefinedSizes sizes = 1;
+}
+
+// Set (replace) all predefined sizes
+// Returns PreDefinedSizesResponse with the updated sizes
+message SetPreDefinedSizes
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+  PreDefinedSizes sizes = 2;
+}
+
+/*
+ * Teardrop Settings
+ * Default properties for teardrops (Design Rules -> Teardrops)
+ */
+
+// Parameters for a single teardrop target type (round, rect, or track)
+// All fields are optional to support partial updates in SetTeardropSettings
+message TeardropParameters
+{
+  optional double best_length_ratio = 1;        // Best length as ratio of pad size (e.g., 0.5 = 50%)
+  optional int64 max_length_nm = 2;             // Maximum length in nanometers
+  optional double best_width_ratio = 3;         // Best width as ratio of pad size (e.g., 1.0 = 100%)
+  optional int64 max_width_nm = 4;              // Maximum width in nanometers
+  optional bool curved_edges = 5;               // Use curved edges
+  optional bool allow_two_segments = 6;         // Allow teardrop to span two track segments
+  optional bool prefer_zone_connection = 7;     // Prefer zone connection (for pads in zones)
+  optional double track_width_limit_ratio = 8;  // Track width limit as ratio (e.g., 0.9 = 90%)
+}
+
+// All teardrop settings (global + per-type parameters)
+message TeardropSettings
+{
+  // Global target enable flags
+  bool target_vias = 1;                // Create teardrops for vias
+  bool target_pth_pads = 2;            // Create teardrops for PTH pads
+  bool target_smd_pads = 3;            // Create teardrops for SMD pads
+  bool target_track_to_track = 4;      // Create teardrops at track-to-track junctions
+  bool round_shapes_only = 5;          // Only apply to round shapes
+
+  // Per-type parameters
+  TeardropParameters round_shapes = 6;    // For round pads/vias
+  TeardropParameters rect_shapes = 7;     // For rectangular pads
+  TeardropParameters track_to_track = 8;  // For track-to-track junctions
+}
+
+// Get teardrop settings
+// Returns TeardropSettingsResponse
+message GetTeardropSettings
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+}
+
+message TeardropSettingsResponse
+{
+  TeardropSettings settings = 1;
+}
+
+// Set teardrop settings
+// Returns TeardropSettingsResponse with updated settings
+message SetTeardropSettings
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+
+  // Global target enable flags (optional - only set if provided)
+  optional bool target_vias = 2;
+  optional bool target_pth_pads = 3;
+  optional bool target_smd_pads = 4;
+  optional bool target_track_to_track = 5;
+  optional bool round_shapes_only = 6;
+
+  // Per-type parameters (optional - only update provided types)
+  optional TeardropParameters round_shapes = 7;
+  optional TeardropParameters rect_shapes = 8;
+  optional TeardropParameters track_to_track = 9;
+}
+
+/*
+ * Length-Tuning Pattern Settings
+ * Default settings for meander patterns (Design Rules -> Length-tuning Patterns)
+ */
+
+// Corner style for meander patterns
+enum MeanderCornerStyle
+{
+  MCS_ROUND = 0;   // Rounded corners (fillet)
+  MCS_CHAMFER = 1; // Chamfered corners (45 degree)
+}
+
+// Settings for a single meander pattern type
+// All fields are optional to support partial updates in SetLengthTuningPatternSettings
+message MeanderPatternSettings
+{
+  optional int64 min_amplitude_nm = 1;          // Minimum amplitude (A) in nanometers
+  optional int64 max_amplitude_nm = 2;          // Maximum amplitude (A) in nanometers
+  optional int64 spacing_nm = 3;                // Spacing (s) in nanometers
+  optional MeanderCornerStyle corner_style = 4; // Corner style (round/chamfer)
+  optional int32 corner_radius_percent = 5;     // Radius (r) as percentage (0-100)
+  optional bool single_sided = 6;               // Place meanders on one side only
+}
+
+// All length-tuning pattern settings
+message LengthTuningPatternSettings
+{
+  MeanderPatternSettings single_track = 1;    // Single track tuning
+  MeanderPatternSettings diff_pair = 2;       // Differential pair tuning
+  MeanderPatternSettings diff_pair_skew = 3;  // Differential pair skew tuning
+}
+
+// Get length-tuning pattern settings
+// Returns LengthTuningPatternSettingsResponse
+message GetLengthTuningPatternSettings
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+}
+
+message LengthTuningPatternSettingsResponse
+{
+  LengthTuningPatternSettings settings = 1;
+}
+
+// Set length-tuning pattern settings
+// Returns LengthTuningPatternSettingsResponse with updated settings
+message SetLengthTuningPatternSettings
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+
+  // Per-type settings (optional - only update provided types)
+  optional MeanderPatternSettings single_track = 2;
+  optional MeanderPatternSettings diff_pair = 3;
+  optional MeanderPatternSettings diff_pair_skew = 4;
+}
+
+/*
+ * Tuning Profiles
+ * Named profiles for impedance/delay tuning (Design Rules -> Tuning Profiles)
+ */
+
+// Tuning profile type
+enum TuningProfileType
+{
+  TPT_SINGLE = 0;       // Single-ended track
+  TPT_DIFFERENTIAL = 1; // Differential pair
+}
+
+// Track propagation delay entry (per-layer settings)
+message TrackPropagationEntry
+{
+  kiapi.board.types.BoardLayer signal_layer = 1;         // Signal layer
+  kiapi.board.types.BoardLayer top_reference_layer = 2;  // Top reference plane
+  kiapi.board.types.BoardLayer bottom_reference_layer = 3; // Bottom reference plane
+  int64 width_nm = 4;                // Track width in nanometers
+  int64 diff_pair_gap_nm = 5;        // Differential pair gap in nanometers (0 for single-ended)
+  int32 delay_ps_per_mm = 6;         // Delay in picoseconds per millimeter
+  bool enable_time_domain = 7;       // Enable time domain tuning for this entry
+}
+
+// Via propagation delay override entry
+message ViaPropagationOverride
+{
+  kiapi.board.types.BoardLayer signal_layer_from = 1;  // Signal start layer
+  kiapi.board.types.BoardLayer signal_layer_to = 2;    // Signal end layer
+  kiapi.board.types.BoardLayer via_layer_from = 3;     // Via start layer
+  kiapi.board.types.BoardLayer via_layer_to = 4;       // Via end layer
+  int32 delay_ps = 5;                                  // Delay in picoseconds
+}
+
+// A single tuning profile
+message TuningProfile
+{
+  string name = 1;                                      // Profile name
+  TuningProfileType type = 2;                           // Single or differential
+  double target_impedance_ohms = 3;                     // Target impedance in ohms
+  bool enable_time_domain_tuning = 4;                   // Enable time domain tuning
+  int32 via_propagation_delay_ps = 5;                   // Default via propagation delay in picoseconds
+  repeated TrackPropagationEntry track_entries = 6;     // Per-layer track settings
+  repeated ViaPropagationOverride via_overrides = 7;    // Via delay overrides
+}
+
+// Collection of all tuning profiles
+message TuningProfiles
+{
+  repeated TuningProfile profiles = 1;
+}
+
+// Get all tuning profiles
+// Returns TuningProfilesResponse
+message GetTuningProfiles
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+}
+
+message TuningProfilesResponse
+{
+  TuningProfiles profiles = 1;
+}
+
+// Set (replace) all tuning profiles
+// Returns TuningProfilesResponse with the updated profiles
+message SetTuningProfiles
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+  TuningProfiles profiles = 2;
+}
+
+
+// ============================================================================
+// Component Classes
+// ============================================================================
+
+// Condition type for component class assignment rules
+enum ComponentClassConditionType
+{
+  CCCT_REFERENCE = 0;       // Match by reference designator pattern
+  CCCT_FOOTPRINT = 1;       // Match by footprint name pattern
+  CCCT_SIDE = 2;            // Match by board side (Top/Bottom)
+  CCCT_ROTATION = 3;        // Match by rotation angle
+  CCCT_FOOTPRINT_FIELD = 4; // Match by footprint field value
+  CCCT_CUSTOM = 5;          // Custom expression
+  CCCT_SHEET_NAME = 6;      // Match by hierarchical sheet name
+}
+
+// How multiple conditions are combined
+enum ComponentClassConditionsOperator
+{
+  CCCO_ALL = 0;  // All conditions must match (AND)
+  CCCO_ANY = 1;  // Any condition can match (OR)
+}
+
+// A single condition in a component class assignment rule
+message ComponentClassCondition
+{
+  ComponentClassConditionType type = 1;
+  string primary_data = 2;    // Main match data (e.g., pattern, field name)
+  string secondary_data = 3;  // Secondary data (e.g., field value for FOOTPRINT_FIELD)
+}
+
+// A component class assignment rule
+message ComponentClassAssignment
+{
+  string component_class = 1;                       // Name of the component class to assign
+  repeated ComponentClassCondition conditions = 2;  // Conditions that must match
+  ComponentClassConditionsOperator operator = 3;    // How conditions are combined (ALL/ANY)
+}
+
+// Component class settings
+message ComponentClassSettings
+{
+  bool enable_sheet_component_classes = 1;              // Assign component class per sheet
+  repeated ComponentClassAssignment assignments = 2;    // Custom assignment rules
+}
+
+// Get component class settings
+// Returns ComponentClassSettingsResponse
+message GetComponentClassSettings
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+}
+
+message ComponentClassSettingsResponse
+{
+  ComponentClassSettings settings = 1;
+}
+
+// Set component class settings
+// Returns ComponentClassSettingsResponse with the updated settings
+message SetComponentClassSettings
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+  ComponentClassSettings settings = 2;
+}
+
+
+// ============================================================================
+// Custom DRC Rules
+// ============================================================================
+
+// Get custom DRC rules text
+// Returns CustomRulesResponse
+message GetCustomRules
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+}
+
+message CustomRulesResponse
+{
+  string rules_text = 1;  // The full text content of the .kicad_dru file
+}
+
+// Set custom DRC rules text
+// Returns CustomRulesResponse with the updated rules
+message SetCustomRules
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+  string rules_text = 2;  // The full text content for the .kicad_dru file
+}

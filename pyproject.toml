@@ -1,0 +1,90 @@
+[project]
+name = "zeo-mcp"
+version = "0.6.3"
+description = "Zeo MCP Server — connect Claude Code to KiCad for schematic and PCB design"
+authors = [
+    { name = "The KiCad Development Team" },
+]
+license = "MIT"
+readme = "README.md"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Topic :: Scientific/Engineering :: Electronic Design Automation (EDA)",
+    "Typing :: Typed",
+]
+requires-python = ">=3.10"
+dependencies = [
+    "protobuf >=6.33",
+    "pynng >=0.8.0",
+    "typing_extensions >=4.13.2 ; python_version < '3.13'",
+    "mcp >=1.0.0",
+    "Pillow >=10.0",
+]
+
+[project.scripts]
+zeo-mcp = "kipy.mcp:main"
+
+[project.urls]
+homepage = "https://zeo.dev"
+repository = "https://github.com/zeodotdev/zeo-python"
+issues = "https://github.com/zeodotdev/zeo-python/issues"
+
+[tool.poetry]
+packages = [
+    { include = "kipy" },
+]
+# Explicitly include generated files (they're in .gitignore but needed at runtime)
+include = [
+    { path = "kipy/proto/**/*_pb2.py", format = ["sdist", "wheel"] },
+    { path = "kipy/proto/**/*_pb2.pyi", format = ["sdist", "wheel"] },
+    { path = "kipy/kicad_api_version.py", format = ["sdist", "wheel"] },
+]
+
+[tool.poetry.dependencies]
+python = "<4.0,>=3.10"
+
+[tool.poetry.group.dev.dependencies]
+nox = "^2025.2.9"
+ruff = "^0.9"
+protoletariat = "^3.3"
+mypy-protobuf = "^3.6"
+mypy = "^1.14.0"
+setuptools = "^75.6.0"
+sphinx = "7.4"
+furo = "^2024.8.6"
+pytest = "^8.3.4"
+
+[tool.poetry.requires-plugins]
+poetry-plugin-export = ">=1.8"
+
+[build-system]
+requires = [
+    "poetry-core>=2.0.0,<3.0.0",
+    "protoletariat == 3.3.*",
+    "setuptools",
+    "mypy-protobuf == 3.6.*"
+]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.build]
+generate-setup-file = false
+
+[tool.ruff]
+exclude = [
+    "kipy/proto"
+]
+
+[tool.mypy]
+exclude = [
+    "kipy/proto"
+]
+
+[[tool.mypy.overrides]]
+module = "pynng"
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = [
+    "tests",
+]

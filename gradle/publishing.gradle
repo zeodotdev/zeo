@@ -1,0 +1,145 @@
+apply plugin: "com.vanniktech.maven.publish"
+
+// -----------------------------------------------------------------------------
+// Collect publishing information
+// -----------------------------------------------------------------------------
+ext.publishing = [:]
+
+apply from: 'gradle/project-info.gradle'
+
+// -----------------------------------------------------------------------------
+// Performs publishing
+// -----------------------------------------------------------------------------
+
+tasks.register('javadocJar', Jar) {
+    dependsOn javadoc
+    archiveClassifier = 'javadoc'
+    from javadoc.destinationDir
+    
+    // Only build when publishing or explicitly requested
+    onlyIf {
+        gradle.taskGraph.hasTask(':publish') || 
+        gradle.taskGraph.hasTask(':publishToMavenLocal') ||
+        gradle.taskGraph.hasTask(':javadocJar')
+    }
+}
+
+// create one jar for the source files
+tasks.register('sourcesJar', Jar) {
+    dependsOn classes
+    archiveClassifier = 'sources'
+    from sourceSets.main.allSource
+    
+    // Only build when publishing or explicitly requested
+    onlyIf {
+        gradle.taskGraph.hasTask(':publish') || 
+        gradle.taskGraph.hasTask(':publishToMavenLocal') ||
+        gradle.taskGraph.hasTask(':sourcesJar')
+    }
+}
+
+
+// Define the POM configuration
+def pomConfig = {
+    name ext.publishing.pomName
+    description ext.publishing.desc
+    url ext.publishing.websiteUrl
+    inceptionYear ext.publishing.inceptionYear
+    licenses {
+        license([:]) {
+            name ext.publishing.license
+            url ext.publishing.licenseUrl
+            distribution 'repo'
+        }
+    }
+    scm {
+        url ext.publishing.vcsUrl
+        connection ext.publishing.vcsUrl
+        developerConnection ext.publishing.vcsUrl
+    }
+    developers {
+        developer {
+            id ext.publishing.developerNameAlias
+            name ext.publishing.developerName
+        }
+    }
+}
+
+// Verify that the version is not a SNAPSHOT version (because then it can't be published to Maven Central)
+tasks.register('verifyVersion') {
+    doLast {
+        if (version.toString().toUpperCase().contains("SNAPSHOT")) {
+            throw new GradleException("Can't publish a SNAPSHOT version to Maven Central.")
+        }
+    }
+}
+
+// Set up the publishing for the maven-publish plugin
+publishing {
+    publications {
+        mavenCustom(MavenPublication) {
+            groupId = publishing.groupId
+            artifactId = publishing.artifactId
+            version = publishing.versionId
+            from components.java
+            artifact sourcesJar
+            artifact javadocJar
+            afterEvaluate {
+                artifact executableJar
+            }
+
+            pom.withXml {
+                def root = asNode()
+                root.appendNode 'description', publishing.desc
+                root.children().last() + pomConfig
+            }
+        }
+    }
+    repositories {
+        maven {
+            name = 'OSSRH'
+            url = uri("https://s01.oss.sonatype.org/service/local/staging/deploy/maven2/")
+
+            credentials {
+                username = project.findProperty("sonatypeUsername") ?: System.getenv("SONATYPE_USERNAME")
+                password = project.findProperty("sonatypePassword") ?: System.getenv("SONATYPE_PASSWORD")
+            }
+        }
+    }
+}
+
+// Define the publish task
+tasks.named("publish").configure {
+    dependsOn verifyVersion
+}
+
+// Configuring the POM (Project Object Model) for Maven Central publication
+mavenPublishing {
+    coordinates(publishing.groupId, publishing.artifactId, publishing.versionId)
+
+    pom {
+        name = publishing.pomName
+        description = publishing.desc
+        inceptionYear = publishing.inceptionYear
+        url = publishing.websiteUrl
+        licenses {
+            license {
+                name = publishing.license
+                url = publishing.licenseUrl
+                distribution = "repo"
+            }
+        }
+        developers {
+            developer {
+                id = publishing.developerAlias
+                name = publishing.developerName
+                email = publishing.developerEmail
+            }
+        }
+        scm {
+            url = publishing.vcsUrl
+            connection = publishing.vcsUrl
+            developerConnection = publishing.vcsUrl
+        }
+    }
+}

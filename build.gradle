@@ -1,0 +1,278 @@
+import com.vanniktech.maven.publish.SonatypeHost
+
+import java.time.Duration
+
+plugins {
+    id 'java'
+    id 'jvm-test-suite'
+    id 'signing'
+    id 'maven-publish'
+    id "com.vanniktech.maven.publish" version "0.31.0"
+    id 'net.nemerosa.versioning' version '3.1.0'
+    id 'com.github.ben-manes.versions' version '0.52.0'
+    id 'org.openrewrite.rewrite' version '7.22.0'
+}
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_25
+    targetCompatibility = JavaVersion.VERSION_25
+}
+
+java.toolchain {
+    languageVersion = JavaLanguageVersion.of(25)
+}
+
+[compileJava, compileTestJava]*.options*.encoding = 'UTF-8'
+
+tasks.withType(JavaCompile).configureEach {
+    options.compilerArgs << '-Xlint:unchecked' << '-Xlint:deprecation'
+}
+
+// javadoc is way too strict for my taste.
+tasks.withType(Javadoc).configureEach {
+    options.addStringOption 'encoding', 'UTF-8'
+    options.addStringOption 'Xdoclint:none', '-quiet'
+}
+
+testing {
+    suites {
+        test {
+            useJUnitJupiter()
+        }
+
+        integrationTest(JvmTestSuite) {
+            dependencies {
+                implementation project()
+            }
+
+            targets {
+                all {
+                    testTask.configure {
+                        shouldRunAfter(test)
+                    }
+                }
+            }
+        }
+    }
+}
+
+tasks.named('check') {
+    dependsOn(testing.suites.integrationTest)
+}
+
+repositories {
+    flatDir {
+        dirs 'libs'
+    }
+
+    mavenCentral()
+    // Adding mirror repositories
+    maven {
+        name = 'MirrorRepo1'
+        url = 'https://repo1.maven.org/maven2' // Replace with actual mirror URL
+    }
+
+    google()
+}
+
+dependencies {
+    // https://mvnrepository.com/artifact/javax.help/javahelp
+    //implementation group: 'javax.help', name: 'javahelp', version: '2.0.05'
+
+    // https://mvnrepository.com/artifact/org.apache.logging.log4j
+    implementation 'org.apache.logging.log4j:log4j-core:2.25.2'
+    implementation 'org.apache.logging.log4j:log4j-api:2.25.2'
+
+    // https://github.com/google/gson
+    implementation 'com.google.code.gson:gson:2.13.2'
+
+    // https://segment.com/docs - this one doesn't work because it's missing the Java 9+ module-info.class
+    //implementation 'com.segment.analytics.java:analytics:+'
+
+    // Add Jakarta Inject API dependency
+    implementation 'jakarta.inject:jakarta.inject-api:2.0.1'
+    implementation 'jakarta.annotation:jakarta.annotation-api:3.0.0'
+    implementation 'jakarta.validation:jakarta.validation-api:3.1.1'
+    implementation 'jakarta.activation:jakarta.activation-api:2.1.4'
+    implementation 'jakarta.xml.bind:jakarta.xml.bind-api:4.0.4'
+
+    // Add Jersey dependencies
+    implementation 'org.glassfish.jersey.core:jersey-common:4.0.0'
+    implementation 'org.glassfish.jersey.core:jersey-client:4.0.0'
+    implementation 'org.glassfish.jersey.core:jersey-server:4.0.0'
+    implementation 'org.glassfish.jersey.inject:jersey-hk2:4.0.0'
+    implementation 'org.glassfish.jersey.media:jersey-media-json-binding:4.0.0'
+    implementation 'org.glassfish.jersey.media:jersey-media-sse:4.0.0'
+    implementation 'org.glassfish.jersey.media:jersey-media-json-jackson:4.0.0'
+    implementation 'org.glassfish.jersey.containers:jersey-container-servlet:4.0.0'
+    implementation 'org.glassfish.jaxb:jaxb-runtime:4.0.6'
+
+    // Add Jetty dependencies
+    implementation 'org.eclipse.jetty.ee10:jetty-ee10-servlet:12.1.4'
+    implementation 'org.eclipse.jetty:jetty-server:12.1.4'
+    implementation 'org.eclipse.jetty:jetty-util:12.1.4'
+    implementation 'org.eclipse.jetty:jetty-security:12.1.4'
+
+    // Add SLF4J API and binding dependencies for Jersey logging
+    implementation 'org.slf4j:slf4j-api:2.0.17'
+    implementation 'org.slf4j:slf4j-nop:2.0.17'
+
+    // Add Google Cloud BigQuery dependencies for telemetry
+    implementation 'com.google.auth:google-auth-library-oauth2-http:1.40.0'
+    implementation 'com.google.api:gax:2.72.1'
+    implementation 'com.google.api-client:google-api-client-appengine:2.8.1'
+    implementation 'com.google.cloud:google-cloud-core:2.62.1'
+    implementation 'com.google.cloud:google-cloud-core-http:2.62.1'
+    implementation 'com.google.cloud:google-cloud-bigquery:2.55.3'
+
+    // Add Google Sheets API dependencies for API key validation
+    implementation 'com.google.api-client:google-api-client:2.8.1'
+    implementation 'com.google.apis:google-api-services-sheets:v4-rev20240416-2.0.0'
+
+    // Add Swagger/OpenAPI dependencies for API documentation (OpenAPI 3.0)
+    implementation 'io.swagger.core.v3:swagger-annotations-jakarta:2.2.27'
+    implementation 'io.swagger.core.v3:swagger-jaxrs2-jakarta:2.2.27'
+    implementation 'io.swagger.core.v3:swagger-core-jakarta:2.2.27'
+
+    // OpenRewrite:
+    rewrite 'org.openrewrite.recipe:rewrite-static-analysis:2.23.0'
+    rewrite 'org.openrewrite.recipe:rewrite-migrate-java:3.23.0'
+    rewrite 'org.openrewrite.recipe:rewrite-recommendations:1.15.0'
+}
+
+ext {
+    mainClassName = 'app.freerouting.Freerouting'
+
+    def buildDateTime = new Date()
+    buildDate = buildDateTime.format('yyyy-MM-dd')
+    buildTime = buildDateTime.format('HH:mm:ss.SSSZ')
+}
+
+def manifestAttributes = [
+        'Automatic-Module-Name' : 'app.freerouting',
+        'Built-By'              : System.properties['user.name'],
+        'Created-By'            : "${System.properties['java.version']} (${System.properties['java.vendor']} ${System.properties['java.vm.version']})",
+        'Build-Date'            : project.buildDate,
+        'Build-Time'            : project.buildTime,
+        'Build-Revision'        : versioning.info.commit,
+        'Specification-Title'   : project.name,
+        'Specification-Version' : project.version,
+        'Implementation-Title'  : project.name,
+        'Implementation-Version': project.version
+].asImmutable()
+
+jar {
+    manifest {
+        attributes manifestAttributes
+    }
+}
+
+tasks.register('executableJar', Jar) {
+    archiveClassifier = 'executable'
+
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+
+    // Exclude signature files from dependencies
+    from {
+        configurations.runtimeClasspath.collect { zipTree(it) }
+    } {
+        exclude 'META-INF/*.SF', 'META-INF/*.DSA', 'META-INF/*.RSA'
+    }
+
+    from files(sourceSets.main.output)
+
+    manifest {
+        attributes manifestAttributes + ['Main-Class': project.mainClassName]
+    }
+}
+
+// Publishing
+
+mavenPublishing {
+    publishToMavenCentral(SonatypeHost.CENTRAL_PORTAL)
+
+    signAllPublications()
+}
+
+apply from: 'gradle/publishing.gradle'
+
+// Signing - Signing (generating the \builds\libs\*.asc files) is needed for publishing to Maven Central
+//signing {
+//    useGpgCmd()
+//
+//    sign configurations.runtimeElements
+//}
+
+// write constants to code
+tasks.register('writeVersionInfo') {
+    def outputDir = layout.buildDirectory.dir("generated-src/app/freerouting/constants")
+    def versionId = publishing.versionId
+    def buildDateValue = buildDate
+    
+    outputs.dir(outputDir)
+    
+    doLast {
+        def buildInfoCode = outputDir.get().file("Constants.java").asFile
+        buildInfoCode.getParentFile().mkdirs()
+        buildInfoCode.write(
+                """
+            package app.freerouting.constants;
+            public final class Constants {
+              public static final String FREEROUTING_VERSION = \"${versionId}\";
+              public static final String FREEROUTING_BUILD_DATE = \"${buildDateValue}\";
+            }
+            """.stripIndent().trim()
+        )
+    }
+}
+
+// add the 'vmfconstants' src dir to the folders to compile (input to groovyc)
+sourceSets.main.java.srcDirs += layout.buildDirectory.dir("generated-src")
+
+compileJava.dependsOn += 'writeVersionInfo'
+
+
+tasks.register('dist', Copy) {
+    dependsOn assemble
+    from 'build/libs/freerouting-executable.jar'
+    into 'build/dist/'
+}
+
+tasks.register('run', JavaExec) {
+    classpath = sourceSets.main.runtimeClasspath
+
+    mainClass = project.mainClassName
+
+    // arguments to pass to the application
+    //    args 'appArg1'
+    // jvmArgs 'arg1'
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.compilerArgs.addAll(["-Xmaxerrs", "1000", "-Xmaxwarns", "1000"])
+}
+
+tasks.register('buildDockerImage', Exec) {
+    group = 'docker'
+    description = 'Builds the Docker image for the application.'
+    commandLine 'docker', 'build', '-t', 'freerouting/freerouting:2.0.1', '.'
+}
+
+test {
+    testLogging {
+        showExceptions = true
+        showStandardStreams = true
+    }
+
+    timeout = Duration.ofMinutes(15)
+}
+
+rewrite {
+    activeRecipe("org.openrewrite.staticanalysis.CodeCleanup")
+    checkstyleConfigFile = file("google_checks.xml")
+    //activeRecipe("org.openrewrite.java.format.AutoFormat")
+    //activeRecipe("org.openrewrite.java.migrate.UpgradeToJava17")
+    //activeRecipe("org.openrewrite.java.migrate.UpgradeToJava21")
+    //activeRecipe("org.openrewrite.java.migrate.UpgradeToJava25")
+    setExportDatatables(true)
+}

@@ -1,0 +1,14 @@
+diff --git a/common/build_version.cpp b/common/build_version.cpp
+--- a/common/build_version.cpp
++++ b/common/build_version.cpp
+@@ -232,6 +232,11 @@
+ #endif
+
++    // Detect AppImage runtime
++    wxString appdir;
++    if( wxGetEnv( wxT( "APPDIR" ), &appdir ) && !appdir.IsEmpty() )
++        aMsg << ", AppImage";
++
+     wxString glMsg;
+
+     for( const wxString& str : { s_glVendor, s_glRenderer, s_glVersion, s_glBackend } )

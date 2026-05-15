@@ -1,0 +1,39 @@
+# Build KiCad library data (symbols, footprints, templates)
+ARG BASE_IMAGE
+
+# Symbols use unpacked .kicad_symdir directories on master. CMake's
+# install(FILES) can't handle directories and packing requires kicad-cli
+# (which isn't built yet at this stage), so copy them directly.
+FROM ${BASE_IMAGE} AS build-symbols
+LABEL description="KiCad symbols library"
+COPY --from=symbols-src . /src
+RUN <<'EOSYM'
+    set -e
+    mkdir -p /usr/installtemp/share/kicad/symbols /usr/installtemp/share/kicad/template
+    # Handle both unpacked (.kicad_symdir) and packed (.kicad_sym) formats
+    if ls /src/*.kicad_symdir 1>/dev/null 2>&1; then
+        cp -a /src/*.kicad_symdir /usr/installtemp/share/kicad/symbols/
+    else
+        cp -a /src/*.kicad_sym /usr/installtemp/share/kicad/symbols/
+    fi
+    cp -a /src/*.sp /usr/installtemp/share/kicad/symbols/ 2>/dev/null || true
+    cp /src/sym-lib-table /usr/installtemp/share/kicad/template/
+EOSYM
+
+FROM ${BASE_IMAGE} AS build-footprints
+# Add metadata
+LABEL description="KiCad footprints library"
+COPY --from=footprints-src . /src
+RUN /build-library.sh
+
+FROM ${BASE_IMAGE} AS build-templates
+# Add metadata
+LABEL description="KiCad templates library"
+COPY --from=templates-src . /src
+RUN /build-library.sh
+
+FROM scratch
+# Combine all libraries into single image
+COPY --from=build-symbols /usr/installtemp /usr/installtemp
+COPY --from=build-footprints /usr/installtemp /usr/installtemp
+COPY --from=build-templates /usr/installtemp /usr/installtemp

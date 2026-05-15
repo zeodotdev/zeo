@@ -1,0 +1,30 @@
+# Build KiCad 3D packages library
+ARG BASE_IMAGE
+
+FROM ${BASE_IMAGE} AS build
+
+# Add metadata
+LABEL description="KiCad 3D packages library"
+
+# Copy 3D packages source from build context
+COPY --from=packages3d-src . /src
+RUN /build-library.sh
+
+# Reduce STEP file size by deduplicating entities and removing orphans.
+# Uses each file's own UNCERTAINTY_MEASURE_WITH_UNIT to derive safe precision.
+COPY scripts/stepreduce.py /stepreduce.py
+RUN <<-EOSTEP
+  set -eu
+  BEFORE=$(find /usr/installtemp -name '*.step' -print0 | xargs -0 du -cb 2>/dev/null | tail -1 | cut -f1 || echo 0)
+  echo "STEP files before reduction: ${BEFORE} bytes"
+  find /usr/installtemp -name '*.step' -print0 | \
+    xargs -0 -P"$(nproc)" -I{} python3 /stepreduce.py --use-step-precision {} {}
+  AFTER=$(find /usr/installtemp -name '*.step' -print0 | xargs -0 du -cb 2>/dev/null | tail -1 | cut -f1 || echo 0)
+  echo "STEP files after reduction: ${AFTER} bytes"
+  if [ "$BEFORE" -gt 0 ]; then
+    echo "STEP reduction savings: $(( (BEFORE - AFTER) * 100 / BEFORE ))%"
+  fi
+EOSTEP
+
+FROM scratch
+COPY --from=build /usr/installtemp /usr/installtemp

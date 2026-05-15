@@ -1,0 +1,23 @@
+diff --git a/include/gal/opengl/kiglew.h b/include/gal/opengl/kiglew.h
+--- a/include/gal/opengl/kiglew.h
++++ b/include/gal/opengl/kiglew.h
+@@ -33,7 +33,10 @@
+ #include <wx/version.h>
+
+
+-#if wxCHECK_VERSION( 3, 3, 2 )
++// wx 3.3.3 handles GLX/EGL runtime switching internally so only GL/glew.h is needed.
++// wx 3.3.2 has runtime switching but GL_UTILS::SetSwapInterval() (kept for < 3.3.3)
++// still needs GLX/EGL-specific headers.
++#if wxCHECK_VERSION( 3, 3, 3 )
+     #include <GL/glew.h>
+
+     #ifdef _WIN32
+@@ -71,6 +74,6 @@
+
+     #endif  // _WIN32
+
+-#endif /* !wxCHECK_VERSION( 3, 3, 2 ) */
++#endif /* !wxCHECK_VERSION( 3, 3, 3 ) */
+
+ #endif  // KIGLEW_H_

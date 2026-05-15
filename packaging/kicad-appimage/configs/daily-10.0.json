@@ -1,0 +1,26 @@
+{
+  "description": "KiCad 10.0 daily build from stable branch",
+  "build_type": "Nightly",
+  "upload_subdir": "testing/10.0",
+  "patches": [
+    "0001-Add-AppImage-to-platform-string.patch",
+    "0002-Remove-dirty-suffix-from-version.patch",
+    "0003-Fix-wchar_t-array-streaming-for-C-20.patch",
+    "0004-Fix-std-string-wchar-concatenation-in-geda-test.patch"
+  ],
+  "kicad": {
+    "ref": "10.0"
+  },
+  "libraries": {
+    "symbols": "10.0.0-rc1",
+    "footprints": "10.0.0-rc1",
+    "templates": "10.0.0-rc1",
+    "packages3d": "10.0.0-rc1"
+  },
+  "dependencies": {
+    "wx": "84a8b816bbc71981586568f3ea0afb15127263d1",
+    "wxpython": "a14508320d752b2c95ec1808c4c7bf128fff06ac",
+    "occt": "V7_9_1",
+    "ngspice": "45.2"
+  }
+}

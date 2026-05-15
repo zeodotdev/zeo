@@ -1,0 +1,469 @@
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" || $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "schedule" || $CI_PIPELINE_SOURCE == "api"'
+
+variables:
+  # Build config file (configs/*.json). When set, values from the config
+  # override the defaults below. Useful for scheduled builds that specify
+  # BUILD_CONFIG=configs/daily-9.0.json in the GitLab schedule variables.
+  # For API-triggered builds, variables can be passed directly instead.
+  BUILD_CONFIG: ${BUILD_CONFIG:-""}
+  # Build configuration: "Nightly" (default) or "Release"
+  KICAD_BUILD_TYPE: ${KICAD_BUILD_TYPE:-"Nightly"}
+  # Source branch for KiCad code (overridden for release builds)
+  KICAD_BRANCH: ${KICAD_BRANCH:-"master"}
+  # For release builds, set this to the release tag (e.g. "9.0.7")
+  KICAD_RELEASE_TAG: ${KICAD_RELEASE_TAG:-""}
+  # Library branches (overridden for release builds to pin specific tags)
+  KICAD_SYMBOLS_BRANCH: ${KICAD_SYMBOLS_BRANCH:-"master"}
+  KICAD_FOOTPRINTS_BRANCH: ${KICAD_FOOTPRINTS_BRANCH:-"master"}
+  KICAD_TEMPLATES_BRANCH: ${KICAD_TEMPLATES_BRANCH:-"master"}
+  KICAD_PACKAGES3D_BRANCH: ${KICAD_PACKAGES3D_BRANCH:-"master"}
+  # Version pins for reproducible builds
+  WX_VERSION: "3.2.8.1"
+  OCCT_VERSION: "V7_9_1"
+  WXPYTHON_VERSION: "4.2.3"
+  NGSPICE_VERSION: "44.2"
+  # Docker TLS configuration for buildx
+  DOCKER_HOST: tcp://docker:2376
+  DOCKER_TLS_CERTDIR: "/certs"
+
+stages:
+  - base
+  - deps
+  - compile
+  - package
+  - upload
+
+# ============================================================================
+# SHARED RULES AND TEMPLATES
+# ============================================================================
+
+# Load config from BUILD_CONFIG JSON if set. Source this early in any job
+# that depends on build/dependency variables. Requires jq (installed in
+# the before_script of jobs that need it). Variables from the config
+# override the pipeline-level defaults, but explicit CI variable overrides
+# (passed via API) take precedence since they're already expanded.
+.load_config: &load_config
+  - |
+    if [ -n "$BUILD_CONFIG" ] && [ -f "$BUILD_CONFIG" ]; then
+      echo "Loading build config from $BUILD_CONFIG"
+      apk add --no-cache jq >/dev/null 2>&1 || true
+      eval $(scripts/load_config.sh "$BUILD_CONFIG")
+      export APPIMAGE_PREFIX UPLOAD_SUBDIR KICAD_BUILD_TYPE KICAD_BRANCH \
+             KICAD_RELEASE_TAG \
+             KICAD_SYMBOLS_BRANCH KICAD_FOOTPRINTS_BRANCH \
+             KICAD_TEMPLATES_BRANCH KICAD_PACKAGES3D_BRANCH \
+             WX_VERSION WXPYTHON_VERSION OCCT_VERSION NGSPICE_VERSION \
+             KICAD_PATCHES WX_USE_EGL
+    fi
+
+# Base rules for foundational jobs (schedule: always, manual: manual)
+.base_rules: &base_rules
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+      when: always
+    - if: '$CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"'
+      when: always
+    - when: manual
+
+# Standard dependency rules (always run when dependencies succeed)
+.dependency_rules: &dependency_rules
+  stage: deps
+  needs: ["build-base"]
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+      when: always
+    - if: '$CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"'
+      when: on_success
+
+
+# ============================================================================
+# BUILD JOBS
+# ============================================================================
+
+default:
+  tags:
+    - kicad-dind
+  image: docker:28
+  services:
+    - docker:28-dind
+  before_script:
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+    - docker context create ki-builder
+    - docker buildx create ki-builder --driver docker-container --use
+    - docker buildx inspect --bootstrap
+
+# Base image - foundational dependencies
+build-base:
+  <<: *base_rules
+  stage: base
+  script:
+    - BASE_TAG="base-$(date +%Y%m%d)-$CI_COMMIT_SHORT_SHA"
+    - IMAGE_NAME="$CI_REGISTRY_IMAGE/base:$BASE_TAG"
+    # Check if we need to rebuild
+    - |
+      if docker manifest inspect $CI_REGISTRY_IMAGE/base:latest >/dev/null 2>&1 && [ "$FORCE_REBUILD_BASE" != "true" ]; then
+        echo "Base image exists and no forced rebuild, skipping build"
+      else
+        docker build -t $IMAGE_NAME -f docker/Dockerfile.base .
+        docker tag $IMAGE_NAME $CI_REGISTRY_IMAGE/base:latest
+        docker push $IMAGE_NAME
+        docker push $CI_REGISTRY_IMAGE/base:latest
+      fi
+    # Compute digest of current base image for downstream cache invalidation.
+    # When the base image changes (e.g. Python version bump from debian:testing),
+    # dependency images get new tags and rebuild automatically.
+    - BASE_DIGEST=$(docker manifest inspect $CI_REGISTRY_IMAGE/base:latest 2>/dev/null | sha256sum | cut -c1-12 || echo "initial")
+    - echo "BASE_DIGEST=$BASE_DIGEST" > base.env
+    - echo "Base image digest prefix $BASE_DIGEST"
+  artifacts:
+    reports:
+      dotenv: base.env
+
+# wxWidgets - version-pinned rebuild
+build-wx:
+  <<: *dependency_rules
+  script:
+    - *load_config
+    - EGL_SUFFIX=$([ "${WX_USE_EGL:-OFF}" = "ON" ] && echo "-egl" || echo "")
+    - WX_TAG="wx-$WX_VERSION-b${BASE_DIGEST:-unknown}${EGL_SUFFIX}"
+    - IMAGE_NAME="$CI_REGISTRY_IMAGE/wx:$WX_TAG"
+    - |
+      if docker manifest inspect $IMAGE_NAME >/dev/null 2>&1 && [ "$FORCE_REBUILD" != "true" ]; then
+        echo "wxWidgets $WX_VERSION already built ($WX_TAG)"
+        exit 0
+      fi
+    - docker build --build-arg BASE_IMAGE=$CI_REGISTRY_IMAGE/base:latest --build-arg WX_VERSION=$WX_VERSION --build-arg WX_USE_EGL=${WX_USE_EGL:-OFF} -t $IMAGE_NAME -f docker/Dockerfile.wx .
+    - docker push $IMAGE_NAME
+
+# wxPython - depends on wx
+build-wxpython:
+  stage: deps
+  needs: ["build-wx", "build-base"]
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+      when: always
+    - when: on_success
+  script:
+    - *load_config
+    - EGL_SUFFIX=$([ "${WX_USE_EGL:-OFF}" = "ON" ] && echo "-egl" || echo "")
+    - WXPY_TAG="wxpython-$WXPYTHON_VERSION-b${BASE_DIGEST:-unknown}${EGL_SUFFIX}"
+    - IMAGE_NAME="$CI_REGISTRY_IMAGE/wxpython:$WXPY_TAG"
+    # Check if this version already exists
+    - WX_TAG="wx-$WX_VERSION-b${BASE_DIGEST:-unknown}${EGL_SUFFIX}"
+    - |
+      if docker manifest inspect $IMAGE_NAME >/dev/null 2>&1 && [ "$FORCE_REBUILD" != "true" ]; then
+        echo "wxPython $WXPYTHON_VERSION already built ($WXPY_TAG)"
+        exit 0
+      fi
+    - docker build --build-arg BASE_IMAGE=$CI_REGISTRY_IMAGE/base:latest --build-arg WX_IMAGE=$CI_REGISTRY_IMAGE/wx:$WX_TAG --build-arg WXPYTHON_VERSION=$WXPYTHON_VERSION -t $IMAGE_NAME -f docker/Dockerfile.wxpython .
+    - docker push $IMAGE_NAME
+
+# OCCT - version-pinned rebuild
+build-occt:
+  <<: *dependency_rules
+  script:
+    - *load_config
+    - OCCT_TAG="occt-$OCCT_VERSION-b${BASE_DIGEST:-unknown}"
+    - IMAGE_NAME="$CI_REGISTRY_IMAGE/occt:$OCCT_TAG"
+    # Check if this version already exists
+    - |
+      if docker manifest inspect $IMAGE_NAME >/dev/null 2>&1 && [ "$FORCE_REBUILD" != "true" ]; then
+        echo "OCCT $OCCT_VERSION already built ($OCCT_TAG)"
+        exit 0
+      fi
+    - git clone --depth=1 --branch=${OCCT_BRANCH:-$OCCT_VERSION} --single-branch --filter=blob:none https://github.com/Open-Cascade-SAS/OCCT.git occt || exit 1
+    - docker build --build-context occt-src=occt --build-arg BASE_IMAGE=$CI_REGISTRY_IMAGE/base:latest -t $IMAGE_NAME -f docker/Dockerfile.occt .
+    - docker push $IMAGE_NAME
+
+# ngspice - git hash-based rebuild
+build-ngspice:
+  <<: *dependency_rules
+  script:
+    - *load_config
+    - NGSPICE_TAG="ngspice-$NGSPICE_VERSION-b${BASE_DIGEST:-unknown}"
+    - IMAGE_NAME="$CI_REGISTRY_IMAGE/ngspice:$NGSPICE_TAG"
+    # Check if this version already exists
+    - |
+      if docker manifest inspect $IMAGE_NAME >/dev/null 2>&1 && [ "$FORCE_REBUILD" != "true" ]; then
+        echo "ngspice $NGSPICE_VERSION already built ($NGSPICE_TAG)"
+        exit 0
+      fi
+    - git clone --depth=1 --single-branch --branch=ngspice-$NGSPICE_VERSION --filter=blob:none https://git.code.sf.net/p/ngspice/ngspice.git ngspice || exit 1
+    - docker build --build-context ngspice-src=ngspice --build-arg BASE_IMAGE=$CI_REGISTRY_IMAGE/base:latest -t $IMAGE_NAME -f docker/Dockerfile.ngspice .
+    - docker push $IMAGE_NAME
+
+# KiCad libraries - rebuild on schedule or manual
+build-libs:
+  <<: *dependency_rules
+  script:
+    - *load_config
+    - LIBS_DATE=$(date +%Y%m%d)
+    - LIBS_REF=$(echo "${KICAD_SYMBOLS_BRANCH:-master}" | tr '/' '-')
+    - LIBS_TAG="libs-${LIBS_REF}-${LIBS_DATE}"
+    - IMAGE_NAME="$CI_REGISTRY_IMAGE/libs:$LIBS_TAG"
+    - |
+      if docker manifest inspect $IMAGE_NAME >/dev/null 2>&1 && [ "$FORCE_REBUILD" != "true" ]; then
+        echo "Libraries $LIBS_REF for $LIBS_DATE already built ($LIBS_TAG)"
+        exit 0
+      fi
+    - git clone --depth=1 --branch=${KICAD_SYMBOLS_BRANCH:-master} https://gitlab.com/kicad/libraries/kicad-symbols.git symbols || exit 1
+    - git clone --depth=1 --branch=${KICAD_FOOTPRINTS_BRANCH:-master} https://gitlab.com/kicad/libraries/kicad-footprints.git footprints || exit 1
+    - git clone --depth=1 --branch=${KICAD_TEMPLATES_BRANCH:-master} https://gitlab.com/kicad/libraries/kicad-templates.git templates || exit 1
+    - docker build
+      --build-context symbols-src=symbols
+      --build-context footprints-src=footprints
+      --build-context templates-src=templates
+      --build-arg BASE_IMAGE=$CI_REGISTRY_IMAGE/base:latest -t $IMAGE_NAME -f docker/Dockerfile.libs .
+    - docker push $IMAGE_NAME
+
+# 3D packages - rebuild on schedule or manual
+build-packages3d:
+  <<: *dependency_rules
+  script:
+    - *load_config
+    - PACKAGES_DATE=$(date +%Y%m%d)
+    - PACKAGES_REF=$(echo "${KICAD_PACKAGES3D_BRANCH:-master}" | tr '/' '-')
+    - PACKAGES_TAG="packages3d-${PACKAGES_REF}-${PACKAGES_DATE}"
+    - IMAGE_NAME="$CI_REGISTRY_IMAGE/packages3d:$PACKAGES_TAG"
+    - |
+      if docker manifest inspect $IMAGE_NAME >/dev/null 2>&1 && [ "$FORCE_REBUILD" != "true" ]; then
+        echo "3D packages $PACKAGES_REF for $PACKAGES_DATE already built ($PACKAGES_TAG)"
+        exit 0
+      fi
+    - git clone --depth=1 --branch=${KICAD_PACKAGES3D_BRANCH:-master} https://gitlab.com/kicad/libraries/kicad-packages3D.git packages3d || exit 1
+    - docker build --build-context packages3d-src=packages3d --build-arg BASE_IMAGE=$CI_REGISTRY_IMAGE/base:latest -t $IMAGE_NAME -f docker/Dockerfile.packages3d .
+    - docker push $IMAGE_NAME
+
+# Compile KiCad and push intermediate appimage-base image to registry.
+# Packaging jobs pull this image instead of recompiling.
+compile-kicad:
+  rules:
+    - when: on_success
+  needs:
+    - job: build-base
+      artifacts: true
+    - job: build-occt
+      artifacts: false
+    - job: build-libs
+      artifacts: false
+    - job: build-packages3d
+      artifacts: false
+    - job: build-wxpython
+      artifacts: false
+    - job: build-ngspice
+      artifacts: false
+  stage: compile
+  before_script:
+    - apk update && apk add --no-cache patch git
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+    - docker context create ki-builder
+    - docker buildx create ki-builder --driver docker-container --use
+    - docker buildx inspect --bootstrap
+  script:
+    - *load_config
+    # Compute version-specific tags that match what the dep jobs pushed.
+    # Prevents :latest race conditions between concurrent pipelines.
+    - EGL_SUFFIX=$([ "${WX_USE_EGL:-OFF}" = "ON" ] && echo "-egl" || echo "")
+    - |
+      DEP_WX_TAG="wx-$WX_VERSION-b${BASE_DIGEST:-unknown}${EGL_SUFFIX}"
+      DEP_WXPYTHON_TAG="wxpython-$WXPYTHON_VERSION-b${BASE_DIGEST:-unknown}${EGL_SUFFIX}"
+      DEP_OCCT_TAG="occt-$OCCT_VERSION-b${BASE_DIGEST:-unknown}"
+      DEP_NGSPICE_TAG="ngspice-$NGSPICE_VERSION-b${BASE_DIGEST:-unknown}"
+      DEP_LIBS_REF=$(echo "${KICAD_SYMBOLS_BRANCH:-master}" | tr '/' '-')
+      DEP_LIBS_TAG="libs-${DEP_LIBS_REF}-$(date +%Y%m%d)"
+      DEP_PACKAGES3D_REF=$(echo "${KICAD_PACKAGES3D_BRANCH:-master}" | tr '/' '-')
+      DEP_PACKAGES3D_TAG="packages3d-${DEP_PACKAGES3D_REF}-$(date +%Y%m%d)"
+      echo "Dependency tags: wx=$DEP_WX_TAG occt=$DEP_OCCT_TAG ngspice=$DEP_NGSPICE_TAG libs=$DEP_LIBS_TAG packages3d=$DEP_PACKAGES3D_TAG"
+    - echo "CI_REGISTRY_IMAGE is '$CI_REGISTRY_IMAGE'"
+    # Clone with full history so git describe produces accurate commit counts
+    - git clone --branch=${KICAD_BRANCH:-master} --single-branch --filter=blob:none https://gitlab.com/kicad/code/kicad.git || exit 1
+    # Extract version string from git describe (e.g. 9.99.0-5128-g2f8c1dc0f7)
+    # Convert hyphens to dots to match Windows convention (9.99.0.5128.g2f8c1dc0f7)
+    - |
+      cd kicad
+      git fetch --tags
+      KICAD_VERSION=$(git describe --tags 2>/dev/null || echo "unknown")
+      KICAD_VERSION_DOTTED=$(echo "$KICAD_VERSION" | sed 's/-/./g')
+      KICAD_BUILD_MAJVERSION=$(echo "$KICAD_VERSION" | sed 's/^\([0-9]*\).*/\1/')
+      echo "Git describe: $KICAD_VERSION"
+      echo "Dotted version: $KICAD_VERSION_DOTTED"
+      echo "Major version: $KICAD_BUILD_MAJVERSION"
+      cd ..
+    # Determine naming and upload path based on build type and branch.
+    # A config-provided APPIMAGE_PREFIX (e.g. "kicad-nightly-wx33") takes
+    # precedence. UPLOAD_SUBDIR uses the config value if set, otherwise
+    # is derived from the prefix (stripping "kicad-").
+    - |
+      if [ -n "$APPIMAGE_PREFIX" ]; then
+        APPIMAGE_VERSION="$KICAD_VERSION_DOTTED"
+        UPLOAD_SUBDIR="appimage/${UPLOAD_SUBDIR:-${APPIMAGE_PREFIX#kicad-}}"
+      elif [ "$KICAD_BUILD_TYPE" = "Release" ] && [ -n "$KICAD_RELEASE_TAG" ]; then
+        APPIMAGE_PREFIX="kicad"
+        APPIMAGE_VERSION="$KICAD_RELEASE_TAG"
+        UPLOAD_SUBDIR="appimage/stable"
+      elif [ "${KICAD_BRANCH:-master}" != "master" ]; then
+        APPIMAGE_PREFIX="kicad-testing"
+        APPIMAGE_VERSION="$KICAD_VERSION_DOTTED"
+        UPLOAD_SUBDIR="appimage/${UPLOAD_SUBDIR:-testing}"
+      else
+        APPIMAGE_PREFIX="kicad-nightly"
+        APPIMAGE_VERSION="$KICAD_VERSION_DOTTED"
+        UPLOAD_SUBDIR="appimage/nightly"
+      fi
+    - APPDIR_IMAGE="$CI_REGISTRY_IMAGE/appdir:$CI_PIPELINE_ID"
+    - |
+      echo "APPIMAGE_PREFIX=$APPIMAGE_PREFIX" > build-naming.env
+      echo "APPIMAGE_VERSION=$APPIMAGE_VERSION" >> build-naming.env
+      echo "UPLOAD_SUBDIR=$UPLOAD_SUBDIR" >> build-naming.env
+      echo "KICAD_BUILD_MAJVERSION=$KICAD_BUILD_MAJVERSION" >> build-naming.env
+      echo "APPDIR_IMAGE=$APPDIR_IMAGE" >> build-naming.env
+      echo "DEP_WX_TAG=$DEP_WX_TAG" >> build-naming.env
+      echo "DEP_WXPYTHON_TAG=$DEP_WXPYTHON_TAG" >> build-naming.env
+      echo "DEP_OCCT_TAG=$DEP_OCCT_TAG" >> build-naming.env
+      echo "DEP_NGSPICE_TAG=$DEP_NGSPICE_TAG" >> build-naming.env
+      echo "DEP_LIBS_TAG=$DEP_LIBS_TAG" >> build-naming.env
+      echo "DEP_PACKAGES3D_TAG=$DEP_PACKAGES3D_TAG" >> build-naming.env
+      echo "Will produce: ${APPIMAGE_PREFIX}-${APPIMAGE_VERSION}-x86_64.AppImage"
+    # Build appimage-base (compile + bundle) and push to registry.
+    # Packaging jobs pull this image via APPDIR_IMAGE, skipping recompilation.
+    # These per-pipeline images should be cleaned up via registry retention policy.
+    - docker buildx build
+      --progress=plain --build-context kicad-src=kicad
+      --build-arg REGISTRY=$CI_REGISTRY_IMAGE
+      --build-arg BUILDKIT_CONTEXT_KEEP_GIT_DIR=1
+      --build-arg KICAD_BUILD_RELEASE=${APPIMAGE_VERSION}
+      --build-arg KICAD_BUILD_MAJVERSION=${KICAD_BUILD_MAJVERSION}
+      --build-arg KICAD_BUILD_TYPE=${KICAD_BUILD_TYPE}
+      --build-arg KICAD_PATCHES="${KICAD_PATCHES:-}"
+      --build-arg WX_TAG=$DEP_WX_TAG
+      --build-arg WXPYTHON_TAG=$DEP_WXPYTHON_TAG
+      --build-arg OCCT_TAG=$DEP_OCCT_TAG
+      --build-arg NGSPICE_TAG=$DEP_NGSPICE_TAG
+      --build-arg LIBS_TAG=$DEP_LIBS_TAG
+      --build-arg PACKAGES3D_TAG=$DEP_PACKAGES3D_TAG
+      --platform linux/amd64
+      --target appimage-base
+      --push -t ${APPDIR_IMAGE}
+      --cache-to type=registry,ref=$CI_REGISTRY_IMAGE/cache:buildcache,mode=max,ignore-error=true
+      --cache-from type=registry,ref=$CI_REGISTRY_IMAGE/cache:buildcache
+      -f Dockerfile .
+  artifacts:
+    reports:
+      dotenv: build-naming.env
+
+# Package full AppImage (with 3D models, zstd compression).
+# No compilation here; APPDIR_IMAGE points to the pre-built appimage-base.
+# Uploads directly to S3 because full AppImages can exceed GitLab's 1GB
+# artifact size limit (e.g. wx33 builds are ~1.07GB).
+package-kicad:
+  rules:
+    - when: on_success
+      needs: ["compile-kicad"]
+  stage: package
+  script:
+    - echo "APPDIR_IMAGE=${APPDIR_IMAGE} APPIMAGE_PREFIX=${APPIMAGE_PREFIX} APPIMAGE_VERSION=${APPIMAGE_VERSION} KICAD_BUILD_MAJVERSION=${KICAD_BUILD_MAJVERSION}"
+    - docker buildx build
+      --progress=plain
+      --build-arg REGISTRY=$CI_REGISTRY_IMAGE
+      --build-arg APPDIR_IMAGE=${APPDIR_IMAGE}
+      --build-arg KICAD_BUILD_RELEASE=${APPIMAGE_VERSION}
+      --build-arg KICAD_BUILD_MAJVERSION=${KICAD_BUILD_MAJVERSION}
+      --build-arg KICAD_BUILD_TYPE=${KICAD_BUILD_TYPE}
+      --build-arg APPIMAGE_PREFIX=${APPIMAGE_PREFIX}
+      --build-arg EXTRACT_DBGSYM=1
+      --build-arg DBGSYM_ARCHIVE=${APPIMAGE_PREFIX}-${APPIMAGE_VERSION}-x86_64-dbgsym.tar.zst
+      --build-arg WX_TAG=${DEP_WX_TAG}
+      --build-arg WXPYTHON_TAG=${DEP_WXPYTHON_TAG}
+      --build-arg OCCT_TAG=${DEP_OCCT_TAG}
+      --build-arg NGSPICE_TAG=${DEP_NGSPICE_TAG}
+      --build-arg LIBS_TAG=${DEP_LIBS_TAG}
+      --build-arg PACKAGES3D_TAG=${DEP_PACKAGES3D_TAG}
+      --platform linux/amd64
+      --target build-kicad
+      --cache-from type=registry,ref=$CI_REGISTRY_IMAGE/cache:buildcache
+      -o type=local,dest=.
+      -f Dockerfile .
+    - apk add --no-cache s3cmd
+    - |
+      if [ -n "$S3_ACCESS_KEY" ] && [ -n "$S3_SECRET_KEY" ]; then
+        printf '[default]\naccess_key = %s\nsecret_key = %s\nhost_base = s3.cern.ch\nhost_bucket = %%(bucket)s.s3.cern.ch\nuse_https = True\n' \
+          "$S3_ACCESS_KEY" "$S3_SECRET_KEY" > /root/.s3cfg
+        DEST="${BUCKET_OUTPUT_PATH:-${UPLOAD_SUBDIR:-appimage/nightly}}"
+        for f in *.AppImage *-dbgsym.tar.zst; do
+          [ -f "$f" ] || continue
+          echo "Uploading $f to s3://kicad-downloads/${DEST}/"
+          s3cmd put "$f" "s3://kicad-downloads/${DEST}/"
+        done
+      else
+        echo "WARNING: S3 credentials not configured, skipping direct upload"
+      fi
+
+# Package light AppImage (no 3D models, gzip compression).
+# No compilation here; APPDIR_IMAGE points to the pre-built appimage-base.
+package-kicad-light:
+  rules:
+    - when: on_success
+      needs: ["compile-kicad"]
+  stage: package
+  script:
+    - echo "APPDIR_IMAGE=${APPDIR_IMAGE} APPIMAGE_PREFIX=${APPIMAGE_PREFIX} APPIMAGE_VERSION=${APPIMAGE_VERSION} KICAD_BUILD_MAJVERSION=${KICAD_BUILD_MAJVERSION}"
+    - docker buildx build
+      --progress=plain
+      --build-arg REGISTRY=$CI_REGISTRY_IMAGE
+      --build-arg APPDIR_IMAGE=${APPDIR_IMAGE}
+      --build-arg KICAD_BUILD_RELEASE=${APPIMAGE_VERSION}
+      --build-arg KICAD_BUILD_MAJVERSION=${KICAD_BUILD_MAJVERSION}
+      --build-arg KICAD_BUILD_TYPE=${KICAD_BUILD_TYPE}
+      --build-arg APPIMAGE_PREFIX=${APPIMAGE_PREFIX}
+      --build-arg WX_TAG=${DEP_WX_TAG}
+      --build-arg WXPYTHON_TAG=${DEP_WXPYTHON_TAG}
+      --build-arg OCCT_TAG=${DEP_OCCT_TAG}
+      --build-arg NGSPICE_TAG=${DEP_NGSPICE_TAG}
+      --build-arg LIBS_TAG=${DEP_LIBS_TAG}
+      --build-arg PACKAGES3D_TAG=${DEP_PACKAGES3D_TAG}
+      --platform linux/amd64
+      --target build-kicad-light
+      --cache-from type=registry,ref=$CI_REGISTRY_IMAGE/cache:buildcache
+      -o type=local,dest=.
+      -f Dockerfile .
+  artifacts:
+    paths:
+      - '*-lite.AppImage'
+
+upload-kicad:
+  <<: *base_rules
+  stage: upload
+  needs:
+    - job: compile-kicad
+      artifacts: true
+    - job: package-kicad
+      optional: true
+    - job: package-kicad-light
+      artifacts: true
+  image: alpine:latest
+  services: []
+  before_script:
+    - apk add --no-cache s3cmd
+  script:
+    - |
+      if [ -z "$S3_ACCESS_KEY" ] || [ -z "$S3_SECRET_KEY" ]; then
+        echo "ERROR: S3_ACCESS_KEY and S3_SECRET_KEY must be configured as CI variables"
+        exit 1
+      fi
+    - |
+      printf '[default]\naccess_key = %s\nsecret_key = %s\nhost_base = s3.cern.ch\nhost_bucket = %%(bucket)s.s3.cern.ch\nuse_https = True\n' \
+        "$S3_ACCESS_KEY" "$S3_SECRET_KEY" \
+        > /root/.s3cfg
+    # UPLOAD_SUBDIR comes from compile-kicad dotenv (appimage/nightly or appimage/stable)
+    # Full AppImage is uploaded directly by package-kicad (bypasses artifact size
+    # limit). This job handles any AppImages that made it through as artifacts
+    # (always includes lite, may include full if under 1GB).
+    - |
+      DEST="${BUCKET_OUTPUT_PATH:-${UPLOAD_SUBDIR:-appimage/nightly}}"
+      for f in *.AppImage *-dbgsym.tar.zst; do
+        [ -f "$f" ] || continue
+        echo "Uploading $f to s3://kicad-downloads/${DEST}/"
+        s3cmd put "$f" "s3://kicad-downloads/${DEST}/"
+      done

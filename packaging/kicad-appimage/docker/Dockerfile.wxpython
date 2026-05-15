@@ -1,0 +1,128 @@
+# Build wxPython bindings
+ARG BASE_IMAGE
+ARG WX_IMAGE
+
+FROM ${WX_IMAGE} AS wx
+FROM ${BASE_IMAGE} AS build
+
+ARG WXPYTHON_VERSION
+
+# Add metadata
+LABEL description="wxPython build for KiCad AppImage"
+LABEL wxpython.version=${WXPYTHON_VERSION}
+
+# Copy wxWidgets from wx image
+COPY --from=wx / /
+
+# Download release tarball for version-like strings, clone git repo otherwise.
+# Release versions match patterns like "4.2.3" or "4.2.4".
+# Anything else (e.g. a 40-char git SHA) triggers the git clone path which
+# runs the full Phoenix generation pipeline (dox, etg, sip, build_py).
+RUN <<'EOS'
+    set -e
+    if echo "$WXPYTHON_VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+'; then
+        echo "=== Downloading wxPython release tarball ${WXPYTHON_VERSION} ==="
+        cd /tmp
+        wget -q "https://github.com/wxWidgets/Phoenix/releases/download/wxPython-${WXPYTHON_VERSION}/wxPython-${WXPYTHON_VERSION}.tar.gz" -O wxPython.tar.gz
+        mkdir wxPython
+        tar xzf wxPython.tar.gz -C wxPython --strip-components=1
+    else
+        echo "=== Cloning wxPython Phoenix at ${WXPYTHON_VERSION} ==="
+        apt-get update && apt-get install -y --no-install-recommends doxygen
+        python3 -m pip install --break-system-packages sip
+        git clone --filter=blob:none https://github.com/wxWidgets/Phoenix.git /tmp/wxPython
+        cd /tmp/wxPython
+        git checkout "$WXPYTHON_VERSION"
+        git submodule update --init --depth=1
+    fi
+EOS
+
+WORKDIR /tmp/wxPython
+RUN <<'EOS2'
+    set -e
+    export PYTHONWARNINGS="ignore::SetuptoolsDeprecationWarning"
+
+    PY_MAJMIN=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
+    echo "=== Using Python ${PY_MAJMIN} ==="
+    python3 -m pip install --break-system-packages "setuptools<75" wheel cython
+    python3 -c "import sys; print('Python version:', sys.version)"
+
+    # Verify system wx-config is working
+    export WX_CONFIG=/usr/bin/wx-config
+    wx-config --version
+    wx-config --cppflags
+    wx-config --libs
+
+    # Create missing docs directory structure that wxPython build expects
+    mkdir -p /usr/docs
+    touch /usr/docs/preamble.txt
+    touch /usr/docs/licence.txt
+    touch /usr/docs/license.txt
+    touch /usr/docs/lgpl.txt
+    touch /usr/docs/gpl.txt
+
+    # Build wxPython. For git checkouts, run the full generation pipeline.
+    # For release tarballs, pre-generated SIP/C++ files are already present.
+    if echo "$WXPYTHON_VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+'; then
+        export WXWIN=/usr
+        python3 build.py --use_syswx --nodoc build_py --jobs=$(nproc)
+    else
+        # Generation steps (dox, etg, sip) use the submodule source tree.
+        # WXWIN must NOT point to /usr here or wxDir() won't find docs/doxygen.
+        python3 build.py dox etg --nodoc sip
+        export WXWIN=/usr
+        python3 build.py --use_syswx build_py --jobs=$(nproc)
+    fi
+
+    # Install Python files
+    python3 build.py install_py --destdir=/tmp/rootfs
+
+    # Find where install_py placed the wx package
+    echo "=== Checking install_py output ==="
+    find /tmp/rootfs -name "wx" -type d || true
+    find /tmp/rootfs -name "__init__.py" -path "*/wx/__init__.py" || true
+
+    WX_INSTALL_DIR=$(find /tmp/rootfs -name "__init__.py" -path "*/wx/__init__.py" -exec dirname {} \; | head -1)
+    if [ -z "$WX_INSTALL_DIR" ]; then
+        echo "ERROR: Could not find wx package installation directory"
+        exit 1
+    fi
+    echo "=== Found wx package at: $WX_INSTALL_DIR ==="
+
+    # Verify all expected extension modules are present.
+    # install_py + copyFileToPkg should have placed these; the old manual
+    # copy from build/waf/*/gtk3/ was wrong (WAF output has no gtk3/ subdir).
+    EXPECTED="_core _adv _dataview _glcanvas _grid _html _html2 _stc _xml _xrc _richtext _media _ribbon _propgrid _aui"
+    MISSING=""
+    for mod in $EXPECTED; do
+        if ! ls "$WX_INSTALL_DIR"/${mod}.*.so 1>/dev/null 2>&1; then
+            MISSING="$MISSING $mod"
+        fi
+    done
+    if [ -n "$MISSING" ]; then
+        echo "ERROR: Missing wxPython modules:$MISSING"
+        echo "=== Available .so files ==="
+        ls -la "$WX_INSTALL_DIR"/*.so 2>/dev/null || echo "No .so files at all"
+        echo "=== Build output ==="
+        find build -type f -name '*.so' 2>/dev/null | head -30
+        exit 1
+    fi
+    echo "=== All expected modules present ==="
+    ls -la "$WX_INSTALL_DIR"/*.so
+
+    # Verify the installation by attempting to import wx
+    echo "=== Testing wxPython import ==="
+    PY_SITE_DIR=$(find /tmp/rootfs -type d -path "*/lib/python${PY_MAJMIN}/dist-packages" -print | head -1)
+    if [ -z "$PY_SITE_DIR" ]; then
+        echo "ERROR: Could not locate python${PY_MAJMIN} dist-packages under /tmp/rootfs"
+        find /tmp/rootfs -maxdepth 6 -type d -name 'dist-packages' -print || true
+        exit 1
+    fi
+    export PYTHONPATH="$PY_SITE_DIR:$PYTHONPATH"
+    python3 -c "import sys; sys.path.insert(0, '${PY_SITE_DIR}'); import wx; print('wxPython version:', wx.version())"
+    python3 -c "import sys; sys.path.insert(0, '${PY_SITE_DIR}'); import wx.aui; print('wx.aui OK')"
+EOS2
+
+FROM scratch
+# Copy the complete wxPython installation
+COPY --from=build /tmp/rootfs /

@@ -1567,7 +1567,7 @@ wxFileName MultiBoardResolveContainerForSubProject( const wxFileName& aSubProjec
     wxFileName searchDir( subPro );
     searchDir.SetFullName( wxEmptyString );
 
-    for( int depth = 0; depth < 6 && searchDir.GetPath().Length() > 1; ++depth )
+    for( int depth = 0; depth < 6; ++depth )
     {
         wxArrayString files;
         wxDir::GetAllFiles( searchDir.GetPath(), &files, wxT( "*.kicad_pro" ),
@@ -1597,6 +1597,12 @@ wxFileName MultiBoardResolveContainerForSubProject( const wxFileName& aSubProjec
                     return candFn;
             }
         }
+
+        // wxFileName::RemoveLastDir() underflows m_dirs (and corrupts the
+        // heap) when called with zero dirs. Stop before walking past the
+        // volume root.
+        if( searchDir.GetDirCount() == 0 )
+            break;
 
         searchDir.RemoveLastDir();
     }

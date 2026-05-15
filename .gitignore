@@ -1,0 +1,17 @@
+.vagrant/
+.idea/
+*-dest/
+cmake-build-debug/
+*.swp
+*.dmg
+build/
+dmg/
+*.pyc
+.DS_Store
+dmgbuild/venv/
+dmgbuild/kicad.dmg
+
+build-universal/
+build-arm64/
+build-x86_64/
+toolchain/kicad-mac-builder.cmake

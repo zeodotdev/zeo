@@ -1,0 +1,10 @@
+==============================================
+Zeo Build Script
+==============================================
+Workspace:     /Users/gmp/workspaces/zeodotdev/zeo/dev
+Source Dir:    /Users/gmp/workspaces/zeodotdev/zeo/dev/src/zeo
+Builder Dir:   /Users/gmp/workspaces/zeodotdev/zeo/dev/packaging/kicad-mac-builder
+Libraries Dir: /Users/gmp/workspaces/zeodotdev/zeo/dev/libraries
+Python Dir:    /Users/gmp/workspaces/zeodotdev/zeo/dev/src/zeo-python
+==============================================
+Error: Zeo source directory not found at /Users/gmp/workspaces/zeodotdev/zeo/dev/src/zeo

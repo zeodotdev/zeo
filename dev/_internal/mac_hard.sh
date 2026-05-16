@@ -1,9 +1,9 @@
 #!/bin/bash
 set -e
 
-# Zeo macOS Full Build Script (mac_build_hard.sh)
+# Zeo macOS Full Build Script (mac_build.sh)
 # Performs a complete rebuild of all components
-# For incremental builds, use mac_build_incr.sh instead
+# For incremental builds, use mac_build.sh --fast instead
 
 # --- Configuration ---
 

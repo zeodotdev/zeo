@@ -2,9 +2,9 @@
 set -e
 set -o pipefail
 
-# Zeo macOS Fast Build Script (mac_build_fast.sh)
+# Zeo macOS Fast Build Script (mac_build.sh --fast)
 # Bypasses build.py and runs make directly in the inner build directory.
-# Requires a prior full build (mac_build_hard.sh) to set up cmake.
+# Requires a prior full build (mac_build.sh) to set up cmake.
 # Typical agent rebuild: 5-15s for one changed .cpp file.
 
 # --- Configuration ---
@@ -38,7 +38,7 @@ print_usage() {
     echo "Usage: $0 [OPTIONS]"
     echo ""
     echo "Fast incremental build - runs make directly in the inner build tree."
-    echo "Requires a prior full build (mac_build_hard.sh)."
+    echo "Requires a prior full build (mac_build.sh)."
     echo ""
     echo "Options:"
     echo "  (default)          Build all targets"
@@ -133,13 +133,13 @@ validate_prerequisites() {
         echo "Error: Inner build directory not found at:"
         echo "  $INNER_BUILD_DIR"
         echo ""
-        echo "Run mac_build_hard.sh first to set up the cmake build tree."
+        echo "Run mac_build.sh first to set up the cmake build tree."
         exit 1
     fi
 
     if [ ! -f "$INNER_BUILD_DIR/Makefile" ]; then
         echo "Error: No Makefile found in inner build directory."
-        echo "Run mac_build_hard.sh first to configure cmake."
+        echo "Run mac_build.sh first to configure cmake."
         exit 1
     fi
 
@@ -147,7 +147,7 @@ validate_prerequisites() {
         echo "Error: In-tree Zeo.app not found at:"
         echo "  $INTREE_APP"
         echo ""
-        echo "Run mac_build_hard.sh first to create the initial build."
+        echo "Run mac_build.sh first to create the initial build."
         exit 1
     fi
 }
@@ -277,7 +277,7 @@ if $DO_LAUNCH; then
     fi
 
     # Ensure KiCad symbol/footprint libraries are installed
-    # Uses the same cmake install approach as mac_build_hard.sh.
+    # Uses the same cmake install approach as mac_build.sh.
     # Only runs once — skipped if sym-lib-table already exists in SharedSupport.
     SHARED_SUPPORT="$INTREE_APP/Contents/SharedSupport"
     if [ -L "$SHARED_SUPPORT" ]; then
@@ -333,7 +333,7 @@ if $DO_LAUNCH; then
         ln -s "$NGSPICE_DEST/libngspice.dylib" "$INTREE_SIM_DIR/libngspice.dylib"
     fi
 
-    # Copy Freerouting JAR if available (built by mac_build_hard.sh or manually)
+    # Copy Freerouting JAR if available (built by mac_build.sh or manually)
     FREEROUTING_JAR="$WORKSPACE_DIR/tools/freerouting/build/libs/freerouting-executable.jar"
     FREEROUTING_DEST="$SHARED_SUPPORT/freerouting"
     if [ -f "$FREEROUTING_JAR" ] && [ ! -f "$FREEROUTING_DEST/freerouting.jar" ]; then
@@ -359,7 +359,7 @@ install_kipy() {
             cp -R "$PYTHON_FW_SRC" "$INTREE_PYTHON_FW"
         else
             echo "Error: Python framework not found at $PYTHON_FW_SRC"
-            echo "Run mac_build_hard.sh first to build the Python framework."
+            echo "Run mac_build.sh first to build the Python framework."
             exit 1
         fi
     fi

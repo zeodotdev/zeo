@@ -1,6 +1,6 @@
 # Zeo Windows Installer Build Script (win_build_installer.ps1)
 # Creates an NSIS installer with Zeo, Agent, Terminal, libraries, and 3D models.
-# Parallel to mac_build_dmg.sh and linux_build_appimage.sh.
+# Parallel to mac_build.sh --package and appimage_build.sh --package.
 #
 # Usage:
 #   .\dev\win_build_installer.ps1                       # Full build + installer

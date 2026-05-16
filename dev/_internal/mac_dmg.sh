@@ -1,14 +1,14 @@
 #!/bin/bash
 set -e
 
-# Zeo macOS DMG Build Script (mac_build_dmg.sh)
+# Zeo macOS DMG Build Script (mac_build.sh --package)
 # Creates a shareable DMG with Zeo (KiCad), Agent, Terminal, and all dependencies
 #
 # Usage:
-#   ./mac_build_dmg.sh                    # Full build + DMG (default)
-#   ./mac_build_dmg.sh --skip-build       # DMG only (requires previous build)
-#   ./mac_build_dmg.sh --release "1.0"    # Named release DMG
-#   ./mac_build_dmg.sh --sign "Developer ID Application: Name"  # Signed for distribution
+#   ./mac_build.sh --package                    # Full build + DMG (default)
+#   ./mac_build.sh --package --skip-build       # DMG only (requires previous build)
+#   ./mac_build.sh --package --release "1.0"    # Named release DMG
+#   ./mac_build.sh --package --sign "Developer ID Application: Name"  # Signed for distribution
 
 # --- Configuration ---
 

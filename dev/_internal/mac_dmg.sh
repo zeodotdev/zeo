@@ -138,7 +138,7 @@ if [ "$SKIP_BUILD" = false ]; then
 
     # DMG builds are always release builds
     # Pass --verbose so build progress is visible (otherwise output only goes to log file)
-    "$SCRIPT_DIR/mac_build_hard.sh" --release --verbose
+    "$SCRIPT_DIR/mac_hard.sh" --release --verbose
 
     echo ""
     echo "Build phase complete."

@@ -68,9 +68,9 @@ def create_background():
     
     draw.text((text_x, text_y), text, fill=TEXT_COLOR, font=font)
     
-    # Save
+    # Save into dev/assets/ (sibling of dev/utils/)
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    output_path = os.path.join(script_dir, "dmg-background.png")
+    output_path = os.path.join(script_dir, "..", "assets", "dmg-background.png")
     img.save(output_path, "PNG")
     print(f"Created: {output_path}")
     print(f"Size: {WIDTH}x{HEIGHT}")

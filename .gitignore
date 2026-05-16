@@ -5,4 +5,5 @@ __pycache__/
 .env
 src/zeo-python/kicad/
 build.log
-/dev/build.log
+/dev/log/*
+!/dev/log/.gitkeep

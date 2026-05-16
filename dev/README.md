@@ -74,9 +74,9 @@ Platform-specific extras: `--sign IDENTITY` / `--notarize` (mac), `--light` /
 ./dev/mac_build.sh --package --sign 'Developer ID Application: Name' --notarize
 ```
 
-## Internal scripts (`dev/_internal/`)
+## Internal scripts (`dev/utils/`)
 
-The unified entries delegate to per-mode helpers in `_internal/`. You can call
+The unified entries delegate to per-mode helpers in `utils/`. You can call
 them directly if a mode breaks, but they aren't the supported interface — flag
 sets and naming may change. For mac these are `mac_hard.sh`, `mac_fast.sh`, and
 `mac_dmg.sh`.

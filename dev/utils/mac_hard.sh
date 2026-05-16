@@ -79,8 +79,9 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Build log — overwritten each run
-BUILD_LOG="$WORKSPACE_DIR/build.log"
+# Build log — overwritten each run; lives in dev/log/ (gitignored)
+BUILD_LOG="$WORKSPACE_DIR/dev/log/build.log"
+mkdir -p "$(dirname "$BUILD_LOG")"
 echo "Build started: $(date)" > "$BUILD_LOG"
 if [ "$VERBOSE" = true ]; then
     exec > >(tee -a "$BUILD_LOG") 2>&1

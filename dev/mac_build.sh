@@ -23,13 +23,13 @@
 #   --notarize       Apple notarization (--package, requires --sign)
 #   --help           Show this help
 #
-# Internal implementation lives in dev/_internal/mac_{hard,fast,dmg}.sh and is
+# Internal implementation lives in dev/utils/mac_{hard,fast,dmg}.sh and is
 # not intended to be invoked directly.
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-INTERNAL="$SCRIPT_DIR/_internal"
+INTERNAL="$SCRIPT_DIR/utils"
 
 # Defaults
 MODE=hard          # hard | fast | skip

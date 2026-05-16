@@ -2,7 +2,7 @@
 set -e
 set -o pipefail
 
-# Zeo Linux Fast Build Script (linux_build_fast.sh)
+# Zeo Linux Fast Build Script (appimage_build.sh --fast)
 # Single command that auto-sets-up, builds, and launches Zeo in Docker.
 # Auto-detects when the Docker image needs rebuilding via Dockerfile hashing.
 # Typical rebuild: 5-15s for one changed .cpp file.
@@ -10,7 +10,7 @@ set -o pipefail
 # --- Configuration ---
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-WORKSPACE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+WORKSPACE_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 KICAD_SOURCE_DIR="$WORKSPACE_DIR/src/zeo"
 KICAD_PYTHON_DIR="$WORKSPACE_DIR/src/zeo-python"

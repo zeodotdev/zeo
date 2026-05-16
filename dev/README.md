@@ -74,13 +74,23 @@ Platform-specific extras: `--sign IDENTITY` / `--notarize` (mac), `--light` /
 ./dev/mac_build.sh --package --sign 'Developer ID Application: Name' --notarize
 ```
 
-## Internal scripts (`dev/utils/`)
+## Repository layout
 
-The unified entries delegate to per-mode helpers in `utils/`. You can call
-them directly if a mode breaks, but they aren't the supported interface — flag
-sets and naming may change. For mac these are `mac_hard.sh`, `mac_fast.sh`, and
-`mac_dmg.sh`.
+```
+dev/
+├── mac_build.sh           macOS entry point
+├── appimage_build.sh      Linux entry point (Docker-based)
+├── win_build_fast.ps1     Windows dev iteration (not yet consolidated)
+├── win_build_installer.ps1  Windows installer (not yet consolidated)
+├── setup-upstreams.sh     one-time: add upstream-* remotes
+├── assets/                build-time image assets (DMG background, etc.)
+├── log/                   build logs (gitignored)
+└── utils/                 internal helpers, called by the entries above
+    ├── mac_{hard,fast,dmg}.sh
+    ├── linux_{fast,appimage}.sh
+    └── create-dmg-background.py
+```
 
-(Linux and Windows scripts are not yet consolidated; they live at the dev/ root
-for now as `linux_build_fast.sh`, `linux_build_appimage.sh`, `win_build_fast.ps1`,
-`win_build_installer.ps1`.)
+The `utils/` scripts can be invoked directly if you need to debug a specific
+phase, but they aren't the supported interface — flag sets and naming may
+change. Always prefer the user-facing entries.

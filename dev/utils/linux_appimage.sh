@@ -1,21 +1,21 @@
 #!/bin/bash
 set -e
 
-# Zeo Linux AppImage Build Script (linux_build_appimage.sh)
+# Zeo Linux AppImage Build Script (appimage_build.sh --package)
 # Creates a shareable AppImage with Zeo (KiCad), Agent, Terminal, and all dependencies
 #
 # Usage:
-#   ./linux_build_appimage.sh                    # Full build + AppImage (default)
-#   ./linux_build_appimage.sh --skip-build       # AppImage only (requires previous build)
-#   ./linux_build_appimage.sh --release "1.0"    # Named release AppImage
-#   ./linux_build_appimage.sh --light            # Build light version (no 3D packages)
-#   ./linux_build_appimage.sh --config <file>    # Use custom config file
-#   ./linux_build_appimage.sh --build-deps       # Build dependency images locally (wx, wxpython)
+#   ./appimage_build.sh --package                    # Full build + AppImage (default)
+#   ./appimage_build.sh --package --skip-build       # AppImage only (requires previous build)
+#   ./appimage_build.sh --package --release "1.0"    # Named release AppImage
+#   ./appimage_build.sh --package --light            # Build light version (no 3D packages)
+#   ./appimage_build.sh --package --config <file>    # Use custom config file
+#   ./appimage_build.sh --package --build-deps       # Build dependency images locally (wx, wxpython)
 
 # --- Configuration ---
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-WORKSPACE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+WORKSPACE_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 KICAD_SOURCE_DIR="$WORKSPACE_DIR/src/zeo"
 APPIMAGE_DIR="$WORKSPACE_DIR/packaging/kicad-appimage"

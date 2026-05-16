@@ -38,27 +38,50 @@ git subtree pull --prefix=packaging/kicad-win-builder upstream-win-builder  mast
 
 Always use `--squash` to keep the monorepo log readable.
 
-### Submodules (`libraries/*`, `src/wzWidget`)
+### Submodules (`libraries/`, `src/wzWidget`)
 
-Each submodule is its own clone with its own upstream. Sync inside the submodule,
-then bump the pin in the monorepo:
+`libraries/` is a single submodule pointing at `zeodotdev/zeo-libraries`,
+which itself contains 7 KiCad libraries as subtrees (`kicad-symbols/`,
+`kicad-footprints/`, etc.). To sync libraries from upstream KiCad:
 
 ```
-cd libraries/kicad-symbols
-git remote add upstream https://gitlab.com/kicad/libraries/kicad-symbols.git  # one-time
-git fetch upstream && git merge upstream/master    # or rebase
-git push origin master                              # push to zeodotdev/kicad-symbols
+cd libraries
+git subtree pull --prefix=kicad-symbols    https://gitlab.com/kicad/libraries/kicad-symbols.git    master --squash
+git subtree pull --prefix=kicad-footprints https://gitlab.com/kicad/libraries/kicad-footprints.git master --squash
+# ... etc for each kicad-* subtree
+git push origin main
+cd ..
+git add libraries
+git commit -m "build: bump zeo-libraries submodule"
+```
+
+For Zeo-proprietary library content, opt in by adding the private
+`zeo-libraries-private` repo manually inside `libraries/`:
+
+```
+git -C libraries submodule add https://github.com/zeodotdev/zeo-libraries-private.git zeo-private
+# Requires github auth. Not in zeo-libraries' .gitmodules — team members add per-clone.
+```
+
+For `src/wzWidget`, sync inside the submodule and bump the pin:
+
+```
+cd src/wzWidget
+git fetch https://gitlab.com/kicad/code/wxWidgets.git kicad/macos-wx-3.2
+git merge FETCH_HEAD
+git push origin kicad/macos-wx-3.2
 cd ../..
-git add libraries/kicad-symbols
-git commit -m "build: bump kicad-symbols submodule"
+git add src/wzWidget && git commit -m "build: bump wzWidget"
 ```
-
-Same pattern for the other 6 libraries and `src/wzWidget`.
 
 ## Notes
 
 - `src/wzWidget` is a submodule (not a subtree) because wxWidgets has its own
   nested submodules (`3rdparty/catch`, `nanosvg`, `pcre`) that need to stay
   self-contained inside the wxWidgets repo.
-- The `kicadpp/*` GitLab forks are no longer used. They were the migration
-  source; the GitHub mirrors at `zeodotdev/*` are now authoritative.
+- `libraries/` was originally 7 individual submodules; consolidated into one
+  `zeo-libraries` submodule for simpler ops and to make room for Zeo-proprietary
+  libraries alongside the KiCad mirrors.
+- The `kicadpp/*` GitLab forks and the standalone `zeodotdev/{zeo-python, zeo-rust,
+  freerouting, dev}` mirrors are archived. Upstream pulls go directly to
+  `gitlab.com/kicad/*` (and `github.com/freerouting/freerouting`).

@@ -11,7 +11,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Base workspace directory
-WORKSPACE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+WORKSPACE_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 # Define paths relative to workspace
 KICAD_SOURCE_DIR="$WORKSPACE_DIR/src/zeo"

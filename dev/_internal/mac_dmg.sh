@@ -13,7 +13,7 @@ set -e
 # --- Configuration ---
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-WORKSPACE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+WORKSPACE_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 KICAD_SOURCE_DIR="$WORKSPACE_DIR/src/zeo"
 BUILDER_DIR="$WORKSPACE_DIR/packaging/kicad-mac-builder"

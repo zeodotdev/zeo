@@ -10,7 +10,7 @@ set -o pipefail
 # --- Configuration ---
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-WORKSPACE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+WORKSPACE_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 KICAD_SOURCE_DIR="$WORKSPACE_DIR/src/zeo"
 KICAD_PYTHON_DIR="$WORKSPACE_DIR/src/zeo-python"

@@ -2,31 +2,7 @@
 	path = src/wzWidget
 	url = https://github.com/zeodotdev/wzWidget.git
 	branch = kicad/macos-wx-3.2
-[submodule "libraries/kicad-symbols"]
-	path = libraries/kicad-symbols
-	url = https://github.com/zeodotdev/kicad-symbols.git
-	branch = master
-[submodule "libraries/kicad-footprints"]
-	path = libraries/kicad-footprints
-	url = https://github.com/zeodotdev/kicad-footprints.git
-	branch = master
-[submodule "libraries/kicad-library-utils"]
-	path = libraries/kicad-library-utils
-	url = https://github.com/zeodotdev/kicad-library-utils.git
-	branch = master
-[submodule "libraries/kicad-footprint-generator"]
-	path = libraries/kicad-footprint-generator
-	url = https://github.com/zeodotdev/kicad-footprint-generator.git
-	branch = master
-[submodule "libraries/kicad-packages3D"]
-	path = libraries/kicad-packages3D
-	url = https://github.com/zeodotdev/kicad-packages3D.git
-	branch = master
-[submodule "libraries/kicad-packages3D-source"]
-	path = libraries/kicad-packages3D-source
-	url = https://github.com/zeodotdev/kicad-packages3D-source.git
-	branch = master
-[submodule "libraries/kicad-templates"]
-	path = libraries/kicad-templates
-	url = https://github.com/zeodotdev/kicad-templates.git
-	branch = master
+[submodule "libraries"]
+	path = libraries
+	url = https://github.com/zeodotdev/zeo-libraries.git
+	branch = main

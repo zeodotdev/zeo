@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
+ */
+
 #ifndef AGENT_CLOUD_SYNC_H
 #define AGENT_CLOUD_SYNC_H
 

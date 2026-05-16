@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2025, Zeo <team@zeo.dev>
+ */
+
 #ifndef AGENT_FRAME_H
 #define AGENT_FRAME_H
 

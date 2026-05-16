@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
+ */
+
 #ifndef VCS_HTML_TEMPLATE_H
 #define VCS_HTML_TEMPLATE_H
 

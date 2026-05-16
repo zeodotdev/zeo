@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
+ */
+
 #ifndef CREATE_PROJECT_HANDLER_H
 #define CREATE_PROJECT_HANDLER_H
 

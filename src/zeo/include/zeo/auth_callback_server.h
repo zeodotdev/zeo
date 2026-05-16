@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
+ */
+
 #ifndef AUTH_CALLBACK_SERVER_H
 #define AUTH_CALLBACK_SERVER_H
 

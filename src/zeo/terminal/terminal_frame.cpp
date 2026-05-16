@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
+ */
+
 #include "terminal_frame.h"
 #include "terminal_command_validator.h"
 #include "headless_python_executor.h"

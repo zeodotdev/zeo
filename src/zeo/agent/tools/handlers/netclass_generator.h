@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
+ */
+
 #ifndef NETCLASS_GENERATOR_H
 #define NETCLASS_GENERATOR_H
 

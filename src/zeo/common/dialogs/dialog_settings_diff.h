@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
+ */
+
 #ifndef DIALOG_SETTINGS_DIFF_H
 #define DIALOG_SETTINGS_DIFF_H
 

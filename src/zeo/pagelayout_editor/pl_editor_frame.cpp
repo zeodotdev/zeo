@@ -3,6 +3,7 @@
  *
  * Copyright (C) 2013 CERN
  * Copyright The KiCad Developers, see AUTHORS.txt for contributors.
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
  * @author Jean-Pierre Charras, jp.charras at wanadoo.fr
  *
  * This program is free software; you can redistribute it and/or

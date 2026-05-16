@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
+ */
+
 #include "vcs_frame.h"
 #include "vcs_ipc_handler.h"
 #include "vcs_html_template.h"

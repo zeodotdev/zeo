@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
+ */
+
 #include "kicad_file_renderer.h"
 #include "../agent/tools/util/process_util.h"
 #include "../agent/tools/util/kicad_cli_util.h"

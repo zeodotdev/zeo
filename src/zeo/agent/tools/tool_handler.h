@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
+ */
+
 #ifndef TOOL_HANDLER_H
 #define TOOL_HANDLER_H
 

@@ -1,3 +1,5 @@
+# Copyright (C) 2026, Zeo <team@zeo.dev>
+
 import json
 from time import sleep
 from kipy.errors import ApiError

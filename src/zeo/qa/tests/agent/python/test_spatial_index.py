@@ -1,3 +1,5 @@
+# Copyright (C) 2026, Zeo <team@zeo.dev>
+
 """Tests for SpatialIndex, bboxes_overlap, and wire_segments_to_bboxes from bbox.py.
 
 These are pure function tests — no KiCad connection or mocks required.

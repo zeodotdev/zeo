@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
+ */
+
 // SVG rasterizer only needed on Windows where vcpkg provides full nanosvg.
 // macOS uses sips; Linux uses rsvg-convert.
 #if defined( _WIN32 )

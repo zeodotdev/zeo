@@ -1,3 +1,5 @@
+# Copyright (C) 2026, Zeo <team@zeo.dev>
+
 import json, sys, fnmatch
 
 refresh_or_fail(sch)

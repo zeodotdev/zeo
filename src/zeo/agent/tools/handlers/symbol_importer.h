@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
+ */
+
 #ifndef SYMBOL_IMPORTER_H
 #define SYMBOL_IMPORTER_H
 

@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
+ */
+
 #include "vcs_html_template.h"
 
 // This header is generated at build time from vcs_template.html by embed_html.cmake.

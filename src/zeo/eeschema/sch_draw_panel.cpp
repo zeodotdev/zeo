@@ -4,6 +4,7 @@
  * Copyright (C) 2014-2019 CERN
  * @author Maciej Suminski <maciej.suminski@cern.ch>
  * Copyright The KiCad Developers, see AUTHORS.txt for contributors.
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License

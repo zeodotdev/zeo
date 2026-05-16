@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
+ */
+
 #ifndef GIT_VCS_BRIDGE_H
 #define GIT_VCS_BRIDGE_H
 

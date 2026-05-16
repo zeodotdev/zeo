@@ -1,3 +1,5 @@
+# Copyright (C) 2026, Zeo <team@zeo.dev>
+
 import json, re
 from kipy.geometry import Vector2
 

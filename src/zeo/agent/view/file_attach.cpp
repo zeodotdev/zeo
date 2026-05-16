@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
+ */
+
 #include "file_attach.h"
 #include "../tools/tool_registry.h"
 

@@ -1,3 +1,5 @@
+# Copyright (C) 2026, Zeo <team@zeo.dev>
+
 """
 Create and manage manufacturing panels for PCB production.
 

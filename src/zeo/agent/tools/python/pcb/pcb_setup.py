@@ -1,3 +1,5 @@
+# Copyright (C) 2026, Zeo <team@zeo.dev>
+
 import json
 from kipy.proto.board import board_pb2, board_commands_pb2
 from kipy.proto.board.board_types_pb2 import BoardLayer

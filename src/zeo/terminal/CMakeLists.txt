@@ -1,9 +1,6 @@
 
-#
-# KiCad Terminal CMake config
-#
+# Copyright (C) 2026, Zeo <team@zeo.dev>
 
-# Add Terminal specific definitions
 add_definitions( -DTERMINAL_APP )
 
 include_directories( BEFORE ${INC_BEFORE} )

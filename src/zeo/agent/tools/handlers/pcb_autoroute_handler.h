@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
+ */
+
 #ifndef PCB_AUTOROUTE_HANDLER_H
 #define PCB_AUTOROUTE_HANDLER_H
 

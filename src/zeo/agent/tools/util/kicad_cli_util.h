@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
+ */
+
 #ifndef KICAD_CLI_UTIL_H
 #define KICAD_CLI_UTIL_H
 

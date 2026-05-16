@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
+ */
+
 #include "symbol_importer.h"
 #include "tools/tool_registry.h"
 #include "../../agent_events.h"

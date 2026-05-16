@@ -3,6 +3,7 @@
  *
  * Copyright (C) 2018 CERN
  * Copyright The KiCad Developers, see AUTHORS.txt for contributors.
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
  *
  * @author Jon Evans <jon@craftyjon.com>
  *

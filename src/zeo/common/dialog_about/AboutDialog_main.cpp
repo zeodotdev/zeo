@@ -3,6 +3,7 @@
  *
  * Copyright (C) 2010 Rafael Sokolowski <Rafael.Sokolowski@web.de>
  * Copyright The KiCad Developers, see AUTHORS.txt for contributors.
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
  * Copyright (C) 2026 Moonshine Distillery Inc.
  *
  * This program is free software; you can redistribute it and/or

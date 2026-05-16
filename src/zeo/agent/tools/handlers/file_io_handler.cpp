@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
+ */
+
 #include "file_io_handler.h"
 #include "tool_registry.h"
 #include <nlohmann/json.hpp>

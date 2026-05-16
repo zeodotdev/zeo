@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
+ */
+
 #include <zeo/agent_auth.h>
 #ifndef __WXMAC__
 #include <zeo/auth_callback_server.h>

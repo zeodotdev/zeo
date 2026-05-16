@@ -1,3 +1,5 @@
+# Copyright (C) 2026, Zeo <team@zeo.dev>
+
 import json
 
 refill_zones = TOOL_ARGS.get("refill_zones", True)

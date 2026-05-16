@@ -3,6 +3,7 @@
  *
  * Copyright (C) 2014-2020 CERN
  * Copyright The KiCad Developers, see AUTHORS.txt for contributors.
+ * Copyright (C) 2025, Zeo <team@zeo.dev>
  *
  * @author Maciej Suminski <maciej.suminski@cern.ch>
  *

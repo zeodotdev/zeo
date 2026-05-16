@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2025, Zeo <team@zeo.dev>
+ */
+
 #include <kiface_base.h>
 #include <pgm_base.h>
 #include <kiway.h>

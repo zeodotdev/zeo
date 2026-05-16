@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
+ */
+
 #include "agent_markdown.h"
 #include <wx/arrstr.h>
 

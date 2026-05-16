@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
+ */
+
 #ifndef CHAT_EVENTS_H
 #define CHAT_EVENTS_H
 

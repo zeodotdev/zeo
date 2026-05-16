@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-# Regenerate PNG files for agent and vcs app icons
+# Copyright (C) 2026, Zeo <team@zeo.dev>
 
 import os
 from subprocess import call

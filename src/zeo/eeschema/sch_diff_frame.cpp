@@ -1,13 +1,5 @@
 /*
- * SCH_DIFF_FRAME - Read-only schematic diff viewer for agent before/after changes.
- *
- * Shows two snapshots of a schematic sheet (before = disk file, after = in-memory agent changes)
- * and lets the user toggle between them using Before / After links in the infobar.
- * Changed items are highlighted via per-item colored bounding box overlays drawn on
- * LAYER_GP_OVERLAY:
- *   green  = added (exists in after, not in before)
- *   red    = deleted (exists in before, not in after)
- *   amber  = modified (exists in both but bbox or reference/value changed)
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
  */
 
 #include "sch_diff_frame.h"

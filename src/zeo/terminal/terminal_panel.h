@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
+ */
+
 #ifndef TERMINAL_PANEL_H
 #define TERMINAL_PANEL_H
 

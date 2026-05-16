@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
+ */
+
 // Console-mode launcher for the Zeo MCP server on Windows.
 //
 // Embeds the same python311.dll that Zeo.exe links against, points PYTHONHOME

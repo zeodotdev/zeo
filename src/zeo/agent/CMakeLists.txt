@@ -1,9 +1,6 @@
 
-#
-# KiCad Agent CMake config
-#
+# Copyright (C) 2025, Zeo <team@zeo.dev>
 
-# Add KiCad Agent specific definitions
 add_definitions( -DAGENT_APP )
 
 # Generate C++ header from unified HTML template at build time

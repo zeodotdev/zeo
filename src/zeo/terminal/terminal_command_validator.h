@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
+ */
+
 #ifndef TERMINAL_COMMAND_VALIDATOR_H
 #define TERMINAL_COMMAND_VALIDATOR_H
 

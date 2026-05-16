@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
+ */
+
 #include "netclass_generator.h"
 #include "tools/tool_registry.h"
 #include <zeo/agent_auth.h>

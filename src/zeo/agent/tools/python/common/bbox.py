@@ -1,7 +1,5 @@
 
-# ---------------------------------------------------------------------------
-# Bounding-box overlap utilities (prepended where needed)
-# ---------------------------------------------------------------------------
+# Copyright (C) 2026, Zeo <team@zeo.dev>
 
 _BBOX_MARGIN = 1.0  # mm padding per side
 

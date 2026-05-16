@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
+ */
+
 #ifndef MACOS_KEY_MONITOR_H
 #define MACOS_KEY_MONITOR_H
 

@@ -1,6 +1,5 @@
-/**
- * Unit tests for the sch_delete tool handler (SCH_CRUD_HANDLER),
- * including query-based deletion by item properties.
+/*
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
  */
 
 #include <algorithm>

@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
+ */
+
 #ifndef CHECK_STATUS_HANDLER_H
 #define CHECK_STATUS_HANDLER_H
 

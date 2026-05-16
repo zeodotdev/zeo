@@ -1,3 +1,5 @@
+# Copyright (C) 2026, Zeo <team@zeo.dev>
+
 import json, re, sys
 
 refresh_or_fail(sch)

@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2025, Zeo <team@zeo.dev>
+ */
+
 void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_EXPRESS& aEvent )
 {
     const std::string& payload = aEvent.Payload();

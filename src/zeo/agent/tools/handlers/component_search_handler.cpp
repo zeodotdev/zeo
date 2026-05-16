@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
+ */
+
 #include "component_search_handler.h"
 #include "../../agent_llm_client.h"
 #include "../../agent_events.h"

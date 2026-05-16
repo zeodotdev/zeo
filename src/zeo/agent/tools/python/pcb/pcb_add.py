@@ -1,3 +1,5 @@
+# Copyright (C) 2026, Zeo <team@zeo.dev>
+
 import json
 import math
 from kipy.geometry import Vector2, PolygonWithHoles, PolyLineNode

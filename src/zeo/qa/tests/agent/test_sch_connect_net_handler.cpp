@@ -1,5 +1,5 @@
-/**
- * Unit tests for the sch_connect_net tool handler
+/*
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
  */
 
 #include <algorithm>

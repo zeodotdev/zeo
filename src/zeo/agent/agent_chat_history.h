@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
+ */
+
 #ifndef AGENT_CHAT_HISTORY_H
 #define AGENT_CHAT_HISTORY_H
 

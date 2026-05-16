@@ -1,3 +1,5 @@
+# Copyright (C) 2026, Zeo <team@zeo.dev>
+
 """
 sch_place_companions - Place companion components adjacent to IC pins.
 

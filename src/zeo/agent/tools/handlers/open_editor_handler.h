@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
+ */
+
 #ifndef OPEN_EDITOR_HANDLER_H
 #define OPEN_EDITOR_HANDLER_H
 

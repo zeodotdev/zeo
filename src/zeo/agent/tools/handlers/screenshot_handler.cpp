@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
+ */
+
 #include "screenshot_handler.h"
 #include "../tool_registry.h"
 #include "../util/kicad_cli_util.h"

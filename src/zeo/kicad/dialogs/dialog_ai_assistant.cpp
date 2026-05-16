@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2025, Zeo <team@zeo.dev>
+ */
+
 #include "dialog_ai_assistant.h"
 #include <wx/sizer.h>
 #include <wx/stattext.h>

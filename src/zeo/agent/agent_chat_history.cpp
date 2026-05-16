@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
+ */
+
 #include "agent_chat_history.h"
 
 #include <wx/filename.h>

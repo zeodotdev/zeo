@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
+ */
+
 #ifndef COMPONENT_SEARCH_HANDLER_H
 #define COMPONENT_SEARCH_HANDLER_H
 

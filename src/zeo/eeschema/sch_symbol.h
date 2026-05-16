@@ -6,6 +6,7 @@
  * Copyright (C) 2015 Wayne Stambaugh <stambaughw@gmail.com>
  * Copyright (C) 2022 CERN
  * Copyright The KiCad Developers, see AUTHORS.txt for contributors.
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License

@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
+ */
+
 #include "check_status_handler.h"
 #include "tools/tool_registry.h"
 #include <frame_type.h>

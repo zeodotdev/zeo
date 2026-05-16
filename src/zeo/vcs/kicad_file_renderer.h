@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
+ */
+
 #ifndef KICAD_FILE_RENDERER_H
 #define KICAD_FILE_RENDERER_H
 

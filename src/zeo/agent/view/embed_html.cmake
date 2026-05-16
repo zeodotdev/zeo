@@ -1,5 +1,4 @@
-# CMake script to embed HTML file as a C++ char array
-# Usage: cmake -DINPUT_FILE=input.html -DOUTPUT_FILE=output.h [-DVAR_NAME=MY_VAR] -P embed_html.cmake
+# Copyright (C) 2026, Zeo <team@zeo.dev>
 
 if(NOT INPUT_FILE OR NOT OUTPUT_FILE)
     message(FATAL_ERROR "INPUT_FILE and OUTPUT_FILE must be defined")

@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
+ */
+
 #ifndef VCS_IPC_HANDLER_H
 #define VCS_IPC_HANDLER_H
 

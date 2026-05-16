@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
+ */
+
 #ifndef AGENT_EVENTS_H
 #define AGENT_EVENTS_H
 

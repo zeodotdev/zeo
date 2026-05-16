@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
+ */
+
 #ifndef DATASHEET_HANDLER_H
 #define DATASHEET_HANDLER_H
 

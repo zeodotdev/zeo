@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
+ */
+
 #ifndef FILE_IO_HANDLER_H
 #define FILE_IO_HANDLER_H
 

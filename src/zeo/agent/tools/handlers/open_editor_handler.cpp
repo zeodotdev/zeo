@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
+ */
+
 #include "open_editor_handler.h"
 #include <filesystem>
 #include <wx/filename.h>

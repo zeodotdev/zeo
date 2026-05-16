@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
+ */
+
 #include "pcb_autoroute_handler.h"
 #include "../tool_registry.h"
 

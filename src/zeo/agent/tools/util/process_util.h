@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
+ */
+
 #ifndef PROCESS_UTIL_H
 #define PROCESS_UTIL_H
 

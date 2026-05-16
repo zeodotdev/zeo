@@ -1,8 +1,5 @@
 /*
- * WEBVIEW_BRIDGE: JS↔C++ message router for the unified webview.
- *
- * Decouples the webview's message protocol from AGENT_FRAME business logic.
- * All JS messages are dispatched here; all C++→JS state pushes go through here.
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
  */
 
 #ifndef WEBVIEW_BRIDGE_H

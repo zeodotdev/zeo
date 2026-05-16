@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
+ */
+
 #ifndef SVG_RASTERIZER_H
 #define SVG_RASTERIZER_H
 

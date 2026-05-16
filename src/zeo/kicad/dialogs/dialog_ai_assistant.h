@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2025, Zeo <team@zeo.dev>
+ */
+
 #ifndef DIALOG_AI_ASSISTANT_H
 #define DIALOG_AI_ASSISTANT_H
 

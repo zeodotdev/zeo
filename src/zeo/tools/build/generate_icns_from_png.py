@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-# Generate .icns files from PNG source for the new taskbar icon
+# Copyright (C) 2026, Zeo <team@zeo.dev>
 
 import os
 from shutil import copy, rmtree

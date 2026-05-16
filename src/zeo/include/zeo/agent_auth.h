@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
+ */
+
 #ifndef AGENT_AUTH_H
 #define AGENT_AUTH_H
 

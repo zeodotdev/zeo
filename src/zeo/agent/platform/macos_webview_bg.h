@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
+ */
+
 #ifndef MACOS_WEBVIEW_BG_H
 #define MACOS_WEBVIEW_BG_H
 

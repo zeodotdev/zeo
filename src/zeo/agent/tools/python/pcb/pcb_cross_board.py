@@ -1,3 +1,5 @@
+# Copyright (C) 2026, Zeo <team@zeo.dev>
+
 """
 Manage cross-board connections in a multi-board project.
 

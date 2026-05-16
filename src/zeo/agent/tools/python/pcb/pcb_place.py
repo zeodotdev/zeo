@@ -1,3 +1,5 @@
+# Copyright (C) 2026, Zeo <team@zeo.dev>
+
 import json, math
 from kipy.proto.board.board_types_pb2 import BoardLayer
 from kipy.geometry import Vector2, Angle

@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
+ */
+
 #include "create_project_handler.h"
 #include <nlohmann/json.hpp>
 #include <wx/dir.h>

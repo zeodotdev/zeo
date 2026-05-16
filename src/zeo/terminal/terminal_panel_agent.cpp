@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
+ */
+
 #include "terminal_panel_agent.h"
 #include <wx/settings.h>
 

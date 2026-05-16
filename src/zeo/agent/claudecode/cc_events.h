@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
+ */
+
 #ifndef CC_EVENTS_H
 #define CC_EVENTS_H
 

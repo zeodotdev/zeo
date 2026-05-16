@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
+ */
+
 #include "chat_controller.h"
 #include "chat_events.h"
 #include "../tools/tool_schemas.h"

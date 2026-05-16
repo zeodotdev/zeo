@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
+ */
+
 #include <dialogs/dialog_settings_diff.h>
 #include <wx/sizer.h>
 #include <wx/button.h>

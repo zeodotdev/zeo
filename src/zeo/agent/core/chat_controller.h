@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
+ */
+
 #ifndef CHAT_CONTROLLER_H
 #define CHAT_CONTROLLER_H
 

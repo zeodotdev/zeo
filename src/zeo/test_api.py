@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (C) 2026, Zeo <team@zeo.dev>
+
 """
 KiCad API Test Script
 

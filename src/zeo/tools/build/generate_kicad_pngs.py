@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-# Regenerate icon_kicad PNG files with black background
+# Copyright (C) 2026, Zeo <team@zeo.dev>
 
 import os
 from subprocess import call

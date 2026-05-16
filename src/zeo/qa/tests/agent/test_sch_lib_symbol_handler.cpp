@@ -1,5 +1,5 @@
-/**
- * Unit tests for the sch_find_symbol tool handler
+/*
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
  */
 
 #include <algorithm>

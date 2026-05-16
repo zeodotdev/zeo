@@ -1,3 +1,5 @@
+# Copyright (C) 2026, Zeo <team@zeo.dev>
+
 import json, re, sys
 
 lib_id = TOOL_ARGS.get("lib_id", "")

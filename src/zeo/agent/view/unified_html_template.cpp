@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
+ */
+
 #include "unified_html_template.h"
 #include "unified_template_embedded.h"
 

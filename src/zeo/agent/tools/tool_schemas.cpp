@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
+ */
+
 #include "tool_schemas.h"
 #include "../agent_llm_client.h"
 #include "handlers/python_tool_handler.h"

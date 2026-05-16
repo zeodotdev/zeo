@@ -1,5 +1,5 @@
 /*
- * IPC shell blocking global state - shared across all kifaces via kicommon.dll
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
  */
 
 #include <api/api_handler_editor.h>

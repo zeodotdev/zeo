@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
+ */
+
 #ifndef ZEO_CONSTANTS_H
 #define ZEO_CONSTANTS_H
 

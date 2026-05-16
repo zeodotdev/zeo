@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2025, Zeo <team@zeo.dev>
+ */
+
 #include "agent_frame.h"
 #include "agent_chat_history.h"
 #include <zeo/agent_auth.h>

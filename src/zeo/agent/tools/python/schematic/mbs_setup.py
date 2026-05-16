@@ -1,3 +1,5 @@
+# Copyright (C) 2026, Zeo <team@zeo.dev>
+
 """mbs_setup — manage multi-board container projects.
 
 One tool, multiple actions covering the full container setup surface:

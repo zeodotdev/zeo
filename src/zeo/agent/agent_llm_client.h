@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2025, Zeo <team@zeo.dev>
+ */
+
 #ifndef AGENT_LLM_CLIENT_H
 #define AGENT_LLM_CLIENT_H
 

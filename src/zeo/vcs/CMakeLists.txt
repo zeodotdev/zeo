@@ -1,9 +1,6 @@
 
-#
-# VCS (Version Control) CMake config
-#
+# Copyright (C) 2026, Zeo <team@zeo.dev>
 
-# Generate C++ header from VCS HTML template at build time
 set( VCS_TEMPLATE_INPUT "${CMAKE_CURRENT_SOURCE_DIR}/vcs_template.html" )
 set( VCS_TEMPLATE_OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/vcs_html_template_embedded.h" )
 

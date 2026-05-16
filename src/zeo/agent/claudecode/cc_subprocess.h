@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
+ */
+
 #ifndef CC_SUBPROCESS_H
 #define CC_SUBPROCESS_H
 

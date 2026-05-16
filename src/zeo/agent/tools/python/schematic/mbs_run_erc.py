@@ -1,3 +1,5 @@
+# Copyright (C) 2026, Zeo <team@zeo.dev>
+
 import json
 
 # ERC code descriptions match those in sch_run_erc.py — the underlying ERC

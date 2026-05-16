@@ -1,8 +1,5 @@
 /*
- * Shared diff highlight utilities for schematic editors.
- *
- * Used by both the live canvas overlay (SCH_EDIT_FRAME) and the
- * VCS diff viewer (SCH_DIFF_FRAME) to ensure identical visual style.
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
  */
 
 #ifndef SCH_DIFF_HIGHLIGHT_H

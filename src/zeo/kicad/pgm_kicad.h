@@ -3,6 +3,7 @@
  *
  * Copyright (C) 2014 SoftPLC Corporation, Dick Hollenbeck <dick@softplc.com>
  * Copyright The KiCad Developers, see AUTHORS.TXT for contributors.
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License

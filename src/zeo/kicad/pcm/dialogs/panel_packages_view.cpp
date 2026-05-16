@@ -3,6 +3,7 @@
  *
  * Copyright (C) 2021 Andrew Lutsenko, anlutsenko at gmail dot com
  * Copyright The KiCad Developers, see AUTHORS.txt for contributors.
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
  *
  * This program is free software: you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the

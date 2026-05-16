@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
+ */
+
 #ifndef PYTHON_TOOL_HANDLER_H
 #define PYTHON_TOOL_HANDLER_H
 

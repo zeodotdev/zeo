@@ -1,3 +1,5 @@
+# Copyright (C) 2026, Zeo <team@zeo.dev>
+
 """Tests for sch_place_companions geometry helpers and overlap detection logic.
 
 Pure function tests for geometry helpers and mocked tests for obstacle collection.

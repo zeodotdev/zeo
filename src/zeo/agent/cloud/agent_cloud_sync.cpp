@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
+ */
+
 #include "agent_cloud_sync.h"
 #include <zeo/agent_auth.h>
 #include <kicad_curl/kicad_curl_easy.h>

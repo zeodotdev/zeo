@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2025, Zeo <team@zeo.dev>
+ */
+
 #include "agent_llm_client.h"
 #include <zeo/agent_auth.h>
 #include "agent_frame.h"

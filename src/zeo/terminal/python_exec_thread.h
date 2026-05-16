@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
+ */
+
 #ifndef PYTHON_EXEC_THREAD_H
 #define PYTHON_EXEC_THREAD_H
 

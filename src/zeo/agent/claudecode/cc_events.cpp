@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
+ */
+
 #include "cc_events.h"
 
 wxDEFINE_EVENT( EVT_CC_LINE, wxThreadEvent );

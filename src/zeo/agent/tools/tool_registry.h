@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
+ */
+
 #ifndef TOOL_REGISTRY_H
 #define TOOL_REGISTRY_H
 

@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
+ */
+
 #ifndef DIFF_MANAGER_H
 #define DIFF_MANAGER_H
 

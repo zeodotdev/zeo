@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
+ */
+
 #include "python_exec_thread.h"
 #include <python_scripting.h>
 #ifdef _WIN32

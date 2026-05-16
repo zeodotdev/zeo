@@ -1,8 +1,5 @@
 /*
- * Bridge protocol constants for JS↔C++ communication.
- *
- * All action names for messages from JavaScript to C++, and
- * JS function names for updates pushed from C++ to JavaScript.
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
  */
 
 #ifndef BRIDGE_PROTOCOL_H

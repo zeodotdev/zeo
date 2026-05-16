@@ -1,3 +1,5 @@
+# Copyright (C) 2026, Zeo <team@zeo.dev>
+
 import json
 from kipy.board_types import BoardSegment
 from kipy.proto.board.board_types_pb2 import BoardLayer

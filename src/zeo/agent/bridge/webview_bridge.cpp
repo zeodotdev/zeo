@@ -1,9 +1,5 @@
 /*
- * WEBVIEW_BRIDGE implementation.
- *
- * Routes JSON messages between the unified webview (JS) and AGENT_FRAME (C++).
- * All JS→C++ messages are parsed here and dispatched to Handle*() methods.
- * All C++→JS state updates are serialized here and sent via RunScriptAsync().
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
  */
 
 #include "webview_bridge.h"

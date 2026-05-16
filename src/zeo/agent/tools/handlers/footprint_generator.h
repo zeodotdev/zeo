@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
+ */
+
 #ifndef FOOTPRINT_GENERATOR_H
 #define FOOTPRINT_GENERATOR_H
 

@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
+ */
+
 #ifndef SCREENSHOT_HANDLER_H
 #define SCREENSHOT_HANDLER_H
 

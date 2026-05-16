@@ -1,5 +1,5 @@
-/**
- * Main file for the Agent QA test module
+/*
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
  */
 
 #define BOOST_TEST_MODULE AgentTests

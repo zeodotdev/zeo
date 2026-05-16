@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
+ */
+
 #ifndef SCH_DIFF_FRAME_H
 #define SCH_DIFF_FRAME_H
 

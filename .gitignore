@@ -3,3 +3,4 @@
 __pycache__/
 /build/
 .env
+src/zeo-python/kicad/

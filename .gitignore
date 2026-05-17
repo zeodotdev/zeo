@@ -7,3 +7,18 @@ src/zeo-python/kicad/
 build.log
 /dev/log/*
 !/dev/log/.gitkeep
+
+# Agentic-tool state / local-only files (catches any new noise).
+# Existing tracked configs in src/zeo/.claude, src/zeo/.entire, etc.
+# stay tracked — those were intentional shared configs from upstream.
+# Override examples (if you want to share, e.g. `!.claude/settings.json`)
+# go below the broad patterns.
+.claude/
+.codex/
+.entire/
+.opencode/
+# Local-only inside any tracked agentic dir:
+**/.claude/settings.local.json
+**/.opencode/*.db
+**/.opencode/*.db-shm
+**/.opencode/*.db-wal

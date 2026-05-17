@@ -1,0 +1,28 @@
+{
+  "cli_version": "0.6.1",
+  "checkpoint_id": "f073896cdfcb",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 0,
+  "files_touched": [
+    ".gitignore",
+    "src/zeo/.opencode/opencode.db",
+    "src/zeo/.opencode/opencode.db-shm",
+    "src/zeo/.opencode/opencode.db-wal"
+  ],
+  "sessions": [
+    {
+      "metadata": "/f0/73896cdfcb/0/metadata.json",
+      "transcript": "/f0/73896cdfcb/0/full.jsonl",
+      "content_hash": "/f0/73896cdfcb/0/content_hash.txt",
+      "prompt": "/f0/73896cdfcb/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 14,
+    "cache_creation_tokens": 14569,
+    "cache_read_tokens": 236218,
+    "output_tokens": 1482,
+    "api_call_count": 9
+  }
+}

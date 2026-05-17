@@ -1,0 +1,53 @@
+{
+  "cli_version": "0.6.1",
+  "checkpoint_id": "f073896cdfcb",
+  "session_id": "ab16da60-d461-4e0f-8859-898be0d369b1",
+  "strategy": "manual-commit",
+  "created_at": "2026-05-17T21:19:29.906364Z",
+  "branch": "main",
+  "checkpoints_count": 0,
+  "files_touched": [
+    ".gitignore",
+    "src/zeo/.opencode/opencode.db",
+    "src/zeo/.opencode/opencode.db-shm",
+    "src/zeo/.opencode/opencode.db-wal"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-opus-4-7[1m]",
+  "turn_id": "d5423214210e",
+  "token_usage": {
+    "input_tokens": 14,
+    "cache_creation_tokens": 14569,
+    "cache_read_tokens": 236218,
+    "output_tokens": 1482,
+    "api_call_count": 9
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-05-17T21:19:29.904028Z",
+    "agent_lines": 15,
+    "agent_removed": 0,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 15,
+    "total_lines_changed": 15,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 175,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".claude/agents/entire-search.md": 25,
+        ".claude/settings.json": 84,
+        ".codex/agents/entire-search.toml": 23,
+        ".codex/config.toml": 3,
+        ".codex/hooks.json": 40
+      }
+    }
+  ]
+}

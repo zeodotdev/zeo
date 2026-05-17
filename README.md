@@ -1,7 +1,8 @@
 # zeo
 
-Zeo's monorepo — a fork of [KiCad](https://kicad.org) with proprietary additions,
-consolidated with related upstream projects.
+Zeo's monorepo
+
+Zeo is a powerful, modern fork of [KiCad](https://kicad.org) with proprietary additions.
 
 ## Quickstart
 

@@ -1,53 +1,52 @@
 # zeo
 
-Zeo monorepo. Consolidates Zeo's forks of the KiCad ecosystem into a single repository.
+Zeo's monorepo — a fork of [KiCad](https://kicad.org) with proprietary additions,
+consolidated with related upstream projects.
+
+## Quickstart
+
+```bash
+git clone --recurse-submodules https://github.com/zeodotdev/zeo.git
+cd zeo
+./dev/setup-upstreams.sh        # one-time: configure upstream remotes
+./dev/mac_build.sh              # full build + install on macOS
+```
+
+Substitute the platform script:
+
+| OS | Script |
+|---|---|
+| macOS | `./dev/mac_build.sh` |
+| Linux | `./dev/appimage_build.sh` |
+| Windows | `./dev/win_build_installer.ps1` |
+
+Run any script with `--help` for flags. See [`dev/README.md`](dev/README.md)
+for the full flag set + examples.
+
+If you cloned without `--recurse-submodules`:
+
+```bash
+git submodule update --init --recursive
+```
 
 ## Layout
 
 ```
-src/
-  zeo/              fork of KiCad (gitlab.com/kicad/code/kicad)
-  zeo-python/       fork of kicad-python (gitlab.com/kicad/code/kicad-python)
-  zeo-rust/         fork of kicad-rs (gitlab.com/kicad/code/kicad-rs)
-  wzWidget/         submodule: fork of KiCad's wxWidgets fork
-libraries/          submodules: KiCad symbol/footprint/3D libraries
-packaging/
-  kicad-appimage/   Linux AppImage packaging
-  kicad-mac-builder/macOS .dmg packaging
-  kicad-win-builder/Windows installer packaging
-tools/
-  freerouting/      autorouter (fork of github.com/freerouting/freerouting)
-dev/                build scripts (mac/linux/windows)
+src/zeo                          KiCad source fork (subtree)
+src/zeo-python, src/zeo-rust     KiCad language-binding forks (subtrees)
+src/wzWidget                     wxWidgets fork (submodule — KiCad needs custom wx)
+libraries/                       KiCad symbols/footprints/3D models (submodules → gitlab.com/kicad)
+packaging/{appimage,mac-builder,win-builder}   per-OS packaging (subtrees)
+tools/freerouting                autorouter (subtree)
+dev/                             build scripts
 ```
 
-## Getting started
+## Upstream sync
 
-Clone with submodules:
-
-```
-git clone --recursive https://github.com/zeodotdev/zeo.git
-cd zeo
-./dev/mac_build_fast.sh --install --python
-```
-
-If you already cloned without `--recursive`:
-
-```
-git submodule update --init --recursive
-```
-
-## Upstream syncs
-
-`src/zeo`, `src/zeo-python`, `src/zeo-rust`, `packaging/*`, and `tools/freerouting`
-are git subtrees. To pull upstream KiCad changes, see `UPSTREAMS.md` (TODO).
-
-Library submodules and `src/wzWidget` are managed as regular git submodules.
+See [`UPSTREAMS.md`](UPSTREAMS.md). Use `git subtree pull` for subtrees and
+in-submodule sync + pin-bump for submodules.
 
 ## License
 
-Zeo inherits KiCad's licensing (GPL-3.0 and others — see `src/zeo/LICENSE*`).
-See `src/zeo/AUTHORS.txt` for KiCad contributors.
-
-> **Note:** This README is a placeholder. A full Zeo README, NOTICE files,
-> and meta-file pass (AUTHORS.ZEO, CONTRIBUTING) are tracked as the next
-> phase of monorepo consolidation.
+GPL-3.0, inherited from KiCad. See [`src/zeo/LICENSE*`](src/zeo/) and
+[`src/zeo/AUTHORS.txt`](src/zeo/AUTHORS.txt) for upstream contributors.

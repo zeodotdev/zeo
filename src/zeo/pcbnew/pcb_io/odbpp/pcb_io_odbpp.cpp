@@ -28,6 +28,8 @@
 #include "odb_entity.h"
 #include "wx/log.h"
 
+#include <footprint.h>
+
 
 double      PCB_IO_ODBPP::m_scale = 1.0 / PCB_IU_PER_MM;
 double      PCB_IO_ODBPP::m_symbolScale = 1.0 / PL_IU_PER_MM;
@@ -64,10 +66,7 @@ bool PCB_IO_ODBPP::GenerateFiles( ODB_TREE_WRITER& writer )
     for( const auto& entity : m_entities )
     {
         if( !entity->CreateDirectoryTree( writer ) )
-        {
             throw std::runtime_error( "Failed in create directory tree process" );
-            return false;
-        }
 
         try
         {
@@ -75,9 +74,7 @@ bool PCB_IO_ODBPP::GenerateFiles( ODB_TREE_WRITER& writer )
         }
         catch( const std::exception& e )
         {
-            throw std::runtime_error( "Failed in generate files process.\n"
-                                      + std::string( e.what() ) );
-            return false;
+            throw std::runtime_error( "Failed in generate files process.\n" + std::string( e.what() ) );
         }
 
     }

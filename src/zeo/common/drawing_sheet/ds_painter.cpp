@@ -108,6 +108,8 @@ void DS_DRAW_ITEM_LIST::GetTextVars( wxArrayString* aVars )
     aVars->push_back( wxT( "PROJECTNAME" ) );
     aVars->push_back( wxT( "PAPER" ) );
     aVars->push_back( wxT( "LAYER" ) );
+    aVars->push_back( wxT( "VARIANT" ) );
+    aVars->push_back( wxT( "VARIANT_DESC" ) );
     TITLE_BLOCK::GetContextualTextVars( aVars );
 }
 
@@ -167,6 +169,16 @@ wxString DS_DRAW_ITEM_LIST::BuildFullText( const wxString& aTextbase )
                     *token = m_sheetLayer;
                     tokenUpdated = true;
                 }
+                else if( token->IsSameAs( wxT( "VARIANT" ) ) )
+                {
+                    *token = m_variantName;
+                    tokenUpdated = true;
+                }
+                else if( token->IsSameAs( wxT( "VARIANT_DESC" ) ) )
+                {
+                    *token = m_variantDesc;
+                    tokenUpdated = true;
+                }
                 else if( m_titleBlock )
                 {
                     if( m_titleBlock->TextVarResolver( token, m_project, m_flags ) )
@@ -208,10 +220,13 @@ wxString DS_DRAW_ITEM_LIST::BuildFullText( const wxString& aTextbase )
 
     wxString retv = ExpandTextVars( aTextbase, &wsResolver, m_flags );
 
-    static EXPRESSION_EVALUATOR evaluator;
-
     if( retv.Contains( wxS( "@{" ) ) )
+    {
+        // Must not be static. Painting can run on parallel workers and a shared
+        // evaluator races on its internal error collector.
+        EXPRESSION_EVALUATOR evaluator;
         retv = evaluator.Evaluate( retv );
+    }
 
     return retv;
 }

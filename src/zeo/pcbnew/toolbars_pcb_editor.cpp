@@ -74,6 +74,8 @@
 #include <settings/settings_manager.h>
 #include <eda_text.h>
 #include <tools/pcb_control.h>
+#include <pcb_draw_panel_gal.h>
+#include <drawing_sheet/ds_proxy_view_item.h>
 
 #include "../scripting/python_scripting.h"
 
@@ -250,6 +252,8 @@ std::optional<TOOLBAR_CONFIGURATION> PCB_EDIT_TOOLBAR_SETTINGS::DefaultToolbarCo
 
                       menu->Add( PCB_ACTIONS::zoneFillAll );
                       menu->Add( PCB_ACTIONS::zoneUnfillAll );
+                      menu->AppendSeparator();
+                      menu->Add( PCB_ACTIONS::zonesManager );
 
                       return menu;
                   } )
@@ -525,6 +529,26 @@ void PCB_EDIT_FRAME::UpdateVariantSelectionCtrl()
 }
 
 
+void PCB_EDIT_FRAME::SetCurrentVariant( const wxString& aVariantName )
+{
+    GetBoard()->SetCurrentVariant( aVariantName );
+
+    if( PCB_DRAW_PANEL_GAL* canvas = dynamic_cast<PCB_DRAW_PANEL_GAL*>( GetCanvas() ) )
+    {
+        DS_PROXY_VIEW_ITEM* ds = canvas->GetDrawingSheet();
+
+        if( ds )
+        {
+            wxString currentVariant = GetBoard()->GetCurrentVariant();
+            wxString variantDesc = GetBoard()->GetVariantDescription( currentVariant );
+
+            ds->SetVariantName( currentVariant.ToStdString() );
+            ds->SetVariantDesc( variantDesc.ToStdString() );
+        }
+    }
+}
+
+
 void PCB_EDIT_FRAME::onVariantSelected( wxCommandEvent& aEvent )
 {
     if( !m_CurrentVariantCtrl )
@@ -535,12 +559,12 @@ void PCB_EDIT_FRAME::onVariantSelected( wxCommandEvent& aEvent )
     if( selection == wxNOT_FOUND || selection == 0 )
     {
         // "<Default>" selected - clear the current variant
-        GetBoard()->SetCurrentVariant( wxEmptyString );
+        SetCurrentVariant( wxEmptyString );
     }
     else
     {
         wxString selectedVariant = m_CurrentVariantCtrl->GetString( selection );
-        GetBoard()->SetCurrentVariant( selectedVariant );
+        SetCurrentVariant( selectedVariant );
     }
 
     // Refresh the view and properties panel to show the new variant state
@@ -577,10 +601,8 @@ void PCB_EDIT_FRAME::onVariantSelected( wxCommandEvent& aEvent )
 
     GetCanvas()->Refresh();
 
-    TOOL_EVENT dummy;
-    m_toolManager->GetTool<PCB_CONTROL>()->UpdateMessagePanel( dummy );
-
     Update3DView( true, GetPcbNewSettings()->m_Display.m_Live3DRefresh );
+    m_toolManager->ProcessEvent( EVENTS::SelectedItemsModified );
 }
 
 

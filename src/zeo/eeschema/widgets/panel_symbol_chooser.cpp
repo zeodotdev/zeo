@@ -113,16 +113,7 @@ PANEL_SYMBOL_CHOOSER::PANEL_SYMBOL_CHOOSER( SCH_BASE_FRAME* aFrame, wxWindow* aP
             static std::function<bool( LIB_TREE_NODE& )> powerFilter =
                     []( LIB_TREE_NODE& aNode ) -> bool
                     {
-                        if (PANEL_SYMBOL_CHOOSER::m_frame)
-                        {
-                            LIB_SYMBOL* symbol = PANEL_SYMBOL_CHOOSER::m_frame->GetLibSymbol(aNode.m_LibId);
-
-                            if (symbol && symbol->IsPower())
-                                return true;
-
-                        }
-
-                        return false;
+                        return aNode.m_IsPower;
                     };
 
             adapter->SetFilter( &powerFilter );
@@ -483,6 +474,9 @@ void PANEL_SYMBOL_CHOOSER::OnDetailsCharHook( wxKeyEvent& e )
 void PANEL_SYMBOL_CHOOSER::SetPreselect( const LIB_ID& aPreselect )
 {
     m_adapter->SetPreselectNode( aPreselect, 0 );
+
+    if( m_tree && aPreselect.IsValid() )
+        m_tree->SelectLibId( aPreselect );
 }
 
 

@@ -27,6 +27,8 @@
 #include <functional>
 #include <memory>
 #include <unordered_map>
+#include <vector>
+#include <unordered_set>
 
 #include <convert/allegro_pcb_structs.h>
 #include <convert/allegro_db.h>
@@ -135,6 +137,18 @@ private:
     std::unique_ptr<PCB_SHAPE> buildPolygon( const BLK_0x28_SHAPE& aShape, BOARD_ITEM_CONTAINER& aParent );
 
     /**
+     * Build graphics from an 0x28 SHAPE, with separate items per segment/arc
+     */
+    std::vector<std::unique_ptr<PCB_SHAPE>> buildPolygonShapes( const BLK_0x28_SHAPE& aShape,
+                                                                BOARD_ITEM_CONTAINER& aParent );
+
+    /**
+     * Build a drill marker from a 0x0C PIN_DEF block
+     */
+    std::vector<std::unique_ptr<BOARD_ITEM>> buildDrillMarker( const BLK_0x0C_PIN_DEF& aPinDef,
+                                                               BOARD_ITEM_CONTAINER&   aParent );
+
+    /**
      * Build a list of graphic items, e.g. from a table's pointer list.
      */
     std::vector<std::unique_ptr<BOARD_ITEM>> buildGraphicItems( const BLOCK_BASE&     aBlock,
@@ -148,8 +162,29 @@ private:
     std::unique_ptr<FOOTPRINT>               buildFootprint( const BLK_0x2D_FOOTPRINT_INST& aFpInstance );
     std::vector<std::unique_ptr<BOARD_ITEM>> buildTrack( const BLK_0x05_TRACK& aBlock, int aNetcode );
     std::unique_ptr<BOARD_ITEM>              buildVia( const BLK_0x33_VIA& aBlock, int aNetcode );
-    std::unique_ptr<ZONE>                    buildZone( const BLK_0x28_SHAPE& aShape, int aNetcode );
-    const SHAPE_LINE_CHAIN&                  buildOutline( const BLK_0x28_SHAPE& aShape ) const;
+
+    class ZONE_FILL_HANDLER;
+
+    /**
+     * Build a ZONE from an 0x0E, 0x24 or 0x28 block.
+     *
+     * @param aRelatedBlocks are blocks to get net (0x1B) and fill (0x28) info from
+     * @param aZoneFillHandler is a management object for efficiently dealing with filled zones
+     */
+    std::unique_ptr<ZONE> buildZone( const BLOCK_BASE&                     aBoundaryBlock,
+                                     const std::vector<const BLOCK_BASE*>& aRelatedBlocks,
+                                     ZONE_FILL_HANDLER&                    aZoneFillHandler );
+
+    SHAPE_LINE_CHAIN buildOutline( const BLK_0x0E_RECT& aRect ) const;
+    SHAPE_LINE_CHAIN buildOutline( const BLK_0x24_RECT& aRect ) const;
+    SHAPE_LINE_CHAIN buildOutline( const BLK_0x28_SHAPE& aShape ) const;
+
+    SHAPE_POLY_SET shapeToPolySet( const BLK_0x28_SHAPE& aShape ) const;
+
+    /**
+     * Try to build a zone shape for the given block, with holes.
+     */
+    SHAPE_POLY_SET tryBuildZoneShape( const BLOCK_BASE& aBlock );
 
     /**
      * Walk a geometry chain (0x01 arcs and 0x15-17 segments) starting from the given key,
@@ -158,10 +193,9 @@ private:
     const SHAPE_LINE_CHAIN& buildSegmentChain( uint32_t aStartKey ) const;
 
     /**
-     * Resolve the net code for a BOUNDARY shape by following the pointer chain:
-     * BOUNDARY.Ptr7 -> 0x2C TABLE -> Ptr1 -> 0x37 array -> first entry -> 0x1B NET
+     * Get blocks that are related to the BOUNDARY shape, i.e. NET and SHAPE (fill) info.
      */
-    int resolveShapeNet( const BLK_0x28_SHAPE& aShape ) const;
+    std::vector<const BLOCK_BASE*> getShapeRelatedBlocks( const BLK_0x28_SHAPE& aShape ) const;
 
     /**
      * Follow m_MatchGroupPtr through the 0x26/0x2C pointer chain to get
@@ -187,7 +221,7 @@ private:
     void setupLayers();
     void createNets();
     void createTracks();
-    void createBoardOutline();
+    void createBoardShapes();
     void createBoardText();
     void createZones();
     void createTables();
@@ -229,7 +263,10 @@ private:
         PCB_LAYER_ID          layer;
     };
 
-    std::vector<ZoneFillEntry> m_zoneFillShapes;
+    std::unordered_map<uint32_t, ZoneFillEntry> m_zoneFillShapes;
+
+    // Keys that have been used as zone fills already
+    std::unordered_set<uint32_t> m_usedZoneFillShapes;
 
     std::unique_ptr<LAYER_MAPPER> m_layerMapper;
 
@@ -240,7 +277,6 @@ private:
     mutable std::unordered_map<uint32_t, SHAPE_LINE_CHAIN> m_segChainCache;
 
     // Conversion factor from internal units to nanometers.
-    // Internal coordinates are in mils / divisor, so scale = 25400 / divisor.
     double m_scale;
 };
 

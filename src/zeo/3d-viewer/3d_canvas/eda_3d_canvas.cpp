@@ -34,6 +34,8 @@
 #include <wx/combobox.h>
 #include <wx/spinctrl.h>
 
+#include <fmt/format.h>
+
 #include "../common_ogl/ogl_utils.h"
 #include "eda_3d_canvas.h"
 #include <eda_3d_viewer_frame.h>
@@ -46,8 +48,10 @@
 #include <build_version.h>
 #include <settings/color_settings.h>
 #include <board.h>
+#include <footprint.h>
 #include <pad.h>
 #include <pcb_field.h>
+#include <pcb_track.h>
 #include <reporter.h>
 #include <widgets/wx_infobar.h>
 #include <core/profile.h>        // To use GetRunningMicroSecs or another profiling utility
@@ -61,9 +65,8 @@
 #include <string_utils.h>
 #include <mail_type.h>
 #include <kiway_mail.h>
-#include <fmt/format.h>
-
 #include <widgets/wx_busy_indicator.h>
+#include <zone.h>
 
 
 /**
@@ -1543,6 +1546,7 @@ void EDA_3D_CANVAS::OnLeftUp( wxMouseEvent& event )
     int scaledMouseY = static_cast<int>( static_cast<float>( logicalH - event.GetY() ) * scaleY );
 
     m_3d_render_opengl->handleGizmoMouseInput( scaledMouseX, scaledMouseY );
+    m_3d_render_opengl->updateGizmoSelection( m_camera.GetRotationMatrix() );
     Refresh();
 }
 

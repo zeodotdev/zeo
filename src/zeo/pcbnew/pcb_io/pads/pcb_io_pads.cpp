@@ -751,6 +751,77 @@ void PCB_IO_PADS::loadFootprints()
                         }
                     }
 
+                    // Track mask/paste layers explicitly present in the stack regardless
+                    // of size. A zero-size entry means "intentionally no pad on this layer"
+                    // and must suppress the SMD fallback for that layer.
+                    LSET explicitly_seen_tech;
+
+                    for( const auto& layer_def : stack )
+                    {
+                        if( layer_def.layer > 0 )
+                        {
+                            PCB_LAYER_ID check = getMappedLayer( layer_def.layer );
+
+                            if( check == F_Mask || check == B_Mask
+                                || check == F_Paste || check == B_Paste )
+                            {
+                                explicitly_seen_tech.set( check );
+                            }
+                        }
+                    }
+
+                    // Pre-scan copper layers to detect whether the pad needs
+                    // per-layer shapes.  In PADS, layer -2 is top copper and
+                    // layer -1 is bottom copper, and they can have different
+                    // shapes (e.g. square on top, round on bottom).  KiCad's
+                    // PADSTACK in NORMAL mode stores a single shape for all
+                    // layers, so we must switch to FRONT_INNER_BACK when the
+                    // front and back shapes differ.
+                    if( has_explicit_layers )
+                    {
+                        std::string front_shape;
+                        std::string back_shape;
+                        double front_sizeA = 0;
+                        double back_sizeA = 0;
+                        double front_sizeB = 0;
+                        double back_sizeB = 0;
+
+                        for( const auto& layer_def : stack )
+                        {
+                            if( layer_def.sizeA <= 0 )
+                                continue;
+
+                            if( layer_def.shape == "RT" || layer_def.shape == "ST"
+                                || layer_def.shape == "RA" || layer_def.shape == "SA" )
+                            {
+                                continue;
+                            }
+
+                            PCB_LAYER_ID mapped = mapPadsLayer( layer_def.layer );
+
+                            if( mapped == F_Cu && front_shape.empty() )
+                            {
+                                front_shape = layer_def.shape;
+                                front_sizeA = layer_def.sizeA;
+                                front_sizeB = layer_def.sizeB;
+                            }
+                            else if( mapped == B_Cu && back_shape.empty() )
+                            {
+                                back_shape = layer_def.shape;
+                                back_sizeA = layer_def.sizeA;
+                                back_sizeB = layer_def.sizeB;
+                            }
+                        }
+
+                        if( !front_shape.empty() && !back_shape.empty()
+                            && ( front_shape != back_shape
+                                 || front_sizeA != back_sizeA
+                                 || front_sizeB != back_sizeB ) )
+                        {
+                            pad->Padstack().SetMode( PADSTACK::MODE::FRONT_INNER_BACK );
+                        }
+                    }
+
                     for( const auto& layer_def : stack )
                     {
                         if( layer_def.layer == 0 )
@@ -778,17 +849,53 @@ void PCB_IO_PADS::loadFootprints()
                             continue;
 
                         // RT/ST are thermal relief spoke patterns for plane layers.
+                        // RA/SA are anti-pad (clearance) shapes for plane layers.
                         // KiCad computes thermal reliefs from zone settings, so skip
-                        // these to avoid overwriting the actual pad shape.
-                        if( layer_def.shape == "RT" || layer_def.shape == "ST"
-                            || layer_def.shape == "RA" || layer_def.shape == "SA" )
+                        // these to avoid overwriting the actual pad shape.  However,
+                        // the presence of RT/ST indicates this pad should have thermal
+                        // relief rather than a solid connection to copper pours.
+                        if( layer_def.shape == "RT" || layer_def.shape == "ST" )
+                        {
+                            pad->SetLocalZoneConnection( ZONE_CONNECTION::THERMAL );
+
+                            if( layer_def.thermal_spoke_width > 0 )
+                            {
+                                pad->SetLocalThermalSpokeWidthOverride(
+                                        decalScaler( layer_def.thermal_spoke_width ) );
+                            }
+
+                            if( layer_def.thermal_spoke_orientation != 0.0 )
+                            {
+                                pad->SetThermalSpokeAngleDegrees(
+                                        layer_def.thermal_spoke_orientation );
+                            }
+
+                            continue;
+                        }
+
+                        if( layer_def.shape == "RA" || layer_def.shape == "SA" )
                         {
                             continue;
                         }
 
                         PCB_LAYER_ID kicad_layer = mapPadsLayer( layer_def.layer );
 
-                        if( kicad_layer != UNDEFINED_LAYER )
+                        if( kicad_layer == UNDEFINED_LAYER && layer_def.layer > 0 )
+                        {
+                            // For non-copper layers, check if they're mask/paste layers.
+                            // PADS pad stacks can include explicit solder mask and paste
+                            // mask entries that must be preserved in KiCad.
+                            // layer_def.layer > 0 skips the copper sentinels -2 (top)
+                            // and -1 (bottom), which mapPadsLayer already resolved above.
+                            PCB_LAYER_ID tech_layer = getMappedLayer( layer_def.layer );
+
+                            if( tech_layer == F_Mask || tech_layer == B_Mask
+                                || tech_layer == F_Paste || tech_layer == B_Paste )
+                            {
+                                layer_set.set( tech_layer );
+                            }
+                        }
+                        else if( kicad_layer != UNDEFINED_LAYER )
                         {
                             layer_set.set( kicad_layer );
                             convertPadShape( layer_def, pad, kicad_layer, part_orient );
@@ -799,6 +906,37 @@ void PCB_IO_PADS::loadFootprints()
                     {
                         layer_set.set( F_Cu );
                         convertPadShape( stack[0], pad, F_Cu, part_orient );
+                    }
+
+                    // For SMD pads, enable mask/paste layers that the stack did not
+                    // explicitly mention. A zero-size stack entry for a mask/paste layer
+                    // means "intentionally disabled" and is tracked in explicitly_seen_tech,
+                    // so only layers absent from the stack entirely get the fallback.
+                    if( drill == 0 )
+                    {
+                        if( layer_set.test( F_Cu ) && !layer_set.test( F_Mask )
+                            && !explicitly_seen_tech.test( F_Mask ) )
+                        {
+                            layer_set.set( F_Mask );
+                        }
+
+                        if( layer_set.test( F_Cu ) && !layer_set.test( F_Paste )
+                            && !explicitly_seen_tech.test( F_Paste ) )
+                        {
+                            layer_set.set( F_Paste );
+                        }
+
+                        if( layer_set.test( B_Cu ) && !layer_set.test( B_Mask )
+                            && !explicitly_seen_tech.test( B_Mask ) )
+                        {
+                            layer_set.set( B_Mask );
+                        }
+
+                        if( layer_set.test( B_Cu ) && !layer_set.test( B_Paste )
+                            && !explicitly_seen_tech.test( B_Paste ) )
+                        {
+                            layer_set.set( B_Paste );
+                        }
                     }
 
                     if( slot_length > 0 && slot_length != drill )
@@ -843,7 +981,11 @@ void PCB_IO_PADS::loadFootprints()
                         else
                             pad->SetAttribute( PAD_ATTRIB::NPTH );
 
-                        layer_set = LSET::AllCuMask();
+                        // Preserve any explicit mask/paste layer bits accumulated
+                        // during stack iteration before expanding to all copper layers.
+                        LSET mask_paste_bits =
+                                layer_set & LSET( { F_Mask, B_Mask, F_Paste, B_Paste } );
+                        layer_set = LSET::AllCuMask() | mask_paste_bits;
                     }
 
                     pad->SetLayerSet( layer_set );
@@ -1561,6 +1703,8 @@ void PCB_IO_PADS::loadCopperShapes()
             appendArcPoints( outline, copper.outline );
             outline.SetClosed( true );
             zone->Outline()->AddOutline( outline );
+            zone->SetBorderDisplayStyle( ZONE_BORDER_DISPLAY_STYLE::DIAGONAL_EDGE, ZONE::GetDefaultHatchPitch(), true );
+
             m_loadBoard->Add( zone );
         }
         else
@@ -1734,6 +1878,7 @@ void PCB_IO_PADS::loadZones()
 
         zone->Outline()->NewOutline();
         appendArcPoints( zone->Outline()->Outline( 0 ), pour_def.points );
+        zone->SetBorderDisplayStyle( ZONE_BORDER_DISPLAY_STYLE::DIAGONAL_EDGE, ZONE::GetDefaultHatchPitch(), true );
 
         if( pour_def.is_cutout )
         {
@@ -1760,7 +1905,7 @@ void PCB_IO_PADS::loadZones()
             zone->SetThermalReliefGap( scaleSize( params.thermal_min_clearance ) );
             zone->SetThermalReliefSpokeWidth( scaleSize( params.thermal_line_width ) );
 
-            zone->SetPadConnection( ZONE_CONNECTION::THERMAL );
+            zone->SetPadConnection( ZONE_CONNECTION::FULL );
         }
 
         pourZoneMap[pour_def.name] = zone;
@@ -1798,6 +1943,8 @@ void PCB_IO_PADS::loadZones()
             fillPoly.Simplify();
         }
 
+        fillPoly.Inflate( scaleSize( pour_def.width ) / 2, CORNER_STRATEGY::ROUND_ALL_CORNERS, ARC_HIGH_DEF );
+
         // Collect all matching VOIDOUT regions into a single poly set and
         // subtract in one operation. PADS VOIDOUT shapes can extend beyond
         // the HATOUT outline boundary (PADS clips at render time), so
@@ -1824,8 +1971,12 @@ void PCB_IO_PADS::loadZones()
             if( parentIt->second != pour_def.owner_pour )
                 continue;
 
-            allVoids.NewOutline();
-            appendArcPoints( allVoids.Outline( allVoids.OutlineCount() - 1 ), void_def.points );
+            SHAPE_POLY_SET voidPoly;
+            voidPoly.NewOutline();
+            appendArcPoints( voidPoly.Outline( 0 ), void_def.points );
+            voidPoly.Inflate( scaleSize( void_def.width ) / 2, CORNER_STRATEGY::ROUND_ALL_CORNERS, ARC_HIGH_DEF );
+
+            allVoids.Append( voidPoly );
         }
 
         if( allVoids.OutlineCount() > 0 )
@@ -2084,6 +2235,7 @@ void PCB_IO_PADS::loadKeepouts()
 
         koChain.SetClosed( true );
         zone->Outline()->AddOutline( koChain );
+        zone->SetBorderDisplayStyle( ZONE_BORDER_DISPLAY_STYLE::DIAGONAL_EDGE, ZONE::GetDefaultHatchPitch(), true );
 
         m_loadBoard->Add( zone );
     }
@@ -2406,13 +2558,41 @@ SHAPE_ARC PCB_IO_PADS::makeMidpointArc( const PADS_IO::ARC_POINT& aPrev,
     VECTOR2I start( scaleCoord( aPrev.x, true ), scaleCoord( aPrev.y, false ) );
     VECTOR2I end( scaleCoord( aCurr.x, true ), scaleCoord( aCurr.y, false ) );
 
-    // Compute the arc midpoint in PADS coordinate space (before the Y-axis
-    // flip in scaleCoord) so the 3-point constructor gets the correct winding.
-    double startAngleRad = atan2( aPrev.y - aCurr.arc.cy, aPrev.x - aCurr.arc.cx );
-    double midAngleRad = startAngleRad + ( aCurr.arc.delta_angle * M_PI / 180.0 ) / 2.0;
+    double midX, midY;
 
-    double midX = aCurr.arc.cx + aCurr.arc.radius * cos( midAngleRad );
-    double midY = aCurr.arc.cy + aCurr.arc.radius * sin( midAngleRad );
+    if( aCurr.arc.radius == 0.0 )
+    {
+        // Route arcs specify only CW/CCW direction without explicit geometry.
+        // They are semicircles between the two endpoints. Compute the midpoint
+        // on the perpendicular bisector of the chord, at distance radius from
+        // the chord center (where radius = half the chord length).
+        double dx = aCurr.x - aPrev.x;
+        double dy = aCurr.y - aPrev.y;
+
+        if( aCurr.arc.delta_angle < 0 )
+        {
+            // CW: arc bulges to the left of the start-to-end direction
+            midX = ( aPrev.x + aCurr.x ) / 2.0 - dy / 2.0;
+            midY = ( aPrev.y + aCurr.y ) / 2.0 + dx / 2.0;
+        }
+        else
+        {
+            // CCW: arc bulges to the right of the start-to-end direction
+            midX = ( aPrev.x + aCurr.x ) / 2.0 + dy / 2.0;
+            midY = ( aPrev.y + aCurr.y ) / 2.0 - dx / 2.0;
+        }
+    }
+    else
+    {
+        // Full arc with explicit center and radius (pours, decals, board outlines).
+        // Compute the arc midpoint in PADS coordinate space (before the Y-axis
+        // flip in scaleCoord) so the 3-point constructor gets the correct winding.
+        double startAngleRad = atan2( aPrev.y - aCurr.arc.cy, aPrev.x - aCurr.arc.cx );
+        double midAngleRad = startAngleRad + ( aCurr.arc.delta_angle * M_PI / 180.0 ) / 2.0;
+
+        midX = aCurr.arc.cx + aCurr.arc.radius * cos( midAngleRad );
+        midY = aCurr.arc.cy + aCurr.arc.radius * sin( midAngleRad );
+    }
 
     VECTOR2I mid( scaleCoord( midX, true ), scaleCoord( midY, false ) );
 
@@ -2546,7 +2726,10 @@ void PCB_IO_PADS::loadBoardSetup()
     bds.m_SolderMaskExpansion = scaleSize( designRules.mask_clearance );
     bds.m_CopperEdgeClearance = scaleSize( designRules.copper_edge_clearance );
 
-    bds.GetDefaultZoneSettings().m_ZoneClearance = scaleSize( designRules.default_clearance );
+    // Do not set the default zone clearance from the PADS design rules.  In PADS,
+    // zone (copper pour) clearance is resolved through the net/netclass clearance
+    // rules rather than a board-level zone clearance setting.  The default netclass
+    // clearance set below is the correct mapping for PADS' DEFAULTCLEAR value.
 
     bds.SetCustomTrackWidth( scaleSize( designRules.default_track_width ) );
     bds.SetCustomViaSize( scaleSize( designRules.default_via_size ) );

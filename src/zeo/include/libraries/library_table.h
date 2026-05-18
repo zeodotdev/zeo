@@ -22,6 +22,7 @@
 #ifndef LIBRARY_TABLE_H
 #define LIBRARY_TABLE_H
 
+#include <deque>
 #include <map>
 #include <optional>
 #include <tl/expected.hpp>
@@ -150,8 +151,12 @@ private:
 };
 
 
-typedef std::vector<LIBRARY_TABLE_ROW>::iterator       LIBRARY_TABLE_ROWS_ITER;
-typedef std::vector<LIBRARY_TABLE_ROW>::const_iterator LIBRARY_TABLE_ROWS_CITER;
+// LIBRARY_TABLE_ROW storage uses std::deque (rather than std::vector) so that pointers and
+// references to rows remain valid across push_back/pop_back and erase-at-end operations.
+// Code elsewhere (LIB_DATA::row, LIBRARY_MANAGER::m_rowCache) caches raw row pointers that
+// must survive runtime mutations from paths like EnsureRemoteLibraryEntry().
+typedef std::deque<LIBRARY_TABLE_ROW>::iterator       LIBRARY_TABLE_ROWS_ITER;
+typedef std::deque<LIBRARY_TABLE_ROW>::const_iterator LIBRARY_TABLE_ROWS_CITER;
 
 
 class KICOMMON_API LIBRARY_TABLE
@@ -162,7 +167,7 @@ public:
      * @param aPath is the path to a library table file to parse
      * @param aScope is the scope of this table (is it global or part of a project)
      */
-    LIBRARY_TABLE( const wxFileName &aPath, LIBRARY_TABLE_SCOPE aScope );
+    LIBRARY_TABLE( const wxFileName &aPath, LIBRARY_TABLE_SCOPE aScope, LIBRARY_TABLE_TYPE aExpectedType = LIBRARY_TABLE_TYPE::UNINITIALIZED );
 
     /**
      * Creates a library table from parsed text
@@ -198,8 +203,8 @@ public:
     bool IsOk() const { return m_ok; }
     const wxString& ErrorDescription() const { return m_errorDescription; }
 
-    const std::vector<LIBRARY_TABLE_ROW>& Rows() const { return m_rows; }
-    std::vector<LIBRARY_TABLE_ROW>& Rows() { return m_rows; }
+    const std::deque<LIBRARY_TABLE_ROW>& Rows() const { return m_rows; }
+    std::deque<LIBRARY_TABLE_ROW>& Rows() { return m_rows; }
 
     void Format( OUTPUTFORMATTER* aOutput ) const;
 
@@ -239,7 +244,7 @@ private:
     bool m_ok = false;
     wxString m_errorDescription;
 
-    std::vector<LIBRARY_TABLE_ROW> m_rows;
+    std::deque<LIBRARY_TABLE_ROW> m_rows;
 };
 
 #endif //LIBRARY_TABLE_H

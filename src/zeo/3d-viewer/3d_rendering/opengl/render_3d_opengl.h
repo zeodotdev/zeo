@@ -44,6 +44,7 @@
 #include "3d_cache/3d_info.h"
 
 #include <geometry/eda_angle.h>
+#include <pad.h> // For PAD_DRILL_POST_MACHINING_MODE
 
 #include <map>
 
@@ -117,7 +118,9 @@ public:
      * Load footprint models if they are not already loaded, i.e. if m_3dModelMap is empty
      */
     void Load3dModelsIfNeeded();
+
     void                                handleGizmoMouseInput( int mouseX, int mouseY );
+    void                                updateGizmoSelection( glm::mat4 aCameraRotationMatrix );
     void                                setGizmoViewport( int x, int y, int width, int height );
     std::tuple<int, int, int, int>      getGizmoViewport() const;
     SPHERES_GIZMO::GizmoSphereSelection getSelectedGizmoSphere() const;

@@ -249,6 +249,8 @@ void SCH_CONNECTION::Clone( const SCH_CONNECTION& aOther )
 
     // Note: m_local_sheet is not cloned
     m_name   = aOther.m_name;
+
+    CONNECTION_TYPE origType = m_type;
     m_type   = aOther.m_type;
 
     // Note: m_local_name is not cloned if not set yet
@@ -275,11 +277,26 @@ void SCH_CONNECTION::Clone( const SCH_CONNECTION& aOther )
     // Handle vector bus members: make sure local names are preserved where possible
     const std::vector<std::shared_ptr<SCH_CONNECTION>>& otherMembers = aOther.Members();
 
-    if( m_type == CONNECTION_TYPE::BUS && aOther.Type() == CONNECTION_TYPE::BUS )
+    auto cloneMember =
+        [&]( const SCH_CONNECTION& aSrc ) -> std::shared_ptr<SCH_CONNECTION>
+        {
+            auto copy = std::make_shared<SCH_CONNECTION>( m_parent, m_sheet );
+            copy->SetGraph( m_graph );
+            copy->Clone( aSrc );
+
+            copy->m_vector_index = aSrc.m_vector_index;
+
+            return copy;
+        };
+
+    if( origType == CONNECTION_TYPE::BUS && aOther.Type() == CONNECTION_TYPE::BUS )
     {
         if( m_members.empty() )
         {
-            m_members = otherMembers;
+            m_members.reserve( otherMembers.size() );
+
+            for( const std::shared_ptr<SCH_CONNECTION>& src : otherMembers )
+                m_members.push_back( cloneMember( *src ) );
         }
         else
         {
@@ -289,11 +306,14 @@ void SCH_CONNECTION::Clone( const SCH_CONNECTION& aOther )
                 m_members[i]->Clone( *otherMembers[i] );
         }
     }
-    else if( m_type == CONNECTION_TYPE::BUS_GROUP && aOther.Type() == CONNECTION_TYPE::BUS_GROUP )
+    else if( origType == CONNECTION_TYPE::BUS_GROUP && aOther.Type() == CONNECTION_TYPE::BUS_GROUP )
     {
         if( m_members.empty() )
         {
-            m_members = otherMembers;
+            m_members.reserve( otherMembers.size() );
+
+            for( const std::shared_ptr<SCH_CONNECTION>& src : otherMembers )
+                m_members.push_back( cloneMember( *src ) );
         }
         else
         {
@@ -310,6 +330,14 @@ void SCH_CONNECTION::Clone( const SCH_CONNECTION& aOther )
                     member->Clone( **it );
             }
         }
+    }
+    else if( aOther.IsBus() )
+    {
+        m_members.clear();
+        m_members.reserve( otherMembers.size() );
+
+        for( const std::shared_ptr<SCH_CONNECTION>& src : otherMembers )
+            m_members.push_back( cloneMember( *src ) );
     }
 
     m_type = aOther.Type();
@@ -562,6 +590,7 @@ wxString SCH_CONNECTION::PrintBusForUI( const wxString& aGroup )
     {
         if( isSuperSubOverbar( aGroup[i] ) && i + 1 < groupLen && aGroup[i+1] == '{' )
         {
+            ret += aGroup[i];
             i++;
             continue;
         }
@@ -592,6 +621,7 @@ wxString SCH_CONNECTION::PrintBusForUI( const wxString& aGroup )
     {
         if( isSuperSubOverbar( aGroup[i] ) && i + 1 < groupLen && aGroup[i+1] == '{' )
         {
+            ret += aGroup[i];
             i++;
             continue;
         }

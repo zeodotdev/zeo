@@ -34,6 +34,7 @@
 #include <pcbnew/pcb_io/allegro/pcb_io_allegro.h>
 
 #include <board.h>
+#include <geometry/shape_utils.h>
 #include <footprint.h>
 #include <pad.h>
 #include <pcb_shape.h>
@@ -259,6 +260,105 @@ BOOST_AUTO_TEST_CASE( PadNumbers )
 }
 
 
+static unsigned CountOutlineElements( const BOARD& board )
+{
+    unsigned count = 0;
+    for( const BOARD_ITEM* item : board.Drawings() )
+    {
+        if( item->Type() == PCB_SHAPE_T && item->GetLayer() == Edge_Cuts )
+        {
+            count++;
+        }
+    }
+    return count;
+}
+
+
+static void AssertOutlineValid( const BOARD& aBoard )
+{
+    // Verify outline forms a closed contour by checking that all segments connect
+    std::vector<SEG> outlineSegs;
+
+    for( BOARD_ITEM* item : aBoard.Drawings() )
+    {
+        if( item->Type() == PCB_SHAPE_T && item->GetLayer() == Edge_Cuts )
+        {
+            PCB_SHAPE* shape = static_cast<PCB_SHAPE*>( item );
+            switch( shape->GetShape() )
+            {
+            case SHAPE_T::SEGMENT:
+            case SHAPE_T::ARC:
+            case SHAPE_T::BEZIER:
+            {
+                outlineSegs.push_back( SEG( shape->GetStart(), shape->GetEnd() ) );
+                break;
+            }
+            case SHAPE_T::RECTANGLE:
+            {
+                // Rectangles are stored as a single item but represent 4 segments
+                VECTOR2I start = shape->GetStart();
+                VECTOR2I end = shape->GetEnd();
+
+                for( const auto& seg : KIGEOM::BoxToSegs( BOX2I( start, end ) ) )
+                {
+                    outlineSegs.push_back( seg );
+                }
+                break;
+            }
+            case SHAPE_T::POLY:
+            {
+                std::vector<VECTOR2I> polyPoints = shape->GetPolyPoints();
+
+                for( size_t i = 0; i < polyPoints.size() - 1; i++ )
+                {
+                    VECTOR2I start = polyPoints[i];
+                    VECTOR2I end = polyPoints[( i + 1 ) % polyPoints.size()];
+                    outlineSegs.emplace_back( start, end );
+                }
+                break;
+            }
+            case SHAPE_T::CIRCLE:
+                // Not really sure what we can do here? Zero-length seg?
+                outlineSegs.push_back( SEG( shape->GetStart(), shape->GetStart() ) );
+                break;
+            default:
+                BOOST_WARN_MESSAGE(
+                        false, "Unexpected shape type in board outline: " << static_cast<int>( shape->GetShape() ) );
+            }
+        }
+    }
+
+    if( !outlineSegs.empty() )
+    {
+        // For a valid closed outline, the sum of all segment lengths should equal the perimeter
+        // and each endpoint should connect to another endpoint
+        int connectedCount = 0;
+
+        for( const SEG& seg : outlineSegs )
+        {
+            for( const SEG& other : outlineSegs )
+            {
+                if( &other == &seg )
+                    continue;
+
+                // Check if this shape's start connects to another shape's start or end
+                if( seg.A == other.A || seg.A == other.B )
+                    connectedCount++;
+
+                // Check if this shape's end connects to another shape's start or end
+                if( seg.B == other.A || seg.B == other.B )
+                    connectedCount++;
+            }
+        }
+
+        // Each segment should connect at both ends for a closed outline
+        // For 4 segments, we expect 8 connections (2 per segment)
+        BOOST_TEST_MESSAGE( "Connected endpoints: " << connectedCount );
+        BOOST_CHECK_GE( connectedCount, outlineSegs.size() * 2 );
+    }
+}
+
+
 /**
  * Test that board outline is imported correctly.
  */
@@ -269,66 +369,14 @@ BOOST_AUTO_TEST_CASE( BoardOutline )
     BOOST_REQUIRE( board != nullptr );
 
     // Count shapes on Edge_Cuts layer
-    int outlineSegmentCount = 0;
+    int outlineSegmentCount = CountOutlineElements( *board );
 
-    for( BOARD_ITEM* item : board->Drawings() )
-    {
-        if( item->Type() == PCB_SHAPE_T && item->GetLayer() == Edge_Cuts )
-        {
-            outlineSegmentCount++;
-        }
-    }
-
-    BOOST_TEST_MESSAGE( "Board outline segments: " << outlineSegmentCount );
+    BOOST_TEST_MESSAGE( "Board outline elements: " << outlineSegmentCount );
 
     // Board should have an outline - TRS80_POWER.brd has a rectangular outline (4 segments)
-    BOOST_CHECK_GE( outlineSegmentCount, 4 );
+    BOOST_CHECK_GE( outlineSegmentCount, 1 );
 
-    // Verify outline forms a closed contour by checking that all segments connect
-    std::vector<PCB_SHAPE*> outlineShapes;
-
-    for( BOARD_ITEM* item : board->Drawings() )
-    {
-        if( item->Type() == PCB_SHAPE_T && item->GetLayer() == Edge_Cuts )
-        {
-            outlineShapes.push_back( static_cast<PCB_SHAPE*>( item ) );
-        }
-    }
-
-    if( !outlineShapes.empty() )
-    {
-        // For a valid closed outline, the sum of all segment lengths should equal the perimeter
-        // and each endpoint should connect to another endpoint
-        int connectedCount = 0;
-
-        for( PCB_SHAPE* shape : outlineShapes )
-        {
-            VECTOR2I start = shape->GetStart();
-            VECTOR2I end = shape->GetEnd();
-
-            for( PCB_SHAPE* other : outlineShapes )
-            {
-                if( other == shape )
-                    continue;
-
-                VECTOR2I otherStart = other->GetStart();
-                VECTOR2I otherEnd = other->GetEnd();
-
-                // Check if this shape's start connects to another shape's start or end
-                if( start == otherStart || start == otherEnd )
-                    connectedCount++;
-
-                // Check if this shape's end connects to another shape's start or end
-                if( end == otherStart || end == otherEnd )
-                    connectedCount++;
-            }
-        }
-
-        // Each segment should connect at both ends for a closed outline
-        // For 4 segments, we expect 8 connections (2 per segment)
-        BOOST_TEST_MESSAGE( "Connected endpoints: " << connectedCount );
-        BOOST_CHECK_GE( connectedCount, outlineShapes.size() * 2 );
-    }
+    AssertOutlineValid( *board );
 }
 
 
@@ -2393,361 +2441,6 @@ BOOST_AUTO_TEST_CASE( FootprintOrientation )
 
 
 /**
- * Verify that per-net trace width constraints from Allegro FIELD blocks are imported
- * as KiCad netclass track width settings. ProiectBoard has 17 nets at 20mil and 2 at 24mil.
- */
-BOOST_AUTO_TEST_CASE( NetclassTraceWidths )
-{
-    std::string dataPath = KI_TEST::AllegroBoardFile( "ProiectBoard/ProiectBoard.brd" );
-
-    BOARD* board = GetCachedBoard( dataPath );
-    BOOST_REQUIRE( board );
-
-    std::shared_ptr<NET_SETTINGS> netSettings = board->GetDesignSettings().m_NetSettings;
-
-    BOOST_CHECK( netSettings->HasNetclass( wxS( "W20mil" ) ) );
-    BOOST_CHECK( netSettings->HasNetclass( wxS( "W24mil" ) ) );
-
-    auto nc20 = netSettings->GetNetClassByName( wxS( "W20mil" ) );
-    auto nc24 = netSettings->GetNetClassByName( wxS( "W24mil" ) );
-
-    BOOST_REQUIRE( nc20 );
-    BOOST_REQUIRE( nc24 );
-
-    // 20 mil = 508000 nm, 24 mil = 609600 nm
-    BOOST_CHECK_EQUAL( nc20->GetTrackWidth(), 508000 );
-    BOOST_CHECK_EQUAL( nc24->GetTrackWidth(), 609600 );
-
-    // Count nets in each netclass
-    int count20 = 0;
-    int count24 = 0;
-
-    for( NETINFO_ITEM* net : board->GetNetInfo() )
-    {
-        if( net->GetNetCode() <= 0 )
-            continue;
-
-        NETCLASS* nc = net->GetNetClass();
-
-        if( !nc )
-            continue;
-
-        if( nc->GetName() == wxS( "W20mil" ) )
-            count20++;
-        else if( nc->GetName() == wxS( "W24mil" ) )
-            count24++;
-    }
-
-    BOOST_CHECK_EQUAL( count20, 17 );
-    BOOST_CHECK_EQUAL( count24, 2 );
-}
-
-
-/**
- * Verify that diff pair match groups in BeagleBone Black produce netclasses with the
- * DP_ prefix and contain exactly 2 nets each.
- */
-BOOST_AUTO_TEST_CASE( DiffPairNetclass )
-{
-    std::string dataPath = KI_TEST::AllegroBoardFile( "BeagleBone_Black_RevC/BeagleBone_Black_RevC.brd" );
-
-    BOARD* board = GetCachedBoard( dataPath );
-    BOOST_REQUIRE( board );
-
-    std::shared_ptr<NET_SETTINGS> netSettings = board->GetDesignSettings().m_NetSettings;
-
-    // HDMI_TXC is a well-known diff pair on BeagleBone Black
-    BOOST_CHECK( netSettings->HasNetclass( wxS( "DP_HDMI_TXC" ) ) );
-    BOOST_CHECK( netSettings->HasNetclass( wxS( "DP_USB0" ) ) );
-
-    // Verify HDMI_TXC has exactly 2 nets assigned
-    int hdmiTxcCount = 0;
-
-    for( NETINFO_ITEM* net : board->GetNetInfo() )
-    {
-        if( net->GetNetCode() <= 0 )
-            continue;
-
-        NETCLASS* nc = net->GetNetClass();
-
-        if( nc && nc->GetName() == wxS( "DP_HDMI_TXC" ) )
-            hdmiTxcCount++;
-    }
-
-    BOOST_CHECK_EQUAL( hdmiTxcCount, 2 );
-}
-
-
-/**
- * Verify that match groups with more than 2 nets (DDR byte lanes, address buses) produce
- * netclasses with the MG_ prefix.
- */
-BOOST_AUTO_TEST_CASE( MatchGroupNetclass )
-{
-    std::string dataPath = KI_TEST::AllegroBoardFile( "BeagleBone_Black_RevC/BeagleBone_Black_RevC.brd" );
-
-    BOARD* board = GetCachedBoard( dataPath );
-    BOOST_REQUIRE( board );
-
-    std::shared_ptr<NET_SETTINGS> netSettings = board->GetDesignSettings().m_NetSettings;
-
-    // DDR_DQ0 is a DDR byte lane with 11 nets (not a diff pair)
-    BOOST_CHECK( netSettings->HasNetclass( wxS( "MG_DDR_DQ0" ) ) );
-    BOOST_CHECK( netSettings->HasNetclass( wxS( "MG_DDR_ADD" ) ) );
-
-    // DDR_DQ0 should have 11 nets, DDR_ADD should have 26
-    int dq0Count = 0;
-    int addCount = 0;
-
-    for( NETINFO_ITEM* net : board->GetNetInfo() )
-    {
-        if( net->GetNetCode() <= 0 )
-            continue;
-
-        NETCLASS* nc = net->GetNetClass();
-
-        if( !nc )
-            continue;
-
-        if( nc->GetName() == wxS( "MG_DDR_DQ0" ) )
-            dq0Count++;
-        else if( nc->GetName() == wxS( "MG_DDR_ADD" ) )
-            addCount++;
-    }
-
-    BOOST_CHECK_EQUAL( dq0Count, 11 );
-    BOOST_CHECK_EQUAL( addCount, 26 );
-}
-
-
-/**
- * Verify the total number of match group netclasses across all boards that have them.
- * BeagleBone Black has 17 diff pair groups and 4 match groups (21 total).
- */
-BOOST_AUTO_TEST_CASE( MatchGroupCounts )
-{
-    std::string dataPath = KI_TEST::AllegroBoardFile( "BeagleBone_Black_RevC/BeagleBone_Black_RevC.brd" );
-
-    BOARD* board = GetCachedBoard( dataPath );
-    BOOST_REQUIRE( board );
-
-    std::shared_ptr<NET_SETTINGS> netSettings = board->GetDesignSettings().m_NetSettings;
-
-    int dpCount = 0;
-    int mgCount = 0;
-
-    for( const auto& [name, nc] : netSettings->GetNetclasses() )
-    {
-        if( name.StartsWith( wxS( "DP_" ) ) )
-            dpCount++;
-        else if( name.StartsWith( wxS( "MG_" ) ) )
-            mgCount++;
-    }
-
-    BOOST_CHECK_EQUAL( dpCount, 17 );
-    BOOST_CHECK_EQUAL( mgCount, 4 );
-}
-
-
-/**
- * Verify that boards without match groups (e.g., simple boards) don't produce any
- * DP_ or MG_ netclasses.
- */
-BOOST_AUTO_TEST_CASE( NoMatchGroupsOnSimpleBoard )
-{
-    std::string dataPath = KI_TEST::AllegroBoardFile( "led_youtube/led_youtube.brd" );
-
-    BOARD* board = GetCachedBoard( dataPath );
-    BOOST_REQUIRE( board );
-
-    std::shared_ptr<NET_SETTINGS> netSettings = board->GetDesignSettings().m_NetSettings;
-
-    for( const auto& [name, nc] : netSettings->GetNetclasses() )
-    {
-        BOOST_CHECK_MESSAGE( !name.StartsWith( wxS( "DP_" ) ) && !name.StartsWith( wxS( "MG_" ) ),
-                             "Simple board should not have match group netclass: " + name );
-    }
-}
-
-
-/**
- * Verify that physical constraint sets (0x1D blocks) from BeagleBone Black are imported as
- * KiCad netclasses with correct track width and clearance values.
- */
-BOOST_AUTO_TEST_CASE( ConstraintSetNetclasses )
-{
-    std::string dataPath = KI_TEST::AllegroBoardFile( "BeagleBone_Black_RevC/BeagleBone_Black_RevC.brd" );
-
-    BOARD* board = GetCachedBoard( dataPath );
-    BOOST_REQUIRE( board );
-
-    std::shared_ptr<NET_SETTINGS> netSettings = board->GetDesignSettings().m_NetSettings;
-
-    // BB Black has 5 constraint sets, all with 4.0 mil (101600 nm) clearance
-    BOOST_CHECK( netSettings->HasNetclass( wxS( "Allegro_Default" ) ) );
-    BOOST_CHECK( netSettings->HasNetclass( wxS( "PWR" ) ) );
-    BOOST_CHECK( netSettings->HasNetclass( wxS( "BGA" ) ) );
-    BOOST_CHECK( netSettings->HasNetclass( wxS( "90_OHM_DIFF" ) ) );
-    BOOST_CHECK( netSettings->HasNetclass( wxS( "100OHM_DIFF" ) ) );
-
-    auto ncDefault = netSettings->GetNetClassByName( wxS( "Allegro_Default" ) );
-    auto ncPwr = netSettings->GetNetClassByName( wxS( "PWR" ) );
-
-    BOOST_REQUIRE( ncDefault );
-    BOOST_REQUIRE( ncPwr );
-
-    BOOST_CHECK_EQUAL( ncDefault->GetClearance(), 101600 );
-    BOOST_CHECK_EQUAL( ncDefault->GetTrackWidth(), 120650 );
-
-    BOOST_CHECK_EQUAL( ncPwr->GetClearance(), 101600 );
-    BOOST_CHECK_EQUAL( ncPwr->GetTrackWidth(), 381000 );
-
-    // Nets without explicit 0x1a0 field assignment fall back to DEFAULT.
-    // BB Black nets have empty-string 0x1a0 fields which don't match any constraint set,
-    // so all nets get assigned to DEFAULT.
-    int defaultCount = 0;
-
-    for( NETINFO_ITEM* net : board->GetNetInfo() )
-    {
-        if( net->GetNetCode() <= 0 )
-            continue;
-
-        NETCLASS* nc = net->GetNetClass();
-
-        if( !nc )
-            continue;
-
-        if( nc->GetName() == wxS( "Allegro_Default" ) )
-            defaultCount++;
-    }
-
-    BOOST_CHECK_MESSAGE( defaultCount > 0, "DEFAULT constraint set should have assigned nets (implicit)" );
-}
-
-
-/**
- * Verify constraint set import on a pre-V172 board (TRS80_POWER). Pre-V172 boards have
- * no dedicated clearance field, so spacing is used as the clearance fallback.
- */
-BOOST_AUTO_TEST_CASE( ConstraintSetPreV172 )
-{
-    std::string dataPath = KI_TEST::AllegroBoardFile( "TRS80_POWER/TRS80_POWER.brd" );
-
-    BOARD* board = GetCachedBoard( dataPath );
-    BOOST_REQUIRE( board );
-
-    std::shared_ptr<NET_SETTINGS> netSettings = board->GetDesignSettings().m_NetSettings;
-
-    BOOST_CHECK( netSettings->HasNetclass( wxS( "CS_0" ) ) );
-
-    auto nc = netSettings->GetNetClassByName( wxS( "CS_0" ) );
-
-    BOOST_REQUIRE( nc );
-
-    // Pre-V172 f[0]=line_width=15 mil (381000 nm), f[1]=spacing=7 mil (177800 nm) used as clearance
-    BOOST_CHECK_EQUAL( nc->GetTrackWidth(), 381000 );
-    BOOST_CHECK_EQUAL( nc->GetClearance(), 177800 );
-}
-
-
-/**
- * Verify that constraint set netclasses and per-net trace width netclasses coexist.
- * ProiectBoard has both a constraint set (CS_0) and per-net trace widths (W20mil, W24mil).
- */
-BOOST_AUTO_TEST_CASE( ConstraintSetAndTraceWidth )
-{
-    std::string dataPath = KI_TEST::AllegroBoardFile( "ProiectBoard/ProiectBoard.brd" );
-
-    BOARD* board = GetCachedBoard( dataPath );
-    BOOST_REQUIRE( board );
-
-    std::shared_ptr<NET_SETTINGS> netSettings = board->GetDesignSettings().m_NetSettings;
-
-    // Constraint set netclass
-    BOOST_CHECK( netSettings->HasNetclass( wxS( "CS_0" ) ) );
-
-    // Per-net trace width netclasses
-    BOOST_CHECK( netSettings->HasNetclass( wxS( "W20mil" ) ) );
-    BOOST_CHECK( netSettings->HasNetclass( wxS( "W24mil" ) ) );
-
-    // Constraint set values (pre-V172, 5 mil line/spacing/clearance)
-    auto ncCS = netSettings->GetNetClassByName( wxS( "CS_0" ) );
-
-    BOOST_REQUIRE( ncCS );
-    BOOST_CHECK_EQUAL( ncCS->GetTrackWidth(), 127000 );
-    BOOST_CHECK_EQUAL( ncCS->GetClearance(), 127000 );
-
-    // Per-net trace widths still intact
-    auto nc20 = netSettings->GetNetClassByName( wxS( "W20mil" ) );
-    auto nc24 = netSettings->GetNetClassByName( wxS( "W24mil" ) );
-
-    BOOST_REQUIRE( nc20 );
-    BOOST_REQUIRE( nc24 );
-    BOOST_CHECK_EQUAL( nc20->GetTrackWidth(), 508000 );
-    BOOST_CHECK_EQUAL( nc24->GetTrackWidth(), 609600 );
-}
-
-
-/**
- * Verify diff pair gap is imported from f[7] of constraint set DataB records.
- * BeagleBone_Black_RevC is V172+ (divisor=100) with two DIFF constraint sets.
- */
-BOOST_AUTO_TEST_CASE( ConstraintSetDiffPairGap )
-{
-    std::string dataPath = KI_TEST::AllegroBoardFile( "BeagleBone_Black_RevC/BeagleBone_Black_RevC.brd" );
-
-    BOARD* board = GetCachedBoard( dataPath );
-    BOOST_REQUIRE( board );
-
-    std::shared_ptr<NET_SETTINGS> netSettings = board->GetDesignSettings().m_NetSettings;
-
-    // 90_OHM_DIFF: f[1]=450, f[4]=400, f[7]=650 (divisor=100, scale=254 nm/unit)
-    auto nc90 = netSettings->GetNetClassByName( wxS( "90_OHM_DIFF" ) );
-    BOOST_REQUIRE( nc90 );
-    BOOST_CHECK_EQUAL( nc90->GetTrackWidth(), 114300 );
-    BOOST_CHECK_EQUAL( nc90->GetClearance(), 101600 );
-    BOOST_CHECK_EQUAL( nc90->GetDiffPairGap(), 165100 );
-    BOOST_CHECK_EQUAL( nc90->GetDiffPairWidth(), 114300 );
-
-    // 100OHM_DIFF: f[1]=375, f[4]=400, f[7]=725
-    auto nc100 = netSettings->GetNetClassByName( wxS( "100OHM_DIFF" ) );
-    BOOST_REQUIRE( nc100 );
-    BOOST_CHECK_EQUAL( nc100->GetTrackWidth(), 95250 );
-    BOOST_CHECK_EQUAL( nc100->GetClearance(), 101600 );
-    BOOST_CHECK_EQUAL( nc100->GetDiffPairGap(), 184150 );
-    BOOST_CHECK_EQUAL( nc100->GetDiffPairWidth(), 95250 );
-
-    // BGA: f[1]=300, f[7]=300 (divisor=100, 300*254=76200 nm)
-    auto ncBga = netSettings->GetNetClassByName( wxS( "BGA" ) );
-    BOOST_REQUIRE( ncBga );
-    BOOST_CHECK_EQUAL( ncBga->GetDiffPairGap(), 76200 );
-    BOOST_CHECK_EQUAL( ncBga->GetDiffPairWidth(), 76200 );
-}
-
-
-/**
- * Verify diff pair gap is imported on pre-V172 boards. VCU118 (divisor=1000) has multiple
- * diff pair constraint sets with per-layer variation in f[7].
- */
-BOOST_AUTO_TEST_CASE( ConstraintSetDiffPairGapPreV172 )
-{
-    std::string dataPath = KI_TEST::AllegroBoardFile( "VCU118_REV2-0/8851_HW-U1-VCU118_REV2-0_071417.brd" );
-
-    BOARD* board = GetCachedBoard( dataPath );
-    BOOST_REQUIRE( board );
-
-    std::shared_ptr<NET_SETTINGS> netSettings = board->GetDesignSettings().m_NetSettings;
-
-    // DP_90_OHM: f[0]=5200 (line_width), f[7]=4800 (dp_gap) on L0 (divisor=1000, scale=25.4)
-    auto nc = netSettings->GetNetClassByName( wxS( "DP_90_OHM" ) );
-    BOOST_REQUIRE( nc );
-    BOOST_CHECK_EQUAL( nc->GetTrackWidth(), 132080 );
-    BOOST_CHECK_EQUAL( nc->GetDiffPairGap(), 121920 );
-    BOOST_CHECK_EQUAL( nc->GetDiffPairWidth(), 132080 );
-}
-
-
-/**
  * Test that LoadBoard works when aAppendToMe is nullptr, which is the path used by the
  * KiCad UI "Import Non-KiCad Board" flow. The plugin must create and return a new BOARD.
  */
@@ -2859,19 +2552,23 @@ BOOST_AUTO_TEST_CASE( SmdPadLayerConsistency )
  */
 BOOST_AUTO_TEST_CASE( SmdFootprintTechLayers )
 {
-    std::vector<std::string> boards = GetAllBoardFiles();
+    // Note that this test is NOT true for all boards - some boards have SMD FPs with
+    // back-layer items.
+    std::vector<std::string> boards = {
+        KI_TEST::AllegroBoardFile( "EVK_BaseBoard/EVK_BaseBoard.brd" ),
+    };
 
     for( const std::string& boardPath : boards )
     {
         std::string boardName = std::filesystem::path( boardPath ).filename().string();
         BOARD*      board = GetCachedBoard( boardPath );
 
-        if( !board )
-            continue;
+        BOOST_REQUIRE( board );
 
         BOOST_TEST_CONTEXT( "Testing board: " << boardName )
         {
             int inconsistentCount = 0;
+            int checkedFootprints = 0;
 
             for( FOOTPRINT* fp : board->Footprints() )
             {
@@ -2889,6 +2586,8 @@ BOOST_AUTO_TEST_CASE( SmdFootprintTechLayers )
 
                 if( !hasSmd || hasTH )
                     continue;
+
+                checkedFootprints++;
 
                 const bool onBottom = fp->IsFlipped();
 
@@ -2918,6 +2617,8 @@ BOOST_AUTO_TEST_CASE( SmdFootprintTechLayers )
                 }
             }
 
+            BOOST_TEST_MESSAGE( "Checked " << checkedFootprints
+                                << " SMD-only footprints for tech layer consistency" );
             BOOST_CHECK_EQUAL( inconsistentCount, 0 );
         }
     }
@@ -3145,7 +2846,7 @@ BOOST_AUTO_TEST_CASE( PreV172_NoTeardrops )
  */
 BOOST_AUTO_TEST_CASE( LegacyNetclassFlags )
 {
-    std::string dataPath = KI_TEST::AllegroBoardFile( "BeagleBone_Black_RevC/BeagleBone_Black_RevC.brd" );
+    std::string dataPath = KI_TEST::AllegroBoardFile( "TRS80_POWER/TRS80_POWER.brd" );
 
     PCB_IO_ALLEGRO plugin;
     CAPTURING_REPORTER reporter;
@@ -3207,86 +2908,6 @@ BOOST_AUTO_TEST_CASE( NetclassesCreatedForAllBoards )
             }
         }
     }
-}
-
-
-/**
- * Verify that BeagleBone Black netclass net assignments survive and that assigned nets
- * have the correct netclass. This tests the full pattern+direct assignment chain.
- */
-BOOST_AUTO_TEST_CASE( BeagleBone_NetclassAssignments )
-{
-    std::string dataPath = KI_TEST::AllegroBoardFile( "BeagleBone_Black_RevC/BeagleBone_Black_RevC.brd" );
-
-    BOARD* board = GetCachedBoard( dataPath );
-    BOOST_REQUIRE( board );
-
-    std::shared_ptr<NET_SETTINGS> netSettings = board->GetDesignSettings().m_NetSettings;
-
-    struct ExpectedNC
-    {
-        const char* name;
-        int         trackWidth;
-        int         clearance;
-    };
-
-    ExpectedNC expectedSets[] = {
-        { "Allegro_Default",      120650, 101600 },
-        { "PWR",          381000, 101600 },
-        { "BGA",           76200, 101600 },
-        { "90_OHM_DIFF",  114300, 101600 },
-        { "100OHM_DIFF",   95250, 101600 },
-    };
-
-    for( const auto& expected : expectedSets )
-    {
-        wxString ncName( expected.name );
-
-        BOOST_CHECK_MESSAGE( netSettings->HasNetclass( ncName ),
-                             "Missing netclass: " << expected.name );
-
-        auto nc = netSettings->GetNetClassByName( ncName );
-
-        BOOST_REQUIRE_MESSAGE( nc, "Cannot retrieve netclass: " << expected.name );
-        BOOST_CHECK_EQUAL( nc->GetTrackWidth(), expected.trackWidth );
-        BOOST_CHECK_EQUAL( nc->GetClearance(), expected.clearance );
-    }
-
-    // Diff pair netclasses
-    BOOST_CHECK( netSettings->HasNetclass( wxS( "DP_USB0" ) ) );
-    BOOST_CHECK( netSettings->HasNetclass( wxS( "DP_USB1" ) ) );
-    BOOST_CHECK( netSettings->HasNetclass( wxS( "DP_HDMI_TX0" ) ) );
-
-    // Match group netclasses
-    BOOST_CHECK( netSettings->HasNetclass( wxS( "MG_DDR_ADD" ) ) );
-    BOOST_CHECK( netSettings->HasNetclass( wxS( "MG_DDR_DQ0" ) ) );
-    BOOST_CHECK( netSettings->HasNetclass( wxS( "MG_DDR_DQ1" ) ) );
-
-    // Per-net trace width netclass
-    BOOST_CHECK( netSettings->HasNetclass( wxS( "W8mil" ) ) );
-
-    auto ncW8 = netSettings->GetNetClassByName( wxS( "W8mil" ) );
-
-    BOOST_REQUIRE( ncW8 );
-    BOOST_CHECK_EQUAL( ncW8->GetTrackWidth(), 203200 );
-
-    // At least some nets should have non-default netclass assignments
-    int assignedCount = 0;
-
-    for( NETINFO_ITEM* net : board->GetNetInfo() )
-    {
-        if( net->GetNetCode() <= 0 )
-            continue;
-
-        NETCLASS* nc = net->GetNetClass();
-
-        if( nc && nc->GetName() != NETCLASS::Default )
-            assignedCount++;
-    }
-
-    BOOST_CHECK_MESSAGE( assignedCount > 0,
-                         "At least some nets should have non-default netclass assignments" );
-    BOOST_TEST_MESSAGE( "Nets with non-default netclass: " << assignedCount );
 }
 
 

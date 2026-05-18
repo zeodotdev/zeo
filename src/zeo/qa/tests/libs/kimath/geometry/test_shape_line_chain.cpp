@@ -1300,6 +1300,31 @@ BOOST_AUTO_TEST_CASE( CompareGeometry )
 }
 
 
+BOOST_AUTO_TEST_CASE( CompareGeometryReversed )
+{
+    // Square
+    const std::vector<VECTOR2I> ptsA = {
+        { 0, 0 },
+        { 100, 0 },
+        { 100, 100 },
+        { 0, 100 },
+    };
+    // Same points, same start, reversed
+    const std::vector<VECTOR2I> ptsB = {
+        { 0, 0 },
+        { 0, 100 },
+        { 100, 100 },
+        { 100, 0 },
+    };
+
+    SHAPE_LINE_CHAIN chainA( ptsA, true );
+    SHAPE_LINE_CHAIN chainB( ptsB, true );
+
+    BOOST_TEST( !chainA.CompareGeometry( chainB, false ) );
+    BOOST_TEST( chainA.CompareGeometry( chainB, true ) );
+}
+
+
 /**
  * Test for issue #22597: Simplify with tolerance should reduce a polygon
  * created from a rotated rounded rectangle (many small line segments approximating arcs).
@@ -1497,6 +1522,145 @@ BOOST_AUTO_TEST_CASE( SimplifyWithToleranceIssue22597 )
     // A 2mm tolerance should reduce it to approximately 4-8 points.
     // If it's only slightly reduced, there may be an issue.
     BOOST_CHECK_LE( simplifiedCount, 20 );
+}
+
+
+BOOST_AUTO_TEST_CASE( SelfIntersecting_NoIntersection_OpenChain )
+{
+    SHAPE_LINE_CHAIN chain( { { 0, 0 }, { 1000, 0 }, { 2000, 1000 }, { 3000, 0 } } );
+
+    BOOST_CHECK( !chain.SelfIntersecting() );
+}
+
+
+BOOST_AUTO_TEST_CASE( SelfIntersecting_NoIntersection_ClosedChain )
+{
+    SHAPE_LINE_CHAIN chain( { { 0, 0 }, { 10000, 0 }, { 10000, 10000 }, { 0, 10000 } } );
+    chain.SetClosed( true );
+
+    BOOST_CHECK( !chain.SelfIntersecting() );
+}
+
+
+BOOST_AUTO_TEST_CASE( SelfIntersecting_CrossingSegments )
+{
+    // An X shape: two segments that cross
+    //   (0,0)-(10000,10000) and (10000,0)-(0,10000)
+    SHAPE_LINE_CHAIN chain( { { 0, 0 }, { 10000, 10000 }, { 10000, 0 }, { 0, 10000 } } );
+
+    auto result = chain.SelfIntersecting();
+    BOOST_REQUIRE( result.has_value() );
+    BOOST_CHECK_EQUAL( result->index_our, 0 );
+    BOOST_CHECK_EQUAL( result->index_their, 2 );
+}
+
+
+BOOST_AUTO_TEST_CASE( SelfIntersecting_ClosedFigureEight )
+{
+    // Closed bowtie: segments (0,0)-(10000,10000) and (10000,0)-(0,10000) cross at center
+    SHAPE_LINE_CHAIN chain( { { 0, 0 }, { 10000, 10000 }, { 10000, 0 }, { 0, 10000 } } );
+    chain.SetClosed( true );
+
+    BOOST_CHECK( chain.SelfIntersecting().has_value() );
+}
+
+
+BOOST_AUTO_TEST_CASE( SelfIntersecting_VertexOnSegment )
+{
+    // Third vertex lies exactly on the first segment
+    SHAPE_LINE_CHAIN chain( { { 0, 0 }, { 20000, 0 }, { 20000, 10000 }, { 10000, 0 },
+                              { 10000, -10000 } } );
+
+    auto result = chain.SelfIntersecting();
+    BOOST_REQUIRE( result.has_value() );
+    BOOST_CHECK_EQUAL( result->p.x, 10000 );
+    BOOST_CHECK_EQUAL( result->p.y, 0 );
+}
+
+
+BOOST_AUTO_TEST_CASE( SelfIntersecting_TwoSegments )
+{
+    SHAPE_LINE_CHAIN chain( { { 0, 0 }, { 10000, 0 } } );
+
+    BOOST_CHECK( !chain.SelfIntersecting() );
+}
+
+
+BOOST_AUTO_TEST_CASE( SelfIntersecting_SinglePoint )
+{
+    SHAPE_LINE_CHAIN chain;
+    chain.Append( VECTOR2I( 0, 0 ) );
+
+    BOOST_CHECK( !chain.SelfIntersecting() );
+}
+
+
+BOOST_AUTO_TEST_CASE( SelfIntersecting_AdjacentSegmentsIgnored )
+{
+    // A simple zigzag where adjacent segments share endpoints but don't self-intersect
+    SHAPE_LINE_CHAIN chain( { { 0, 0 }, { 5000, 10000 }, { 10000, 0 }, { 15000, 10000 },
+                              { 20000, 0 } } );
+
+    BOOST_CHECK( !chain.SelfIntersecting() );
+}
+
+
+BOOST_AUTO_TEST_CASE( SelfIntersecting_ClosedTriangle )
+{
+    SHAPE_LINE_CHAIN chain( { { 0, 0 }, { 10000, 0 }, { 5000, 10000 } } );
+    chain.SetClosed( true );
+
+    BOOST_CHECK( !chain.SelfIntersecting() );
+}
+
+
+BOOST_AUTO_TEST_CASE( SelfIntersecting_ClosedLastFirstNotFalsePositive )
+{
+    // Closed rectangle. The last segment shares its endpoint with the first segment.
+    // This must NOT be reported as a self-intersection.
+    SHAPE_LINE_CHAIN chain( { { 0, 0 }, { 10000, 0 }, { 10000, 10000 }, { 0, 10000 } } );
+    chain.SetClosed( true );
+
+    BOOST_CHECK( !chain.SelfIntersecting() );
+}
+
+
+BOOST_AUTO_TEST_CASE( SelfIntersecting_SpatiallyDistant )
+{
+    // Segments are far apart spatially, exercising the bbox rejection path
+    SHAPE_LINE_CHAIN chain( { { 0, 0 }, { 1000, 0 },
+                              { 1000, 1000000 }, { 2000, 1000000 },
+                              { 2000, 2000000 }, { 3000, 2000000 } } );
+
+    BOOST_CHECK( !chain.SelfIntersecting() );
+}
+
+
+BOOST_AUTO_TEST_CASE( SelfIntersecting_LargeNonIntersecting )
+{
+    // Build a spiral-like chain with many segments that don't self-intersect
+    SHAPE_LINE_CHAIN chain;
+
+    for( int i = 0; i < 200; i++ )
+        chain.Append( VECTOR2I( i * 1000, ( i % 2 ) * 5000 ) );
+
+    BOOST_CHECK( !chain.SelfIntersecting() );
+}
+
+
+BOOST_AUTO_TEST_CASE( SelfIntersecting_LargeWithCrossing )
+{
+    // Many non-intersecting segments, then one that crosses back over an earlier one
+    SHAPE_LINE_CHAIN chain;
+
+    for( int i = 0; i < 50; i++ )
+        chain.Append( VECTOR2I( i * 1000, 0 ) );
+
+    // Last segment crosses back over the first few segments
+    chain.Append( VECTOR2I( 5000, 10000 ) );
+    chain.Append( VECTOR2I( 5000, -10000 ) );
+
+    BOOST_CHECK( chain.SelfIntersecting().has_value() );
 }
 
 

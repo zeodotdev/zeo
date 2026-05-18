@@ -98,12 +98,21 @@ static std::unique_ptr<SCHEMATIC> readSchematicFromFile( const std::string& aFil
 
     SETTINGS_MANAGER& manager = Pgm().GetSettingsManager();
 
-    // TODO: this must load the schematic's project, not a default project.  At the very minimum
-    // variable resolution won't work without the project, but there might also be issues with
-    // netclasses, etc.
-    manager.LoadProject( "" );
+    wxFileName pro( aFilename );
+    pro.SetExt( FILEEXT::ProjectFileExtension );
+    pro.MakeAbsolute();
+    wxString projectPath = pro.GetFullPath();
+
+    PROJECT* project = manager.GetProject( projectPath );
+
+    if( !project )
+    {
+        manager.LoadProject( projectPath, true );
+        project = manager.GetProject( projectPath );
+    }
+
     schematic->Reset();
-    schematic->SetProject( &manager.Prj() );
+    schematic->SetProject( project );
     SCH_SHEET* rootSheet = pi->LoadSchematicFile( aFilename, schematic.get() );
 
     if( !rootSheet )
@@ -304,7 +313,7 @@ static struct IFACE : public KIFACE_BASE, public UNITS_PROVIDER
             for( ACTION_TOOLBAR_CONTROL* control : ACTION_TOOLBAR::GetCustomControlList( FRAME_SCH_SYMBOL_EDITOR ) )
                 controls.push_back( control );
 
-            return new PANEL_TOOLBAR_CUSTOMIZATION( aParent, cfg, tb, actions, controls );
+            return new PANEL_TOOLBAR_CUSTOMIZATION( aParent, cfg, tb, FRAME_SCH_SYMBOL_EDITOR, actions, controls );
         }
 
         case PANEL_SYM_COLORS:
@@ -360,7 +369,7 @@ static struct IFACE : public KIFACE_BASE, public UNITS_PROVIDER
             for( ACTION_TOOLBAR_CONTROL* control : ACTION_TOOLBAR::GetCustomControlList( FRAME_SCH ) )
                 controls.push_back( control );
 
-            return new PANEL_TOOLBAR_CUSTOMIZATION( aParent, cfg, tb, actions, controls );
+            return new PANEL_TOOLBAR_CUSTOMIZATION( aParent, cfg, tb, FRAME_SCH, actions, controls );
         }
 
         case PANEL_SCH_COLORS:

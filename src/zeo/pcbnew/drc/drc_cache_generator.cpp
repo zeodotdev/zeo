@@ -23,6 +23,7 @@
 
 #include <common.h>
 #include <board_design_settings.h>
+#include <pad.h>
 #include <pcb_board_outline.h>
 #include <footprint.h>
 #include <thread_pool.h>
@@ -55,7 +56,8 @@ bool DRC_CACHE_GENERATOR::Run()
         largestPhysicalClearance = std::max( largestPhysicalClearance, worstConstraint.GetValue().Min() );
 
     // If the unconditional max is 0, check for conditional constraints that may still apply.
-    // Only include the conditional maximum if matching items actually exist on the board.
+    // User-defined conditional rules always need the test to run.  The implicit barcode rule
+    // only needs the test if barcodes actually exist on the board.
     if( largestPhysicalClearance <= 0 )
     {
         int conditionalMax = 0;
@@ -68,17 +70,24 @@ bool DRC_CACHE_GENERATOR::Run()
 
         if( conditionalMax > 0 )
         {
-            bool hasMatchingItems = false;
-
-            forEachGeometryItem( { PCB_BARCODE_T }, LSET::AllLayersMask(),
-                    [&]( BOARD_ITEM* item ) -> bool
-                    {
-                        hasMatchingItems = true;
-                        return false;
-                    } );
-
-            if( hasMatchingItems )
+            if( m_drcEngine->HasUserDefinedPhysicalConstraint() )
+            {
                 largestPhysicalClearance = conditionalMax;
+            }
+            else
+            {
+                bool hasMatchingItems = false;
+
+                forEachGeometryItem( { PCB_BARCODE_T }, LSET::AllLayersMask(),
+                                     [&]( BOARD_ITEM* item ) -> bool
+                                     {
+                                         hasMatchingItems = true;
+                                         return false;
+                                     } );
+
+                if( hasMatchingItems )
+                    largestPhysicalClearance = conditionalMax;
+            }
         }
     }
 
@@ -306,4 +315,3 @@ bool DRC_CACHE_GENERATOR::Run()
 
     return !m_drcEngine->IsCancelled();
 }
-

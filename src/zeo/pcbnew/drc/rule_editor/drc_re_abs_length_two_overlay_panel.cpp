@@ -25,6 +25,7 @@
 #include "drc_re_abs_length_two_overlay_panel.h"
 #include "drc_re_abs_length_two_constraint_data.h"
 #include "drc_rule_editor_utils.h"
+#include "drc_re_validator_numeric_ctrl.h"
 
 #include <base_units.h>
 #include <eda_base_frame.h>
@@ -32,6 +33,7 @@
 
 #include <wx/checkbox.h>
 #include <wx/textctrl.h>
+#include <wx/stattext.h>
 #include <dialogs/rule_editor_dialog_base.h>
 
 DRC_RE_ABS_LENGTH_TWO_OVERLAY_PANEL::DRC_RE_ABS_LENGTH_TWO_OVERLAY_PANEL(
@@ -55,29 +57,36 @@ DRC_RE_ABS_LENGTH_TWO_OVERLAY_PANEL::DRC_RE_ABS_LENGTH_TWO_OVERLAY_PANEL(
         }
     }
 
-    // Create min length field
-    auto* minLengthField = AddField<wxTextCtrl>( wxS( "min_length" ), positions[0],
-                                                 wxTE_CENTRE | wxTE_PROCESS_ENTER );
-    m_minLengthBinder =
-            std::make_unique<UNIT_BINDER>( &m_unitsProvider, eventSource, nullptr, minLengthField->GetControl(),
-                                           minLengthField->GetLabel(), false, false );
-    minLengthField->SetUnitBinder( m_minLengthBinder.get() );
-
     // Create opt length field
-    auto* optLengthField = AddField<wxTextCtrl>( wxS( "opt_length" ), positions[1],
-                                                 wxTE_CENTRE | wxTE_PROCESS_ENTER );
+    auto* optLengthField = AddField<wxTextCtrl>( wxS( "opt_length" ), positions[0], wxTE_CENTRE | wxTE_PROCESS_ENTER );
     m_optLengthBinder =
             std::make_unique<UNIT_BINDER>( &m_unitsProvider, eventSource, nullptr, optLengthField->GetControl(),
                                            optLengthField->GetLabel(), false, false );
     optLengthField->SetUnitBinder( m_optLengthBinder.get() );
+    optLengthField->GetControl()->SetValidator( VALIDATOR_NUMERIC_CTRL( false, false ) );
 
-    // Create max length field
-    auto* maxLengthField = AddField<wxTextCtrl>( wxS( "max_length" ), positions[2],
-                                                 wxTE_CENTRE | wxTE_PROCESS_ENTER );
-    m_maxLengthBinder =
-            std::make_unique<UNIT_BINDER>( &m_unitsProvider, eventSource, nullptr, maxLengthField->GetControl(),
-                                           maxLengthField->GetLabel(), false, false );
-    maxLengthField->SetUnitBinder( m_maxLengthBinder.get() );
+    // Create tolerance field
+    auto* toleranceField = AddField<wxTextCtrl>( wxS( "tolerance" ), positions[1], wxTE_CENTRE | wxTE_PROCESS_ENTER );
+    m_toleranceBinder =
+            std::make_unique<UNIT_BINDER>( &m_unitsProvider, eventSource, nullptr, toleranceField->GetControl(),
+                                           toleranceField->GetLabel(), false, false );
+    toleranceField->SetUnitBinder( m_toleranceBinder.get() );
+    toleranceField->GetControl()->SetValidator( VALIDATOR_NUMERIC_CTRL( false, false ) );
+
+    // Add +/- decoration between the two fields (same pattern as via style)
+    {
+        const DRC_RE_FIELD_POSITION& optPos = positions[0];
+        const DRC_RE_FIELD_POSITION& tolPos = positions[1];
+        int                          fieldHeight = optLengthField->GetControl()->GetBestSize().GetHeight();
+
+        auto*         plusMinus = new wxStaticText( this, wxID_ANY, wxS( "\u00B1" ) );
+        wxSize        pmSize = plusMinus->GetBestSize();
+        wxStaticText* optMmLabel = optLengthField->GetLabel();
+        int           afterOptLabel = optMmLabel->GetPosition().x + optMmLabel->GetBestSize().GetWidth();
+        int           gapMid = ( afterOptLabel + tolPos.xStart ) / 2;
+        plusMinus->SetPosition(
+                wxPoint( gapMid - pmSize.GetWidth() / 2, optPos.yTop + ( fieldHeight - pmSize.GetHeight() ) / 2 ) );
+    }
 
     auto notifyModified = [this]( wxCommandEvent& )
     {
@@ -86,9 +95,8 @@ DRC_RE_ABS_LENGTH_TWO_OVERLAY_PANEL::DRC_RE_ABS_LENGTH_TWO_OVERLAY_PANEL(
             dlg->SetModified();
     };
 
-    minLengthField->GetControl()->Bind( wxEVT_TEXT, notifyModified );
     optLengthField->GetControl()->Bind( wxEVT_TEXT, notifyModified );
-    maxLengthField->GetControl()->Bind( wxEVT_TEXT, notifyModified );
+    toleranceField->GetControl()->Bind( wxEVT_TEXT, notifyModified );
 
     auto notifySave = [this]( wxCommandEvent& aEvent )
     {
@@ -97,9 +105,8 @@ DRC_RE_ABS_LENGTH_TWO_OVERLAY_PANEL::DRC_RE_ABS_LENGTH_TWO_OVERLAY_PANEL(
             dlg->OnSave( aEvent );
     };
 
-    minLengthField->GetControl()->Bind( wxEVT_TEXT_ENTER, notifySave );
     optLengthField->GetControl()->Bind( wxEVT_TEXT_ENTER, notifySave );
-    maxLengthField->GetControl()->Bind( wxEVT_TEXT_ENTER, notifySave );
+    toleranceField->GetControl()->Bind( wxEVT_TEXT_ENTER, notifySave );
 
     // Cross-board scope checkbox — positioned below the bitmap, outside
     // the overlay-field grid. The bitmap-overlay base class set the
@@ -149,9 +156,8 @@ bool DRC_RE_ABS_LENGTH_TWO_OVERLAY_PANEL::TransferDataToWindow()
     if( !m_data )
         return false;
 
-    m_minLengthBinder->SetDoubleValue( pcbIUScale.mmToIU( m_data->GetMinimumLength() ) );
-    m_optLengthBinder->SetDoubleValue( pcbIUScale.mmToIU( m_data->GetOptimumLength() ) );
-    m_maxLengthBinder->SetDoubleValue( pcbIUScale.mmToIU( m_data->GetMaximumLength() ) );
+    m_optLengthBinder->ChangeDoubleValue( pcbIUScale.mmToIU( m_data->GetOptimumLength() ) );
+    m_toleranceBinder->ChangeDoubleValue( pcbIUScale.mmToIU( m_data->GetTolerance() ) );
 
     if( m_crossBoardScopeCheckbox )
         m_crossBoardScopeCheckbox->SetValue( m_data->GetCrossBoardScope() );
@@ -165,9 +171,8 @@ bool DRC_RE_ABS_LENGTH_TWO_OVERLAY_PANEL::TransferDataFromWindow()
     if( !m_data )
         return false;
 
-    m_data->SetMinimumLength( pcbIUScale.IUTomm( m_minLengthBinder->GetDoubleValue() ) );
     m_data->SetOptimumLength( pcbIUScale.IUTomm( m_optLengthBinder->GetDoubleValue() ) );
-    m_data->SetMaximumLength( pcbIUScale.IUTomm( m_maxLengthBinder->GetDoubleValue() ) );
+    m_data->SetTolerance( pcbIUScale.IUTomm( m_toleranceBinder->GetDoubleValue() ) );
 
     if( m_crossBoardScopeCheckbox )
         m_data->SetCrossBoardScope( m_crossBoardScopeCheckbox->IsChecked() );

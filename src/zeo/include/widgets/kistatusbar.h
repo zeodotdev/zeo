@@ -30,6 +30,7 @@
 #include <optional>
 #include <mutex>
 #include <vector>
+#include <unordered_map>
 #include <widgets/report_severity.h>
 #include <wx/statusbr.h>
 #include <wx/bmpbndl.h>
@@ -133,14 +134,22 @@ public:
      */
     void SetNotificationCount( int aCount );
 
-    void SetLoadWarningMessages( const wxString& aMessages );
-    void ClearLoadWarningMessages();
+    /**
+     * Clears all warning messages from the given source (or all sources if aSource is empty)
+     */
+    void ClearWarningMessages( const wxString& aSource = wxEmptyString );
+
+    /**
+     * Add warning/error messages (not thread-safe, use the std::vector<LOAD_MESSAGE> variant
+     * from other threads)
+     */
+    void AddWarningMessages( const wxString& aSource, const wxString& aMessages );
 
     /**
      * Add warning/error messages thread-safely.
      * Can be called from any thread. UI update is deferred to main thread.
      */
-    void AddLoadWarningMessages( const std::vector<LOAD_MESSAGE>& aMessages );
+    void AddWarningMessages( const wxString& aSource, const std::vector<LOAD_MESSAGE>& aMessages );
 
     /**
      * Get current message count (thread-safe).
@@ -173,6 +182,9 @@ private:
     void onNotificationsIconClick( wxCommandEvent& aEvent );
     void onLoadWarningsIconClick( wxCommandEvent& aEvent );
     void updateWarningUI();  ///< Update warning button visibility and badge (main thread only)
+    void updateAuxFieldWidths();
+    void updateBackgroundText();
+    void layoutControls();
 
     enum class FIELD
     {
@@ -203,15 +215,17 @@ private:
     wxButton*       m_labelButton;        ///< Zeo session label button
     wxStaticBitmap* m_profileBitmap;     ///< Zeo session profile avatar
     wxSize          m_profileLogicalSize; ///< Logical display size of the profile avatar
-    mutable std::mutex m_loadWarningMutex;  ///< Protects m_loadWarningMessages
-    std::vector<LOAD_MESSAGE> m_loadWarningMessages;
-    int            m_normalFieldsCount;
-    STYLE_FLAGS    m_styleFlags;
-    wxString       m_savedStatusText;       ///< Saved text from adjacent field during background jobs
+    mutable std::mutex m_warningMutex;  ///< Protects m_warningMessages
+    std::unordered_map<wxString, std::vector<LOAD_MESSAGE>> m_warningMessages;
+    int             m_normalFieldsCount;
+    STYLE_FLAGS     m_styleFlags;
+    wxString        m_savedStatusText;       ///< Saved text from adjacent field during background jobs
+    wxString        m_backgroundRawText;     ///< Unellipsized background status text
+    std::vector<int> m_fieldWidths;
 
-    int            m_primaryFieldId     = -1;   ///< Text field biased by SetFieldWeight; -1 = none
-    int            m_primaryFieldWeight = 1;    ///< Proportional weight for primary field
-    bool           m_bgJobActive        = false;   ///< Gauge / cancel / label occupying space
+    int             m_primaryFieldId     = -1;   ///< Text field biased by SetFieldWeight; -1 = none
+    int             m_primaryFieldWeight = 1;    ///< Proportional weight for primary field
+    bool            m_bgJobActive        = false;   ///< Gauge / cancel / label occupying space
 };
 
 #endif

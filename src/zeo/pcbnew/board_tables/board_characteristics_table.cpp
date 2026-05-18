@@ -147,6 +147,7 @@ PCB_TABLE* Build_Board_Characteristics_Table( BOARD* aBoard, EDA_UNITS aDisplayU
     table->SetStrokeColumns( false );
     table->SetStrokeRows( false );
     table->Autosize();
+    table->SetPosition( VECTOR2I( 0, 0 ) );
 
     return table;
 }

@@ -66,7 +66,8 @@ private:
     int testCreepage();
     int testCreepage( CREEPAGE_GRAPH& aGraph, int aNetCodeA, int aNetCodeB, PCB_LAYER_ID aLayer );
 
-    void CollectBoardEdges( std::vector<BOARD_ITEM*>& aVector );
+    void CollectBoardEdges( std::vector<BOARD_ITEM*>& aVector,
+                            std::vector<std::unique_ptr<PCB_SHAPE>>& aOwned );
     void CollectNetCodes( std::vector<int>& aVector );
 
     std::set<std::pair<const BOARD_ITEM*, const BOARD_ITEM*>> m_reportedPairs;
@@ -127,7 +128,6 @@ int DRC_TEST_PROVIDER_CREEPAGE::testCreepage( CREEPAGE_GRAPH& aGraph, int aNetCo
     std::shared_ptr<GRAPH_NODE> NetA = aGraph.AddNetElements( aNetCodeA, aLayer, creepageValue );
     std::shared_ptr<GRAPH_NODE> NetB = aGraph.AddNetElements( aNetCodeB, aLayer, creepageValue );
 
-
     aGraph.GeneratePaths( creepageValue, aLayer );
 
     std::vector<std::shared_ptr<GRAPH_NODE>> temp_nodes;
@@ -135,8 +135,8 @@ int DRC_TEST_PROVIDER_CREEPAGE::testCreepage( CREEPAGE_GRAPH& aGraph, int aNetCo
     std::copy_if( aGraph.m_nodes.begin(), aGraph.m_nodes.end(), std::back_inserter( temp_nodes ),
                   []( std::shared_ptr<GRAPH_NODE> aNode )
                   {
-                      return !!aNode && aNode->m_parent && aNode->m_parent->IsConductive()
-                             && aNode->m_connectDirectly && aNode->m_type == GRAPH_NODE::POINT;
+                      return !!aNode && aNode->m_parent && !aNode->m_parent->IsConductive()
+                             && !aNode->m_connectDirectly && aNode->m_type == GRAPH_NODE::POINT;
                   } );
 
     alg::for_all_pairs( temp_nodes.begin(), temp_nodes.end(),
@@ -152,21 +152,6 @@ int DRC_TEST_PROVIDER_CREEPAGE::testCreepage( CREEPAGE_GRAPH& aGraph, int aNetCo
                                 return;
 
                             if( ( aN1->m_parent ) != ( aN2->m_parent ) )
-                                return;
-
-
-                            if( aN1->m_parent->IsConductive() )
-                                return;
-
-                            if( aN1->m_connectDirectly || aN2->m_connectDirectly )
-                                return;
-
-                            // We are only looking for points on circles and arcs
-
-                            if( aN1->m_type != GRAPH_NODE::POINT )
-                                return;
-
-                            if( aN2->m_type != GRAPH_NODE::POINT )
                                 return;
 
                             aN1->m_parent->ConnectChildren( aN1, aN2, aGraph );
@@ -257,7 +242,8 @@ void DRC_TEST_PROVIDER_CREEPAGE::CollectNetCodes( std::vector<int>& aVector )
 }
 
 
-void DRC_TEST_PROVIDER_CREEPAGE::CollectBoardEdges( std::vector<BOARD_ITEM*>& aVector )
+void DRC_TEST_PROVIDER_CREEPAGE::CollectBoardEdges( std::vector<BOARD_ITEM*>& aVector,
+                                                    std::vector<std::unique_ptr<PCB_SHAPE>>& aOwned )
 {
     if( !m_board )
         return;
@@ -294,10 +280,58 @@ void DRC_TEST_PROVIDER_CREEPAGE::CollectBoardEdges( std::vector<BOARD_ITEM*>& aV
         if( p->GetAttribute() != PAD_ATTRIB::NPTH )
             continue;
 
-        PCB_SHAPE* s = new PCB_SHAPE( NULL, SHAPE_T::CIRCLE );
-        s->SetRadius( p->GetDrillSize().x / 2 );
-        s->SetPosition( p->GetPosition() );
-        aVector.push_back( s );
+        std::shared_ptr<SHAPE_SEGMENT> hole = p->GetEffectiveHoleShape();
+
+        if( !hole )
+            continue;
+
+        VECTOR2I ptA = hole->GetSeg().A;
+        VECTOR2I ptB = hole->GetSeg().B;
+        int      radius = hole->GetWidth() / 2;
+
+        if( ptA == ptB )
+        {
+            // Circular hole: add as a single circle.
+            auto s = std::make_unique<PCB_SHAPE>( nullptr, SHAPE_T::CIRCLE );
+            s->SetRadius( radius );
+            s->SetPosition( ptA );
+            aVector.push_back( s.get() );
+            aOwned.push_back( std::move( s ) );
+        }
+        else
+        {
+            // Oblong slot: add the two semicircular end caps and two straight sides.
+            // The slot outline is the border that creepage paths must not cross.
+            VECTOR2I axis = ptB - ptA;
+            VECTOR2I perp = axis.Perpendicular().Resize( radius );
+
+            // Side segments connecting the two end caps.
+            auto seg1 = std::make_unique<PCB_SHAPE>( nullptr, SHAPE_T::SEGMENT );
+            seg1->SetStart( ptA + perp );
+            seg1->SetEnd( ptB + perp );
+            aVector.push_back( seg1.get() );
+            aOwned.push_back( std::move( seg1 ) );
+
+            auto seg2 = std::make_unique<PCB_SHAPE>( nullptr, SHAPE_T::SEGMENT );
+            seg2->SetStart( ptA - perp );
+            seg2->SetEnd( ptB - perp );
+            aVector.push_back( seg2.get() );
+            aOwned.push_back( std::move( seg2 ) );
+
+            // Semicircular arc at ptA end (180 degrees, away from ptB).
+            VECTOR2I midA = ptA - axis.Resize( radius );
+            auto     arcA = std::make_unique<PCB_SHAPE>( nullptr, SHAPE_T::ARC );
+            arcA->SetArcGeometry( ptA + perp, midA, ptA - perp );
+            aVector.push_back( arcA.get() );
+            aOwned.push_back( std::move( arcA ) );
+
+            // Semicircular arc at ptB end (180 degrees, away from ptA).
+            VECTOR2I midB = ptB + axis.Resize( radius );
+            auto     arcB = std::make_unique<PCB_SHAPE>( nullptr, SHAPE_T::ARC );
+            arcB->SetArcGeometry( ptB - perp, midB, ptB + perp );
+            aVector.push_back( arcB.get() );
+            aOwned.push_back( std::move( arcB ) );
+        }
     }
 }
 
@@ -330,7 +364,7 @@ int DRC_TEST_PROVIDER_CREEPAGE::testCreepage()
 
     graph.m_boardOutline = &outline;
 
-    this->CollectBoardEdges( graph.m_boardEdge );
+    this->CollectBoardEdges( graph.m_boardEdge, graph.m_ownedBoardEdges );
     graph.TransformEdgeToCreepShapes();
     graph.RemoveDuplicatedShapes();
     graph.TransformCreepShapesToNodes( graph.m_shapeCollection );
@@ -371,6 +405,18 @@ int DRC_TEST_PROVIDER_CREEPAGE::testCreepage()
 
                                     vectorSize = graph.m_nodes.size();
                                     graph.m_nodes.resize( beNodeSize, nullptr );
+
+                                    // Rebuild m_nodeset to match the surviving board-edge
+                                    // prefix.  Without this, stale per-net nodes from the
+                                    // previous iteration remain in the set and corrupt
+                                    // subsequent FindNode/AddNode lookups.
+                                    graph.m_nodeset.clear();
+
+                                    for( int i = 0; i < beNodeSize; ++i )
+                                    {
+                                        if( graph.m_nodes[i] )
+                                            graph.m_nodeset.insert( graph.m_nodes[i] );
+                                    }
                                 }
 
                                 prevTestChangedGraph = testCreepage( graph, aNet1, aNet2, layer );

@@ -102,13 +102,9 @@ void SCH_EDIT_FRAME::doReCreateMenuBar()
     submenuImport->SetTitle( _( "Import" ) );
     submenuImport->SetIcon( BITMAPS::import );
 
-    submenuImport->Add( _( "Non-KiCad Schematic..." ),
-                _( "Replace current schematic sheet with one imported from another application" ),
-                ID_IMPORT_NON_KICAD_SCH,
-                BITMAPS::import_document );
-
+    submenuImport->Add( SCH_ACTIONS::importNonKicadSchematic, ACTION_MENU::NORMAL, _( "Non-KiCad Schematic..." ) );
     submenuImport->Add( SCH_ACTIONS::importFPAssignments, ACTION_MENU::NORMAL, _( "Footprint Assignments..." ) );
-    submenuImport->Add( SCH_ACTIONS::importGraphics,      ACTION_MENU::NORMAL, _( "Graphics..." ) );
+    submenuImport->Add( SCH_ACTIONS::importGraphics, ACTION_MENU::NORMAL, _( "Graphics..." ) );
 
     fileMenu->Add( submenuImport );
 
@@ -166,10 +162,10 @@ void SCH_EDIT_FRAME::doReCreateMenuBar()
     ACTION_MENU* submenuAttributes = new ACTION_MENU( false, selTool );
     submenuAttributes->SetTitle( _( "Attributes" ) );
 
-    submenuAttributes->Add( SCH_ACTIONS::setExcludeFromSimulation, ACTION_MENU::CHECK );
-    submenuAttributes->Add( SCH_ACTIONS::setExcludeFromBOM,        ACTION_MENU::CHECK );
-    submenuAttributes->Add( SCH_ACTIONS::setExcludeFromBoard,      ACTION_MENU::CHECK );
-    submenuAttributes->Add( SCH_ACTIONS::setDNP,                   ACTION_MENU::CHECK );
+    submenuAttributes->Add( SCH_ACTIONS::setExcludeFromSim,    ACTION_MENU::CHECK );
+    submenuAttributes->Add( SCH_ACTIONS::setExcludeFromBOM,    ACTION_MENU::CHECK );
+    submenuAttributes->Add( SCH_ACTIONS::setExcludeFromBoard,  ACTION_MENU::CHECK );
+    submenuAttributes->Add( SCH_ACTIONS::setDNP,               ACTION_MENU::CHECK );
 
     editMenu->Add( submenuAttributes );
 
@@ -181,8 +177,8 @@ void SCH_EDIT_FRAME::doReCreateMenuBar()
     ACTION_MENU* showHidePanels = new ACTION_MENU( false, selTool );
     showHidePanels->SetTitle( _( "Panels" ) );
 
-    showHidePanels->Add( ACTIONS::showProperties, ACTION_MENU::CHECK );
-    showHidePanels->Add( ACTIONS::showSearch, ACTION_MENU::CHECK );
+    showHidePanels->Add( ACTIONS::showProperties,    ACTION_MENU::CHECK );
+    showHidePanels->Add( ACTIONS::showSearch,        ACTION_MENU::CHECK );
     showHidePanels->Add( SCH_ACTIONS::showHierarchy, ACTION_MENU::CHECK );
 
     if( ADVANCED_CFG::GetCfg().m_IncrementalConnectivity )
@@ -194,7 +190,7 @@ void SCH_EDIT_FRAME::doReCreateMenuBar()
     if( m_remoteSymbolPane && !m_remoteSymbolPane->HasDataSources() )
     {
         remoteSymbolItem->Enable( false );
-        remoteSymbolItem->SetHelp( _( "Install a remote symbol server using the Plugin and Content Manager to enable" ) );
+        remoteSymbolItem->SetHelp( _( "Search signed-in remote symbol providers and download verified libraries." ) );
     }
 
     viewMenu->Add( showHidePanels );
@@ -332,6 +328,7 @@ void SCH_EDIT_FRAME::doReCreateMenuBar()
     submenuVariants->SetTitle( _( "Variants" ) );
     submenuVariants->Add( SCH_ACTIONS::addVariant );
     submenuVariants->Add( SCH_ACTIONS::removeVariant );
+    submenuVariants->Add( SCH_ACTIONS::editVariantDescription );
     toolsMenu->Add( submenuVariants );
 
 #ifdef KICAD_IPC_API
@@ -366,4 +363,3 @@ void SCH_EDIT_FRAME::doReCreateMenuBar()
     SetMenuBar( menuBar );
     delete oldMenuBar;
 }
-

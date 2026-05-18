@@ -235,6 +235,26 @@ public:
 
     bool HitTest( const BOX2I& aRect, bool aContained, int aAccuracy ) const override
     {
+        bool anyItems = false;
+
+        for( BOARD_ITEM* item : GetBoardItems() )
+        {
+            anyItems = true;
+
+            if( aContained )
+            {
+                if( !item->HitTest( aRect, true, aAccuracy ) )
+                    return false;
+            }
+            else if( item->HitTest( aRect, false, aAccuracy ) )
+            {
+                return true;
+            }
+        }
+
+        if( anyItems )
+            return aContained;
+
         BOX2I sel = aRect;
 
         if( aAccuracy )
@@ -255,6 +275,26 @@ public:
 
     bool HitTest( const SHAPE_LINE_CHAIN& aPoly, bool aContained ) const override
     {
+        bool anyItems = false;
+
+        for( BOARD_ITEM* item : GetBoardItems() )
+        {
+            anyItems = true;
+
+            if( aContained )
+            {
+                if( !item->HitTest( aPoly, true ) )
+                    return false;
+            }
+            else if( item->HitTest( aPoly, false ) )
+            {
+                return true;
+            }
+        }
+
+        if( anyItems )
+            return aContained;
+
         return KIGEOM::ShapeHitTest( aPoly, getOutline(), aContained );
     }
 

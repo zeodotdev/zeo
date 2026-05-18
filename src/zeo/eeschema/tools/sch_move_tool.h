@@ -55,6 +55,7 @@ struct SPECIAL_CASE_LABEL_INFO
     VECTOR2I  originalLabelPos;
     VECTOR2I  originalLineStart;
     VECTOR2I  originalLineEnd;
+    bool      trackMovingEnd = false;
 };
 
 

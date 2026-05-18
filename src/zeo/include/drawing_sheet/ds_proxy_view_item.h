@@ -89,6 +89,12 @@ public:
     void SetIsFirstPage( bool aIsFirstPage ) { m_isFirstPage = aIsFirstPage; }
 
     /**
+     * Set the current variant name and description to be shown on the drawing sheet.
+     */
+    void SetVariantName( const std::string& aVariant ) { m_variantName = aVariant; }
+    void SetVariantDesc( const std::string& aVariantDesc ) { m_variantDesc = aVariantDesc; }
+
+    /**
      * Can be used to override which layer ID is used for drawing sheet item colors
      * @param aLayerId is the color to use (defaults to LAYER_DRAWINGSHEET if this is not called)
      */
@@ -145,6 +151,8 @@ protected:
     std::string         m_pageNumber;
     int                 m_sheetCount;
     bool                m_isFirstPage;
+    std::string         m_variantName;
+    std::string         m_variantDesc;
     const PROJECT*      m_project;
 
     const std::map<wxString, wxString>* m_properties;

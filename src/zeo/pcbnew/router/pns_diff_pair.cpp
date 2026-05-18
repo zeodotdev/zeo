@@ -833,16 +833,20 @@ double DIFF_PAIR::Skew() const
 
 void DIFF_PAIR::CoupledSegmentPairs( COUPLED_SEGMENTS_VEC& aPairs ) const
 {
-    SHAPE_LINE_CHAIN p( m_p );
-    SHAPE_LINE_CHAIN n( m_n );
-
-    p.Simplify();
-    n.Simplify();
+    const SHAPE_LINE_CHAIN& p = m_p;
+    const SHAPE_LINE_CHAIN& n = m_n;
+    // Do not simplify the line chains here, otherwise the indices will be invalid
 
     for( int i = 0; i < p.SegmentCount(); i++ )
     {
+        if( p.IsArcSegment( i ) )
+            continue;
+
         for( int j = 0; j < n.SegmentCount(); j++ )
         {
+            if( n.IsArcSegment( j ) )
+                continue;
+            
             SEG sp = p.Segment( i );
             SEG sn = n.Segment( j );
 

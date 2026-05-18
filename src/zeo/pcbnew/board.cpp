@@ -46,6 +46,7 @@
 #include <font/outline_font.h>
 #include <length_delay_calculation/length_delay_calculation.h>
 #include <lset.h>
+#include <pad.h>
 #include <pcb_base_frame.h>
 #include <pcb_track.h>
 #include <pcb_marker.h>
@@ -78,6 +79,9 @@
 #include <pcb_board_outline.h>
 #include <local_history.h>
 #include <pcb_io/pcb_io_mgr.h>
+#include <pcb_io/kicad_sexpr/pcb_io_kicad_sexpr.h>
+#include <advanced_config.h>
+#include <richio.h>
 #include <trace_helpers.h>
 
 // This is an odd place for this, but CvPcb won't link if it's in board_item.cpp like I first
@@ -86,7 +90,7 @@ VECTOR2I BOARD_ITEM::ZeroOffset( 0, 0 );
 
 
 BOARD::BOARD() :
-        BOARD_ITEM_CONTAINER( (BOARD_ITEM*) nullptr, PCB_T ),
+        BOARD_ITEM_CONTAINER( nullptr, PCB_T ),
         m_LegacyDesignSettingsLoaded( false ),
         m_LegacyCopperEdgeClearanceLoaded( false ),
         m_LegacyNetclassesLoaded( false ),
@@ -972,6 +976,7 @@ int BOARD::GetCopperLayerCount() const
 void BOARD::SetCopperLayerCount( int aCount )
 {
     GetDesignSettings().SetCopperLayerCount( aCount );
+    recalcOpposites();
 }
 
 
@@ -1429,6 +1434,14 @@ void BOARD::Remove( BOARD_ITEM* aBoardItem, REMOVE_MODE aRemoveMode )
 {
     // find these calls and fix them!  Don't send me no stinking' nullptr.
     wxASSERT( aBoardItem );
+
+    // This is redundant with BOARD_COMMIT::Push but necessary to support SWIG interaction
+    // until the SWIG API is completely removed (since it doesn't use the commit system)
+    if( EDA_GROUP* parentGroup = aBoardItem->GetParentGroup();
+        parentGroup && !( parentGroup->AsEdaItem()->GetFlags() & STRUCT_DELETED ) )
+    {
+        parentGroup->RemoveItem( aBoardItem );
+    }
 
     m_itemByIdCache.erase( aBoardItem->m_Uuid );
 
@@ -1896,6 +1909,12 @@ BOARD_ITEM* BOARD::ResolveItem( const KIID& aID, bool aAllowNullptrReturn ) cons
             if( group->m_Uuid == aID )
                 return cacheAndReturn( group );
         }
+
+        for( PCB_POINT* point : footprint->Points() )
+        {
+            if( point->m_Uuid == aID )
+                return cacheAndReturn( point );
+        }
     }
 
     for( ZONE* zone : Zones() )
@@ -2160,10 +2179,13 @@ unsigned BOARD::GetNodesCount( int aNet ) const
 }
 
 
-BOX2I BOARD::ComputeBoundingBox( bool aBoardEdgesOnly ) const
+BOX2I BOARD::ComputeBoundingBox( bool aBoardEdgesOnly, bool aPhysicalLayersOnly ) const
 {
     BOX2I bbox;
     LSET  visible = GetVisibleLayers();
+
+    if( aPhysicalLayersOnly )
+        visible &= LSET::PhysicalLayersMask();
 
     // If the board is just showing a footprint, we want all footprint layers included in the
     // bounding box
@@ -3792,16 +3814,16 @@ int BOARD::GetPadWithCastellatedAttrCount()
 }
 
 
-void BOARD::SaveToHistory( const wxString& aProjectPath, std::vector<wxString>& aFiles )
+void BOARD::SaveToHistory( const wxString& aProjectPath, std::vector<HISTORY_FILE_DATA>& aFileData )
 {
     // GetProject() can be nullptr after the project's destroy hook fires —
     // BOARD outlives its PROJECT during sub-project unload, peer-window
-    // teardown, and project-switch transitions. The autosave timer
+    // teardown, and project-switch transitions, and also during a non-KiCad
+    // import while the old project is being unloaded and the new one has
+    // not yet been linked. The autosave timer
     // (EDA_BASE_FRAME::doAutoSave → LOCAL_HISTORY::RunRegisteredSaversAndCommit)
-    // can fire on a board whose project is mid-tear-down; without this guard
-    // the unconditional GetProject()->GetProjectPath() segfaults
-    // (EXC_BAD_ACCESS on null deref). The empty-projPath check below was
-    // never reached because the crash beat it to it.
+    // can fire in any of those windows; without this guard the unconditional
+    // GetProject()->GetProjectPath() segfaults (EXC_BAD_ACCESS on null deref).
     PROJECT* project = GetProject();
 
     if( !project )
@@ -3834,28 +3856,28 @@ void BOARD::SaveToHistory( const wxString& aProjectPath, std::vector<wxString>& 
 
     wxString rel = boardPath.Mid( projPath.length() );
 
-    // Build destination path inside .history mirror.
-    wxFileName historyRoot( projPath, wxEmptyString );
-    historyRoot.AppendDir( wxS( ".history" ) );
-    wxFileName dst( historyRoot.GetPath(), rel );
-
-    // Ensure destination directories exist.
-    wxFileName dstDir( dst );
-    dstDir.SetFullName( wxEmptyString );
-
-    if( !dstDir.DirExists() )
-        wxFileName::Mkdir( dstDir.GetPath(), 0777, wxPATH_MKDIR_FULL );
-
     try
     {
-        IO_RELEASER<PCB_IO> pi( PCB_IO_MGR::FindPlugin( PCB_IO_MGR::KICAD_SEXP ) );
-        // Save directly to history mirror path.
-        pi->SaveBoard( dst.GetFullPath(), this, nullptr );
-        aFiles.push_back( dst.GetFullPath() );
-        wxLogTrace( traceAutoSave, wxS( "[history] pcb saver exported '%s'" ), dst.GetFullPath() );
+        PCB_IO_KICAD_SEXPR pi;
+        STRING_FORMATTER   formatter;
+
+        pi.FormatBoardToFormatter( &formatter, this, nullptr );
+
+        HISTORY_FILE_DATA entry;
+        entry.relativePath = rel;
+        entry.content = std::move( formatter.MutableString() );
+        entry.prettify = true;
+
+        if( ADVANCED_CFG::GetCfg().m_CompactSave )
+            entry.formatMode = KICAD_FORMAT::FORMAT_MODE::COMPACT_TEXT_PROPERTIES;
+
+        aFileData.push_back( std::move( entry ) );
+
+        wxLogTrace( traceAutoSave, wxS( "[history] pcb saver serialized %zu bytes for '%s'" ),
+                    aFileData.back().content.size(), rel );
     }
     catch( const IO_ERROR& ioe )
     {
-        wxLogTrace( traceAutoSave, wxS( "[history] pcb saver export failed: %s" ), wxString::FromUTF8( ioe.What() ) );
+        wxLogTrace( traceAutoSave, wxS( "[history] pcb saver serialize failed: %s" ), wxString::FromUTF8( ioe.What() ) );
     }
 }

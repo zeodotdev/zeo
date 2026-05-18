@@ -37,7 +37,6 @@
 #include <zone_settings_bag.h>
 #include <widgets/unit_binder.h>
 #include <zone.h>
-#include <pad.h>
 #include <board.h>
 #include <trigo.h>
 #include <eda_pattern_match.h>
@@ -85,12 +84,16 @@ protected:
 
     void MoveSelectedZonePriority( ZONE_INDEX_MOVEMENT aMove );
 
+    void OnMoveTopClick( wxCommandEvent& aEvent ) override;
     void OnMoveUpClick( wxCommandEvent& aEvent ) override;
     void OnMoveDownClick( wxCommandEvent& aEvent ) override;
+    void OnMoveBottomClick( wxCommandEvent& aEvent ) override;
+    void OnAutoAssignClick( wxCommandEvent& aEvent ) override;
     void OnFilterCtrlCancel( wxCommandEvent& aEvent ) override;
     void OnFilterCtrlSearch( wxCommandEvent& aEvent ) override;
     void OnFilterCtrlTextChange( wxCommandEvent& aEvent ) override;
     void OnFilterCtrlEnter( wxCommandEvent& aEvent ) override;
+    void OnLayerFilterChanged( wxCommandEvent& aEvent ) override;
     void OnUpdateDisplayedZonesClick( wxCommandEvent& aEvent ) override;
 
     void PostProcessZoneViewSelChange( wxDataViewItem const& aItem );
@@ -102,6 +105,8 @@ private:
     void GenericProcessChar( wxKeyEvent& event );
 
     void OnIdle( wxIdleEvent& aEvent );
+    void NavigateZoneSelection( int aDirection );
+    void OnDialogCharHook( wxKeyEvent& aEvent );
 
 private:
     PCB_BASE_FRAME*                       m_pcbFrame;

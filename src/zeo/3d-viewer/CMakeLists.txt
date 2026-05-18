@@ -26,6 +26,7 @@ set(3D-VIEWER_SRCS
     ${DIR_3D_PLUGINS}/3d/pluginldr3D.cpp
     3d_cache/3d_cache.cpp
     3d_cache/3d_plugin_manager.cpp
+    3d_cache/model_substitution_helpers.cpp
     3d_canvas/board_adapter.cpp
     3d_canvas/create_layer_items.cpp
     3d_canvas/create_3Dgraphic_brd_items.cpp
@@ -113,6 +114,18 @@ set(3D-VIEWER_SRCS
 
 add_library(3d-viewer STATIC ${3D-VIEWER_SRCS})
 add_dependencies( 3d-viewer pcbcommon )
+
+if( KICAD_USE_PCH )
+    target_precompile_headers( 3d-viewer
+        PRIVATE
+            <3d_canvas/board_adapter.h>
+            <clipper2/clipper.h>
+            <kiid.h>
+            <board.h>
+            <pgm_base.h>
+            <wx/wx.h>
+            )
+endif()
 
 target_link_libraries( 3d-viewer
     PRIVATE

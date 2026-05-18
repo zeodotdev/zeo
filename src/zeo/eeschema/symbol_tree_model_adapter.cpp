@@ -37,8 +37,6 @@
 #include <trace_helpers.h>
 #include <libraries/symbol_library_adapter.h>
 
-#define PROGRESS_INTERVAL_MILLIS 33      // 30 FPS refresh rate
-
 
 wxObjectDataPtr<LIB_TREE_MODEL_ADAPTER>
 SYMBOL_TREE_MODEL_ADAPTER::Create( SCH_BASE_FRAME* aParent, SYMBOL_LIBRARY_ADAPTER* aManager )
@@ -85,15 +83,24 @@ void SYMBOL_TREE_MODEL_ADAPTER::AddLibraries( SCH_BASE_FRAME* aFrame )
     COMMON_SETTINGS* cfg = Pgm().GetCommonSettings();
     PROJECT_FILE&    project = aFrame->Prj().GetProjectFile();
 
+    std::unordered_set<wxString> pinned;
+    std::ranges::copy( cfg->m_Session.pinned_symbol_libs, std::inserter( pinned, pinned.begin() ) );
+    std::ranges::copy( project.m_PinnedSymbolLibs, std::inserter( pinned, pinned.begin() ) );
+
     auto addFunc =
             [&]( const wxString& aLibName, const std::vector<LIB_SYMBOL*>& aSymbolList,
                  const wxString& aDescription )
             {
-                std::vector<LIB_TREE_ITEM*> treeItems( aSymbolList.begin(), aSymbolList.end() );
-                bool pinned = alg::contains( cfg->m_Session.pinned_symbol_libs, aLibName )
-                              || alg::contains( project.m_PinnedSymbolLibs, aLibName );
+                LIB_TREE_NODE_LIBRARY& lib_node =
+                        DoAddLibraryNode( aLibName, aDescription, pinned.contains( aLibName ) );
 
-                DoAddLibrary( aLibName, aDescription, treeItems, pinned, false );
+                for( LIB_TREE_ITEM* item: aSymbolList )
+                {
+                    if( item )
+                        lib_node.AddItem( item );
+                }
+
+                lib_node.AssignIntrinsicRanks( m_shownColumns, false );
             };
 
     LIBRARY_MANAGER& manager = Pgm().GetLibraryManager();
@@ -116,15 +123,22 @@ void SYMBOL_TREE_MODEL_ADAPTER::AddLibraries( SCH_BASE_FRAME* aFrame )
         }
     }
 
+    bool anyLoaded = false;
+
     for( const wxString& lib : toLoad )
     {
         std::optional<LIB_STATUS> status = m_adapter->GetLibraryStatus( lib );
+
+        if( status && status->load_status == LOAD_STATUS::LOAD_ERROR )
+            continue;
 
         if( !status || status->load_status != LOAD_STATUS::LOADED )
         {
             m_pending_load_libraries.insert( lib );
             continue;
         }
+
+        anyLoaded = true;
 
         std::optional<const LIBRARY_TABLE_ROW*> rowResult = manager.GetRow( LIBRARY_TABLE_TYPE::SYMBOL, lib );
 
@@ -198,7 +212,7 @@ void SYMBOL_TREE_MODEL_ADAPTER::AddLibraries( SCH_BASE_FRAME* aFrame )
 
     m_tree.AssignIntrinsicRanks( m_shownColumns );
 
-    if( isLazyLoad && m_lazyLoadHandler )
+    if( isLazyLoad && anyLoaded && m_lazyLoadHandler )
     {
         createMissingColumns();
         m_lazyLoadHandler();

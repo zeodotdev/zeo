@@ -247,10 +247,10 @@ bool DRC_RE_CONDITION_ROW_PANEL::ParseExpression( const wxString& aExpr )
     }
 
     // Try to match known patterns
-    wxRegEx netRe( wxT( "^NetName\\s*==\\s*'([^']*)'" ) );
-    wxRegEx netclassRe1( wxT( "^hasNetclass\\('([^']*)'\\)" ) );
-    wxRegEx netclassRe2( wxT( "^NetClass\\s*==\\s*'([^']*)'" ) );
-    wxRegEx areaRe( wxT( "^(?:enclosedByArea|intersectsArea)\\('([^']*)'\\)" ) );
+    static wxRegEx netRe( wxT( "^NetName\\s*==\\s*'([^']*)'" ) );
+    static wxRegEx netclassRe1( wxT( "^hasNetclass\\('([^']*)'\\)" ) );
+    static wxRegEx netclassRe2( wxT( "^NetClass\\s*==\\s*'([^']*)'" ) );
+    static wxRegEx areaRe( wxT( "^(?:enclosedByArea|intersectsArea)\\('([^']*)'\\)" ) );
 
     if( netRe.Matches( expr ) )
     {

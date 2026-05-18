@@ -2,12 +2,147 @@
     "boards": {
         "BeagleBone_Black_RevC": {
             "formatVersion": "17.2",
-            "boardFile": "BeagleBone_Black_RevC.brd"
+            "boardFile": "BeagleBone_Black_RevC.brd",
+            "blocks": [
+                {
+                    "type": "0x0F",
+                    "offset": "0x0000c8b8",
+                    "comment": "Function slot G1 = RES_10K_1/16W_1%_0402_402_10K,1",
+                    "extraBlockTest": true
+                },
+                {
+                    "type": "0x1C",
+                    "offset": "0x0007c420",
+                    "comment": "Padstack 120X040SLOT, slotted PTH pad",
+                    "extraBlockTest": true
+                }
+            ],
+            "boardExpectations": [
+                {
+                    "skip": true,
+                    "testName": "DP_Netclasses",
+                    "comment": "Verify that diff pair match groups in BeagleBone Black produce netclasses with the DP_ prefix and contain exactly 2 nets each.",
+                    "type": "netclass",
+                    "name": "DP_HDMI_TXC",
+                    "netCount": 2
+                },
+                {
+                    "type": "netclass",
+                    "name": "DP_USB0",
+                    "netCount": 2
+                },
+                {
+                    "comment": "Verify that match groups with more than 2 nets (DDR byte lanes, address buses) produce netclasses with the MG_ prefix.",
+                    "type": "netclass",
+                    "name": "MG_DDR_DQ0",
+                    "netCount": 11
+                },
+                {
+                    "type": "netclass",
+                    "name": "MG_DDR_ADD",
+                    "netCount": 26
+                },
+                {
+                    "comment": "Verify there are 4 match groups",
+                    "type": "netclass",
+                    "name": "MG_*",
+                    "count": 4
+                },
+                {
+                    "comment": "BB Black has 5 constraint sets, all with 4.0 mil (101600 nm) clearance",
+                    "type": "netclass",
+                    "name": [
+                        "Allegro_Default",
+                        "PWR",
+                        "BGA",
+                        "90_OHM_DIFF",
+                        "100OHM_DIFF"
+                    ],
+                    "clearance": "4 mil"
+                },
+                {
+                    "type": "netclass",
+                    "name": "PWR",
+                    "trackWidth": "15 mil"
+                },
+                {
+                    "comment": "The default netclass should have 4.75 mil tracks and match something",
+                    "type": "netclass",
+                    "name": "Allegro_Default",
+                    "trackWidth": "4.75 mil",
+                    "netCount": {
+                        "min": 1
+                    }
+                },
+                {
+                    "comment": "90_OHM_DIFF: f[1]=450, f[4]=400, f[7]=650 (divisor=100, scale=254 nm/unit)",
+                    "type": "netclass",
+                    "name": "90_OHM_DIFF",
+                    "trackWidth": "4.5 mil",
+                    "clearance": "4 mil",
+                    "dpGap": "6.5 mil",
+                    "dpWidth": "4.5 mil"
+                },
+                {
+                    "comment": "100_OHM_DIFF: f[1]=375, f[4]=400, f[7]=725 (divisor=100, scale=254 nm/unit)",
+                    "type": "netclass",
+                    "name": "100OHM_DIFF",
+                    "trackWidth": "3.75 mil",
+                    "clearance": "4 mil",
+                    "dpGap": "7.25 mil",
+                    "dpWidth": "3.75 mil"
+                },
+                {
+                    "comment": "// BGA: f[1]=300, f[7]=300 (divisor=100, 300*254=76200 nm)",
+                    "type": "netclass",
+                    "name": "BGA",
+                    "dpGap": "3 mil",
+                    "dpWidth": "3 mil"
+                },
+                {
+                    "comment": "Simple via count",
+                    "type": "item",
+                    "itemType": "via",
+                    "count": {
+                        "min": 100
+                    }
+                },
+                {
+                    "type": "item",
+                    "itemType": "track",
+                    "expr": "A.width > 10 mil",
+                    "count": {
+                        "min": 1
+                    }
+                }
+            ]
         },
         "BeagleBone-AI": {
             "formatVersion": "17.2",
+            "url": "https://github.com/beagleboard/beaglebone-ai",
+            "license": "CC-BY-4.0",
             "boardFile": "BeagleBone-AI.brd",
-            "testLabels": ["slow-board"]
+            "testLabels": ["slow-board"],
+            "blocks": [
+                {
+                    "type": "0x1c",
+                    "offset": "0x00047f44",
+                    "comment": "Padstack 200C125D, plated mech hole",
+                    "extraBlockTest": true
+                }
+            ]
+        },
+        "BeagleBone-AI-64": {
+            "formatVersion": "17.2",
+            "url": "https://github.com/beagleboard/beaglebone-ai-64",
+            "license": "CC-BY-4.0",
+            "testLabels": ["slow-board"],
+            "blocks": [
+                {
+                    "type": "0x22",
+                    "offset": "0x020858c"
+                }
+            ]
         },
         "copper_text": {
             "formatVersion": "17.4",
@@ -27,11 +162,18 @@
                     "type": "0x08",
                     "offset": "0x00136a5c",
                     "skip": false
+                },
+                {
+                    "type": "0x1c",
+                    "offset": "0x0001ef8c",
+                    "comment": "Padstack C50H340M700N, NPTH mech hole",
+                    "extraBlockTest": true
                 }
             ],
             "boardExpectations": [
                 {
-                    "type": "footprint",
+                    "type": "item",
+                    "itemType": "footprint",
                     "count": {
                         "min": 300,
                         "max": 400
@@ -55,7 +197,7 @@
             "description": "CutiePi 2.3, up-revved with DB Doctor 18",
             "formatVersion": "18.0",
             "header": {
-                // This one appears to be reading only 1264 bytes
+                "comment": "This one appears to be reading only 1264 bytes",
                 "skip": true
             }
         },
@@ -69,7 +211,15 @@
         },
         "led_youtube": {
             "formatVersion": "17.4",
-            "boardFile": "led_youtube.brd"
+            "boardFile": "led_youtube.brd",
+            "boardExpectations": [
+                {
+                    "comment": "Verify that a simple board doesn't find any netclasses with the DP_ or MG_ prefixes.",
+                    "type": "netclass",
+                    "name": ["DP_*", "MG_*"],
+                    "count": 0
+                }
+            ]
         },
         "mainBoard": {
             "formatVersion": "16.6",
@@ -92,13 +242,93 @@
                     "comment": "This is the only known 0x20 in the boards seen so far",
                     "type": "0x20",
                     "offset": "0x0131553c",
-                    "skip": false
+                    "extraBlockTest": true,
+                    "extraDbObjTest": true
+                }
+            ]
+        },
+        "OpenBreath_encoder_v174": {
+            "formatVersion": "17.4",
+            "url": "https://github.com/CombatCovid/Open_Breath",
+            "license": "CC0",
+            "boardFile": "motor_encoder_brd.brd",
+            "blocks": [
+                {
+                    "type": "0x0f",
+                    "offset": "0x00001c3c",
+                    "comment": "Slot G1 of comp AM4096",
+                    "extraBlockTest": true
+                }
+            ]
+        },
+        "parallella_v163": {
+            "formatVersion": "16.3",
+            "url": "https://github.com/parallella/parallella-hw",
+            "license": "CC-BY-SA-3.0",
+            "blocks": [
+                {
+                    "type": "0x1c",
+                    "offset": "0x000368c8",
+                    "comment": "Padstack 56X55RT, common SMD pad on chip caps etc.",
+                    "extraBlockTest": true
+                },
+                {
+                    "type": "0x1c",
+                    "offset": "0x0002cc08",
+                    "comment": "Padstack 28C128N, NPTH (big mech hole under left-hand connector)",
+                    "extraBlockTest": true
+                },
+                {
+                    "type": "0x1c",
+                    "offset": "0x0002e168",
+                    "comment": "Padstack P65X1P7SLT, plated slot (on right-hand connector)",
+                    "extraBlockTest": true
                 }
             ]
         },
         "ProiectBoard": {
             "formatVersion": "16.6",
-            "boardFile": "ProiectBoard.brd"
+            "boardFile": "ProiectBoard.brd",
+            "boardExpectations": [
+                {
+                    "type": "item",
+                    "itemType": "board_graphic",
+                    // A.Shape == 'Circle' &&
+                    "expr": "A.Radius == 25 mil && A.Center_X == -215mil && A.Center_Y == -2272 mil"
+                },
+                {
+                    "type": "item",
+                    "itemType": "pad",
+                    "comment": "C7, pad 2",
+                    "expr": "A.Pad_Shape == 'Rectangle' && A.Position_X == 348 mil && A.Position_Y == -270 mil && A.Pad_Number == '2'",
+                    "parentExpr": "A.Reference == 'C7'"
+                },
+                {
+                    "type": "netclass",
+                    "name": "W20mil",
+                    "trackWidth": "20 mil",
+                    "netCount": 17
+                },
+                {
+                    "type": "netclass",
+                    "name": "W24mil",
+                    "trackWidth": "24 mil",
+                    "netCount": 2
+                },
+                {
+                    "comment": "Verify that constraint set netclasses and per-net trace width netclasses coexist. ProiectBoard has both a constraint set (CS_0) and per-net trace widths (W20mil, W24mil).",
+                    "type": "netclass",
+                    "name": "CS_0",
+                    "trackWidth": "5 mil",
+                    "clearance": "5 mil"
+                },
+                {
+                    "type": "item",
+                    "itemType": "via",
+                    "expr": "A.Diameter == 24 mil && A.Hole == 16 mil && A.Via_Type == 'Through'",
+                    "count": 8
+                }
+             ]
         },
         "rects": {
             "formatVersion": "17.4",
@@ -109,7 +339,8 @@
             "boardFile": "TRS80_POWER.brd",
             "boardExpectations": [
                 {
-                    "type": "footprint",
+                    "type": "item",
+                    "itemType": "footprint",
                     "count": {
                         "min": 1
                     }
@@ -123,19 +354,36 @@
                 {
                     "type": "layers",
                     "cuNames": ["TOP", "BOTTOM"]
+                },
+                {
+                    "comment": "Verify constraint set import on a pre-V172 board (TRS80_POWER).\nPre-V172 boards    have no dedicated clearance field, so spacing is used as the clearance fallback.\nPre-V172 f[0]=line_width=15 mil (381000 nm), f[1]=spacing=7 mil (177800 nm) used as clearance",
+                    "type": "netclass",
+                    "name": "CS_0",
+                    "trackWidth": "15 mil",
+                    "clearance": "7 mil"
                 }
             ]
         },
         "v13_header": {
             "formatVersion": "13.0",
             "boardFile": "v13_header.brd",
-            // This version cannot (yet) be read successfully, so expect it to fail
+            "comment": "This version cannot (yet) be read successfully, so expect it to fail",
             "expectLoadFailure": true
         },
         "VCU118_REV2-0": {
             "formatVersion": "16.6",
             "boardFile": "8851_HW-U1-VCU118_REV2-0_071417.brd",
-            "testLabels": ["slow-board"]
+            "testLabels": ["slow-board"],
+            "boardExpectations": [
+                {
+                    "comment": "// DP_90_OHM: f[0]=5200 (line_width), f[7]=4800 (dp_gap) on L0 (divisor=1000, scale=25.4)",
+                    "type": "netclass",
+                    "name": "DP_90_OHM",
+                    "trackWidth": "5.2 mil",
+                    "dpGap": "4.8 mil",
+                    "dpWidth": "5.2 mil"
+                }
+            ]
         }
     }
 }

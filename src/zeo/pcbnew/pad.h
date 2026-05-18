@@ -787,6 +787,15 @@ public:
     VECTOR2I ShapePos( PCB_LAYER_ID aLayer ) const;
 
     /**
+     * Swap the visible shape positions of two pads, preserving each pad's own shape offset.
+     *
+     * Using SetPosition() directly would swap anchor (hole) positions, which leaves each pad's
+     * copper shape displaced by its own offset after the swap.  This helper computes the new
+     * anchor for each pad so the visible shape centers (ShapePos) are exchanged.
+     */
+    static void SwapShapePositions( PAD* aLhs, PAD* aRhs );
+
+    /**
      * Has meaning only for rounded rectangle pads.
      *
      * Set the ratio between the smaller X or Y size and the rounded corner radius.
@@ -1070,6 +1079,21 @@ protected:
 private:
     const SHAPE_COMPOUND& buildEffectiveShape( PCB_LAYER_ID aLayer ) const;
 
+    struct PAD_DRAW_CACHE_DATA
+    {
+        // Must be set to true to force rebuild shapes to draw (after geometry change for instance)
+        typedef std::map<PCB_LAYER_ID, std::shared_ptr<SHAPE_COMPOUND>> LAYER_SHAPE_MAP;
+        typedef std::map<PCB_LAYER_ID, std::array<std::shared_ptr<SHAPE_POLY_SET>, 2>> LAYER_POLYGON_MAP;
+
+        BOX2I                          m_effectiveBoundingBox;
+        LAYER_SHAPE_MAP                m_effectiveShapes;
+        std::shared_ptr<SHAPE_SEGMENT> m_effectiveHoleShape;
+        LAYER_POLYGON_MAP              m_effectivePolygons;
+        double                         m_lastGalZoomLevel = 0.0;
+    };
+
+    PAD_DRAW_CACHE_DATA& getDrawCache() const;
+
     void doCheckPad( PCB_LAYER_ID aLayer, UNITS_PROVIDER* aUnitsProvider, bool aForPadProperties,
                      const std::function<void( int aErrorCode, const wxString& aMsg )>& aErrorHandler ) const;
 
@@ -1085,17 +1109,7 @@ private:
     // Mutex for shape building, poly building and zone layer overrides
     mutable std::mutex m_dataMutex;
 
-    // Must be set to true to force rebuild shapes to draw (after geometry change for instance)
-    typedef std::map<PCB_LAYER_ID, std::shared_ptr<SHAPE_COMPOUND>> LAYER_SHAPE_MAP;
-    mutable BOX2I                             m_effectiveBoundingBox;
-    mutable LAYER_SHAPE_MAP                   m_effectiveShapes;
-    mutable std::shared_ptr<SHAPE_SEGMENT>    m_effectiveHoleShape;
-
-    typedef std::map<PCB_LAYER_ID, std::array<std::shared_ptr<SHAPE_POLY_SET>, 2>> LAYER_POLYGON_MAP;
-    mutable LAYER_POLYGON_MAP                 m_effectivePolygons;
-    // Last zoom level used to draw the pad: the LAYER_PAD_HOLEWALLS layer shape
-    // depend on the zoom level. So keep trace on the last used zoom level
-    mutable double                            m_lastGalZoomLevel;
+    mutable std::unique_ptr<PAD_DRAW_CACHE_DATA> m_drawCache;
 
     mutable int       m_effectiveBoundingRadius;
 

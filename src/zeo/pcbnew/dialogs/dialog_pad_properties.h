@@ -27,10 +27,13 @@
 #ifndef _DIALOG_PAD_PROPERTIES_H_
 #define _DIALOG_PAD_PROPERTIES_H_
 
+#include <optional>
+
 #include <pcb_base_frame.h>
+
 #include <wx/valnum.h>
+
 #include <board.h>
-#include <footprint.h>
 #include <padstack.h>
 #include <pcb_shape.h>
 #include <origin_viewitem.h>
@@ -39,6 +42,8 @@
 #include <pcb_draw_panel_gal.h>
 #include <widgets/unit_binder.h>
 #include <widgets/margin_offset_binder.h>
+
+class PAD;
 
 /**
  * DIALOG_PAD_PROPERTIES, derived from DIALOG_PAD_PROPERTIES_BASE,
@@ -63,10 +68,15 @@ private:
     void afterPadstackModeChanged();
 
     /**
-     * Updates the CheckBox states in pad layers list, based on the layer_mask (if non-empty)
-     * or the default layers for the current pad type.
+     * Updates the CheckBox states in pad layers list.
+     *
+     * When @a layer_mask has a value, its exact contents (including an empty set) are reflected
+     * in the UI.  When it is std::nullopt, the default layers for the current pad type are used
+     * instead; this is intended for the case when the pad type has just changed and the previous
+     * layer set no longer applies.
      */
-    void updatePadLayersList( LSET layer_mask, bool remove_unconnected, bool keep_top_bottom );
+    void updatePadLayersList( std::optional<LSET> layer_mask, bool remove_unconnected,
+                              bool keep_top_bottom );
 
     /// Copy values from dialog field to aPad's members
     bool transferDataToPad( PAD* aPad );

@@ -146,6 +146,7 @@ int UPDATE_MANAGER::PostRequest( const wxString& aUrl, std::string aRequestBody,
     curl.SetPostFields( aRequestBody );
     curl.SetFollowRedirects( true );
     curl.SetTransferCallback( callback, 250000L );
+    curl.SetTimeout( 30L );
 
     int code = curl.Perform();
 

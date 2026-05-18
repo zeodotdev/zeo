@@ -29,7 +29,7 @@
 #include <wx/textentry.h>
 
 #include <widgets/indicator_icon.h>
-#include <widgets/grid_icon_text_helpers.h>
+#include <widgets/grid_text_helpers.h>
 #include <widgets/wx_grid.h>
 #include <widgets/ui_common.h>
 #include <algorithm>
@@ -754,6 +754,31 @@ void WX_GRID::OnDeleteRows( const std::function<bool( int row )>& aFilter,
                             const std::function<void( int row )>& aDeleter )
 {
     wxArrayInt selectedRows = GetSelectedRows();
+
+    auto addSelectedRow = [&]( int row )
+    {
+        for( size_t i = 0; i < selectedRows.size(); ++i )
+        {
+            if( selectedRows[i] == row )
+                return;
+        }
+
+        selectedRows.push_back( row );
+    };
+
+    wxGridCellCoordsArray topLeft = GetSelectionBlockTopLeft();
+    wxGridCellCoordsArray botRight = GetSelectionBlockBottomRight();
+
+    for( size_t i = 0; i < std::min( topLeft.Count(), botRight.Count() ); ++i )
+    {
+        for( int row = topLeft[i].GetRow(); row <= botRight[i].GetRow(); ++row )
+            addSelectedRow( row );
+    }
+
+    wxGridCellCoordsArray cells = GetSelectedCells();
+
+    for( size_t i = 0; i < cells.Count(); ++i )
+        addSelectedRow( cells[i].GetRow() );
 
     if( selectedRows.empty() && GetGridCursorRow() >= 0 )
         selectedRows.push_back( GetGridCursorRow() );

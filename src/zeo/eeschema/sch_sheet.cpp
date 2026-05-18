@@ -45,7 +45,6 @@
 #include <sch_symbol.h>
 #include <sch_painter.h>
 #include <schematic.h>
-#include <settings/color_settings.h>
 #include <settings/settings_manager.h>
 #include <trace_helpers.h>
 #include <validators.h>
@@ -509,6 +508,7 @@ bool SCH_SHEET::ResolveTextVar( const SCH_SHEET_PATH* aPath, wxString* token, in
     }
 
     PROJECT* project = &schematic->Project();
+    wxString variant = schematic->GetCurrentVariant();
 
     // We cannot resolve text variables initially on load as we need to first load the screen and
     // then parse the hierarchy.  So skip the resolution if the screen isn't set yet
@@ -536,7 +536,7 @@ bool SCH_SHEET::ResolveTextVar( const SCH_SHEET_PATH* aPath, wxString* token, in
     {
         *token = wxEmptyString;
 
-        if( aPath->GetExcludedFromBOM() || this->ResolveExcludedFromBOM() )
+        if( aPath->GetExcludedFromBOM( variant ) || this->ResolveExcludedFromBOM( aPath, variant ) )
             *token = _( "Excluded from BOM" );
 
         return true;
@@ -545,7 +545,7 @@ bool SCH_SHEET::ResolveTextVar( const SCH_SHEET_PATH* aPath, wxString* token, in
     {
         *token = wxEmptyString;
 
-        if( aPath->GetExcludedFromBoard() || this->ResolveExcludedFromBoard() )
+        if( aPath->GetExcludedFromBoard( variant ) || this->ResolveExcludedFromBoard( aPath, variant ) )
             *token = _( "Excluded from board" );
 
         return true;
@@ -554,7 +554,7 @@ bool SCH_SHEET::ResolveTextVar( const SCH_SHEET_PATH* aPath, wxString* token, in
     {
         *token = wxEmptyString;
 
-        if( aPath->GetExcludedFromSim() || this->ResolveExcludedFromSim() )
+        if( aPath->GetExcludedFromSim( variant ) || this->ResolveExcludedFromSim( aPath, variant ) )
             *token = _( "Excluded from simulation" );
 
         return true;
@@ -563,7 +563,7 @@ bool SCH_SHEET::ResolveTextVar( const SCH_SHEET_PATH* aPath, wxString* token, in
     {
         *token = wxEmptyString;
 
-        if( aPath->GetDNP() || this->ResolveDNP() )
+        if( aPath->GetDNP( variant ) || this->ResolveDNP( aPath, variant ) )
             *token = _( "DNP" );
 
         return true;
@@ -671,17 +671,10 @@ void SCH_SHEET::SetFields( const std::vector<SCH_FIELD>& aFields )
 }
 
 
-void SCH_SHEET::AddOptionalField( const SCH_FIELD& aField )
+SCH_FIELD* SCH_SHEET::AddField( const SCH_FIELD& aField )
 {
-    SCH_FIELD* field = GetField( aField.GetId() );
-
-    if( ( aField.GetId() == FIELD_T::SHEET_FILENAME ) || ( aField.GetId() == FIELD_T::SHEET_NAME ) )
-        return;
-
-    if( field )
-        *field = aField;
-    else
-        m_fields.emplace_back( aField );
+    m_fields.emplace_back( aField );
+    return &m_fields.back();
 }
 
 
@@ -710,34 +703,39 @@ void SCH_SHEET::SetFieldText( const wxString& aFieldName, const wxString& aField
         break;
 
     default:
-        if( aFieldText != field->GetText( aPath ) ) // Do not set the variant unless it's different than the default.
+    {
+        wxString defaultText = field->GetText( aPath );
+
+        if( aVariantName.IsEmpty() )
         {
-            if( aVariantName.IsEmpty() )
-            {
+            if( aFieldText != defaultText )
                 field->SetText( aFieldText );
-            }
-            else
+        }
+        else
+        {
+            SCH_SHEET_INSTANCE* instance = getInstance( *aPath );
+
+            wxCHECK( instance, /* void */ );
+
+            if( instance->m_Variants.contains( aVariantName ) )
             {
-                SCH_SHEET_INSTANCE* instance = getInstance( *aPath );
-
-                wxCHECK( instance, /* void */ );
-
-                if( instance->m_Variants.contains( aVariantName ) )
-                {
+                if( aFieldText != defaultText )
                     instance->m_Variants[aVariantName].m_Fields[aFieldName] = aFieldText;
-                }
                 else
-                {
-                    SCH_SHEET_VARIANT newVariant( aVariantName );
+                    instance->m_Variants[aVariantName].m_Fields.erase( aFieldName );
+            }
+            else if( aFieldText != defaultText )
+            {
+                SCH_SHEET_VARIANT newVariant( aVariantName );
 
-                    newVariant.InitializeAttributes( *this );
-                    newVariant.m_Fields[aFieldName] = aFieldText;
-                    instance->m_Variants.insert( std::make_pair( aVariantName, newVariant ) );
-                }
+                newVariant.InitializeAttributes( *this );
+                newVariant.m_Fields[aFieldName] = aFieldText;
+                instance->m_Variants.insert( std::make_pair( aVariantName, newVariant ) );
             }
         }
 
         break;
+    }
     }
 }
 
@@ -1636,6 +1634,16 @@ void SCH_SHEET::Plot( PLOTTER* aPlotter, bool aBackground, const SCH_PLOT_OPTS& 
     SCH_RENDER_SETTINGS* renderSettings = getRenderSettings( aPlotter );
     COLOR4D              borderColor = GetBorderColor();
     COLOR4D              backgroundColor = GetBackgroundColor();
+    SCH_SHEET_PATH       instance;
+    wxString             variantName;
+
+    if( Schematic() )
+    {
+        instance = Schematic()->CurrentSheet();
+        variantName = Schematic()->GetCurrentVariant();
+    }
+
+    bool dnp = GetDNP( &instance, variantName );
 
     if( renderSettings->m_OverrideItemColors || borderColor == COLOR4D::UNSPECIFIED )
         borderColor = aPlotter->RenderSettings()->GetLayerColor( LAYER_SHEET );
@@ -1648,6 +1656,12 @@ void SCH_SHEET::Plot( PLOTTER* aPlotter, bool aBackground, const SCH_PLOT_OPTS& 
 
     if( backgroundColor.m_text && Schematic() )
         backgroundColor = COLOR4D( ResolveText( *backgroundColor.m_text, &Schematic()->CurrentSheet() ) );
+
+    if( aDimmed || dnp )
+    {
+        borderColor.Desaturate();
+        borderColor = borderColor.Mix( backgroundColor, 0.5f );
+    }
 
     if( aBackground && backgroundColor.a > 0.0 )
     {
@@ -1685,37 +1699,25 @@ void SCH_SHEET::Plot( PLOTTER* aPlotter, bool aBackground, const SCH_PLOT_OPTS& 
 
     // Plot sheet pins
     for( SCH_SHEET_PIN* sheetPin : m_pins )
-        sheetPin->Plot( aPlotter, aBackground, aPlotOpts, aUnit, aBodyStyle, aOffset, aDimmed );
+        sheetPin->Plot( aPlotter, aBackground, aPlotOpts, aUnit, aBodyStyle, aOffset, aDimmed || dnp );
 
     // Plot the fields
     for( SCH_FIELD& field : m_fields )
-        field.Plot( aPlotter, aBackground, aPlotOpts, aUnit, aBodyStyle, aOffset, aDimmed );
+        field.Plot( aPlotter, aBackground, aPlotOpts, aUnit, aBodyStyle, aOffset, aDimmed || dnp );
 
-    SCH_SHEET_PATH instance;
-    wxString variantName;
-
-    if( Schematic() )
+    if( dnp )
     {
-        instance = Schematic()->CurrentSheet();
-        variantName = Schematic()->GetCurrentVariant();
-    }
-
-    if( GetDNP( &instance, variantName) )
-    {
-        COLOR_SETTINGS* colors = ::GetColorSettings( DEFAULT_THEME );
-        BOX2I           bbox = GetBodyBoundingBox();
-        BOX2I           pins = GetBoundingBox();
-        VECTOR2D        margins( std::max( bbox.GetX() - pins.GetX(),
-                                           pins.GetEnd().x - bbox.GetEnd().x ),
-                                 std::max( bbox.GetY() - pins.GetY(),
-                                           pins.GetEnd().y - bbox.GetEnd().y ) );
-        int             strokeWidth = 3.0 * schIUScale.MilsToIU( DEFAULT_LINE_WIDTH_MILS );
+        BOX2I    bbox = GetBodyBoundingBox();
+        BOX2I    pins = GetBoundingBox();
+        VECTOR2D margins( std::max( bbox.GetX() - pins.GetX(), pins.GetEnd().x - bbox.GetEnd().x ),
+                          std::max( bbox.GetY() - pins.GetY(), pins.GetEnd().y - bbox.GetEnd().y ) );
+        int      strokeWidth = 3.0 * schIUScale.MilsToIU( DEFAULT_LINE_WIDTH_MILS );
 
         margins.x = std::max( margins.x * 0.6, margins.y * 0.3 );
         margins.y = std::max( margins.y * 0.6, margins.x * 0.3 );
         bbox.Inflate( KiROUND( margins.x ), KiROUND( margins.y ) );
 
-        aPlotter->SetColor( colors->GetColor( LAYER_DNP_MARKER ) );
+        aPlotter->SetColor( renderSettings->GetLayerColor( LAYER_DNP_MARKER ) );
 
         aPlotter->ThickSegment( bbox.GetOrigin(), bbox.GetEnd(), strokeWidth, nullptr );
 

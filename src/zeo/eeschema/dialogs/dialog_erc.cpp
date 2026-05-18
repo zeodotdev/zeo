@@ -175,7 +175,10 @@ void DIALOG_ERC::UpdateAnnotationWarning()
     if( m_parent->CheckAnnotate(
                 []( ERCE_T, const wxString&, SCH_REFERENCE*, SCH_REFERENCE* )
                 {
-                } ) )
+                },
+                ANNOTATE_ALL,
+                true,
+                SYMBOL_FILTER_NON_POWER ) )
     {
         if( !m_infoBar->IsShownOnScreen() )
         {
@@ -525,7 +528,10 @@ void DIALOG_ERC::OnRunERCClick( wxCommandEvent& event )
 
                 SCH_MARKER* marker = new SCH_MARKER( std::move( ercItem ), aItemA->GetSymbol()->GetPosition() );
                 aItemA->GetSheetPath().LastScreen()->Append( marker );
-            } );
+            },
+            ANNOTATE_ALL,
+            true,
+            SYMBOL_FILTER_NON_POWER );
 
     testErc();
 
@@ -773,15 +779,14 @@ void DIALOG_ERC::OnERCItemRClick( wxDataViewEvent& aEvent )
         menu.Append( ID_SET_SEVERITY_TO_ERROR,
                      wxString::Format( _( "Change severity to Error for all '%s' violations" ),
                                        rcItem->GetErrorText( true ) ),
-                     _( "Violation severities can also be edited in the Schematic Setup... dialog" ) );
+                     _( "Violation severities can also be edited in Schematic Setup" ) );
     }
     else
     {
         menu.Append( ID_SET_SEVERITY_TO_WARNING,
                      wxString::Format( _( "Change severity to Warning for all '%s' violations" ),
                                        rcItem->GetErrorText( true ) ),
-                     _( "Violation severities can also be edited in the Schematic Setup... "
-                        "dialog" ) );
+                     _( "Violation severities can also be edited in Schematic Setup" ) );
     }
 
     menu.Append( ID_SET_SEVERITY_TO_IGNORE,
@@ -795,20 +800,20 @@ void DIALOG_ERC::OnERCItemRClick( wxDataViewEvent& aEvent )
     {
         menu.Append( ID_EDIT_PIN_CONFLICT_MAP,
                      _( "Edit pin-to-pin conflict map..." ),
-                     _( "Open the Schematic Setup... dialog" ) );
+                     _( "Open the Schematic Setup dialog" ) );
     }
     else
     {
         menu.Append( ID_EDIT_SEVERITIES,
                      _( "Edit violation severities..." ),
-                     _( "Open the Schematic Setup... dialog" ) );
+                     _( "Open the Schematic Setup dialog" ) );
     }
 
     if( rcItem->GetErrorCode() == ERCE_ENDPOINT_OFF_GRID )
     {
         menu.Append( ID_EDIT_CONNECTION_GRID,
                      _( "Edit connection grid spacing..." ),
-                     _( "Open the Schematic Setup... dialog" ) );
+                     _( "Open the Schematic Setup dialog" ) );
     }
 
     bool modified = false;
@@ -972,9 +977,9 @@ void DIALOG_ERC::OnIgnoredItemRClick( wxListEvent& event )
     int           errorCode = (int) event.m_item.GetData();
     wxMenu        menu;
 
-    menu.Append( RPT_SEVERITY_ERROR,   _( "Error" ),   wxEmptyString, wxITEM_CHECK );
-    menu.Append( RPT_SEVERITY_WARNING, _( "Warning" ), wxEmptyString, wxITEM_CHECK );
-    menu.Append( RPT_SEVERITY_IGNORE,  _( "Ignore" ),  wxEmptyString, wxITEM_CHECK );
+    menu.Append( RPT_SEVERITY_ERROR,   _( "Error" ),   wxEmptyString, wxITEM_RADIO );
+    menu.Append( RPT_SEVERITY_WARNING, _( "Warning" ), wxEmptyString, wxITEM_RADIO );
+    menu.Append( RPT_SEVERITY_IGNORE,  _( "Ignore" ),  wxEmptyString, wxITEM_RADIO );
 
     menu.Check( settings.GetSeverity( errorCode ), true );
 

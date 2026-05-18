@@ -38,13 +38,11 @@ public:
     {
     }
 
-    explicit DRC_RE_ROUTING_WIDTH_CONSTRAINT_DATA( int aId, int aParentId, wxString aRuleName,
-                                                   double aMinRoutingWidth,
-                                                   double aPreferredRoutingWidth,
-                                                   double aMaxRoutingWidth ) :
+    explicit DRC_RE_ROUTING_WIDTH_CONSTRAINT_DATA( int aId, int aParentId, const wxString& aRuleName, double aOptWidth,
+                                                   double aWidthTolerance ) :
             DRC_RE_BASE_CONSTRAINT_DATA( aId, aParentId, aRuleName ),
-            m_minRoutingWidth( aMinRoutingWidth ),
-            m_preferredRoutingWidth( aPreferredRoutingWidth ), m_maxRoutingWidth( aMaxRoutingWidth )
+            m_optWidth( aOptWidth ),
+            m_widthTolerance( aWidthTolerance )
     {
     }
 
@@ -57,9 +55,8 @@ public:
         // Positions measured from constraint_routing_width.png bitmap
         // Format: { xStart, xEnd, yTop, tabOrder }
         return {
-            { 64, 104, 96, 1, wxS( "mm" ), LABEL_POSITION::RIGHT },  // min_width (left arrow)
-            { 126, 166, 40, 2, wxS( "mm" ), LABEL_POSITION::RIGHT }, // opt_width (bottom center arrow)
-            { 248, 288, 74, 3, wxS( "mm" ), LABEL_POSITION::RIGHT }, // max_width (right arrow)
+            { 30 + DRC_RE_OVERLAY_XO, 70 + DRC_RE_OVERLAY_XO, 15 + DRC_RE_OVERLAY_YO, 1, wxS( "mm" ), LABEL_POSITION::RIGHT }, // opt_width
+            { 110 + DRC_RE_OVERLAY_XO, 150 + DRC_RE_OVERLAY_XO, 15 + DRC_RE_OVERLAY_YO, 2, wxS( "mm" ), LABEL_POSITION::RIGHT }, // width_tolerance (±)
         };
     }
 
@@ -68,26 +65,14 @@ public:
     {
         VALIDATION_RESULT result;
 
-        if( m_minRoutingWidth <= 0 )
-            result.AddError( _( "Minimum Routing Width must be greater than 0" ) );
+        if( m_optWidth <= 0 )
+            result.AddError( _( "Optimum Width must be greater than 0" ) );
 
-        if( m_preferredRoutingWidth <= 0 )
-            result.AddError( _( "Preferred Routing Width must be greater than 0" ) );
+        if( m_widthTolerance < 0 )
+            result.AddError( _( "Width Tolerance must be greater than or equal to 0" ) );
 
-        if( m_maxRoutingWidth <= 0 )
-            result.AddError( _( "Maximum Routing Width must be greater than 0" ) );
-
-        if( result.isValid )
-        {
-            if( m_minRoutingWidth > m_preferredRoutingWidth )
-                result.AddError( _( "Minimum Routing Width cannot be greater than Preferred Routing Width" ) );
-
-            if( m_preferredRoutingWidth > m_maxRoutingWidth )
-                result.AddError( _( "Preferred Routing Width cannot be greater than Maximum Routing Width" ) );
-
-            if( m_minRoutingWidth > m_maxRoutingWidth )
-                result.AddError( _( "Minimum Routing Width cannot be greater than Maximum Routing Width" ) );
-        }
+        if( m_widthTolerance >= m_optWidth )
+            result.AddError( _( "Width Tolerance must be less than Optimum Width" ) );
 
         return result;
     }
@@ -105,12 +90,12 @@ public:
         if( code.IsEmpty() )
             code = wxS( "track_width" );
 
-        wxString clause = wxString::Format(
-                wxS( "(constraint %s (min %s) (opt %s) (max %s))" ),
-                code,
-                formatDistance( m_minRoutingWidth ),
-                formatDistance( m_preferredRoutingWidth ),
-                formatDistance( m_maxRoutingWidth ) );
+        double minWidth = m_optWidth - m_widthTolerance;
+        double maxWidth = m_optWidth + m_widthTolerance;
+
+        wxString clause =
+                wxString::Format( wxS( "(constraint %s (min %s) (opt %s) (max %s))" ), code, formatDistance( minWidth ),
+                                  formatDistance( m_optWidth ), formatDistance( maxWidth ) );
 
         return { clause };
     }
@@ -120,20 +105,11 @@ public:
         return buildRule( aContext, GetConstraintClauses( aContext ) );
     }
 
-    double GetMinRoutingWidth() { return m_minRoutingWidth; }
+    double GetOptWidth() { return m_optWidth; }
+    void   SetOptWidth( double aOptWidth ) { m_optWidth = aOptWidth; }
 
-    void SetMinRoutingWidth( double aMinRoutingWidth ) { m_minRoutingWidth = aMinRoutingWidth; }
-
-    double GetPreferredRoutingWidth() { return m_preferredRoutingWidth; }
-
-    void SetPreferredRoutingWidth( double aPreferredRoutingWidth )
-    {
-        m_preferredRoutingWidth = aPreferredRoutingWidth;
-    }
-
-    double GetMaxRoutingWidth() { return m_maxRoutingWidth; }
-
-    void SetMaxRoutingWidth( double aMaxRoutingWidth ) { m_maxRoutingWidth = aMaxRoutingWidth; }
+    double GetWidthTolerance() { return m_widthTolerance; }
+    void   SetWidthTolerance( double aTolerance ) { m_widthTolerance = aTolerance; }
 
     void CopyFrom( const ICopyable& aSource ) override
     {
@@ -141,15 +117,13 @@ public:
 
         DRC_RE_BASE_CONSTRAINT_DATA::CopyFrom( source );
 
-        m_minRoutingWidth = source.m_minRoutingWidth;
-        m_preferredRoutingWidth = source.m_preferredRoutingWidth;
-        m_maxRoutingWidth = source.m_maxRoutingWidth;
+        m_optWidth = source.m_optWidth;
+        m_widthTolerance = source.m_widthTolerance;
     }
 
 private:
-    double m_minRoutingWidth{ 0 };
-    double m_preferredRoutingWidth{ 0 };
-    double m_maxRoutingWidth{ 0 };
+    double m_optWidth{ 0 };
+    double m_widthTolerance{ 0 };
 };
 
 #endif // DRC_RE_ROUTING_WIDTH_CONSTRAINT_DATA_H_

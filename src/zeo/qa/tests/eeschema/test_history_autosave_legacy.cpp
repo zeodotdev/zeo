@@ -19,6 +19,7 @@
  */
 
 #include <boost/test/unit_test.hpp>
+#include <local_history.h>
 #include <sch_screen.h>
 #include <sch_sheet.h>
 #include <schematic.h>
@@ -67,15 +68,19 @@ BOOST_FIXTURE_TEST_CASE( SavesLegacySheetIntoHistoryPath, HISTORY_AUTOSAVE_FIXTU
     sheet->SetFileName( wxS( "legacy/legacy.sch" ) );
     sheet->GetScreen()->SetFileName( wxS( "legacy/legacy.sch" ) );
 
-    std::vector<wxString> savedFiles;
-    m_schematic->SaveToHistory( m_settingsManager.Prj().GetProjectPath(), savedFiles );
+    std::vector<HISTORY_FILE_DATA> fileData;
+    m_schematic->SaveToHistory( m_settingsManager.Prj().GetProjectPath(), fileData );
 
-    BOOST_REQUIRE_EQUAL( savedFiles.size(), 1 );
+    BOOST_REQUIRE_EQUAL( fileData.size(), 1 );
 
-    wxFileName saved( savedFiles[0] );
-    BOOST_CHECK( saved.FileExists() );
+    // SaveToHistory now emits project-relative paths -- the dispatcher joins them with
+    // the storage root (.history/ or the user data dir) at write time.
+    wxFileName saved( fileData[0].relativePath );
     BOOST_CHECK_EQUAL( saved.GetExt(), FILEEXT::LegacySchematicFileExtension );
     BOOST_CHECK( saved.GetPath().Contains( wxS( "legacy" ) ) );
+    BOOST_CHECK( !wxFileName( fileData[0].relativePath ).IsAbsolute() );
+    BOOST_CHECK( !fileData[0].content.empty() );
+    BOOST_CHECK( fileData[0].prettify );
 }
 
 BOOST_AUTO_TEST_SUITE_END()

@@ -1262,7 +1262,9 @@ bool BOARD_NETLIST_UPDATER::updateComponentPadConnections( FOOTPRINT* aFootprint
             {
                 netName = wxString::Format( wxS( "%s" ), net.GetNetName() );
 
-                for( int jj = 1; !padNetnames.insert( netName ).second; jj++ )
+                for( int jj = 1; !padNetnames.insert( netName ).second
+                                 || ( netName != net.GetNetName() && m_schematicNetNames.count( netName ) );
+                     jj++ )
                 {
                     netName = wxString::Format( wxS( "%s_%d" ), net.GetNetName(), jj );
                 }
@@ -1431,9 +1433,6 @@ void BOARD_NETLIST_UPDATER::applyComponentVariants( COMPONENT* aComponent,
     wxString    msg;
     const auto& variants = aComponent->GetVariants();
 
-    if( variants.empty() )
-        return;
-
     if( aBaseFpid.empty() )
         return;
 
@@ -1499,7 +1498,7 @@ void BOARD_NETLIST_UPDATER::applyComponentVariants( COMPONENT* aComponent,
                     {
                         if( aFootprints.size() > 1 )
                         {
-                            msg.Printf( add ? _( "Add %s '%s' attribute to varaint %s (footprint %s)." )
+                            msg.Printf( add ? _( "Add %s '%s' attribute to variant %s (footprint %s)." )
                                             : _( "Remove %s '%s' attribute from variant %s (footprint %s)." ),
                                         footprint->GetReference(),
                                         attrName,
@@ -1508,7 +1507,7 @@ void BOARD_NETLIST_UPDATER::applyComponentVariants( COMPONENT* aComponent,
                         }
                         else
                         {
-                            msg.Printf( add ? _( "Add %s '%s' attribute to varaint %s." )
+                            msg.Printf( add ? _( "Add %s '%s' attribute to variant %s." )
                                             : _( "Remove %s '%s' attribute from variant %s." ),
                                         footprint->GetReference(),
                                         attrName,
@@ -1519,7 +1518,7 @@ void BOARD_NETLIST_UPDATER::applyComponentVariants( COMPONENT* aComponent,
                     {
                         if( aFootprints.size() > 1 )
                         {
-                            msg.Printf( add ? _( "Added %s '%s' attribute to varaint %s (footprint %s)." )
+                            msg.Printf( add ? _( "Added %s '%s' attribute to variant %s (footprint %s)." )
                                             : _( "Removed %s '%s' attribute from variant %s (footprint %s)." ),
                                         footprint->GetReference(),
                                         attrName,
@@ -1528,7 +1527,7 @@ void BOARD_NETLIST_UPDATER::applyComponentVariants( COMPONENT* aComponent,
                         }
                         else
                         {
-                            msg.Printf( add ? _( "Added %s '%s' attribute to varaint %s." )
+                            msg.Printf( add ? _( "Added %s '%s' attribute to variant %s." )
                                             : _( "Removed %s '%s' attribute from variant %s." ),
                                         footprint->GetReference(),
                                         attrName,
@@ -2092,6 +2091,15 @@ bool BOARD_NETLIST_UPDATER::UpdateNetlist( NETLIST& aNetlist )
         m_board->GetComponentClassManager().InitNetlistUpdate();
     }
 
+    // Collect all schematic net names so NC pad deduplication can avoid collisions
+    for( unsigned ii = 0; ii < aNetlist.GetCount(); ii++ )
+    {
+        COMPONENT* comp = aNetlist.GetComponent( ii );
+
+        for( unsigned jj = 0; jj < comp->GetNetCount(); jj++ )
+            m_schematicNetNames.insert( comp->GetNet( jj ).GetNetName() );
+    }
+
     // Next go through the netlist updating all board footprints which have matching component
     // entries and adding new footprints for those that don't.
     //
@@ -2280,7 +2288,7 @@ bool BOARD_NETLIST_UPDATER::UpdateNetlist( NETLIST& aNetlist )
             }
         }
 
-        if( !baseFootprint && hasBaseFpid )
+        if( !baseFootprint && ( hasBaseFpid || expectedFpids.empty() ) )
             baseFootprint = addNewFootprint( component, baseFpid );
 
         if( baseFootprint )

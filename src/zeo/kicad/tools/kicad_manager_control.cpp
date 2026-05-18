@@ -1068,6 +1068,7 @@ int KICAD_MANAGER_CONTROL::NewFromRepository( const TOOL_EVENT& aEvent )
 
 
     GIT_CLONE_HANDLER cloneHandler( pane->m_TreeProject->GitCommon() );
+    pane->m_TreeProject->GitCommon()->SetCancelled( false );
 
     cloneHandler.SetRemote( dlg.GetFullURL() );
     cloneHandler.SetClonePath( pro.GetPath() );

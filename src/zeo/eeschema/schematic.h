@@ -29,6 +29,7 @@
 #include <project.h>
 
 
+struct HISTORY_FILE_DATA;
 class BUS_ALIAS;
 class CONNECTION_GRAPH;
 class EDA_BASE_FRAME;
@@ -69,6 +70,8 @@ public:
     // This is called when the user changes to a new sheet, not when a sheet is altered.
     // Sheet alteration events will call OnSchItems*
     virtual void OnSchSheetChanged( SCHEMATIC& aSch ) {}
+
+    virtual void OnSchCurrentVariantChanged( SCHEMATIC& aSch ) {}
 };
 
 enum SCH_CLEANUP_FLAGS
@@ -127,7 +130,7 @@ public:
     SCH_ITEM* ResolveItem( const KIID& aID, SCH_SHEET_PATH* aPathOut = nullptr,
                            bool aAllowNullptrReturn = false ) const
     {
-        return BuildUnorderedSheetList().ResolveItem( aID, aPathOut, aAllowNullptrReturn );
+        return m_hierarchy.ResolveItem( aID, aPathOut, aAllowNullptrReturn );
     }
 
     SCH_SHEET& Root() const
@@ -534,14 +537,15 @@ public:
     PROJECT::ELEM ProjectElementType() override { return PROJECT::ELEM::SCHEMATIC; }
 
     /**
-     * Save schematic files to the .history directory.
+     * Serialize schematic sheets into HISTORY_FILE_DATA for non-blocking history commit.
      *
      * This method is used as a saver callback for LOCAL_HISTORY during autosave operations.
+     * Serialization runs on the UI thread; Prettify and file I/O happen in the background.
      *
      * @param aProjectPath The path to check against this schematic's project path
-     * @param aFiles Output vector to append absolute file paths for history inclusion
+     * @param aFileData Output vector to append serialized data for history inclusion
      */
-    void SaveToHistory( const wxString& aProjectPath, std::vector<wxString>& aFiles );
+    void SaveToHistory( const wxString& aProjectPath, std::vector<HISTORY_FILE_DATA>& aFileData );
 
 private:
     friend class SCH_EDIT_FRAME;

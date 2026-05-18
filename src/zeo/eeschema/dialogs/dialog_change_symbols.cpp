@@ -112,8 +112,6 @@ DIALOG_CHANGE_SYMBOLS::DIALOG_CHANGE_SYMBOLS( SCH_EDIT_FRAME* aParent, SCH_SYMBO
         m_mandatoryFieldListIndexes[fieldId] = listIdx;
     }
 
-    updateFieldsList();
-
     // initialize controls based on m_mode in case there is no saved state yet
     m_removeExtraBox->SetValue( false );
     m_resetEmptyFields->SetValue( false );
@@ -160,6 +158,8 @@ bool DIALOG_CHANGE_SYMBOLS::TransferDataToWindow()
         m_matchAll->SetValue( true );
     else
         m_matchByReference->SetValue( true );
+
+    updateFieldsList();
 
     return true;
 }
@@ -666,6 +666,7 @@ int DIALOG_CHANGE_SYMBOLS::processSymbols( SCH_COMMIT* aCommit, const std::map<S
             symbol->SetExcludedFromSim( symbol->GetLibSymbolRef()->GetExcludedFromSim() );
             symbol->SetExcludedFromBOM( symbol->GetLibSymbolRef()->GetExcludedFromBOM() );
             symbol->SetExcludedFromBoard( symbol->GetLibSymbolRef()->GetExcludedFromBoard() );
+            symbol->SetExcludedFromPosFiles( symbol->GetLibSymbolRef()->GetExcludedFromPosFiles() );
         }
 
         if( m_resetPinTextVisibility->GetValue() )

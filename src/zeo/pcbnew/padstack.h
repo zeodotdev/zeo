@@ -264,10 +264,10 @@ public:
     ///! The properties of a padstack drill.  Drill position is always the pad position (origin).
     struct DRILL_PROPS
     {
-        VECTOR2I size;  ///< Drill diameter (x == y) or slot dimensions (x != y)
-        PAD_DRILL_SHAPE shape;
-        PCB_LAYER_ID start;
-        PCB_LAYER_ID end;
+        VECTOR2I        size;                            ///< Drill diameter (x == y) or slot dimensions (x != y)
+        PAD_DRILL_SHAPE shape = PAD_DRILL_SHAPE::UNDEFINED;
+        PCB_LAYER_ID    start = UNDEFINED_LAYER;
+        PCB_LAYER_ID    end   = UNDEFINED_LAYER;
 
         std::optional<bool> is_filled; ///< True if the drill hole should be filled completely
         std::optional<bool> is_capped; ///< True if the drill hole should be capped
@@ -337,6 +337,9 @@ public:
 
     ///! Returns the name of this padstack in IPC-7351 format
     wxString Name() const;
+
+    const wxChar* CustomName() const;
+    void SetCustomName( const wxString& aCustomName );
 
     EDA_ANGLE GetOrientation() const { return m_orientation; }
     void SetOrientation( EDA_ANGLE aAngle )
@@ -531,7 +534,7 @@ private:
     LSET m_layerSet;
 
     ///! An override for the IPC-7351 padstack name
-    wxString m_customName;
+    std::unique_ptr<wxString> m_customName;
 
     ///! The rotation of the pad relative to an outer reference frame
     EDA_ANGLE m_orientation;

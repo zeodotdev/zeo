@@ -41,6 +41,7 @@
 #include <jobset_frame.h>
 #include <dialogs/dialog_edit_cfg.h>
 #include <local_history.h>
+#include <widgets/wx_progress_reporters.h>
 #include <wx/msgdlg.h>
 #include <eda_base_frame.h>
 #include <executable_names.h>
@@ -949,17 +950,22 @@ bool KICAD_MANAGER_FRAME::CloseProject( bool aSave )
         // a clean close.
         wxString projPath = Prj().GetProjectPath();
 
+        // Wait for any in-flight autosave so the HEAD check below isn't racing it.
+        Kiway().LocalHistory().WaitForPendingSave();
+
         if( !projPath.IsEmpty() && Kiway().LocalHistory().HistoryExists( projPath ) )
         {
             if( Kiway().LocalHistory().HeadNewerThanLastSave( projPath ) )
             {
-                // Commit the current on-disk state and tag it so Last_Save matches HEAD
-                if( Kiway().LocalHistory().CommitFullProjectSnapshot( projPath, wxS( "Close" ) ) )
-                {
-                    Kiway().LocalHistory().TagSave( projPath, wxS( "project" ) );
-                }
+                // Tag unconditionally: even on no-op snapshots Last_Save must anchor at HEAD.
+                Kiway().LocalHistory().CommitFullProjectSnapshot( projPath, wxS( "Close" ) );
+                Kiway().LocalHistory().TagSave( projPath, wxS( "project" ) );
             }
         }
+
+        // The editors clean up autosaves for sheets actually dirtied in their session.
+        // Anything still on disk here was deferred by the user in the recovery dialog
+        // and must survive so the dialog can offer it again on the next open.
 
         m_active_project = false;
         // Enforce local history size limit (if enabled) once all pending saves/backups are done.
@@ -968,7 +974,10 @@ bool KICAD_MANAGER_FRAME::CloseProject( bool aSave )
             unsigned long long int limit = Pgm().GetCommonSettings()->m_Backup.limit_total_size;
 
             if( limit > 0 )
-                Kiway().LocalHistory().EnforceSizeLimit( Prj().GetProjectPath(), (size_t) limit );
+            {
+                WX_PROGRESS_REPORTER reporter( this, _( "Local History" ), 3, PR_NO_ABORT );
+                Kiway().LocalHistory().EnforceSizeLimit( Prj().GetProjectPath(), (size_t) limit, &reporter );
+            }
         }
 
         // Unregister the project saver before unloading the project to prevent
@@ -1132,8 +1141,6 @@ bool KICAD_MANAGER_FRAME::LoadProject( const wxFileName& aProjectFileName )
     if( aProjectFileName.IsDirWritable() )
         SetMruPath( Prj().GetProjectPath() );
 
-    Kiway().LocalHistory().Init( Prj().GetProjectPath() );
-
     if( Kiway().LocalHistory().HeadNewerThanLastSave( Prj().GetProjectPath() ) )
     {
         wxString head = Kiway().LocalHistory().GetHeadHash( Prj().GetProjectPath() );
@@ -1154,10 +1161,10 @@ bool KICAD_MANAGER_FRAME::LoadProject( const wxFileName& aProjectFileName )
         }
         else
         {
-            // User declined to restore - commit the current on-disk state and tag it
-            // so we don't prompt again on next load
-            if( Kiway().LocalHistory().CommitFullProjectSnapshot( Prj().GetProjectPath(), wxS( "Declined restore" ) ) )
-                Kiway().LocalHistory().TagSave( Prj().GetProjectPath(), wxS( "project" ) );
+            // User declined; commit on-disk state and tag unconditionally so Last_Save anchors
+            // at HEAD even if no new commit was needed.
+            Kiway().LocalHistory().CommitFullProjectSnapshot( Prj().GetProjectPath(), wxS( "Declined restore" ) );
+            Kiway().LocalHistory().TagSave( Prj().GetProjectPath(), wxS( "project" ) );
         }
     }
 
@@ -1786,9 +1793,9 @@ void KICAD_MANAGER_FRAME::ProjectChanged()
     // Register project file saver. Ensures project file participates in
     // autosave history commits without affecting dirty state.
     Kiway().LocalHistory().RegisterSaver( &Prj(),
-            [this]( const wxString& aProjectPath, std::vector<wxString>& aFiles )
+            [this]( const wxString& aProjectPath, std::vector<HISTORY_FILE_DATA>& aFileData )
             {
-                Prj().SaveToHistory( aProjectPath, aFiles );
+                Prj().SaveToHistory( aProjectPath, aFileData );
             } );
 }
 

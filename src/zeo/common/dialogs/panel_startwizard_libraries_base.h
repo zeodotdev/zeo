@@ -17,11 +17,12 @@
 #include <wx/colour.h>
 #include <wx/settings.h>
 #include <wx/radiobut.h>
+#include <wx/checkbox.h>
+#include <wx/sizer.h>
 #include <wx/bitmap.h>
 #include <wx/image.h>
 #include <wx/icon.h>
 #include <wx/statbmp.h>
-#include <wx/sizer.h>
 #include <wx/panel.h>
 
 ///////////////////////////////////////////////////////////////////////////
@@ -40,14 +41,19 @@ class PANEL_STARTWIZARD_LIBRARIES_BASE : public wxPanel
 		wxStaticText* m_stQuery;
 		wxRadioButton* m_rbDefaultTables;
 		wxRadioButton* m_rbImport;
+		wxCheckBox* m_cbMigrateBuiltInLibraries;
 		wxRadioButton* m_rbBlankTables;
 		wxBoxSizer* m_sizerWarning;
 		wxStaticBitmap* m_bmpWarning;
 		wxStaticText* m_stWarning;
 
+		// Virtual event handlers, override them in your derived class
+		virtual void OnSize( wxSizeEvent& event ) { event.Skip(); }
+
+
 	public:
 
-		PANEL_STARTWIZARD_LIBRARIES_BASE( wxWindow* parent, wxWindowID id = wxID_ANY, const wxPoint& pos = wxDefaultPosition, const wxSize& size = wxSize( 550,-1 ), long style = wxTAB_TRAVERSAL, const wxString& name = wxEmptyString );
+		PANEL_STARTWIZARD_LIBRARIES_BASE( wxWindow* parent, wxWindowID id = wxID_ANY, const wxPoint& pos = wxDefaultPosition, const wxSize& size = wxSize( -1,-1 ), long style = wxTAB_TRAVERSAL, const wxString& name = wxEmptyString );
 
 		~PANEL_STARTWIZARD_LIBRARIES_BASE();
 

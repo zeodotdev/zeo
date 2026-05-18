@@ -120,6 +120,8 @@ set( PCBNEW_DIALOGS
     dialogs/dialog_items_list.cpp
     dialogs/dialog_imported_layers_base.cpp
     dialogs/dialog_map_layers.cpp
+    dialogs/dialog_migrate_3d_models.cpp
+    dialogs/dialog_migrate_3d_models_base.cpp
     dialogs/dialog_rule_area_properties.cpp
     dialogs/dialog_rule_area_properties_base.cpp
     dialogs/dialog_layer_selection_base.cpp
@@ -136,6 +138,7 @@ set( PCBNEW_DIALOGS
     dialogs/dialog_pad_properties.cpp
     dialogs/dialog_pad_properties_base.cpp
     dialogs/dialog_fp_edit_pad_table.cpp
+    dialogs/dialog_fp_edit_pad_table_base.cpp
     dialogs/dialog_plot.cpp
     dialogs/dialog_plot_base.cpp
     dialogs/dialog_pns_diff_pair_dimensions.cpp
@@ -346,9 +349,11 @@ set( PCBNEW_DRC_SRCS
     drc/rule_editor/drc_re_rtg_diff_pair_overlay_panel.cpp
     drc/rule_editor/drc_re_min_txt_ht_th_overlay_panel.cpp
     drc/rule_editor/drc_re_abs_length_two_overlay_panel.cpp
+    drc/rule_editor/drc_re_matched_length_diff_pair_overlay_panel.cpp
     drc/rule_editor/drc_re_via_style_overlay_panel.cpp
     drc/rule_editor/drc_re_numeric_input_overlay_panel.cpp
     drc/rule_editor/drc_re_bool_input_overlay_panel.cpp
+    drc/rule_editor/drc_re_vias_under_smd_overlay_panel.cpp
     drc/rule_editor/drc_re_permitted_layers_overlay_panel.cpp
     drc/rule_editor/drc_re_allowed_orientation_overlay_panel.cpp
     drc/rule_editor/drc_re_condition_row_panel.cpp

@@ -22,6 +22,7 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
+#include "teardrop/teardrop.h"
 
 #include <confirm.h>
 
@@ -32,7 +33,6 @@
 #include <board_commit.h>
 
 #include <connectivity/connectivity_data.h>
-#include <teardrop/teardrop.h>
 #include <drc/drc_rtree.h>
 #include <geometry/shape_line_chain.h>
 #include <geometry/rtree.h>
@@ -294,6 +294,16 @@ void TEARDROP_MANAGER::UpdateTeardrops( BOARD_COMMIT& aCommit,
             if( startHitsPad && endHitsPad )
                 continue;
 
+            // Only count segments that substantively emerge from the pad copper. A track
+            // whose centerline grazes the pad edge exits by less than its own width; such a
+            // segment is effectively covered and using it mis-orients the teardrop axis
+            // along the tangent instead of the track's real entry direction.
+            if( startHitsPad != endHitsPad
+                && computeEmergingTrackLength( track, pad, track->GetLayer() ) < track->GetWidth() )
+            {
+                continue;
+            }
+
             // Skip case where pad and the track are within a copper zone with the same net
             // (and the pad can be connected to the zone)
             if( !tdParams.m_TdOnPadsInZones && areItemsInSameZone( pad, track ) )
@@ -343,6 +353,14 @@ void TEARDROP_MANAGER::UpdateTeardrops( BOARD_COMMIT& aCommit,
             if( startHitsVia && endHitsVia )
                 continue;
 
+            // Only count segments that substantively emerge from the via copper. A track
+            // that grazes the via edge tangentially emerges by less than its own width and
+            // should not anchor a teardrop: its direction misrepresents the real track entry.
+            if( startHitsVia != endHitsVia
+                && computeEmergingTrackLength( track, via, track->GetLayer() ) < track->GetWidth() )
+            {
+                continue;
+            }
 
             tryCreateTrackTeardrop( aCommit, tdParams, TEARDROP_MANAGER::TD_TYPE_PADVIA, track, via,
                                     via->GetPosition() );
@@ -400,9 +418,13 @@ void TEARDROP_MANAGER::setTeardropPriorities()
         bool operator()(ZONE* a, ZONE* b) const
             {
                 if( a->GetFirstLayer() == b->GetFirstLayer() )
-                    return a->GetOutlineArea() > b->GetOutlineArea();
-
+                {
+                    if( a->GetOutlineArea() != b->GetOutlineArea() )
+                        return a->GetOutlineArea() > b->GetOutlineArea();
+                    return a->m_Uuid < b->m_Uuid;  // stable tiebreak
+                }
                 return a->GetFirstLayer() < b->GetFirstLayer();
+
             }
     } compareLess;
 
@@ -530,5 +552,3 @@ void TEARDROP_MANAGER::AddTeardropsOnTracks( BOARD_COMMIT& aCommit,
         }
     }
 }
-
-

@@ -28,6 +28,7 @@
 #include <design_block_library_adapter.h>
 #include <footprint.h>
 #include <pad.h>
+#include <pcb_generator.h>
 #include <pcb_group.h>
 #include <widgets/pcb_design_block_pane.h>
 #include <pcb_edit_frame.h>
@@ -309,11 +310,30 @@ bool PCB_EDIT_FRAME::saveSelectionToDesignBlock( const wxString& aNickname, PCB_
         }
         else if( copy->Type() == PCB_GROUP_T || copy->Type() == PCB_GENERATOR_T )
         {
-            PCB_GROUP* group = static_cast<PCB_GROUP*>( item );
+            // Clone() produces a shallow copy whose m_items still references original
+            // children. Replace with DeepClone() which recursively clones all children
+            // with correct group membership.
+            tempBoard->Remove( copy );
 
-            // Groups also need their children copied
-            group->RunOnChildren( cloneAndAdd, RECURSE_MODE::RECURSE );
-            group->RunOnChildren( addNetIfNeeded, RECURSE_MODE::RECURSE );
+            PCB_GROUP* deepCopy = nullptr;
+
+            if( item->Type() == PCB_GENERATOR_T )
+                deepCopy = static_cast<PCB_GENERATOR*>( item )->DeepClone();
+            else
+                deepCopy = static_cast<PCB_GROUP*>( item )->DeepClone();
+
+            deepCopy->SetParentGroup( nullptr );
+            tempBoard->Add( deepCopy, ADD_MODE::APPEND, false );
+
+            deepCopy->RunOnChildren(
+                    [&]( BOARD_ITEM* child )
+                    {
+                        tempBoard->Add( child, ADD_MODE::APPEND, false );
+                        addNetIfNeeded( child );
+                    },
+                    RECURSE_MODE::RECURSE );
+
+            delete copy;
         }
         else
             addNetIfNeeded( copy );

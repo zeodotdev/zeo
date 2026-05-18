@@ -37,8 +37,10 @@ set( QA_PCBNEW_SRCS
     test_array_pad_name_provider.cpp
     test_barcode_load_save.cpp
     test_board_connected_items.cpp
+    test_board_design_settings.cpp
     test_board_item.cpp
     test_board_commit.cpp
+    test_clipboard_group.cpp
     test_board_statistics.cpp
     test_cam_backdrill.cpp
     test_clip_line_to_pad.cpp
@@ -47,7 +49,10 @@ set( QA_PCBNEW_SRCS
     test_graphics_load_save.cpp
     test_graphics_import_mgr.cpp
     test_group_load_save.cpp
+    test_history_autosave.cpp
+    test_footprint.cpp
     test_footprint_load_save.cpp
+    test_footprint_rescue_layer.cpp
     test_fp_lib_load_save.cpp
     test_io_mgr.cpp
     test_lset.cpp
@@ -55,12 +60,15 @@ set( QA_PCBNEW_SRCS
     test_pns_basics.cpp
     test_pad_flashing.cpp
     test_pad_numbering.cpp
+    test_pad_swap_positions.cpp
     test_pad_tenting.cpp
     test_pcb_textbox.cpp
     test_prettifier.cpp
     test_pcb_render_settings.cpp
     test_libeval_compiler.cpp
     test_reference_image_load.cpp
+    test_gencad_export.cpp
+    test_step_model_color_transfer.cpp
     test_pdf_output_path.cpp
     test_plot_controller.cpp
     test_shape_corner_radius.cpp
@@ -81,6 +89,8 @@ set( QA_PCBNEW_SRCS
     drc/test_drc_courtyard_invalid.cpp
     drc/test_drc_courtyard_overlap.cpp
     drc/test_drc_regressions.cpp
+    drc/test_drc_issue23469.cpp
+    drc/test_drc_writedrcreport.cpp
     drc/test_drc_solder_mask_expansion.cpp
     drc/test_drc_copper_conn.cpp
     drc/test_drc_copper_graphics.cpp
@@ -98,8 +108,15 @@ set( QA_PCBNEW_SRCS
     drc/test_drc_tuner_agreement.cpp
     drc/test_drc_unconnected_items_exclusion_loss.cpp
     drc/test_drc_via_dangling.cpp
+    drc/test_drc_keepout_disallow.cpp
     drc/test_drc_tuning_profiles.cpp
+    drc/test_drc_creepage.cpp
+    drc/test_drc_creepage_issue20480.cpp
     drc/test_drc_creepage_issue21482.cpp
+    drc/test_drc_creepage_issue23364.cpp
+    drc/test_drc_creepage_issue23389.cpp
+    drc/test_drc_creepage_issue23576.cpp
+    drc/test_drc_invalid_outline_issue24078.cpp
     drc/test_drc_physical_clearance.cpp
     drc/test_drc_rule_editor.cpp
     drc/test_drc_bitmap_overlay_panel.cpp

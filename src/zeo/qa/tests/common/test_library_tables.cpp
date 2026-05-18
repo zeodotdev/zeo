@@ -216,4 +216,113 @@ BOOST_AUTO_TEST_CASE( NestedTablesDisabledHidden )
 }
 
 
+/**
+ * Regression test: inserting rows into a loaded LIBRARY_TABLE must not invalidate
+ * pointers or references to previously-captured rows. The remote symbol import path
+ * (EnsureRemoteLibraryEntry) calls InsertRow() at runtime while LIB_DATA instances
+ * and LIBRARY_MANAGER::m_rowCache hold raw pointers into the rows container. A
+ * std::vector-backed container would reallocate on growth and leave those pointers
+ * dangling, which produced an intermittent std::bad_alloc crash deep in
+ * KIwxExpandEnvVars when the next symbol placement tried to read the stale URI.
+ */
+BOOST_AUTO_TEST_CASE( InsertRowPreservesExistingRowPointers )
+{
+    LIBRARY_TABLE table( true, wxEmptyString, LIBRARY_TABLE_SCOPE::PROJECT );
+    table.SetType( LIBRARY_TABLE_TYPE::SYMBOL );
+
+    // Seed with a few rows and snapshot pointers plus the expected URIs.
+    std::vector<const LIBRARY_TABLE_ROW*> seededPointers;
+    std::vector<wxString>                 seededUris;
+
+    for( int i = 0; i < 4; ++i )
+    {
+        LIBRARY_TABLE_ROW& row = table.InsertRow();
+        row.SetNickname( wxString::Format( wxS( "seed_%d" ), i ) );
+        row.SetURI( wxString::Format( wxS( "${KIPRJMOD}/libs/seed_%d.kicad_sym" ), i ) );
+        row.SetType( wxS( "KiCad" ) );
+
+        seededPointers.push_back( &row );
+        seededUris.push_back( row.URI() );
+    }
+
+    // Insert additional rows to force container growth that would reallocate
+    // a std::vector, and verify the seeded pointers continue to resolve to the
+    // same logical rows (same nickname and URI).
+    for( int i = 0; i < 64; ++i )
+    {
+        LIBRARY_TABLE_ROW& row = table.InsertRow();
+        row.SetNickname( wxString::Format( wxS( "extra_%d" ), i ) );
+        row.SetURI( wxString::Format( wxS( "${KIPRJMOD}/libs/extra_%d.kicad_sym" ), i ) );
+        row.SetType( wxS( "KiCad" ) );
+
+        for( size_t j = 0; j < seededPointers.size(); ++j )
+        {
+            BOOST_REQUIRE_MESSAGE(
+                    seededPointers[j]->URI() == seededUris[j],
+                    wxString::Format(
+                            wxS( "Seed row %zu pointer was invalidated after inserting %d rows: "
+                                 "expected URI '%s', got '%s'" ),
+                            j, i + 1, seededUris[j], seededPointers[j]->URI() ) );
+        }
+    }
+}
+
+
+/**
+ * Regression test for the PCM auto-remove identification predicate. Rows inserted by
+ * the PCM traverser reference `${KICADn_3RD_PARTY}` directly, so matching on the URI
+ * template uniquely identifies them and avoids cleaning up user-added libraries whose
+ * expanded absolute paths happen to be descendants of the 3RD_PARTY directory via a
+ * different env var (e.g. `${KICAD_USER_LIB}` pointing to `${KICAD10_3RD_PARTY}/V10`).
+ *
+ * Prior to this fix, `cleanupRemovedPCMLibraries` did a raw prefix check on the
+ * expanded path, mis-identifying overlapping user libraries as PCM-managed and
+ * silently deleting their rows any time the file was temporarily absent. The
+ * user-visible symptom was "Could not create the library file" when adding a new
+ * library through the symbol editor.
+ */
+BOOST_AUTO_TEST_CASE( IsPcmManagedRow_URITemplateMatching )
+{
+    struct CASE
+    {
+        wxString uri;
+        bool     expectedPcmManaged;
+        wxString description;
+    };
+
+    std::vector<CASE> cases = {
+        { wxS( "${KICAD10_3RD_PARTY}/symbols/foo/foo.kicad_sym" ), true,
+          wxS( "Versioned 3RD_PARTY template should be recognised as PCM-managed" ) },
+        { wxS( "${KICAD9_3RD_PARTY}/symbols/legacy/legacy.kicad_sym" ), true,
+          wxS( "Legacy versioned 3RD_PARTY template should still match the wildcard" ) },
+        { wxS( "${KICAD10_3RD_PARTY}/footprints/bar/bar.pretty" ), true,
+          wxS( "Footprint library using 3RD_PARTY template should match" ) },
+        { wxS( "${KICAD_USER_LIB}/symbols/test.kicad_sym" ), false,
+          wxS( "Row using a different env var must not be flagged as PCM-managed" ) },
+        { wxS( "${KIPRJMOD}/libs/local.kicad_sym" ), false,
+          wxS( "Project-relative row must not be flagged as PCM-managed" ) },
+        { wxS( "/abs/path/to/lib.kicad_sym" ), false,
+          wxS( "Absolute path row must not be flagged as PCM-managed" ) },
+        { wxS( "${}" ), false,
+          wxS( "Malformed empty var name must not match" ) },
+        { wxS( "${KICAD10_3RD_PARTY_EXTRA}/foo" ), false,
+          wxS( "Similar-but-different var name must not match" ) },
+    };
+
+    for( const CASE& c : cases )
+    {
+        LIBRARY_TABLE_ROW row;
+        row.SetURI( c.uri );
+
+        bool actual = LIBRARY_MANAGER::IsPcmManagedRow( row );
+
+        BOOST_CHECK_MESSAGE(
+                actual == c.expectedPcmManaged,
+                wxString::Format( wxS( "%s: URI='%s' expected=%d actual=%d" ),
+                                  c.description, c.uri, c.expectedPcmManaged ? 1 : 0,
+                                  actual ? 1 : 0 ) );
+    }
+}
+
+
 BOOST_AUTO_TEST_SUITE_END()

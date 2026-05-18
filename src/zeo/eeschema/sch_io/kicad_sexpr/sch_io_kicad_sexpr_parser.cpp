@@ -648,6 +648,8 @@ LIB_SYMBOL* SCH_IO_KICAD_SEXPR_PARSER::parseLibSymbol( LIB_SYMBOL_MAP& aSymbolLi
     if( m_requiredVersion < 20250827 )
         symbol->SetHasDeMorganBodyStyles( symbol->HasLegacyAlternateBodyStyle() );
 
+    symbol->RefreshLibraryTreeCaches();
+
     return symbol.release();
 }
 
@@ -2946,7 +2948,13 @@ void SCH_IO_KICAD_SEXPR_PARSER::ParseSchematic( SCH_SHEET* aSheet, bool aIsCopya
             // when the item has only 2 corners, similar to a SCH_LINE
             SCH_SHAPE* poly = parseSchPolyLine();
 
-            if( poly->GetPointCount() > 2 )
+            if( poly->GetPointCount() < 2 )
+            {
+                delete poly;
+                THROW_PARSE_ERROR( _( "Schematic polyline has too few points" ), CurSource(), CurLine(),
+                                   CurLineNumber(), CurOffset() );
+            }
+            else if( poly->GetPointCount() > 2 )
             {
                 screen->Append( poly );
             }
@@ -3394,6 +3402,7 @@ SCH_SYMBOL* SCH_IO_KICAD_SEXPR_PARSER::parseSchematicSymbol()
                         case T_variant:
                         {
                             SCH_SYMBOL_VARIANT variant;
+                            variant.InitializeAttributes( *symbol );
 
                             for( token = NextTok(); token != T_RIGHT; token = NextTok() )
                             {
@@ -3422,6 +3431,13 @@ SCH_SYMBOL* SCH_IO_KICAD_SEXPR_PARSER::parseSchematicSymbol()
 
                                 case T_in_bom:
                                     variant.m_ExcludedFromBOM = parseBool();
+
+                                    // This fixes the incorrect logic from prior file versions.  The "in_bom" token
+                                    // used in the file format is the positive logic.  However, in the UI the term
+                                    // excluded from BOM is used which is the inverted logic.
+                                    if( m_requiredVersion >= 20260306 )
+                                        variant.m_ExcludedFromBOM = !variant.m_ExcludedFromBOM;
+
                                     NeedRIGHT();
                                     break;
 
@@ -3857,6 +3873,7 @@ SCH_SHEET* SCH_IO_KICAD_SEXPR_PARSER::parseSheet()
                         case T_variant:
                         {
                             SCH_SHEET_VARIANT variant;
+                            variant.InitializeAttributes( *sheet );
 
                             for( token = NextTok(); token != T_RIGHT; token = NextTok() )
                             {
@@ -3885,6 +3902,13 @@ SCH_SHEET* SCH_IO_KICAD_SEXPR_PARSER::parseSheet()
 
                                 case T_in_bom:
                                     variant.m_ExcludedFromBOM = parseBool();
+
+                                    // This fixes the incorrect logic from prior file versions.  The "in_bom" token
+                                    // used in the file format is the positive logic.  However, in the UI the term
+                                    // excluded from BOM is used which is the inverted logic.
+                                    if( m_requiredVersion >= 20260306 )
+                                        variant.m_ExcludedFromBOM = !variant.m_ExcludedFromBOM;
+
                                     NeedRIGHT();
                                     break;
 
@@ -3962,6 +3986,18 @@ SCH_SHEET* SCH_IO_KICAD_SEXPR_PARSER::parseSheet()
     }
 
     sheet->SetFields( fields );
+
+    if( !FindField( sheet->GetFields(), FIELD_T::SHEET_NAME ) )
+    {
+        THROW_PARSE_ERROR( _( "Missing sheet name property" ), CurSource(), CurLine(),
+                           CurLineNumber(), CurOffset() );
+    }
+
+    if( !FindField( sheet->GetFields(), FIELD_T::SHEET_FILENAME ) )
+    {
+        THROW_PARSE_ERROR( _( "Missing sheet file property" ), CurSource(), CurLine(),
+                           CurLineNumber(), CurOffset() );
+    }
 
     return sheet.release();
 }
@@ -5199,6 +5235,12 @@ SCH_TABLE* SCH_IO_KICAD_SEXPR_PARSER::parseSchTable()
         default:
             Expecting( "columns, col_widths, row_heights, border, separators, uuid, header or cells" );
         }
+    }
+
+    if( !table->GetCell( 0, 0 ) )
+    {
+        THROW_PARSE_ERROR( _( "Invalid table: no cells defined" ), CurSource(), CurLine(), CurLineNumber(),
+                           CurOffset() );
     }
 
     return table.release();

@@ -1065,12 +1065,12 @@ BOARD_ITEM* PCB_IO_KICAD_SEXPR_PARSER::Parse()
         if( m_board == nullptr )
             m_board = new BOARD();
 
-        item = (BOARD_ITEM*) parseBOARD();
+        item = parseBOARD();
         break;
 
     case T_module:      // legacy token
     case T_footprint:
-        item = (BOARD_ITEM*) parseFOOTPRINT( initial_comments.release() );
+        item = parseFOOTPRINT( initial_comments.release() );
 
         // Locking a footprint has no meaning outside of a board.
         item->SetLocked( false );
@@ -1968,6 +1968,9 @@ void PCB_IO_KICAD_SEXPR_PARSER::parseBoardStackup()
     int dielectric_idx = 1;     // the index of dielectric layers
     BOARD_STACKUP& stackup = m_board->GetDesignSettings().GetStackupDescriptor();
 
+    // Remove existing stack or we end up just appending to the existing stackup
+    stackup.RemoveAll();
+
     for( token = NextTok(); token != T_RIGHT; token = NextTok() )
     {
         if( CurTok() != T_LEFT )
@@ -2047,16 +2050,30 @@ void PCB_IO_KICAD_SEXPR_PARSER::parseBoardStackup()
             type = BS_ITEM_TYPE_COPPER;
 
         BOARD_STACKUP_ITEM* item = nullptr;
+        bool                skipItem = false;
 
         if( type != BS_ITEM_TYPE_UNDEFINED )
         {
+            // A 32-copper-layer board has at most 69 stackup items (32 copper +
+            // 31 dielectric + 6 mask/paste/silk).  Anything far beyond that
+            // indicates a corrupted file.  Parse the item so tokens are consumed
+            // correctly, but don't keep it.
+            static constexpr int MAX_STACKUP_ITEMS = 128;
+
             item = new BOARD_STACKUP_ITEM( type );
             item->SetBrdLayerId( layerId );
 
             if( type == BS_ITEM_TYPE_DIELECTRIC )
                 item->SetDielectricLayerId( dielectric_idx++ );
 
-            stackup.Add( item );
+            if( stackup.GetCount() < MAX_STACKUP_ITEMS )
+            {
+                stackup.Add( item );
+            }
+            else
+            {
+                skipItem = true;
+            }
         }
         else
         {
@@ -2170,6 +2187,9 @@ void PCB_IO_KICAD_SEXPR_PARSER::parseBoardStackup()
                 item->AddDielectricPrms( sublayer_idx );
             }
         }
+
+        if( skipItem )
+            delete item;
     }
 
     if( token != T_RIGHT )
@@ -2479,7 +2499,10 @@ void PCB_IO_KICAD_SEXPR_PARSER::parseSetup()
         switch( token )
         {
         case T_stackup:
-            parseBoardStackup();
+            if( m_preserveDestinationStackup )
+                skipCurrent();
+            else
+                parseBoardStackup();
             break;
 
         case T_last_trace_width:    // not used now
@@ -2860,7 +2883,7 @@ void PCB_IO_KICAD_SEXPR_PARSER::parseSetup()
 
     // Set up a default stackup in case the file doesn't define one, and now we know
     // the enabled layers
-    if( ! m_board->GetDesignSettings().m_HasStackup )
+    if( !m_preserveDestinationStackup && !m_board->GetDesignSettings().m_HasStackup )
     {
         BOARD_STACKUP& stackup = bds.GetStackupDescriptor();
         stackup.RemoveAll();
@@ -7661,8 +7684,8 @@ PCB_IO_KICAD_SEXPR_PARSER::parseFrontBackOptBool( bool aAllowLegacyFormat )
 {
     T token = NextTok();
 
-    std::optional<bool> front( std::nullopt );
-    std::optional<bool> back( std::nullopt );
+    std::optional<bool> front{};
+    std::optional<bool> back{};
 
     if( token != T_LEFT && aAllowLegacyFormat )
     {
@@ -7690,7 +7713,16 @@ PCB_IO_KICAD_SEXPR_PARSER::parseFrontBackOptBool( bool aAllowLegacyFormat )
             token = NextTok();
         }
 
+        // GCC false-positive: both front and back are initialized to {} above and can only be
+        // set or reset inside this loop, never left in an indeterminate state.
+#if defined( __GNUC__ ) && !defined( __clang__ )
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
+#endif
         return { front, back };
+#if defined( __GNUC__ ) && !defined( __clang__ )
+#pragma GCC diagnostic pop
+#endif
     }
 
     while( token != T_RIGHT )
@@ -8254,6 +8286,9 @@ ZONE* PCB_IO_KICAD_SEXPR_PARSER::parseZONE( BOARD_ITEM_CONTAINER* aParent )
             NeedRIGHT();
 
             outline.SetClosed( true );
+
+            if( outline.PointCount() == 0 )
+                break;
 
             // Remark: The first polygon is the main outline.
             // Others are holes inside the main outline.

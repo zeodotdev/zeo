@@ -136,6 +136,26 @@ public:
 };
 
 
+struct FOOTPRINT_COURTYARD_CACHE_DATA
+{
+    SHAPE_POLY_SET front;  // Note that a footprint can have both front and back courtyards populated.
+    SHAPE_POLY_SET back;
+    HASH_128       front_hash;
+    HASH_128       back_hash;
+};
+
+
+struct FOOTPRINT_GEOMETRY_CACHE_DATA
+{
+    BOX2I          bounding_box;
+    int            bounding_box_timestamp = 0;
+    BOX2I          text_excluded_bbox;
+    int            text_excluded_bbox_timestamp = 0;
+    SHAPE_POLY_SET hull;
+    int            hull_timestamp = 0;
+};
+
+
 /**
  * Variant information for a footprint.
  *
@@ -363,7 +383,7 @@ public:
     wxString GetLibNickname() const override { return m_fpid.GetLibNickname(); }
     wxString GetDesc() override { return GetLibDescription(); }
     int GetPinCount() override { return static_cast<int>( GetUniquePadCount( DO_NOT_INCLUDE_NPTH ) ); }
-    std::vector<SEARCH_TERM> GetSearchTerms() override;
+    std::vector<SEARCH_TERM>& GetSearchTerms() override;
 
     wxString GetLibDescription() const { return m_libDescription; }
     void     SetLibDescription( const wxString& aDesc ) { m_libDescription = aDesc; }
@@ -1325,13 +1345,8 @@ private:
     // that any edit that could affect the bounding boxes (including edits to the footprint
     // children) marked the bounding boxes dirty.  It would definitely be faster -- but also more
     // fragile.
-    mutable std::mutex     m_bboxCacheMutex;
-    mutable BOX2I          m_cachedBoundingBox;
-    mutable int            m_boundingBoxCacheTimeStamp;
-    mutable BOX2I          m_cachedTextExcludedBBox;
-    mutable int            m_textExcludedBBoxCacheTimeStamp;
-    mutable SHAPE_POLY_SET m_cachedHull;
-    mutable int            m_hullCacheTimeStamp;
+    mutable std::mutex                                     m_geometry_cache_mutex;
+    mutable std::unique_ptr<FOOTPRINT_GEOMETRY_CACHE_DATA> m_geometry_cache;
 
     // A list of pad groups, each of which is allowed to short nets within their group.
     // A pad group is a comma-separated list of pad numbers.
@@ -1377,17 +1392,16 @@ private:
     wxArrayString*          m_initial_comments;  // s-expression comments in the footprint,
                                                  //   lazily allocated only if needed for speed
 
-    SHAPE_POLY_SET     m_courtyard_cache_front;  // Note that a footprint can have both front and back
-    SHAPE_POLY_SET     m_courtyard_cache_back;   //   courtyards populated.
-    mutable HASH_128   m_courtyard_cache_front_hash;
-    mutable HASH_128   m_courtyard_cache_back_hash;
-    mutable std::mutex m_courtyard_cache_mutex;
+    mutable std::unique_ptr<FOOTPRINT_COURTYARD_CACHE_DATA> m_courtyard_cache;
+    mutable std::mutex                                      m_courtyard_cache_mutex;
 
     std::unordered_set<wxString> m_transientComponentClassNames;
     std::unique_ptr<COMPONENT_CLASS_CACHE_PROXY> m_componentClassCacheProxy;
 
     // Optional unit mapping information for multi-unit symbols
     std::vector<FP_UNIT_INFO> m_unitInfo;
+
+    std::vector<SEARCH_TERM> m_searchTerms;
 };
 
 #endif     // FOOTPRINT_H

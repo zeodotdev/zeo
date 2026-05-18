@@ -23,21 +23,28 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
+#include <vector>
+#include <thread>
+#include <algorithm>
+#include <atomic>
+
+#include <wx/log.h>
+
 #include "board_adapter.h"
 #include "../3d_rendering/raytracing/shapes2D/filled_circle_2d.h"
 #include "raytracing/shapes2D/triangle_2d.h"
 #include <board_design_settings.h>
 #include <board.h>
+#include <footprint.h>
 #include <layer_range.h>
 #include <lset.h>
 #include <convert_basic_shapes_to_polygon.h>
 #include <trigo.h>
-#include <vector>
-#include <thread>
-#include <algorithm>
-#include <atomic>
-#include <wx/log.h>
+#include <pad.h>
 #include <pcb_barcode.h>
+#include <pcb_shape.h>
+#include <pcb_track.h>
+#include <zone.h>
 
 #ifdef PRINT_STATISTICS_3D_VIEWER
 #include <core/profile.h>
@@ -1465,15 +1472,11 @@ void BOARD_ADAPTER::createLayers( REPORTER* aStatusReporter )
                 }
             }
 
-            // Add footprints tech layers - objects
-            const bool     isPasteLayer = ( layer == F_Paste || layer == B_Paste );
-            const wxString currentVariant = m_board->GetCurrentVariant();
-
+            // Add footprints tech layers - objects.  Paste, mask, silk and fab belong to the
+            // board fabrication outputs and render for every footprint, matching the gerber
+            // plotters.  DNP affects only the 3D model, handled by IsFootprintShown().
             for( FOOTPRINT* footprint : m_board->Footprints() )
             {
-                // Skip paste layers for footprints that are DNP in the current variant
-                bool skipForVariantDNP = isPasteLayer && footprint->GetDNPForVariant( currentVariant );
-
                 if( layer == F_SilkS || layer == B_SilkS )
                 {
                     int linewidth = m_board->GetDesignSettings().m_LineThickness[ LAYER_CLASS_SILK ];
@@ -1486,13 +1489,12 @@ void BOARD_ADAPTER::createLayers( REPORTER* aStatusReporter )
                         buildPadOutlineAsSegments( pad, layer, layerContainer, linewidth );
                     }
                 }
-                else if( !skipForVariantDNP )
+                else
                 {
                     addPads( footprint, layerContainer, layer );
                 }
 
-                if( !skipForVariantDNP )
-                    addFootprintShapes( footprint, layerContainer, layer, visibilityFlags );
+                addFootprintShapes( footprint, layerContainer, layer, visibilityFlags );
             }
 
             // Draw non copper zones

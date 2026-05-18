@@ -86,6 +86,7 @@ EDA_DRAW_PANEL_GAL::EDA_DRAW_PANEL_GAL( wxWindow* aParentWindow, wxWindowID aWin
         m_options( aOptions ),
         m_eventDispatcher( nullptr ),
         m_lostFocus( false ),
+        m_glRecoveryAttempted( false ),
         m_stealsFocus( true ),
         m_statusPopup( nullptr )
 {
@@ -196,18 +197,61 @@ void EDA_DRAW_PANEL_GAL::SetFocus()
 void EDA_DRAW_PANEL_GAL::onPaint( wxPaintEvent& WXUNUSED( aEvent ) )
 {
     // System paint events (X11 Expose) indicate the window content was damaged
-    // and needs repainting.  On X11 without a compositor the backing store is
-    // lost when the window is obscured, so DoRePaint()'s optimisation of
-    // skipping drawing when the VIEW isn't dirty would leave the window grey.
-    // Force a full redraw to ensure the content is restored.
-    if( m_view )
-        m_view->MarkDirty();
-
-    DoRePaint();
+    // and needs repainting. Force a full redraw via aAllowSkip=false so the
+    // OS-invalidated window content is restored even if VIEW thinks nothing
+    // changed.
+    DoRePaint( false );
 }
 
 
-bool EDA_DRAW_PANEL_GAL::DoRePaint()
+bool EDA_DRAW_PANEL_GAL::recoverFromGalError( const std::exception& aError )
+{
+    try
+    {
+        // Sleep/wake and GPU resets can invalidate the entire GL context.
+        // Try a full reinit of the current backend before falling back.
+        if( !m_glRecoveryAttempted )
+        {
+            m_glRecoveryAttempted = true;
+            GAL_TYPE prevBackend = m_backend;
+            m_backend = GAL_TYPE_NONE;
+
+            if( SwitchBackend( prevBackend ) )
+            {
+                StartDrawing();
+                return true;
+            }
+        }
+
+        if( GAL_FALLBACK_AVAILABLE && GAL_FALLBACK != m_backend )
+        {
+            m_glRecoveryAttempted = false;
+            SwitchBackend( GAL_FALLBACK );
+
+            DisplayInfoMessage( m_parent, _( "Could not use OpenGL, falling back to software rendering" ),
+                                wxString( aError.what() ) );
+
+            StartDrawing();
+            return true;
+        }
+
+        DisplayErrorMessage( m_parent, _( "Graphics error" ), wxString( aError.what() ) );
+    }
+    catch( std::exception& recoveryErr )
+    {
+        DisplayErrorMessage( m_parent, _( "Graphics error during recovery" ), wxString( recoveryErr.what() ) );
+    }
+    catch( ... )
+    {
+        DisplayErrorMessage( m_parent, _( "Graphics error during recovery" ),
+                             _( "Unknown exception during backend switch" ) );
+    }
+
+    return false;
+}
+
+
+bool EDA_DRAW_PANEL_GAL::DoRePaint( bool aAllowSkip )
 {
     if( !m_refreshMutex.try_lock() )
         return false;
@@ -277,24 +321,10 @@ bool EDA_DRAW_PANEL_GAL::DoRePaint()
 
     try
     {
-        cntUpd.Start();
-
-        try
-        {
-            m_view->UpdateItems();
-        }
-        catch( std::out_of_range& err )
-        {
-            // Don't do anything here but don't fail
-            // This can happen when we don't catch `at()` calls
-            wxLogTrace( traceDrawPanel, wxS( "Out of Range error: %s" ), err.what() );
-        }
-
-        cntUpd.Stop();
-
         VECTOR2D cursorPos = m_viewControls->GetCursorPosition();
         bool viewDirty = m_view->IsDirty();
         bool cursorMoved = ( cursorPos != m_lastCursorPosition );
+        bool hasPendingItemUpdates = m_view->HasPendingItemUpdates();
 
         // On X11 without a compositor the backing store is lost when the
         // window is obscured, so we must force a full redraw even though
@@ -305,9 +335,46 @@ bool EDA_DRAW_PANEL_GAL::DoRePaint()
             viewDirty = true;
         }
 
-        // Skip the entire GL cycle when nothing has changed. The front buffer
-        // still shows the previous frame so there is nothing to redraw.
-        if( !viewDirty && !cursorMoved )
+        // Skip all update work when nothing has changed since the previous frame.
+        // Never skip when responding to a native paint event or explicit ForceRefresh
+        // because the window content may have been invalidated by the OS.
+        if( aAllowSkip && !viewDirty && !cursorMoved && !hasPendingItemUpdates )
+        {
+            m_lastRepaintEnd = wxGetLocalTimeMillis();
+            return true;
+        }
+
+        if( hasPendingItemUpdates )
+        {
+            cntUpd.Start();
+
+            try
+            {
+                m_view->UpdateItems();
+            }
+            catch( std::out_of_range& err )
+            {
+                // Don't do anything here but don't fail
+                // This can happen when we don't catch `at()` calls
+                wxLogTrace( traceDrawPanel, wxS( "Out of Range error: %s" ), err.what() );
+            }
+            catch( std::runtime_error& err )
+            {
+                // Handle GL errors (e.g. glMapBuffer failure) that surface during UpdateItems().
+                // These can occur on macOS under memory pressure when embedding large 3D models.
+                // Log and continue so the outer handler can decide whether to switch backends.
+                wxLogTrace( traceDrawPanel, wxS( "Runtime error during UpdateItems: %s" ),
+                            err.what() );
+                throw;
+            }
+
+            cntUpd.Stop();
+            viewDirty = m_view->IsDirty();
+        }
+
+        // After processing item updates, skip the GL cycle when neither the
+        // view targets nor the cursor position have changed.
+        if( aAllowSkip && !viewDirty && !cursorMoved )
         {
             m_lastRepaintEnd = wxGetLocalTimeMillis();
             return true;
@@ -365,48 +432,48 @@ bool EDA_DRAW_PANEL_GAL::DoRePaint()
 
         // ctx goes out of scope here so destructor would be called
         cntCtxDestroy.Stop();
+
+        // OpenGL frame completed successfully, allow future recovery attempts
+        m_glRecoveryAttempted = false;
     }
     catch( std::exception& err )
     {
-        if( GAL_FALLBACK != m_backend )
+        wxLogTrace( traceDrawPanel, wxS( "DoRePaint exception: %s" ), err.what() );
+
+        if( recoverFromGalError( err ) )
+            return true;
+
+        // We're well and truly banjaxed if we get here without a fallback.
+        // After sleep/wake on macOS the GL context can be invalidated and
+        // every paint cycle throws — showing a modal dialog pumps the
+        // event loop, which fires another paint, which throws, which shows
+        // another dialog, and the user ends up stacking infinite pop-ups.
+        // Stop drawing immediately, then rate-limit the dialog so the
+        // cascade is broken even if paints keep firing.
+        StopDrawing();
+
+        static wxLongLong s_lastGfxErrorMs = 0;
+        static const long GFX_ERROR_COOLDOWN_MS = 30000;  // 30 s
+        wxLongLong nowMs = wxGetUTCTimeMillis();
+
+        if( s_lastGfxErrorMs == 0
+            || ( nowMs - s_lastGfxErrorMs ).GetValue() > GFX_ERROR_COOLDOWN_MS )
         {
-            SwitchBackend( GAL_FALLBACK );
-
-            DisplayInfoMessage( m_parent,
-                                _( "Could not use OpenGL, falling back to software rendering" ),
-                                wxString( err.what() ) );
-
-            StartDrawing();
+            s_lastGfxErrorMs = nowMs;
+            DisplayErrorMessage( m_parent, _( "Graphics error" ),
+                                 wxString( err.what() ) );
         }
         else
         {
-            // We're well and truly banjaxed if we get here without a fallback.
-            // After sleep/wake on macOS the GL context can be invalidated and
-            // every paint cycle throws — showing a modal dialog pumps the
-            // event loop, which fires another paint, which throws, which shows
-            // another dialog, and the user ends up stacking infinite pop-ups.
-            // Stop drawing immediately, then rate-limit the dialog so the
-            // cascade is broken even if paints keep firing.
-            StopDrawing();
-
-            static wxLongLong s_lastGfxErrorMs = 0;
-            static const long GFX_ERROR_COOLDOWN_MS = 30000;  // 30 s
-            wxLongLong nowMs = wxGetUTCTimeMillis();
-
-            if( s_lastGfxErrorMs == 0
-                || ( nowMs - s_lastGfxErrorMs ).GetValue() > GFX_ERROR_COOLDOWN_MS )
-            {
-                s_lastGfxErrorMs = nowMs;
-                DisplayErrorMessage( m_parent, _( "Graphics error" ),
-                                     wxString( err.what() ) );
-            }
-            else
-            {
-                wxLogTrace( wxT( "KICAD_GAL_OPENGL_ERROR" ),
-                            wxT( "Suppressing graphics error dialog (cooldown): %s" ),
-                            err.what() );
-            }
+            wxLogTrace( wxT( "KICAD_GAL_OPENGL_ERROR" ),
+                        wxT( "Suppressing graphics error dialog (cooldown): %s" ),
+                        err.what() );
         }
+    }
+    catch( ... )
+    {
+        DisplayErrorMessage( m_parent, _( "Graphics error" ), _( "Unknown exception" ) );
+        StopDrawing();
     }
 
     if( isDirty )
@@ -475,13 +542,14 @@ void EDA_DRAW_PANEL_GAL::Refresh( bool aEraseBackground, const wxRect* aRect )
 {
     wxLongLong now = wxGetLocalTimeMillis();
     wxLongLong delta = now - m_lastRepaintEnd;
+    bool galInitialized = m_gal && m_gal->IsInitialized();
 
     // When vsync is available the driver throttles SwapBuffers, so we only need
     // a small guard to avoid queueing work faster than the GPU can consume it.
     // Without vsync, enforce a 60 FPS ceiling to prevent saturating the GPU.
     int minPeriodMs = 3;
 
-    if( m_gal && m_gal->IsInitialized() && m_gal->GetSwapInterval() == 0 )
+    if( galInitialized && m_gal->GetSwapInterval() == 0 )
         minPeriodMs = 16;
 
     if( delta >= minPeriodMs )
@@ -517,7 +585,7 @@ void EDA_DRAW_PANEL_GAL::ForceRefresh()
         }
     }
 
-    if( !DoRePaint() && m_needRecoveryPaint )
+    if( !DoRePaint( false ) && m_needRecoveryPaint )
     {
         // Recovery paint failed (e.g. X11 exposure still not processed).
         // Retry via idle handler so we don't lose the recovery request.

@@ -118,6 +118,17 @@ DIALOG_EXPORT_2581_BASE::DIALOG_EXPORT_2581_BASE( wxWindow* parent, wxWindowID i
 	fgSizer4->SetFlexibleDirection( wxBOTH );
 	fgSizer4->SetNonFlexibleGrowMode( wxFLEX_GROWMODE_SPECIFIED );
 
+	m_lblBomRev = new wxStaticText( this, wxID_ANY, _("BOM revision:"), wxDefaultPosition, wxDefaultSize, 0 );
+	m_lblBomRev->Wrap( -1 );
+	m_lblBomRev->SetToolTip( _("Revision string for the BOM section. Auto-populated from schematic title block revision") );
+
+	fgSizer4->Add( m_lblBomRev, 0, wxALIGN_CENTER_VERTICAL|wxEXPAND, 5 );
+
+	m_textBomRev = new wxTextCtrl( this, wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, 0 );
+	m_textBomRev->SetToolTip( _("Revision string for the BOM section. Auto-populated from schematic title block revision") );
+
+	fgSizer4->Add( m_textBomRev, 0, wxALIGN_CENTER_VERTICAL|wxEXPAND|wxRIGHT, 5 );
+
 	m_lblOEM = new wxStaticText( this, wxID_ANY, _("Internal ID:"), wxDefaultPosition, wxDefaultSize, 0 );
 	m_lblOEM->Wrap( -1 );
 	m_lblOEM->SetToolTip( _("Part ID number used internally during design.\nThis number must be unique to each part.") );

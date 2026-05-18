@@ -20,8 +20,10 @@
     * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
     */
 
-#include <drc/drc_creepage_utils.h>
+#include "drc/drc_creepage_utils.h"
+
 #include <geometry/intersection.h>
+#include <pcb_track.h>
 #include <thread_pool.h>
 
 
@@ -33,27 +35,36 @@ bool segmentIntersectsArc( const VECTOR2I& p1, const VECTOR2I& p2, const VECTOR2
     VECTOR2I  startPoint( radius * cos( startAngle.AsRadians() ), radius * sin( startAngle.AsRadians() ) );
     SHAPE_ARC arc( center, startPoint + center, endAngle - startAngle );
 
+    VECTOR2I arcStart = arc.GetP0();
+    VECTOR2I arcEnd = arc.GetP1();
+
     INTERSECTABLE_GEOM geom1 = segment;
     INTERSECTABLE_GEOM geom2 = arc;
 
+    std::vector<VECTOR2I> rawPoints;
+    INTERSECTION_VISITOR  visitor( geom2, rawPoints );
+    std::visit( visitor, geom1 );
+
+    // Filter out intersections where a segment endpoint coincides with an
+    // arc endpoint, matching the endpoint exclusion in segments_intersect.
+    std::vector<VECTOR2I> filtered;
+
+    for( const VECTOR2I& ip : rawPoints )
+    {
+        bool atSharedEndpoint = ( ip == arcStart || ip == arcEnd )
+                                && ( ip == p1 || ip == p2 );
+
+        if( !atSharedEndpoint )
+            filtered.push_back( ip );
+    }
+
     if( aIntersectionPoints )
     {
-        size_t startCount = aIntersectionPoints->size();
-
-        INTERSECTION_VISITOR visitor( geom2, *aIntersectionPoints );
-        std::visit( visitor, geom1 );
-
-        return aIntersectionPoints->size() > startCount;
+        for( const VECTOR2I& ip : filtered )
+            aIntersectionPoints->push_back( ip );
     }
-    else
-    {
-        std::vector<VECTOR2I> intersectionPoints;
 
-        INTERSECTION_VISITOR visitor( geom2, intersectionPoints );
-        std::visit( visitor, geom1 );
-
-        return intersectionPoints.size() > 0;
-    }
+    return !filtered.empty();
 }
 
 
@@ -523,8 +534,10 @@ void CREEPAGE_GRAPH::TransformEdgeToCreepShapes()
         case SHAPE_T::SEGMENT:
         {
             BE_SHAPE_POINT* a = new BE_SHAPE_POINT( d->GetStart() );
+            a->SetParent( d );
             m_shapeCollection.push_back( a );
             a = new BE_SHAPE_POINT( d->GetEnd() );
+            a->SetParent( d );
             m_shapeCollection.push_back( a );
             break;
         }
@@ -532,12 +545,16 @@ void CREEPAGE_GRAPH::TransformEdgeToCreepShapes()
         case SHAPE_T::RECTANGLE:
         {
             BE_SHAPE_POINT* a = new BE_SHAPE_POINT( d->GetStart() );
+            a->SetParent( d );
             m_shapeCollection.push_back( a );
             a = new BE_SHAPE_POINT( d->GetEnd() );
+            a->SetParent( d );
             m_shapeCollection.push_back( a );
             a = new BE_SHAPE_POINT( VECTOR2I( d->GetEnd().x, d->GetStart().y ) );
+            a->SetParent( d );
             m_shapeCollection.push_back( a );
             a = new BE_SHAPE_POINT( VECTOR2I( d->GetStart().x, d->GetEnd().y ) );
+            a->SetParent( d );
             m_shapeCollection.push_back( a );
             break;
         }
@@ -546,6 +563,7 @@ void CREEPAGE_GRAPH::TransformEdgeToCreepShapes()
             for( const VECTOR2I& p : d->GetPolyPoints() )
             {
                 BE_SHAPE_POINT* a = new BE_SHAPE_POINT( p );
+                a->SetParent( d );
                 m_shapeCollection.push_back( a );
             }
 
@@ -772,7 +790,7 @@ void BE_SHAPE_ARC::ConnectChildren( std::shared_ptr<GRAPH_NODE>& a1, std::shared
 
     double weight = abs( m_radius * ( angle2 - angle1 ).AsRadians() );
 
-    if( true || aG.m_minGrooveWidth <= 0 )
+    if( aG.m_minGrooveWidth <= 0 )
     {
         if( ( weight > aG.GetTarget() ) )
             return;
@@ -1492,6 +1510,35 @@ std::vector<PATH_CONNECTION> CU_SHAPE_CIRCLE::Paths( const BE_SHAPE_CIRCLE& aS2,
     if( dist > aMaxWeight || dist == 0 )
         return result;
 
+    double circleAngle = EDA_ANGLE( center2 - center1 ).AsRadians();
+
+    if( dist <= R2 )
+    {
+        // Copper circle center is inside the board-edge circle so external tangent lines
+        // don't exist. The nearest gap is the radial distance between circle boundaries.
+        double weight = std::max( R2 - dist - R1, 0.0 );
+
+        if( weight > aMaxWeight )
+            return result;
+
+        double radialAngle = circleAngle + M_PI;
+        double cx = cos( radialAngle );
+        double cy = sin( radialAngle );
+        VECTOR2I pEnd = center2 + VECTOR2I( R2 * cx, R2 * cy );
+        VECTOR2I pStart = center1 + VECTOR2I( R1 * cx, R1 * cy );
+
+        PATH_CONNECTION pc;
+        pc.a1 = pStart;
+        pc.a2 = pEnd;
+        pc.weight = weight;
+
+        // Callers expect two entries (one per tangent side) and select by index.
+        result.push_back( pc );
+        result.push_back( pc );
+
+        return result;
+    }
+
     double weight = sqrt( dist * dist - R2 * R2 ) - R1;
     double theta = asin( R2 / dist );
     double psi = acos( R2 / dist );
@@ -1501,8 +1548,6 @@ std::vector<PATH_CONNECTION> CU_SHAPE_CIRCLE::Paths( const BE_SHAPE_CIRCLE& aS2,
 
     PATH_CONNECTION pc;
     pc.weight = std::max( weight, 0.0 );
-
-    double circleAngle = EDA_ANGLE( center2 - center1 ).AsRadians();
 
     VECTOR2I pStart;
     VECTOR2I pEnd;
@@ -2395,6 +2440,53 @@ void CREEPAGE_GRAPH::GeneratePaths( double aMaxWeight, PCB_LAYER_ID aLayer )
             searchParent( i );
     }
 
+    // Generate work items for same-parent node pairs. The cross-parent search above
+    // skips pairs where parent1 == parent2, but creepage paths between different edge
+    // segments of the same slot (which share a footprint grandparent) are needed for
+    // the path to navigate around the slot geometry. Also handles null-parent nodes
+    // (e.g. NPTH pad shapes) which were excluded from the RTree search entirely.
+    for( const auto& [parent, net_groups] : parent_net_groups )
+    {
+        std::vector<std::shared_ptr<GRAPH_NODE>> sameParentNodes;
+
+        for( const auto& [net, nodeList] : net_groups )
+            sameParentNodes.insert( sameParentNodes.end(), nodeList.begin(), nodeList.end() );
+
+        for( size_t i = 0; i < sameParentNodes.size(); i++ )
+        {
+            for( size_t j = i + 1; j < sameParentNodes.size(); j++ )
+            {
+                auto& gn1 = sameParentNodes[i];
+                auto& gn2 = sameParentNodes[j];
+
+                // ConnectChildren already handles nodes on the same CREEP_SHAPE
+                if( gn1->m_parent == gn2->m_parent )
+                    continue;
+
+                // Skip same-net conductive pairs
+                if( gn1->m_parent->IsConductive() && gn2->m_parent->IsConductive()
+                    && gn1->m_net == gn2->m_net )
+                {
+                    continue;
+                }
+
+                VECTOR2I pos1 = gn1->m_parent->GetPos();
+                VECTOR2I pos2 = gn2->m_parent->GetPos();
+                int      r1 = gn1->m_parent->GetRadius();
+                int      r2 = gn2->m_parent->GetRadius();
+
+                int64_t centerDistSq = ( pos1 - pos2 ).SquaredEuclideanNorm();
+                double  threshold = aMaxWeight + r1 + r2;
+                double  thresholdSq = threshold * threshold;
+
+                if( (double) centerDistSq > thresholdSq )
+                    continue;
+
+                work_items.push_back( { gn1, gn2 } );
+            }
+        }
+    }
+
     auto processWorkItems =
             [&]( size_t idx ) -> bool
             {
@@ -2406,10 +2498,23 @@ void CREEPAGE_GRAPH::GeneratePaths( double aMaxWeight, PCB_LAYER_ID aLayer )
 
                 for( const PATH_CONNECTION& pc : GetPaths( shape1, shape2, aMaxWeight ) )
                 {
-                    std::vector<const BOARD_ITEM*> IgnoreForTest =
-                    {
-                        gn1->m_parent->GetParent(), gn2->m_parent->GetParent()
-                    };
+                    std::vector<const BOARD_ITEM*> IgnoreForTest;
+
+                    // Both segments_intersect and segmentIntersectsArc exclude
+                    // shared-endpoint intersections, so POINT and ARC shapes don't
+                    // need their parent skipped during board edge intersection
+                    // testing. Only CIRCLE shapes need parent suppression because
+                    // segmentIntersectsCircle has no endpoint exclusion.
+                    //
+                    // Previously both parents were always added, which caused paths
+                    // between corners of different Edge.Cuts rectangles to skip both
+                    // rectangles entirely, allowing invalid paths through slot
+                    // interiors.
+                    if( shape1->GetType() == CREEP_SHAPE::TYPE::CIRCLE )
+                        IgnoreForTest.push_back( shape1->GetParent() );
+
+                    if( shape2->GetType() == CREEP_SHAPE::TYPE::CIRCLE )
+                        IgnoreForTest.push_back( shape2->GetParent() );
 
                     bool valid = pc.isValid( m_board, aLayer, m_boardEdge, IgnoreForTest, m_boardOutline,
                                      { false, true }, m_minGrooveWidth, &trackIndex );

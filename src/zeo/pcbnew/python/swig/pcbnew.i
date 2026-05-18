@@ -62,6 +62,7 @@ warnings.warn("The SWIG-based Python interface to the PCB editor is deprecated a
 // ignore a couple of items that generate warnings from swig built code
 %ignore BOARD_ITEM::ZeroOffset;
 %ignore PAD::m_PadSketchModePenSize;
+%ignore PCB_TEXT_KNOCKOUT_CACHE_DATA;
 
 class BASE_SET {};
 %ignore BASE_SET;
@@ -85,6 +86,7 @@ class BASE_SET {};
 #include <exporters/gendrill_excellon_writer.h>
 #include <exporters/gendrill_gerber_writer.h>
 #include <exporters/gerber_jobfile_writer.h>
+#include <footprint.h>
 #include <pcb_io/pcb_io_mgr.h>
 #include <pcb_io/pcb_io.h>
 
@@ -149,5 +151,3 @@ HANDLE_EXCEPTIONS(WriteDRCReport)
 %include plugins.i
 %include units.i
 %include version.i
-
-

@@ -40,6 +40,8 @@
 #include <locale_io.h>
 #include <confirm.h>
 #include <string_utils.h>
+#include <wildcards_and_files_ext.h>
+#include <kiplatform/io.h>
 #include <libraries/library_manager.h>
 #include <libraries/symbol_library_adapter.h>
 
@@ -87,7 +89,23 @@ int SYMBOL_LIBRARY_MANAGER::GetLibraryHash( const wxString& aLibrary ) const
 
     if( auto uri = manager.GetFullURI( LIBRARY_TABLE_TYPE::SYMBOL, aLibrary, true ); uri )
     {
-        return std::hash<std::string>{}( aLibrary.ToStdString() + uri->ToStdString() );
+        // Mix a file modification timestamp into the hash so that external changes (e.g. a git
+        // branch switch) are detected by the library tree synchronizer without a restart.
+        wxFileName fn( *uri );
+        long long  mtime = 0;
+
+        wxLogNull silence;
+
+        fn.Normalize( FN_NORMALIZE_FLAGS );
+
+        if( fn.DirExists() )
+            mtime = KIPLATFORM::IO::TimestampDir( fn.GetFullPath(),
+                        wxS( "*." ) + wxString( FILEEXT::KiCadSymbolLibFileExtension ) );
+        else if( fn.IsFileReadable() )
+            mtime = fn.GetModificationTime().GetValue().GetValue();
+
+        size_t base = std::hash<std::string>{}( aLibrary.ToStdString() + uri->ToStdString() );
+        return static_cast<int>( base ^ static_cast<size_t>( mtime ) );
     }
 
     return -1;
@@ -203,12 +221,12 @@ bool SYMBOL_LIBRARY_MANAGER::SaveLibrary( const wxString& aLibrary, const wxStri
                                  wxString::Format( wxT( "Derived symbol '%s' found with undefined parent." ),
                                                    symbol->GetName() ) );
 
-                    LIB_SYMBOL* libParent = pi->LoadSymbol( aLibrary, oldParent->GetName(), &properties );
+                    LIB_SYMBOL* libParent = pi->LoadSymbol( aFileName, oldParent->GetName(), &properties );
 
                     if( !libParent )
                     {
                         libParent = new LIB_SYMBOL( *oldParent );
-                        pi->SaveSymbol( aLibrary, libParent, &properties );
+                        pi->SaveSymbol( aFileName, libParent, &properties );
                     }
                     else
                     {
@@ -230,11 +248,11 @@ bool SYMBOL_LIBRARY_MANAGER::SaveLibrary( const wxString& aLibrary, const wxStri
 
                     newSymbol = new LIB_SYMBOL( *symbol );
                     newSymbol->SetParent( libParent );
-                    pi->SaveSymbol( aLibrary, newSymbol, &properties );
+                    pi->SaveSymbol( aFileName, newSymbol, &properties );
                 }
-                else if( !pi->LoadSymbol( aLibrary, symbol->GetName(), &properties ) )
+                else if( !pi->LoadSymbol( aFileName, symbol->GetName(), &properties ) )
                 {
-                    pi->SaveSymbol( aLibrary, new LIB_SYMBOL( *symbol ), &properties );
+                    pi->SaveSymbol( aFileName, new LIB_SYMBOL( *symbol ), &properties );
                 }
             }
             catch( ... )
@@ -814,13 +832,6 @@ bool SYMBOL_LIBRARY_MANAGER::addLibrary( const wxString& aFilePath, bool aCreate
 
     if( success )
     {
-        manager.ReloadTables( aScope, { LIBRARY_TABLE_TYPE::SYMBOL } );
-
-        // Tables are reinitialized. So reinit table reference.
-        optTable = manager.Table( LIBRARY_TABLE_TYPE::SYMBOL, aScope );
-        wxCHECK( optTable, false );
-        table = optTable.value();
-
         if( aCreate )
         {
             wxCHECK( schFileType != SCH_IO_MGR::SCH_FILE_T::SCH_LEGACY, false );

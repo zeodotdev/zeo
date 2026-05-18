@@ -253,7 +253,7 @@ protected:
     void openTable( const LIBRARY_TABLE_ROW& aRow ) override
     {
         wxFileName fn( LIBRARY_MANAGER::ExpandURI( aRow.URI(), Pgm().GetSettingsManager().Prj() ) );
-        std::shared_ptr<LIBRARY_TABLE> child = std::make_shared<LIBRARY_TABLE>( fn, LIBRARY_TABLE_SCOPE::GLOBAL );
+        std::shared_ptr<LIBRARY_TABLE> child = std::make_shared<LIBRARY_TABLE>( fn, LIBRARY_TABLE_SCOPE::GLOBAL, LIBRARY_TABLE_TYPE::DESIGN_BLOCK );
 
         m_panel->OpenTable( child, aRow.Nickname() );
     }
@@ -331,6 +331,18 @@ void PANEL_DESIGN_BLOCK_LIB_TABLE::AddTable( LIBRARY_TABLE* table, const wxStrin
                                                                     m_supportedDesignBlockFiles ),
                         true /* take ownership */ );
     }
+
+    static_cast<LIB_TABLE_GRID_DATA_MODEL*>( grid->GetTable() )->RecheckRows();
+
+    LIB_TABLE_NOTEBOOK_PANEL* notebookPanel =
+            static_cast<LIB_TABLE_NOTEBOOK_PANEL*>( m_notebook->GetPage( m_notebook->GetPageCount() - 1 ) );
+
+    static_cast<LIB_TABLE_GRID_DATA_MODEL*>( grid->GetTable() )
+            ->SetChangeCallback(
+                    [notebookPanel]()
+                    {
+                        notebookPanel->MarkDirty();
+                    } );
 
     // add Cut, Copy, and Paste to wxGrids
     grid->PushEventHandler( new DESIGN_BLOCK_GRID_TRICKS( this, grid ) );

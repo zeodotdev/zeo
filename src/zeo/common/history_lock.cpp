@@ -24,8 +24,11 @@
 #include <history_lock.h>
 #include <lockfile.h>
 #include <advanced_config.h>
+#include <pgm_base.h>
+#include <settings/settings_manager.h>
 #include <wx/filename.h>
 #include <wx/filefn.h>
+#include <wx/ffile.h>
 #include <wx/log.h>
 #include <wx/datetime.h>
 
@@ -36,9 +39,7 @@
 
 static wxString historyPath( const wxString& aProjectPath )
 {
-    wxFileName p( aProjectPath, wxEmptyString );
-    p.AppendDir( wxS( ".history" ) );
-    return p.GetPath();
+    return Pgm().GetSettingsManager().GetLocalHistoryDirForPath( aProjectPath );
 }
 
 
@@ -195,6 +196,19 @@ bool HISTORY_LOCK_MANAGER::openRepository()
         return false;
     }
 
+    // libgit2 will not read .history/.gitignore on its own (it sits outside the workdir).
+    // Inject its rules so users can edit that file and have them honoured.
+    wxFileName ignoreFile( m_historyPath, wxS( ".gitignore" ) );
+
+    if( ignoreFile.FileExists() )
+    {
+        wxFFile  f( ignoreFile.GetFullPath(), wxT( "rb" ) );
+        wxString content;
+
+        if( f.IsOpened() && f.ReadAll( &content ) )
+            git_ignore_add_rule( m_repo, content.utf8_str() );
+    }
+
     m_repoOwned = true;
     return true;
 }
@@ -284,4 +298,22 @@ bool HISTORY_LOCK_MANAGER::BreakStaleLock( const wxString& aProjectPath )
     }
 
     return result;
+}
+
+
+void HISTORY_LOCK_MANAGER::ReleaseRepository()
+{
+    if( m_indexOwned && m_index )
+    {
+        git_index_free( m_index );
+        m_index = nullptr;
+        m_indexOwned = false;
+    }
+
+    if( m_repoOwned && m_repo )
+    {
+        git_repository_free( m_repo );
+        m_repo = nullptr;
+        m_repoOwned = false;
+    }
 }

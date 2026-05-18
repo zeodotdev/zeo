@@ -1744,8 +1744,7 @@ void PDF_PLOTTER::endPlotEmitResources()
                     if( m_project )
                         href = ResolveUriByEnvVars( href, m_project );
 
-                    js += wxString::Format( wxT( "[\"%s\", \"%s\"],\n" ),
-                                            EscapeString( href, CTX_JS_STR ),
+                    js += wxString::Format( wxT( "[\"%s\", \"%s\"],\n" ), EscapeString( property, CTX_JS_STR ),
                                             EscapeString( href, CTX_JS_STR ) );
                 }
                 else if( property.Find( "https:" ) >= 0 )
@@ -1755,8 +1754,7 @@ void PDF_PLOTTER::endPlotEmitResources()
                     if( m_project )
                         href = ResolveUriByEnvVars( href, m_project );
 
-                    js += wxString::Format( wxT( "[\"%s\", \"%s\"],\n" ),
-                                            EscapeString( href, CTX_JS_STR ),
+                    js += wxString::Format( wxT( "[\"%s\", \"%s\"],\n" ), EscapeString( property, CTX_JS_STR ),
                                             EscapeString( href, CTX_JS_STR ) );
                 }
                 else if( property.Find( "file:" ) >= 0 )
@@ -1767,15 +1765,57 @@ void PDF_PLOTTER::endPlotEmitResources()
                         href = ResolveUriByEnvVars( href, m_project );
 
                     href = NormalizeFileUri( href );
+                    wxString displayText = property.substr( 0, property.Find( "file:" ) ) + href;
 
-                    js += wxString::Format( wxT( "[\"%s\", \"%s\"],\n" ),
-                                            EscapeString( href, CTX_JS_STR ),
+                    js += wxString::Format( wxT( "[\"%s\", \"%s\"],\n" ), EscapeString( displayText, CTX_JS_STR ),
                                             EscapeString( href, CTX_JS_STR ) );
                 }
                 else
                 {
-                    js += wxString::Format( wxT( "[\"%s\"],\n" ),
-                                            EscapeString( property, CTX_JS_STR ) );
+                    // Legacy fallback
+                    int      eqPos = property.Find( wxS( " = " ) );
+                    wxString href;
+                    bool     converted = false;
+
+                    if( eqPos != wxNOT_FOUND )
+                    {
+                        href = property.Mid( eqPos + 3 );
+
+                        if( m_project )
+                            href = ResolveUriByEnvVars( href, m_project );
+
+                        if( href.StartsWith( wxS( "/" ) ) || href.StartsWith( wxS( "${" ) )
+                            || ( href.Length() >= 2 && wxIsalpha( href[0] ) && href[1] == ':' )
+                            || href.StartsWith( wxS( "\\\\" ) ) )
+                        {
+                            if( !href.StartsWith( wxS( "/" ) ) )
+                            {
+                                href.Replace( wxS( "\\" ), wxS( "/" ) );
+
+                                if( href.StartsWith( wxS( "//" ) ) )
+                                    href = wxS( "file:" ) + href;
+                                else
+                                    href = wxS( "file:///" ) + href;
+                            }
+                            else
+                            {
+                                href = wxS( "file://" ) + href;
+                            }
+
+                            href = NormalizeFileUri( href );
+                            converted = true;
+                        }
+                    }
+
+                    if( converted )
+                    {
+                        js += wxString::Format( wxT( "[\"%s\", \"%s\"],\n" ), EscapeString( property, CTX_JS_STR ),
+                                                EscapeString( href, CTX_JS_STR ) );
+                    }
+                    else
+                    {
+                        js += wxString::Format( wxT( "[\"%s\"],\n" ), EscapeString( property, CTX_JS_STR ) );
+                    }
                 }
             }
             else if( url.StartsWith( "#" ) )
@@ -1795,21 +1835,44 @@ void PDF_PLOTTER::endPlotEmitResources()
                     }
                 }
             }
-            else if( url.StartsWith( "http:" ) || url.StartsWith( "https:" ) || url.StartsWith( "file:" ) )
+            else
             {
                 wxString href = url;
 
                 if( m_project )
-                    href = ResolveUriByEnvVars( url, m_project );
+                    href = ResolveUriByEnvVars( href, m_project );
 
-                if( url.StartsWith( "file:" ) )
+                // Convert bare file paths to file:// URIs (legacy support)
+                if( !href.StartsWith( wxS( "http:" ) ) && !href.StartsWith( wxS( "https:" ) )
+                    && !href.StartsWith( wxS( "file:" ) ) )
+                {
+                    if( href.StartsWith( wxS( "/" ) ) || href.StartsWith( wxS( "${" ) ) )
+                    {
+                        href = wxS( "file://" ) + href;
+                    }
+                    else if( href.Length() >= 2 && wxIsalpha( href[0] ) && href[1] == ':' )
+                    {
+                        href.Replace( wxS( "\\" ), wxS( "/" ) );
+                        href = wxS( "file:///" ) + href;
+                    }
+                    else if( href.StartsWith( wxS( "\\\\" ) ) )
+                    {
+                        href.Replace( wxS( "\\" ), wxS( "/" ) );
+                        href = wxS( "file:" ) + href;
+                    }
+                }
+
+                if( href.StartsWith( wxS( "file:" ) ) )
                     href = NormalizeFileUri( href );
 
-                wxString menuText = wxString::Format( _( "Open %s" ), href );
+                if( href.StartsWith( wxS( "http:" ) ) || href.StartsWith( wxS( "https:" ) )
+                    || href.StartsWith( wxS( "file:" ) ) )
+                {
+                    wxString menuText = wxString::Format( _( "Open %s" ), href );
 
-                js += wxString::Format( wxT( "[\"%s\", \"%s\"],\n" ),
-                                        EscapeString( href, CTX_JS_STR ),
-                                        EscapeString( href, CTX_JS_STR ) );
+                    js += wxString::Format( wxT( "[\"%s\", \"%s\"],\n" ), EscapeString( menuText, CTX_JS_STR ),
+                                            EscapeString( href, CTX_JS_STR ) );
+                }
             }
         }
 
@@ -1842,17 +1905,33 @@ void PDF_PLOTTER::endPlotEmitResources()
         wxString js = R"JS(
 function ShM(aEntries) {
     var aParams = [];
-    for (var i in aEntries) {
+    for (var i = 0; i < aEntries.length; ++i) {
         aParams.push({
             cName: aEntries[i][0],
-            cReturn: aEntries[i][1]
+            cReturn: aEntries[i].length > 1 ? aEntries[i][1] : ''
         })
     }
 
     var cChoice = app.popUpMenuEx.apply(app, aParams);
-    if (cChoice != null && cChoice.substring(0, 1) == '#') this.pageNum = parseInt(cChoice.slice(1));
-    else if (cChoice != null && cChoice.substring(0, 4) == 'http') app.launchURL(cChoice);
-    else if (cChoice != null && cChoice.substring(0, 4) == 'file') app.openDoc(cChoice.substring(7));
+    if (cChoice == null || cChoice == '') return;
+
+    if (cChoice.substring(0, 1) == '#') {
+        this.pageNum = parseInt(cChoice.slice(1));
+        return;
+    }
+
+    // Fallback: some viewers return cName instead of cReturn
+    var url = cChoice;
+    if (url.substring(0, 4) != 'http' && url.substring(0, 4) != 'file') {
+        var idx = url.indexOf('http');
+        if (idx < 0) idx = url.indexOf('file:');
+        if (idx >= 0) url = url.substring(idx);
+        else return;
+    }
+
+    if (url.substring(0, 8) == 'file:///') app.openDoc(url.substring(7));
+    else if (url.substring(0, 7) == 'file://') app.openDoc('//' + url.substring(7));
+    else app.launchURL(url);
 }
 )JS";
 
@@ -2422,8 +2501,46 @@ VECTOR2I PDF_PLOTTER::renderWord( const wxString& aWord, const VECTOR2I& aPositi
                 adj_d -= ctm_b * tilt;
             }
 
+            // Realign the Type3 stroke text with where GAL would have drawn the same glyphs.
+            // PDF_PLOTTER::Text() derives its anchor from StringBoundaryLimits, which inflates
+            // the stroke-font bounding box by 3*thickness and does not account for the
+            // m_PDFStrokeFontYOffset baked into every Type3 glyph.  Both issues together shift
+            // the text off its anchor by an amount that depends on the caller's pen width.
+            // The corrections below are the difference between the anchor-relative position
+            // FONT::getLinePositions computes (+yOffsetEm to cancel the glyph yOffset) and
+            // what PDF_PLOTTER::Text already applied.
+            const double yOffsetEm = ADVANCED_CFG::GetCfg().m_PDFStrokeFontYOffset;
+            const double thicknessDev = userToDeviceSize( (double) aWidth );
+            double deltaDev = 0.0;
+
+            switch( aV_justify )
+            {
+            case GR_TEXT_V_ALIGN_TOP:
+                deltaDev = yOffsetEm * fontSize - 3.0 * thicknessDev;
+                break;
+
+            case GR_TEXT_V_ALIGN_CENTER:
+                deltaDev = ( yOffsetEm - 0.085 ) * fontSize - 1.5 * thicknessDev;
+                break;
+
+            case GR_TEXT_V_ALIGN_BOTTOM:
+                deltaDev = ( yOffsetEm - 0.17 ) * fontSize;
+                break;
+
+            case GR_TEXT_V_ALIGN_INDETERMINATE:
+                break;
+            }
+
+            // Shift the text-matrix origin along the text's local Y axis, which is the
+            // (adj_c, adj_d) column of the text matrix.  Using adj_c/adj_d rather than a raw
+            // sin/cos of aOrient keeps the correction aligned with the rendered glyph Y axis
+            // after italic shear has been applied.  Positive deltaDev moves pos downward in
+            // IU (+Y down) -> upward in glyph-local Y -> subtract from the origin.
+            const double adj_ctm_e = ctm_e - deltaDev * adj_c;
+            const double adj_ctm_f = ctm_f - deltaDev * adj_d;
+
             fmt::print( m_workFile, "q {:f} {:f} {:f} {:f} {:f} {:f} cm BT {} Tr {} Tz ",
-                        ctm_a, ctm_b, adj_c, adj_d, ctm_e, ctm_f,
+                        ctm_a, ctm_b, adj_c, adj_d, adj_ctm_e, adj_ctm_f,
                         0, // render_mode
                         encodeDoubleForPlotter( wideningFactor * 100 ) );
 

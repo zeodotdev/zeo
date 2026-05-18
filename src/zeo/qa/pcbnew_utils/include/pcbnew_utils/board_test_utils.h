@@ -33,10 +33,13 @@
 
 #include <wx/string.h>
 
+#include <boost/test/unit_test.hpp>
+
 #include <reporter.h>
 #include <core/typeinfo.h>
 #include <tool/tool_manager.h>
 #include <pcb_io/pcb_io.h>
+#include <pcb_track_types.h>
 
 class BOARD;
 class BOARD_ITEM;
@@ -48,6 +51,13 @@ class ZONE;
 class PAD;
 class SHAPE_POLY_SET;
 class SETTINGS_MANAGER;
+
+
+/*
+ * Boost test printers
+ */
+std::ostream& boost_test_print_type( std::ostream& os, const VIATYPE& aViaType );
+
 
 namespace KI_TEST
 {

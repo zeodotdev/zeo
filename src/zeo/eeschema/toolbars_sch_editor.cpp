@@ -466,8 +466,7 @@ bool SCH_EDIT_FRAME::ShowAddVariantDialog()
     // Update the variant selector and select the new variant
     UpdateVariantSelectionCtrl( Schematic().GetVariantNamesForUI() );
     SetCurrentVariant( variantName );
-    UpdateProperties();
-    HardRedraw();
+    OnModify();
     return true;
 }
 
@@ -495,5 +494,8 @@ void SCH_EDIT_FRAME::SetCurrentVariant( const wxString& aVariantName )
     {
         m_currentVariantCtrl->SetSelection( newSelection );
         Schematic().SetCurrentVariant( aVariantName );
+
+        UpdateProperties();
+        HardRedraw();
     }
 }

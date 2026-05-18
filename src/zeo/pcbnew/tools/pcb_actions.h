@@ -415,6 +415,12 @@ public:
     /// Duplicate zone onto another layer
     static TOOL_ACTION zoneDuplicate;
 
+    // Zone priority actions
+    static TOOL_ACTION zonePriorityMoveToTop;
+    static TOOL_ACTION zonePriorityRaise;
+    static TOOL_ACTION zonePriorityLower;
+    static TOOL_ACTION zonePriorityMoveToBottom;
+
     /// Scripting Actions
     static TOOL_ACTION pluginsShowFolder;
 
@@ -455,6 +461,7 @@ public:
     static TOOL_ACTION cleanupGraphics;
     static TOOL_ACTION updateFootprint;
     static TOOL_ACTION updateFootprints;
+    static TOOL_ACTION migrate3DModels;
     static TOOL_ACTION changeFootprint;
     static TOOL_ACTION changeFootprints;
     static TOOL_ACTION swapLayers;

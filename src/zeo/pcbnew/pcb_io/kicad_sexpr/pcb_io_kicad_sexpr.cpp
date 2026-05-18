@@ -313,6 +313,15 @@ void PCB_IO_KICAD_SEXPR::SaveBoard( const wxString& aFileName, BOARD* aBoard,
         }
     }
 
+    PRETTIFIED_FILE_OUTPUTFORMATTER formatter( aFileName );
+    FormatBoardToFormatter( &formatter, aBoard, aProperties );
+    formatter.Finish();
+}
+
+
+void PCB_IO_KICAD_SEXPR::FormatBoardToFormatter( OUTPUTFORMATTER* aOut, BOARD* aBoard,
+                                                  const std::map<std::string, UTF8>* aProperties )
+{
     init( aProperties );
 
     m_board = aBoard;       // after init()
@@ -324,9 +333,7 @@ void PCB_IO_KICAD_SEXPR::SaveBoard( const wxString& aFileName, BOARD* aBoard,
     else
         m_board->GetEmbeddedFiles()->ClearEmbeddedFonts();
 
-    PRETTIFIED_FILE_OUTPUTFORMATTER formatter( aFileName );
-
-    m_out = &formatter;     // no ownership
+    m_out = aOut;
 
     m_out->Print( "(kicad_pcb (version %d) (generator \"pcbnew\") (generator_version %s)",
                   SEXPR_BOARD_FILE_VERSION,
@@ -335,7 +342,6 @@ void PCB_IO_KICAD_SEXPR::SaveBoard( const wxString& aFileName, BOARD* aBoard,
     Format( aBoard );
 
     m_out->Print( ")" );
-    m_out->Finish();
 
     m_out = nullptr;
 }
@@ -801,8 +807,8 @@ void PCB_IO_KICAD_SEXPR::format( const BOARD* aBoard ) const
                                                                 aBoard->Drawings().end() );
     std::set<PCB_TRACK*, PCB_TRACK::cmp_tracks> sorted_tracks( aBoard->Tracks().begin(),
                                                                aBoard->Tracks().end() );
-    std::set<PCB_POINT*, BOARD_ITEM::ptr_cmp> sorted_points( aBoard->Points().begin(),
-                                                             aBoard->Points().end() );
+    std::set<PCB_POINT*, PCB_POINT::cmp_points> sorted_points( aBoard->Points().begin(),
+                                                               aBoard->Points().end() );
     std::set<BOARD_ITEM*, BOARD_ITEM::ptr_cmp> sorted_zones( aBoard->Zones().begin(),
                                                              aBoard->Zones().end() );
     std::set<BOARD_ITEM*, BOARD_ITEM::ptr_cmp> sorted_groups( aBoard->Groups().begin(),
@@ -1115,7 +1121,7 @@ void PCB_IO_KICAD_SEXPR::format( const PCB_SHAPE* aShape ) const
                       formatInternalUnits( aShape->GetLocalSolderMaskMargin().value() ).c_str() );
     }
 
-    if( aShape->GetNetCode() > 0 )
+    if( !( m_ctl & CTL_OMIT_PAD_NETS ) && aShape->GetNetCode() > 0 )
         m_out->Print( "(net %s)", m_out->Quotew( aShape->GetNetname() ).c_str() );
 
     KICAD_FORMAT::FormatUuid( m_out, aShape->m_Uuid );
@@ -1428,15 +1434,15 @@ void PCB_IO_KICAD_SEXPR::format( const FOOTPRINT* aFootprint ) const
         m_out->Print( ")" );
     }
 
-    Format( (BOARD_ITEM*) &aFootprint->Reference() );
-    Format( (BOARD_ITEM*) &aFootprint->Value() );
+    Format( &aFootprint->Reference() );
+    Format( &aFootprint->Value() );
 
     std::set<PAD*, FOOTPRINT::cmp_pads> sorted_pads( aFootprint->Pads().begin(),
                                                      aFootprint->Pads().end() );
     std::set<BOARD_ITEM*, FOOTPRINT::cmp_drawings> sorted_drawings(
             aFootprint->GraphicalItems().begin(),
             aFootprint->GraphicalItems().end() );
-    std::set<PCB_POINT*, FOOTPRINT::ptr_cmp> sorted_points(
+    std::set<PCB_POINT*, PCB_POINT::cmp_points> sorted_points(
             aFootprint->Points().begin(),
             aFootprint->Points().end() );
     std::set<ZONE*, FOOTPRINT::cmp_zones> sorted_zones( aFootprint->Zones().begin(),
@@ -2458,15 +2464,26 @@ void PCB_IO_KICAD_SEXPR::format( const PCB_GROUP* aGroup ) const
 {
     wxArrayString memberIds;
 
+    // Validate member pointers against the board cache to avoid use-after-free on dangling
+    // pointers (e.g. when a group held a reference to a deleted item).  This validation only
+    // applies when the group itself is part of m_board; for groups created off-board (e.g. a
+    // DeepClone() used by the clipboard) the cache contains the originals, not our clones, so
+    // skip the validation in that case and trust the member pointers.
+    bool                                validateAgainstBoard = false;
+    std::unordered_set<const EDA_ITEM*> validPtrs;
+
     if( m_board )
     {
         const auto& cache = m_board->GetItemByIdCache();
 
-        std::unordered_set<const EDA_ITEM*> validPtrs;
-
         for( const auto& [uuid, item] : cache )
             validPtrs.insert( item );
 
+        validateAgainstBoard = validPtrs.count( aGroup ) > 0;
+    }
+
+    if( validateAgainstBoard )
+    {
         for( EDA_ITEM* member : aGroup->GetItems() )
         {
             if( validPtrs.count( member ) )
@@ -2479,7 +2496,7 @@ void PCB_IO_KICAD_SEXPR::format( const PCB_GROUP* aGroup ) const
             memberIds.Add( member->m_Uuid.AsString() );
     }
 
-    if( memberIds.size() <= 1 )
+    if( memberIds.empty() )
         return;
 
     m_out->Print( "(group %s", m_out->Quotew( aGroup->GetName() ).c_str() );
@@ -2851,7 +2868,8 @@ void PCB_IO_KICAD_SEXPR::format( const PCB_TRACK* aTrack ) const
         }
     }
 
-    m_out->Print( "(net %s)", m_out->Quotew( aTrack->GetNetname() ).c_str() );
+    if( !( m_ctl & CTL_OMIT_PAD_NETS ) )
+        m_out->Print( "(net %s)", m_out->Quotew( aTrack->GetNetname() ).c_str() );
 
     KICAD_FORMAT::FormatUuid( m_out, aTrack->m_Uuid );
     m_out->Print( ")" );
@@ -2862,8 +2880,11 @@ void PCB_IO_KICAD_SEXPR::format( const ZONE* aZone ) const
 {
     m_out->Print( "(zone" );
 
-    if( aZone->IsOnCopperLayer() && !aZone->GetIsRuleArea() && aZone->GetNetCode() > 0 )
+    if( !( m_ctl & CTL_OMIT_PAD_NETS ) && aZone->IsOnCopperLayer() && !aZone->GetIsRuleArea()
+            && aZone->GetNetCode() > 0 )
+    {
         m_out->Print( "(net %s)", m_out->Quotew( aZone->GetNetname() ).c_str() );
+    }
 
     if( aZone->IsLocked() )
         KICAD_FORMAT::FormatBool( m_out, "locked", true );
@@ -3054,6 +3075,9 @@ void PCB_IO_KICAD_SEXPR::format( const ZONE* aZone ) const
 
         for( const SHAPE_LINE_CHAIN& chain : poly )
         {
+            if( chain.PointCount() == 0 )
+                continue;
+
             m_out->Print( "(polygon" );
             formatPolyPts( chain );
             m_out->Print( ")" );
@@ -3159,8 +3183,11 @@ BOARD* PCB_IO_KICAD_SEXPR::DoLoad( LINE_READER& aReader, BOARD* aAppendToMe,
 {
     init( aProperties );
 
-    PCB_IO_KICAD_SEXPR_PARSER parser( &aReader, aAppendToMe, m_queryUserCallback,
-                                      aProgressReporter, aLineCount );
+    bool preserveDestinationStackup =
+            aProperties && aProperties->contains( PCB_IO_LOAD_PROPERTIES::APPEND_PRESERVE_DESTINATION_STACKUP );
+
+    PCB_IO_KICAD_SEXPR_PARSER parser( &aReader, aAppendToMe, m_queryUserCallback, aProgressReporter, aLineCount,
+                                      preserveDestinationStackup );
     BOARD* board;
 
     try
@@ -3449,6 +3476,11 @@ void PCB_IO_KICAD_SEXPR::FootprintSave( const wxString& aLibraryPath, const FOOT
     // Detach it from the board and its group
     footprint->SetParent( nullptr );
     footprint->SetParentGroup( nullptr );
+
+    // Now that the clone is detached from its parent board, any m_netinfo pointers its
+    // descendants still carry reference NETINFO_ITEMs owned by that board and may dangle.
+    // Force them all to the board-independent ORPHANED singleton before serialization.
+    footprint->ClearAllNets();
 
     wxLogTrace( traceKicadPcbPlugin, wxT( "Creating s-expr footprint file '%s'." ), fullPath );
     m_cache->GetFootprints().insert( footprintName,

@@ -269,6 +269,8 @@ public:
 
     bool HasRulesForConstraintType( DRC_CONSTRAINT_T constraintID );
 
+    bool HasGeometryDependentRules() const { return m_hasGeometryDependentRules; }
+
     bool GetReportAllTrackErrors() const { return m_reportAllTrackErrors; }
     bool GetTestFootprints() const { return m_testFootprints; }
 
@@ -286,8 +288,8 @@ public:
 
     REPORTER* GetLogReporter() const { return m_logReporter; }
 
-    bool QueryWorstConstraint( DRC_CONSTRAINT_T aRuleId, DRC_CONSTRAINT& aConstraint,
-                               bool aUnconditionalOnly = false );
+    bool QueryWorstConstraint( DRC_CONSTRAINT_T aRuleId, DRC_CONSTRAINT& aConstraint, bool aUnconditionalOnly = false );
+    bool HasUserDefinedPhysicalConstraint();
     std::set<int> QueryDistinctConstraints( DRC_CONSTRAINT_T aConstraintId );
 
     std::vector<DRC_TEST_PROVIDER*> GetTestProviders() const { return m_testProviders; };
@@ -304,6 +306,9 @@ public:
     std::vector<BOARD_ITEM*> GetItemsMatchingCondition( const wxString& aExpression,
                                                         DRC_CONSTRAINT_T aConstraint = ASSERTION_CONSTRAINT,
                                                         REPORTER* aReporter = nullptr );
+
+    std::vector<BOARD_ITEM*> GetItemsMatchingRule( const std::shared_ptr<DRC_RULE>& aRule,
+                                                   REPORTER*                        aReporter = nullptr );
 
     static bool IsNetADiffPair( BOARD* aBoard, NETINFO_ITEM* aNet, int& aNetP, int& aNetN );
 
@@ -388,6 +393,7 @@ protected:
     // Uses shared_mutex for reader-writer pattern (many concurrent reads, exclusive writes).
     mutable std::shared_mutex m_clearanceCacheMutex;
     bool m_hasExplicitClearanceRules = false;
+    bool m_hasGeometryDependentRules = false;
     bool m_hasDiffPairClearanceOverrides = false;
     std::map<DRC_CONSTRAINT_T, std::vector<DRC_ENGINE_CONSTRAINT*>> m_explicitConstraints;
 };

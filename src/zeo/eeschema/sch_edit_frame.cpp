@@ -162,10 +162,8 @@ EVT_SIZE( SCH_EDIT_FRAME::OnSize )
 EVT_MENU_RANGE( ID_FILE1, ID_FILEMAX, SCH_EDIT_FRAME::OnLoadFile )
 EVT_MENU( ID_FILE_LIST_CLEAR, SCH_EDIT_FRAME::OnClearFileHistory )
 
-EVT_MENU( ID_IMPORT_NON_KICAD_SCH, SCH_EDIT_FRAME::OnImportProject )
-
-EVT_MENU( wxID_EXIT, SCH_EDIT_FRAME::OnExit )
-EVT_MENU( wxID_CLOSE, SCH_EDIT_FRAME::OnExit )
+    EVT_MENU( wxID_EXIT, SCH_EDIT_FRAME::OnExit )
+    EVT_MENU( wxID_CLOSE, SCH_EDIT_FRAME::OnExit )
 
     EVT_CHOICE( ID_ON_ZOOM_SELECT, SCH_EDIT_FRAME::OnSelectZoom )
     EVT_CHOICE( ID_ON_GRID_SELECT, SCH_EDIT_FRAME::OnSelectGrid )
@@ -391,7 +389,9 @@ SCH_EDIT_FRAME::SCH_EDIT_FRAME( KIWAY* aKiway, wxWindow* aParent, FRAME_T aFrame
         SetAuiPaneSize( m_auimgr, designBlocksPane, aui_cfg.design_blocks_panel_docked_width, -1 );
 
     if( aui_cfg.remote_symbol_show )
+    {
         SetAuiPaneSize( m_auimgr, remoteSymbolPane, aui_cfg.remote_symbol_panel_docked_width, -1 );
+    }
 
     if( aui_cfg.hierarchy_panel_docked_width > 0 )
     {
@@ -432,6 +432,14 @@ SCH_EDIT_FRAME::SCH_EDIT_FRAME( KIWAY* aKiway, wxWindow* aParent, FRAME_T aFrame
     {
         m_auimgr.Update();
     }
+
+    CallAfter( [this]()
+            {
+                wxAuiPaneInfo& remotePane = m_auimgr.GetPane( RemoteSymbolPaneName() );
+
+                if( remotePane.IsShown() && m_remoteSymbolPane )
+                    m_remoteSymbolPane->Activate();
+            } );
 
     resolveCanvasType();
     SwitchCanvas( m_canvasType );
@@ -962,8 +970,10 @@ void SCH_EDIT_FRAME::setupUIConditions()
     mgr->SetConditions( SCH_ACTIONS::placeLinkedDesignBlock, ENABLE( groupWithDesignBlockLink ) );
     mgr->SetConditions( SCH_ACTIONS::saveToLinkedDesignBlock, ENABLE( groupWithDesignBlockLink ) );
 
-    mgr->SetConditions( ACTIONS::zoomTool, CHECK( cond.CurrentTool( ACTIONS::zoomTool ) ) );
-    mgr->SetConditions( ACTIONS::selectionTool, CHECK( cond.CurrentTool( ACTIONS::selectionTool ) ) );
+    mgr->SetConditions( ACTIONS::zoomTool,            CHECK( cond.CurrentTool( ACTIONS::zoomTool ) ) );
+    mgr->SetConditions( ACTIONS::selectionTool,       CHECK( cond.CurrentTool( ACTIONS::selectionTool ) ) );
+    mgr->SetConditions( ACTIONS::selectSetRect,       CHECK( cond.CurrentTool( ACTIONS::selectionTool ) ) );
+    mgr->SetConditions( ACTIONS::selectSetLasso,      CHECK( cond.CurrentTool( ACTIONS::selectionTool ) ) );
 
     auto showHiddenPinsCond = [this]( const SELECTION& )
     {
@@ -1554,6 +1564,25 @@ void SCH_EDIT_FRAME::doCloseWindow()
 
     SCH_SHEET_LIST sheetlist = Schematic().Hierarchy();
 
+    if( !Prj().IsNullProject() )
+    {
+        std::vector<wxString> sheetSrcs;
+        sheetSrcs.reserve( sheetlist.size() );
+
+        for( const SCH_SHEET_PATH& path : sheetlist )
+        {
+            SCH_SCREEN* screen = path.LastScreen();
+
+            // Only sweep autosaves for sheets actually dirtied in this session.
+            // A clean sheet's autosave, if any, is a previous-session leftover the
+            // user explicitly deferred in the recovery dialog.
+            if( screen && screen->IsContentModified() )
+                sheetSrcs.push_back( Prj().AbsolutePath( screen->GetFileName() ) );
+        }
+
+        Kiway().LocalHistory().RemoveAutosaveFiles( Prj().GetProjectPath(), sheetSrcs );
+    }
+
 #ifdef KICAD_IPC_API
     Pgm().GetApiServer().DeregisterHandler( m_apiHandler.get() );
     wxTheApp->Unbind( EDA_EVT_PLUGIN_AVAILABILITY_CHANGED, &SCH_EDIT_FRAME::onPluginAvailabilityChanged, this );
@@ -1606,13 +1635,14 @@ void SCH_EDIT_FRAME::doCloseWindow()
     if( !Schematic().GetFileName().IsEmpty() && !Schematic().RootScreen()->IsEmpty() )
         UpdateFileHistory( fileName );
 
+    // Clear the view before freeing any schematic items.  VIEW::Clear() walks m_allItems and
+    // touches each item's private data, so the items must still be alive when this runs.
+    SetScreen( nullptr );
+
     Schematic().RootScreen()->Clear( true );
 
     // all sub sheets are deleted, only the main sheet is usable
     GetCurrentSheet().clear();
-
-    // Clear view before destroying schematic as repaints depend on schematic being valid
-    SetScreen( nullptr );
 
     Schematic().Reset();
 
@@ -1874,9 +1904,9 @@ void SCH_EDIT_FRAME::ProjectChanged()
 
     // Register schematic saver for autosave history
     Kiway().LocalHistory().RegisterSaver( m_schematic,
-            [this]( const wxString& aProjectPath, std::vector<wxString>& aFiles )
+            [this]( const wxString& aProjectPath, std::vector<HISTORY_FILE_DATA>& aFileData )
             {
-                m_schematic->SaveToHistory( aProjectPath, aFiles );
+                m_schematic->SaveToHistory( aProjectPath, aFileData );
             } );
 
     m_designBlocksPane->ProjectChanged();
@@ -2368,9 +2398,6 @@ void SCH_EDIT_FRAME::CommonSettingsChanged( int aFlags )
 
     SCHEMATIC_SETTINGS& settings = Schematic().Settings();
 
-    settings.m_JunctionSize = GetSchematicJunctionSize();
-    settings.m_HopOverScale = GetSchematicHopOverScale();
-
     ShowAllIntersheetRefs( settings.m_IntersheetRefsShow );
 
     if( EESCHEMA_SETTINGS* cfg = GetAppSettings<EESCHEMA_SETTINGS>( "eeschema" ) )
@@ -2405,7 +2432,7 @@ void SCH_EDIT_FRAME::CommonSettingsChanged( int aFlags )
         {
             SCH_LINE* line = static_cast<SCH_LINE*>( item );
 
-            if( line->IsWire() )
+            if( line->IsWire() || line->IsBus() )
                 UpdateHopOveredWires( line );
         }
     }
@@ -3062,7 +3089,12 @@ void SCH_EDIT_FRAME::SetHighlightedConnection( const wxString& aConnection, cons
     m_highlightedConn = aConnection;
 
     if( refreshNetNavigator )
+    {
         RefreshNetNavigator( aSelection );
+
+        if( m_hierarchy )
+            m_hierarchy->UpdateNetHighlight( aConnection );
+    }
 }
 
 
@@ -3469,6 +3501,9 @@ void SCH_EDIT_FRAME::ToggleRemoteSymbolPanel()
 
     if( remotePane.IsShown() )
     {
+        if( m_remoteSymbolPane )
+            m_remoteSymbolPane->Activate();
+
         if( remotePane.IsFloating() )
         {
             remotePane.FloatingSize( cfg->m_AuiPanels.remote_symbol_panel_float_width,
@@ -3536,6 +3571,68 @@ void SCH_EDIT_FRAME::AddVariant()
 }
 
 
+void SCH_EDIT_FRAME::EditVariantDescription()
+{
+    wxArrayString choices = Schematic().GetVariantNamesForUI();
+
+    // Default variant cannot be edited.
+    choices.RemoveAt( 0 );
+
+    if( choices.IsEmpty() )
+    {
+        GetInfoBar()->ShowMessageFor( _( "No design variants to edit." ), 10000, wxICON_ERROR );
+        return;
+    }
+
+    wxSingleChoiceDialog chooser( this, _( "Select variant to edit description:" ) + wxS( "                " ),
+                                  _( "Edit Variant Description" ), choices );
+    chooser.Layout();
+
+    if( chooser.ShowModal() == wxID_CANCEL )
+        return;
+
+    wxString variantName = chooser.GetStringSelection();
+
+    if( variantName.IsEmpty() )
+        return;
+
+    wxString currentDesc = Schematic().GetVariantDescription( variantName );
+
+    wxDialog dlg( this, wxID_ANY, wxString::Format( _( "Edit Description for '%s'" ), variantName ), wxDefaultPosition,
+                  wxDefaultSize, wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER );
+
+    wxBoxSizer* mainSizer = new wxBoxSizer( wxVERTICAL );
+
+    wxStaticText* label = new wxStaticText( &dlg, wxID_ANY, _( "Description:" ) );
+    mainSizer->Add( label, 0, wxLEFT | wxRIGHT | wxTOP | wxEXPAND, 10 );
+
+    mainSizer->AddSpacer( 3 );
+
+    wxTextCtrl* descCtrl =
+            new wxTextCtrl( &dlg, wxID_ANY, currentDesc, wxDefaultPosition, wxSize( 300, 60 ), wxTE_MULTILINE );
+    mainSizer->Add( descCtrl, 1, wxLEFT | wxRIGHT | wxBOTTOM | wxEXPAND, 10 );
+
+    wxStdDialogButtonSizer* btnSizer = new wxStdDialogButtonSizer();
+    btnSizer->AddButton( new wxButton( &dlg, wxID_OK ) );
+    btnSizer->AddButton( new wxButton( &dlg, wxID_CANCEL ) );
+    btnSizer->Realize();
+    mainSizer->Add( btnSizer, 0, wxALL | wxALIGN_RIGHT, 5 );
+
+    dlg.SetSizer( mainSizer );
+    dlg.Fit();
+    dlg.Centre();
+
+    if( dlg.ShowModal() == wxID_CANCEL )
+        return;
+
+    wxString newDesc = descCtrl->GetValue().Trim().Trim( false );
+
+    Schematic().SetVariantDescription( variantName, newDesc );
+    OnModify();
+    GetCanvas()->Refresh();
+}
+
+
 void SCH_EDIT_FRAME::RemoveVariant()
 {
     if( !m_currentVariantCtrl )
@@ -3569,27 +3666,10 @@ void SCH_EDIT_FRAME::RemoveVariant()
         OnModify();
     }
 
-    int      selected = m_currentVariantCtrl->GetSelection();
-    wxString tmp;
+    if( Schematic().GetCurrentVariant() == variantName )
+        SetCurrentVariant( wxEmptyString );
 
-    if( selected != wxNOT_FOUND )
-        tmp = m_currentVariantCtrl->GetString( selected );
-
-    m_currentVariantCtrl->Set( Schematic().GetVariantNamesForUI() );
-
-    if( selected != wxNOT_FOUND )
-    {
-        if( tmp != variantName )
-        {
-            selected = m_currentVariantCtrl->FindString( tmp );
-            m_currentVariantCtrl->SetSelection( selected );
-        }
-        else
-        {
-            m_currentVariantCtrl->SetSelection( 0 );
-            SetCurrentVariant( wxEmptyString );
-        }
-    }
+    UpdateVariantSelectionCtrl( Schematic().GetVariantNamesForUI() );
 
     GetCanvas()->Refresh();
 }

@@ -36,26 +36,31 @@ CONSTRAINT_FILES = {
     'via-style.svg': 'via-style.svg',
 
     # Numeric input constraints
-    'Basic clearance.svg': 'basic-clearance.svg',
+    'basic-clearance.svg': 'basic-clearance.svg',
     'board-outline-clearance.svg': 'board-outline-clearance.svg',
-    'minimum_clearance.svg': 'minimum-clearance.svg',
+    'clearance.svg': 'clearance.svg',
+    'minimum_clearance.svg': 'minimum_clearance.svg',
     'minimum_connection_width.svg': 'minimum-connection-width.svg',
     'minimum_track_width.svg': 'minimum-track-width.svg',
+    'copper_to_edge_clearance.svg': 'copper_to_edge_clearance.svg',
     'copper_to_hole_clearance.svg': 'copper-to-hole-clearance.svg',
-    'hole_to_hole_clearance.svg': 'hole-to-hole-clearance.svg',
+    'creepage-distance.svg': 'creepage_distance.svg',
     'minimum_annular_width.svg': 'minimum-annular-width.svg',
     'minimum_drill_size.svg': 'minimum-drill-size.svg',
     'hole-to-hole-distance.svg': 'hole-to-hole-distance.svg',
-    'minimum_uvia_hole.svg': 'minimum-uvia-hole.svg',
-    'minimum_uvia_diameter.svg': 'minimum-uvia-diameter.svg',
     'minimum_via_diameter.svg': 'minimum-via-diameter.svg',
     'silk-to-soldermask-clearance.svg': 'silk-to-soldermask-clearance.svg',
     'silk-to-silk-clearance.svg': 'silk-to-silk-clearance.svg',
+    'minimum-soldermask-sliver.svg': 'minimum-soldermask-sliver.svg',
     'minimum-soldermask-silver.svg': 'minimum-soldermask-silver.svg',
+    'soldermask-expansion.svg': 'soldermask-expansion.svg',
     'solderpaste-expansion.svg': 'solderpaste-expansion.svg',
     'maximum_allowed_deviation.svg': 'maximum-allowed-deviation.svg',
-    'minimum-angular-ring.svg': 'minimum-angular-ring.svg',
     'matched-lenght-diff-pair.svg': 'matched-length-diff-pair.svg',
+    "matched-length-diff-pair-v2.svg": "matched-length-diff-pair-v2.svg",
+    'routing-diff-pair.svg': 'routing-diff-pair.svg',
+    'routing-width.svg': 'routing-width.svg',
+    'courtyard-clearance.svg': 'courtyard-clearance.svg',
 }
 
 
@@ -75,6 +80,10 @@ def process_svg_files():
     """Process all constraint SVGs and create themed versions."""
     script_dir = Path(__file__).parent
     source_dir = script_dir / 'sources' / 'constraints'
+    alias_source = source_dir / 'basic-clearance.svg'
+    alias_target = source_dir / 'clearance.svg'
+    if alias_source.exists() and not alias_target.exists():
+        shutil.copy(alias_source, alias_target)
     light_dir = script_dir / 'sources' / 'light' / 'constraints'
     dark_dir = script_dir / 'sources' / 'dark' / 'constraints'
 

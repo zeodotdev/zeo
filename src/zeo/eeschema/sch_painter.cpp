@@ -1801,9 +1801,13 @@ void SCH_PAINTER::draw( const SCH_LINE* aLine, int aLayer )
     double             highlightAlpha = 0.6;
     EESCHEMA_SETTINGS* eeschemaCfg = eeconfig();
     double             hopOverScale = 0.0;
+    int                defaultLineWidth = schIUScale.MilsToIU( DEFAULT_LINE_WIDTH_MILS );
 
     if( aLine->Schematic() )    // Can be nullptr when run from the color selection panel
-        hopOverScale = aLine->Schematic()->Settings().m_HopOverScale;
+    {
+        hopOverScale = aLine->Schematic()->Settings().GetHopOverScale();
+        defaultLineWidth = aLine->Schematic()->Settings().m_DefaultLineWidth;
+    }
 
     if( eeschemaCfg )
     {
@@ -1926,11 +1930,10 @@ void SCH_PAINTER::draw( const SCH_LINE* aLine, int aLayer )
 
     std::vector<VECTOR3I> curr_wire_shape;
 
-    if( aLine->IsWire() && hopOverScale > 0.0 )
+    if( ( aLine->IsWire() || aLine->IsBus() ) && hopOverScale > 0.0 )
     {
-        double   lineWidth = getLineWidth( aLine, false, drawingNetColorHighlights );
-        double   arcRadius = lineWidth * hopOverScale;
-        curr_wire_shape = aLine->BuildWireWithHopShape( m_schematic->GetCurrentScreen(), arcRadius );
+        double arcRadius = defaultLineWidth * hopOverScale;
+        curr_wire_shape = aLine->BuildWireWithHopShape( aLine->Schematic()->GetCurrentScreen(), arcRadius );
     }
     else
     {
@@ -1946,8 +1949,7 @@ void SCH_PAINTER::draw( const SCH_LINE* aLine, int aLayer )
                                             // there are always 2 points in list for a segment
         {
             VECTOR2I end( curr_wire_shape[ii].x, curr_wire_shape[ii].y );
-            drawLine( start, end, lineStyle,
-                      ( lineStyle <= LINE_STYLE::FIRST_TYPE || drawingShadows ), width );
+            drawLine( start, end, lineStyle, ( lineStyle <= LINE_STYLE::FIRST_TYPE || drawingShadows ), width );
         }
         else   // This is the start point of a arc. there are always 3 points in list for an arc
         {
@@ -2718,8 +2720,8 @@ void SCH_PAINTER::draw( const SCH_SYMBOL* aSymbol, int aLayer )
     int bodyStyle = aSymbol->GetBodyStyle();
 
     // Use dummy symbol if the actual couldn't be found (or couldn't be locked).
-    LIB_SYMBOL* originalSymbol =
-            aSymbol->GetLibSymbolRef() ? aSymbol->GetLibSymbolRef().get() : LIB_SYMBOL::GetDummy();
+    LIB_SYMBOL*           originalSymbol = aSymbol->GetLibSymbolRef() ? aSymbol->GetLibSymbolRef().get()
+                                                                      : LIB_SYMBOL::GetDummy();
     std::vector<SCH_PIN*> originalPins = originalSymbol->GetGraphicalPins( unit, bodyStyle );
 
     // Copy the source so we can re-orient and translate it.
@@ -2821,8 +2823,7 @@ void SCH_PAINTER::draw( const SCH_SYMBOL* aSymbol, int aLayer )
         BOX2I    bbox = aSymbol->GetBodyBoundingBox();
         BOX2I    pins = aSymbol->GetBodyAndPinsBoundingBox();
         VECTOR2D margins( std::max( bbox.GetX() - pins.GetX(), pins.GetEnd().x - bbox.GetEnd().x ),
-                          std::max( bbox.GetY() - pins.GetY(),
-                                    pins.GetEnd().y - bbox.GetEnd().y ) );
+                          std::max( bbox.GetY() - pins.GetY(), pins.GetEnd().y - bbox.GetEnd().y ) );
         int      strokeWidth = 3 * schIUScale.MilsToIU( DEFAULT_LINE_WIDTH_MILS );
 
         margins.x = std::max( margins.x * 0.6, margins.y * 0.3 );
@@ -3068,8 +3069,13 @@ void SCH_PAINTER::draw( const SCH_FIELD* aField, int aLayer, bool aDimmed )
             drawLocalPowerIcon( pos, size, rotated, color, drawingShadows, aField->IsBrightened() );
     }
 
-    // Draw anchor or umbilical line
-    if( aField->IsMoving() && m_schematic )
+    // Draw anchor or umbilical line.  The umbilical line shows independent motion of a field
+    // relative to its parent; suppress it when the parent is also moving (e.g. dragging the
+    // whole label) or its endpoints would span the entire label, drawing a long stray line.
+    SCH_ITEM* fieldParent = dynamic_cast<SCH_ITEM*>( aField->GetParent() );
+    bool      parentMoving = fieldParent && fieldParent->IsMoving();
+
+    if( aField->IsMoving() && !parentMoving && m_schematic )
     {
         VECTOR2I parentPos = aField->GetParentPosition();
 
@@ -3077,7 +3083,7 @@ void SCH_PAINTER::draw( const SCH_FIELD* aField, int aLayer, bool aDimmed )
         m_gal->SetStrokeColor( getRenderColor( aField, LAYER_SCHEMATIC_ANCHOR, drawingShadows ) );
         m_gal->DrawLine( aField->GetPosition(), parentPos );
     }
-    else if( aField->IsSelected() )
+    else if( aField->IsSelected() && !parentMoving )
     {
         drawAnchor( aField->GetPosition(), drawingShadows );
     }
@@ -3236,7 +3242,7 @@ void SCH_PAINTER::draw( const SCH_HIERLABEL* aLabel, int aLayer, bool aDimmed )
     m_gal->SetStrokeColor( color );
     m_gal->DrawPolyline( d_pts );
 
-    draw( static_cast<const SCH_TEXT*>( aLabel ), aLayer, false );
+    draw( static_cast<const SCH_TEXT*>( aLabel ), aLayer, aDimmed );
 }
 
 
@@ -3368,7 +3374,7 @@ void SCH_PAINTER::draw( const SCH_SHEET* aSheet, int aLayer )
 
     if( aLayer == LAYER_SHEET || aLayer == LAYER_SELECTION_SHADOWS )
     {
-        m_gal->SetStrokeColor( getRenderColor( aSheet, LAYER_SHEET, drawingShadows ) );
+        m_gal->SetStrokeColor( getRenderColor( aSheet, LAYER_SHEET, drawingShadows, DNP ) );
         m_gal->SetIsStroke( true );
         m_gal->SetLineWidth( getLineWidth( aSheet, drawingShadows ) );
         m_gal->SetIsFill( false );

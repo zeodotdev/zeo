@@ -163,6 +163,13 @@ private:
                                  const SHAPE_POLY_SET& aThermalRings );
 
     /**
+     * Remove minimum-width violations introduced by zone-to-zone knockouts.
+     * Runs a deflate/reconnect/inflate cycle and intersects with the pre-deflate boundary
+     * to avoid re-inflating into cleared areas.
+     */
+    void postKnockoutMinWidthPrune( const ZONE* aZone, SHAPE_POLY_SET& aFillPolys );
+
+    /**
      * Refill a zone from cached pre-knockout fill.
      * Used during iterative refill to avoid recomputing thermal reliefs and copper clearances.
      * Only re-applies the higher-priority zone knockout with updated fills.

@@ -247,7 +247,7 @@ bool plotSelectionToSvg( SCH_EDIT_FRAME* aFrame, const SCH_SELECTION& aSelection
 
     LOCALE_IO     toggle;
     SCH_PLOT_OPTS plotOpts;
-    plotOpts.m_plotHopOver = aFrame->Schematic().Settings().m_HopOverScale > 0.0;
+    plotOpts.m_plotHopOver = aFrame->Schematic().Settings().GetHopOverScale() > 0.0;
 
     plotter->StartPlot( wxT( "1" ) );
     aFrame->GetScreen()->Plot( plotter.get(), plotOpts, collectSelectionItems( aSelection ) );
@@ -353,6 +353,11 @@ wxImage renderSelectionToBitmap( SCH_EDIT_FRAME* aFrame, const SCH_SELECTION& aS
             drawingSheet->SetIsFirstPage( screen->GetVirtualPageNumber() == 1 );
             drawingSheet->SetSheetName( TO_UTF8( aFrame->GetScreenDesc() ) );
             drawingSheet->SetSheetPath( TO_UTF8( aFrame->GetFullScreenDesc() ) );
+
+            wxString currentVariant = screen->Schematic()->GetCurrentVariant();
+            wxString variantDesc = screen->Schematic()->GetVariantDescription( currentVariant );
+            drawingSheet->SetVariantName( TO_UTF8( currentVariant ) );
+            drawingSheet->SetVariantDesc( TO_UTF8( variantDesc ) );
 
             view->Add( drawingSheet.get() );
         }
@@ -1373,7 +1378,7 @@ int SCH_EDITOR_CONTROL::ExportSymbolsToLibrary( const TOOL_EVENT& aEvent )
 
     SCH_SHEET_LIST     sheets = m_frame->Schematic().BuildSheetListSortedByPageNumbers();
     SCH_REFERENCE_LIST symbols;
-    sheets.GetSymbols( symbols, savePowerSymbols );
+    sheets.GetSymbols( symbols, savePowerSymbols ? SYMBOL_FILTER_ALL : SYMBOL_FILTER_NON_POWER );
 
     std::map<LIB_ID, LIB_SYMBOL*>              libSymbols;
     std::map<LIB_ID, std::vector<SCH_SYMBOL*>> symbolMap;
@@ -2760,7 +2765,7 @@ SCH_SHEET_PATH SCH_EDITOR_CONTROL::updatePastedSheet( SCH_SHEET* aSheet, const S
         }
     }
 
-    sheetPath.GetSymbols( aPastedSymbols[aPastePath] );
+    sheetPath.GetSymbols( aPastedSymbols[aPastePath], SYMBOL_FILTER_ALL );
 
     return sheetPath;
 }
@@ -3001,7 +3006,7 @@ int SCH_EDITOR_CONTROL::Paste( const TOOL_EVENT& aEvent )
 
     // Build symbol list for reannotation of duplicates
     SCH_REFERENCE_LIST existingRefs;
-    hierarchy.GetSymbols( existingRefs );
+    hierarchy.GetSymbols( existingRefs, SYMBOL_FILTER_ALL );
     existingRefs.SortByReferenceOnly();
 
     std::set<wxString> existingRefsSet;
@@ -3688,9 +3693,9 @@ int SCH_EDITOR_CONTROL::IncrementAnnotations( const TOOL_EVENT& aEvent )
         SCH_REFERENCE_LIST references;
 
         if( dlg.m_AllSheets->GetValue() )
-            schematic->Hierarchy().GetSymbols( references );
+            schematic->Hierarchy().GetSymbols( references, SYMBOL_FILTER_ALL );
         else
-            schematic->CurrentSheet().GetSymbols( references );
+            schematic->CurrentSheet().GetSymbols( references, SYMBOL_FILTER_ALL );
 
         references.SplitReferences();
 
@@ -3729,6 +3734,13 @@ int SCH_EDITOR_CONTROL::ShowCvpcb( const TOOL_EVENT& aEvent )
 }
 
 
+int SCH_EDITOR_CONTROL::ImportNonKicadSchematic( const TOOL_EVENT& aEvent )
+{
+    m_frame->OnImportProject();
+    return 0;
+}
+
+
 int SCH_EDITOR_CONTROL::EditSymbolFields( const TOOL_EVENT& aEvent )
 {
     DIALOG_SYMBOL_FIELDS_TABLE* dlg = m_frame->GetSymbolFieldsTableDialog();
@@ -3740,6 +3752,8 @@ int SCH_EDITOR_CONTROL::EditSymbolFields( const TOOL_EVENT& aEvent )
 
     // Bring it to the top if already open.  Dual monitor users need this.
     dlg->Raise();
+
+    dlg->ShowEditTab();
 
     return 0;
 }
@@ -4218,17 +4232,6 @@ int SCH_EDITOR_CONTROL::TogglePythonConsole( const TOOL_EVENT& aEvent )
     m_frame->ScriptingConsoleEnableDisable();
     return 0;
 }
-
-
-int SCH_EDITOR_CONTROL::ReloadPlugins( const TOOL_EVENT& aEvent )
-{
-#ifdef KICAD_IPC_API
-    if( Pgm().GetCommonSettings()->m_Api.enable_server )
-        Pgm().GetPluginManager().ReloadPlugins();
-#endif
-    return 0;
-}
-
 int SCH_EDITOR_CONTROL::OnAngleSnapModeChanged( const TOOL_EVENT& aEvent )
 {
     // Update the left toolbar Line modes group icon to match current mode
@@ -4379,6 +4382,18 @@ int SCH_EDITOR_CONTROL::RemoveVariant( const TOOL_EVENT& aEvent )
 }
 
 
+int SCH_EDITOR_CONTROL::EditVariantDescription( const TOOL_EVENT& aEvent )
+{
+    SCH_EDIT_FRAME* editFrame = dynamic_cast<SCH_EDIT_FRAME*>( m_frame );
+
+    if( !editFrame )
+        return 1;
+
+    editFrame->EditVariantDescription();
+    return 0;
+}
+
+
 void SCH_EDITOR_CONTROL::setTransitions()
 {
     Go( &SCH_EDITOR_CONTROL::New,                     ACTIONS::doNew.MakeEvent() );
@@ -4444,24 +4459,25 @@ void SCH_EDITOR_CONTROL::setTransitions()
 
     Go( &SCH_EDITOR_CONTROL::GridFeedback, EVENTS::GridChangedByKeyEvent );
 
-    Go( &SCH_EDITOR_CONTROL::EditWithSymbolEditor, SCH_ACTIONS::editWithLibEdit.MakeEvent() );
-    Go( &SCH_EDITOR_CONTROL::EditWithSymbolEditor, SCH_ACTIONS::editLibSymbolWithLibEdit.MakeEvent() );
-    Go( &SCH_EDITOR_CONTROL::ShowCvpcb, SCH_ACTIONS::assignFootprints.MakeEvent() );
-    Go( &SCH_EDITOR_CONTROL::ImportFPAssignments, SCH_ACTIONS::importFPAssignments.MakeEvent() );
-    Go( &SCH_EDITOR_CONTROL::Annotate, SCH_ACTIONS::annotate.MakeEvent() );
-    Go( &SCH_EDITOR_CONTROL::IncrementAnnotations, SCH_ACTIONS::incrementAnnotations.MakeEvent() );
-    Go( &SCH_EDITOR_CONTROL::EditSymbolFields, SCH_ACTIONS::editSymbolFields.MakeEvent() );
-    Go( &SCH_EDITOR_CONTROL::EditSymbolLibraryLinks, SCH_ACTIONS::editSymbolLibraryLinks.MakeEvent() );
-    Go( &SCH_EDITOR_CONTROL::ShowPcbNew, SCH_ACTIONS::showPcbNew.MakeEvent() );
-    Go( &SCH_EDITOR_CONTROL::ShowAgent, SCH_ACTIONS::showAgent.MakeEvent() );
-    Go( &SCH_EDITOR_CONTROL::ShowTerminal, SCH_ACTIONS::showPythonConsole.MakeEvent() );
-    Go( &SCH_EDITOR_CONTROL::ShowVersionControl, ACTIONS::showVersionControl.MakeEvent() );
-    Go( &SCH_EDITOR_CONTROL::UpdatePCB, ACTIONS::updatePcbFromSchematic.MakeEvent() );
-    Go( &SCH_EDITOR_CONTROL::UpdateFromPCB, ACTIONS::updateSchematicFromPcb.MakeEvent() );
-    Go( &SCH_EDITOR_CONTROL::ExportNetlist, SCH_ACTIONS::exportNetlist.MakeEvent() );
-    Go( &SCH_EDITOR_CONTROL::GenerateBOM, SCH_ACTIONS::generateBOM.MakeEvent() );
-    Go( &SCH_EDITOR_CONTROL::GenerateBOMLegacy, SCH_ACTIONS::generateBOMLegacy.MakeEvent() );
-    Go( &SCH_EDITOR_CONTROL::DrawSheetOnClipboard, SCH_ACTIONS::drawSheetOnClipboard.MakeEvent() );
+    Go( &SCH_EDITOR_CONTROL::EditWithSymbolEditor,    SCH_ACTIONS::editWithLibEdit.MakeEvent() );
+    Go( &SCH_EDITOR_CONTROL::EditWithSymbolEditor,    SCH_ACTIONS::editLibSymbolWithLibEdit.MakeEvent() );
+    Go( &SCH_EDITOR_CONTROL::ShowCvpcb,               SCH_ACTIONS::assignFootprints.MakeEvent() );
+    Go( &SCH_EDITOR_CONTROL::ImportFPAssignments,     SCH_ACTIONS::importFPAssignments.MakeEvent() );
+    Go( &SCH_EDITOR_CONTROL::ImportNonKicadSchematic, SCH_ACTIONS::importNonKicadSchematic.MakeEvent() );
+    Go( &SCH_EDITOR_CONTROL::Annotate,                SCH_ACTIONS::annotate.MakeEvent() );
+    Go( &SCH_EDITOR_CONTROL::IncrementAnnotations,    SCH_ACTIONS::incrementAnnotations.MakeEvent() );
+    Go( &SCH_EDITOR_CONTROL::EditSymbolFields,        SCH_ACTIONS::editSymbolFields.MakeEvent() );
+    Go( &SCH_EDITOR_CONTROL::EditSymbolLibraryLinks,  SCH_ACTIONS::editSymbolLibraryLinks.MakeEvent() );
+    Go( &SCH_EDITOR_CONTROL::ShowPcbNew,              SCH_ACTIONS::showPcbNew.MakeEvent() );
+    Go( &SCH_EDITOR_CONTROL::ShowAgent,               SCH_ACTIONS::showAgent.MakeEvent() );
+    Go( &SCH_EDITOR_CONTROL::ShowTerminal,            SCH_ACTIONS::showPythonConsole.MakeEvent() );
+    Go( &SCH_EDITOR_CONTROL::ShowVersionControl,      ACTIONS::showVersionControl.MakeEvent() );
+    Go( &SCH_EDITOR_CONTROL::UpdatePCB,               ACTIONS::updatePcbFromSchematic.MakeEvent() );
+    Go( &SCH_EDITOR_CONTROL::UpdateFromPCB,           ACTIONS::updateSchematicFromPcb.MakeEvent() );
+    Go( &SCH_EDITOR_CONTROL::ExportNetlist,           SCH_ACTIONS::exportNetlist.MakeEvent() );
+    Go( &SCH_EDITOR_CONTROL::GenerateBOM,             SCH_ACTIONS::generateBOM.MakeEvent() );
+    Go( &SCH_EDITOR_CONTROL::GenerateBOMLegacy,       SCH_ACTIONS::generateBOMLegacy.MakeEvent() );
+    Go( &SCH_EDITOR_CONTROL::DrawSheetOnClipboard,    SCH_ACTIONS::drawSheetOnClipboard.MakeEvent() );
 
     Go( &SCH_EDITOR_CONTROL::ShowSearch, SCH_ACTIONS::showSearch.MakeEvent() );
     Go( &SCH_EDITOR_CONTROL::ShowHierarchy, SCH_ACTIONS::showHierarchy.MakeEvent() );
@@ -4488,13 +4504,12 @@ void SCH_EDITOR_CONTROL::setTransitions()
     Go( &SCH_EDITOR_CONTROL::OnAngleSnapModeChanged, SCH_ACTIONS::angleSnapModeChanged.MakeEvent() );
     Go( &SCH_EDITOR_CONTROL::ToggleAnnotateAuto, SCH_ACTIONS::toggleAnnotateAuto.MakeEvent() );
 
-    Go( &SCH_EDITOR_CONTROL::ReloadPlugins, ACTIONS::pluginsReload.MakeEvent() );
-
     Go( &SCH_EDITOR_CONTROL::ExportSymbolsToLibrary,  SCH_ACTIONS::exportSymbolsToLibrary.MakeEvent() );
 
     Go( &SCH_EDITOR_CONTROL::PlaceLinkedDesignBlock, SCH_ACTIONS::placeLinkedDesignBlock.MakeEvent() );
     Go( &SCH_EDITOR_CONTROL::SaveToLinkedDesignBlock, SCH_ACTIONS::saveToLinkedDesignBlock.MakeEvent() );
 
-    Go( &SCH_EDITOR_CONTROL::AddVariant, SCH_ACTIONS::addVariant.MakeEvent() );
-    Go( &SCH_EDITOR_CONTROL::RemoveVariant, SCH_ACTIONS::removeVariant.MakeEvent() );
+    Go( &SCH_EDITOR_CONTROL::AddVariant,              SCH_ACTIONS::addVariant.MakeEvent() );
+    Go( &SCH_EDITOR_CONTROL::RemoveVariant,           SCH_ACTIONS::removeVariant.MakeEvent() );
+    Go( &SCH_EDITOR_CONTROL::EditVariantDescription,  SCH_ACTIONS::editVariantDescription.MakeEvent() );
 }

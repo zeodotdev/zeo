@@ -796,6 +796,8 @@ bool SCH_LABEL_BASE::ResolveTextVar( const SCH_SHEET_PATH* aPath, wxString* toke
     if( !schematic )
         return false;
 
+    wxString variant = schematic->GetCurrentVariant();
+
     if( operatingPoint.Matches( *token ) )
     {
         int      precision = 3;
@@ -867,7 +869,7 @@ bool SCH_LABEL_BASE::ResolveTextVar( const SCH_SHEET_PATH* aPath, wxString* toke
 
         for( SCH_RULE_AREA* ruleArea : directive->GetConnectedRuleAreas() )
         {
-            if( ruleArea->GetExcludedFromBOM() )
+            if( ruleArea->GetExcludedFromBOM( aPath, variant ) )
                 *token = _( "Excluded from BOM" );
         }
 
@@ -880,7 +882,7 @@ bool SCH_LABEL_BASE::ResolveTextVar( const SCH_SHEET_PATH* aPath, wxString* toke
 
         for( SCH_RULE_AREA* ruleArea : directive->GetConnectedRuleAreas() )
         {
-            if( ruleArea->GetExcludedFromBoard() )
+            if( ruleArea->GetExcludedFromBoard( aPath, variant ) )
                 *token = _( "Excluded from board" );
         }
 
@@ -893,7 +895,7 @@ bool SCH_LABEL_BASE::ResolveTextVar( const SCH_SHEET_PATH* aPath, wxString* toke
 
         for( SCH_RULE_AREA* ruleArea : directive->GetConnectedRuleAreas() )
         {
-            if( ruleArea->GetExcludedFromSim() )
+            if( ruleArea->GetExcludedFromSim( aPath, variant ) )
                 *token = _( "Excluded from simulation" );
         }
 
@@ -906,7 +908,7 @@ bool SCH_LABEL_BASE::ResolveTextVar( const SCH_SHEET_PATH* aPath, wxString* toke
 
         for( SCH_RULE_AREA* ruleArea : directive->GetConnectedRuleAreas() )
         {
-            if( ruleArea->GetDNP() )
+            if( ruleArea->GetDNP( aPath, variant ) )
                 *token = _( "DNP" );
         }
 
@@ -928,8 +930,14 @@ bool SCH_LABEL_BASE::ResolveTextVar( const SCH_SHEET_PATH* aPath, wxString* toke
     {
         SCH_SHEET* sheet = static_cast<SCH_SHEET*>( m_parent );
 
+        // aPath is expected to be either the sheet pin's owner-screen path (parent sheet as
+        // Last()) or the already-extended path whose Last() is the owning sheet itself.
+        // Only push the owner sheet when it isn't already at the end; a double-push produces
+        // a nonsense path and breaks lookups keyed on the instance (e.g. ${#} page number).
         SCH_SHEET_PATH path = *aPath;
-        path.push_back( sheet );
+
+        if( path.Last() != sheet )
+            path.push_back( sheet );
 
         if( sheet->ResolveTextVar( &path, token, aDepth + 1 ) )
             return true;
@@ -1449,12 +1457,22 @@ void SCH_LABEL_BASE::Plot( PLOTTER* aPlotter, bool aBackground, const SCH_PLOT_O
     int              layer = ( connection && connection->IsBus() ) ? LAYER_BUS : m_layer;
     COLOR4D          color = settings->GetLayerColor( layer );
     int              penWidth = GetEffectiveTextPenWidth( settings->GetDefaultPenWidth() );
+    COLOR4D          bg = settings->GetBackgroundColor();
+
+    if( bg == COLOR4D::UNSPECIFIED || !aPlotter->GetColorMode() )
+        bg = COLOR4D::WHITE;
 
     if( aPlotter->GetColorMode() && GetLabelColor() != COLOR4D::UNSPECIFIED )
         color = GetLabelColor();
 
     if( color.m_text && Schematic() )
         color = COLOR4D( ResolveText( *color.m_text, &Schematic()->CurrentSheet() ) );
+
+    if( aDimmed )
+    {
+        color.Desaturate();
+        color = color.Mix( bg, 0.5f );
+    }
 
     penWidth = std::max( penWidth, settings->GetMinPenWidth() );
     aPlotter->SetCurrentLineWidth( penWidth );
@@ -1480,10 +1498,20 @@ void SCH_LABEL_BASE::Plot( PLOTTER* aPlotter, bool aBackground, const SCH_PLOT_O
         {
             // For the graphic shape use the override color or the layer color, but not the
             // net/netclass color.
+            COLOR4D shapeColor;
+
             if( GetTextColor() != COLOR4D::UNSPECIFIED )
-                aPlotter->SetColor( GetTextColor() );
+                shapeColor = GetTextColor();
             else
-                aPlotter->SetColor( settings->GetLayerColor( m_layer ) );
+                shapeColor = settings->GetLayerColor( m_layer );
+
+            if( aDimmed )
+            {
+                shapeColor.Desaturate();
+                shapeColor = shapeColor.Mix( bg, 0.5f );
+            }
+
+            aPlotter->SetColor( shapeColor );
         }
 
         if( GetShape() == LABEL_FLAG_SHAPE::F_DOT )
@@ -2095,6 +2123,24 @@ const std::unordered_set<SCH_RULE_AREA*> SCH_DIRECTIVE_LABEL::GetConnectedRuleAr
 bool SCH_DIRECTIVE_LABEL::IsDangling() const
 {
     return m_isDangling && m_connected_rule_areas.empty();
+}
+
+bool SCH_DIRECTIVE_LABEL::IncrementLabel( int aIncrement )
+{
+    for( SCH_FIELD& field : m_fields )
+    {
+        if( field.GetCanonicalName() == wxT( "Netclass" ) || field.GetCanonicalName() == wxT( "Component Class" ) )
+        {
+            wxString text = field.GetText();
+
+            if( IncrementString( text, aIncrement ) )
+            {
+                field.SetText( text );
+            }
+        }
+    }
+
+    return true;
 }
 
 

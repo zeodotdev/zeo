@@ -32,6 +32,7 @@
 #include <board_design_settings.h>
 #include <build_version.h>
 #include <exporters/place_file_exporter.h>
+#include <footprint.h>
 #include <pad.h>
 
 #include <fmt/format.h>
@@ -159,7 +160,8 @@ std::string PLACE_FILE_EXPORTER::GenPositionData()
         LIST_MOD item;
         item.m_Footprint = footprint;
         item.m_Reference = footprint->Reference().GetShownText( false );
-        item.m_Value     = footprint->Value().GetShownText( false );
+        item.m_Value     = UnescapeString( footprint->GetFieldValueForVariant( m_variant,
+                                                               GetCanonicalFieldName( FIELD_T::VALUE ) ) );
         item.m_Layer     = footprint->GetLayer();
 
         lenRefText = std::max( lenRefText, (int) item.m_Reference.length() );
@@ -315,7 +317,7 @@ std::string PLACE_FILE_EXPORTER::GenReportData()
 
     buffer += "\n$BeginDESCRIPTION\n";
 
-    BOX2I bbbox = m_board->ComputeBoundingBox( false );
+    BOX2I bbbox = m_board->ComputeBoundingBox( false, true );
 
     buffer += "\n$BOARD\n";
 
@@ -339,7 +341,9 @@ std::string PLACE_FILE_EXPORTER::GenReportData()
     for( FOOTPRINT* footprint : sortedFootprints )
     {
         wxString ref = footprint->Reference().GetShownText( false );
-        wxString value = footprint->Value().GetShownText( false );
+        wxString value = UnescapeString(
+                footprint->GetFieldValueForVariant( m_variant,
+                                                    GetCanonicalFieldName( FIELD_T::VALUE ) ) );
 
         buffer += fmt::format( "$MODULE {}\n", TO_UTF8( ref ) );
 

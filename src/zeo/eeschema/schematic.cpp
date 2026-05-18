@@ -33,10 +33,12 @@
 #include <erc/erc_settings.h>
 #include <font/outline_font.h>
 #include <netlist_exporter_spice.h>
+#include <pgm_base.h>
 #include <progress_reporter.h>
 #include <project.h>
 #include <project/net_settings.h>
 #include <project/project_file.h>
+#include <settings/common_settings.h>
 #include <refdes_tracker.h>
 #include <schematic.h>
 #include <sch_bus_entry.h>
@@ -58,7 +60,9 @@
 #include <tool/tool_manager.h>
 #include <undo_redo_container.h>
 #include <local_history.h>
+#include <richio.h>
 #include <sch_io/sch_io_mgr.h>
+#include <sch_io/kicad_sexpr/sch_io_kicad_sexpr.h>
 #include <sch_io/sch_io.h>
 
 #include <wx/log.h>
@@ -175,6 +179,7 @@ void SCHEMATIC::Reset()
 
     ensureVirtualRoot();
     ensureDefaultTopLevelSheet();
+    loadBusAliasesFromProject();
 }
 
 
@@ -253,7 +258,7 @@ void SCHEMATIC::CacheExistingAnnotation()
     SCH_SHEET_LIST     sheets = Hierarchy();
     SCH_REFERENCE_LIST references;
 
-    sheets.GetSymbols( references );
+    sheets.GetSymbols( references, SYMBOL_FILTER_ALL );
 
     for( const SCH_REFERENCE& ref : references )
     {
@@ -271,7 +276,7 @@ bool SCHEMATIC::Contains( const SCH_REFERENCE& aRef ) const
     /// REFDES_TRACKER will need to be extended to track if a reference is currently present in the schematic
     /// as well as the units.  For now, this is relatively fast for reasonably sized schematics
     /// Famous last words...
-    sheets.GetSymbols( references );
+    sheets.GetSymbols( references, SYMBOL_FILTER_ALL );
 
     return std::any_of( references.begin(), references.end(),
                         [&]( const SCH_REFERENCE& ref )
@@ -871,7 +876,7 @@ bool SCHEMATIC::ResolveCrossReference( wxString* token, int aDepth ) const
     if( !refItem )
     {
         SCH_REFERENCE_LIST refs;
-        Hierarchy().GetSymbols( refs );
+        Hierarchy().GetSymbols( refs, SYMBOL_FILTER_ALL );
 
         SCH_SYMBOL*    foundSymbol = nullptr;
         SCH_SHEET_PATH foundPath;
@@ -1024,7 +1029,7 @@ wxString SCHEMATIC::ConvertRefsToKIIDs( const wxString& aSource ) const
                 wxString           ref = token.BeforeFirst( ':', &remainder );
                 SCH_REFERENCE_LIST references;
 
-                Hierarchy().GetSymbols( references );
+                Hierarchy().GetSymbols( references, SYMBOL_FILTER_ALL );
 
                 for( size_t jj = 0; jj < references.GetCount(); jj++ )
                 {
@@ -2290,6 +2295,8 @@ void SCHEMATIC::SetCurrentVariant( const wxString& aVariantName )
                 item->ClearCaches();
         }
     }
+
+    InvokeListeners( &SCHEMATIC_LISTENER::OnSchCurrentVariantChanged, *this );
 }
 
 
@@ -2412,7 +2419,7 @@ void SCHEMATIC::LoadVariants()
 }
 
 
-void SCHEMATIC::SaveToHistory( const wxString& aProjectPath, std::vector<wxString>& aFiles )
+void SCHEMATIC::SaveToHistory( const wxString& aProjectPath, std::vector<HISTORY_FILE_DATA>& aFileData )
 {
     if( !IsValid() )
         return;
@@ -2430,19 +2437,23 @@ void SCHEMATIC::SaveToHistory( const wxString& aProjectPath, std::vector<wxStrin
         return;
     }
 
-    // Ensure project path has trailing separator for StartsWith tests & Mid calculations.
     if( !projPath.EndsWith( wxFILE_SEP_PATH ) )
         projPath += wxFILE_SEP_PATH;
 
-    wxFileName historyRoot( projPath, wxEmptyString );
-    historyRoot.AppendDir( wxS( ".history" ) );
-    wxString historyRootPath = historyRoot.GetPath();
-
-    // Iterate full schematic hierarchy (all sheets & their screens).
     SCH_SHEET_LIST sheetList = Hierarchy();
 
-    // Acquire plugin once.
-    IO_RELEASER<SCH_IO> pi( SCH_IO_MGR::FindPlugin( SCH_IO_MGR::SCH_KICAD ) );
+    SCH_IO_KICAD_SEXPR pi;
+
+    KICAD_FORMAT::FORMAT_MODE mode = KICAD_FORMAT::FORMAT_MODE::NORMAL;
+
+    if( ADVANCED_CFG::GetCfg().m_CompactSave )
+        mode = KICAD_FORMAT::FORMAT_MODE::COMPACT_TEXT_PROPERTIES;
+
+    // In ZIP mode the only caller is the autosave timer, so skipping clean sheets
+    // avoids spurious _autosave-* files.  In INCREMENTAL mode the manual-save flow
+    // clears dirty flags before calling here, so filtering would skip the whole
+    // snapshot.  Git's diff-against-HEAD check rejects no-op commits there anyway.
+    bool filterClean = Pgm().GetCommonSettings()->m_Backup.format == BACKUP_FORMAT::ZIP;
 
     for( const SCH_SHEET_PATH& path : sheetList )
     {
@@ -2452,44 +2463,41 @@ void SCHEMATIC::SaveToHistory( const wxString& aProjectPath, std::vector<wxStrin
         if( !sheet || !screen )
             continue;
 
+        if( filterClean && !screen->IsContentModified() )
+            continue;
+
         wxFileName abs = m_project->AbsolutePath( screen->GetFileName() );
 
         if( !abs.IsOk() )
-            continue; // no filename
+            continue;
 
         wxString absPath = abs.GetFullPath();
 
         if( absPath.IsEmpty() || !absPath.StartsWith( projPath ) )
-            continue; // external / unsaved subsheet
+            continue;
 
         wxString rel = absPath.Mid( projPath.length() );
 
-        // Destination mirrors project-relative path under .history
-        wxFileName dst( rel );
-
-        if( dst.IsRelative() )
-            dst.MakeAbsolute( historyRootPath );
-        else
-            dst.SetPath( historyRootPath );
-
-        // Ensure destination directory exists
-        wxFileName dstDir( dst );
-        dstDir.SetFullName( wxEmptyString );
-
-        if( !dstDir.DirExists() )
-            wxFileName::Mkdir( dstDir.GetPath(), 0777, wxPATH_MKDIR_FULL );
-
         try
         {
-            pi->SaveSchematicFile( dst.GetFullPath(), sheet, this );
-            aFiles.push_back( dst.GetFullPath() );
-            wxLogTrace( traceAutoSave, wxS( "[history] sch saver exported sheet '%s' -> '%s'" ), absPath,
-                        dst.GetFullPath() );
+            STRING_FORMATTER formatter;
+            pi.FormatSchematicToFormatter( &formatter, sheet, this );
+
+            HISTORY_FILE_DATA entry;
+            entry.relativePath = rel;
+            entry.content = std::move( formatter.MutableString() );
+            entry.prettify = true;
+            entry.formatMode = mode;
+            aFileData.push_back( std::move( entry ) );
+
+            wxLogTrace( traceAutoSave,
+                        wxS( "[history] sch saver serialized %zu bytes for '%s' -> '%s'" ),
+                        aFileData.back().content.size(), absPath, rel );
         }
         catch( const IO_ERROR& ioe )
         {
-            wxLogTrace( traceAutoSave, wxS( "[history] sch saver export failed for '%s': %s" ), absPath,
-                        wxString::FromUTF8( ioe.What() ) );
+            wxLogTrace( traceAutoSave, wxS( "[history] sch saver serialize failed for '%s': %s" ),
+                        absPath, wxString::FromUTF8( ioe.What() ) );
         }
     }
 }

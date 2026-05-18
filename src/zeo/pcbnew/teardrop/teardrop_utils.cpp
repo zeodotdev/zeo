@@ -171,6 +171,77 @@ bool TEARDROP_MANAGER::areItemsInSameZone( BOARD_ITEM* aPadOrVia, PCB_TRACK* aTr
 }
 
 
+int TEARDROP_MANAGER::computeEmergingTrackLength( PCB_TRACK* aTrack, BOARD_ITEM* aOther,
+                                                  PCB_LAYER_ID aLayer ) const
+{
+    VECTOR2I start = aTrack->GetStart();
+    VECTOR2I end = aTrack->GetEnd();
+    bool     startInside = aOther->HitTest( start, 0 );
+    bool     endInside = aOther->HitTest( end, 0 );
+
+    if( startInside && endInside )
+        return 0;
+
+    // Fully outside: caller handles crossing geometry separately; report full length so
+    // the emergence filter never rejects those.
+    if( !startInside && !endInside )
+        return KiROUND( SEG( start, end ).Length() );
+
+    // Exactly one endpoint inside: normalize so start is outside, end is inside.
+    if( startInside )
+        std::swap( start, end );
+
+    int            maxError = m_board->GetDesignSettings().m_MaxError;
+    int            radius = GetWidth( aOther, aLayer ) / 2;
+    SHAPE_POLY_SET shapebuffer;
+
+    if( IsRound( aOther, aLayer ) )
+    {
+        TransformCircleToPolygon( shapebuffer, aOther->GetPosition(), radius, maxError,
+                                  ERROR_INSIDE, 16 );
+    }
+    else
+    {
+        wxCHECK_MSG( aOther->Type() == PCB_PAD_T, 0, wxT( "Expected non-round item to be PAD" ) );
+        static_cast<PAD*>( aOther )->TransformShapeToPolygon( shapebuffer, aLayer, 0, maxError,
+                                                              ERROR_INSIDE );
+    }
+
+    SHAPE_LINE_CHAIN& outline = shapebuffer.Outline( 0 );
+    outline.SetClosed( true );
+
+    SHAPE_LINE_CHAIN::INTERSECTIONS pts;
+    int                             pt_count = 0;
+
+    if( aTrack->Type() == PCB_ARC_T )
+    {
+        SHAPE_ARC arc( aTrack->GetStart(), static_cast<PCB_ARC*>( aTrack )->GetMid(),
+                       aTrack->GetEnd(), aTrack->GetWidth() );
+        SHAPE_LINE_CHAIN poly = arc.ConvertToPolyline( maxError );
+        pt_count = outline.Intersect( poly, pts );
+    }
+    else
+    {
+        pt_count = outline.Intersect( SEG( start, end ), pts );
+    }
+
+    if( pt_count < 1 )
+        return 0;
+
+    double minDist = std::numeric_limits<double>::max();
+
+    for( const SHAPE_LINE_CHAIN::INTERSECTION& hit : pts )
+    {
+        double d = ( hit.p - start ).EuclideanNorm();
+
+        if( d < minDist )
+            minDist = d;
+    }
+
+    return KiROUND( minDist );
+}
+
+
 PCB_TRACK* TEARDROP_MANAGER::findTouchingTrack( EDA_ITEM_FLAGS& aMatchType, PCB_TRACK* aTrackRef,
                                                 const VECTOR2I& aEndPoint ) const
 {
@@ -683,6 +754,9 @@ bool TEARDROP_MANAGER::computeAnchorPoints( const TEARDROP_PARAMETERS& aParams, 
      * D is midpoint behind the aViaPad centre ( aPts[3] )
      */
 
+    if( c_buffer.OutlineCount() == 0 )
+        return false;
+
     SHAPE_LINE_CHAIN& padpoly = c_buffer.Outline(0);
     std::vector<VECTOR2I> points = padpoly.CPoints();
 
@@ -877,7 +951,31 @@ bool TEARDROP_MANAGER::findAnchorPointsOnTrack( const TEARDROP_PARAMETERS& aPara
             if( connected_track == nullptr )
                 break;
 
-            // TODO: stop if angle between old and new segment is > 45 deg to avoid bad shape
+            // Reject the extension if the angle between segments is too large.
+            // Large angles cause the teardrop shape to bend sharply at the junction.
+            // The junction transition code handles bends up to ~60 degrees, so use
+            // cos(60) = 0.5 as the threshold.
+            constexpr double kMinCosForTwoSegmentExtension = 0.5;
+
+            VECTOR2D firstDir = NormalizeVector( end - ref_lenght_point );
+            VECTOR2D secondDir;
+
+            if( matchType == STARTPOINT )
+            {
+                secondDir = NormalizeVector( connected_track->GetEnd()
+                                             - connected_track->GetStart() );
+            }
+            else
+            {
+                secondDir = NormalizeVector( connected_track->GetStart()
+                                             - connected_track->GetEnd() );
+            }
+
+            double cosAngle = firstDir.x * secondDir.x + firstDir.y * secondDir.y;
+
+            if( cosAngle < kMinCosForTwoSegmentExtension )
+                break;
+
             consumed += actualTdLen;
             // actualTdLen is the new distance from new start point and the teardrop anchor point
             actualTdLen = std::min( targetLength-consumed, int( connected_track->GetLength() ) );
@@ -976,7 +1074,10 @@ bool TEARDROP_MANAGER::computeTeardropPolygon( const TEARDROP_PARAMETERS& aParam
     int track_stub_len;     // the dist between the start point and the anchor point
                             // on the track
 
-    // Note: aTrack can be modified if the initial track is too short
+    // Note: aTrack can be modified if the initial track is too short.
+    // Save the original pointer so we can detect two-segment extension.
+    PCB_TRACK* originalTrack = aTrack;
+
     if( !findAnchorPointsOnTrack( aParams, start, end, intersection, aTrack, aOther, aOtherPos,
                                   &track_stub_len ) )
     {
@@ -988,6 +1089,24 @@ bool TEARDROP_MANAGER::computeTeardropPolygon( const TEARDROP_PARAMETERS& aParam
         return false;
 
     VECTOR2D vecT = NormalizeVector(end - start);
+
+    // When spanning two segments, findAnchorPointsOnTrack replaces aTrack with the
+    // connected track. The start point becomes the junction between the two segments,
+    // which differs from intersection (where the first segment meets the pad/via edge).
+    // Use the first segment's direction for all via-side geometry so that the teardrop
+    // shape is oriented correctly relative to how the track enters the pad/via.
+    // Note: for arcs, start also moves away from intersection during arc refinement, but
+    // aTrack remains the same pointer, so arc tracks are correctly excluded here.
+    bool twoSegments = ( aTrack != originalTrack );
+
+    // vecVia is the direction the track enters the pad/via, used for via-side geometry.
+    // When the first segment is so short that the junction coincides with the pad edge
+    // intersection, start == intersection produces a zero vector whose normalization is
+    // NaN. Fall back to the second segment's direction in that case.
+    VECTOR2D vecVia = vecT;
+
+    if( twoSegments && start != intersection )
+        vecVia = NormalizeVector( start - intersection );
 
     // find the 2 points on the track, sharp end of the teardrop
     int track_halfwidth = aTrack->GetWidth() / 2;
@@ -1011,28 +1130,279 @@ bool TEARDROP_MANAGER::computeTeardropPolygon( const TEARDROP_PARAMETERS& aParam
             return false;
     }
 
-    // Introduce a last point to cover the via centre to ensure it is seen as connected
-    VECTOR2I pointD = aOtherPos;
-    // add a small offset in order to have the aViaPad.m_Pos reference point inside
-    // the teardrop area, just in case...
+    // Compute pointD, the "back" point of the teardrop behind the pad/via center.
+    // For off-center track connections (where the track doesn't pass through the pad center),
+    // we project the pad center onto the track axis so the teardrop is built symmetrically
+    // about the track rather than being skewed toward the pad center.
+    int padRadius = GetWidth( aOther, layer ) / 2;
+    VECTOR2D intToPad = VECTOR2D( aOtherPos - intersection );
+    double projOnTrack = -( intToPad.x * vecVia.x + intToPad.y * vecVia.y );
+    double effectiveDist = std::max( projOnTrack, static_cast<double>( padRadius ) );
     int offset = pcbIUScale.mmToIU( 0.001 );
-    pointD += VECTOR2I( int( -vecT.x*offset), int(-vecT.y*offset) );
+
+    // For non-round pads, clamp effectiveDist so pointD stays within the pad outline.
+    // When a track enters an elongated pad at a steep angle, the projection along the
+    // track axis can extend well beyond the narrow side of the pad.
+    if( !IsRound( aOther, layer ) && aOther->Type() == PCB_PAD_T )
+    {
+        PAD* pad = static_cast<PAD*>( aOther );
+        VECTOR2I candidateD = intersection
+                              + VECTOR2I( KiROUND( -vecVia.x * ( effectiveDist + offset ) ),
+                                          KiROUND( -vecVia.y * ( effectiveDist + offset ) ) );
+
+        if( !pad->HitTest( candidateD, 0, layer ) )
+        {
+            int maxError = m_board->GetDesignSettings().m_MaxError;
+            SHAPE_POLY_SET padPoly;
+            pad->TransformShapeToPolygon( padPoly, layer, 0, maxError, ERROR_INSIDE );
+
+            SHAPE_LINE_CHAIN& padOutline = padPoly.Outline( 0 );
+            padOutline.SetClosed( true );
+
+            // Shoot a ray from just inside the pad at the entry to beyond the candidate point
+            VECTOR2I rayStart = intersection
+                                + VECTOR2I( KiROUND( -vecVia.x * offset ),
+                                            KiROUND( -vecVia.y * offset ) );
+
+            SHAPE_LINE_CHAIN::INTERSECTIONS hits;
+            padOutline.Intersect( SEG( rayStart, candidateD ), hits );
+
+            if( !hits.empty() )
+            {
+                double maxExitDist = 0;
+
+                for( const SHAPE_LINE_CHAIN::INTERSECTION& hit : hits )
+                {
+                    double d = ( hit.p - intersection ).EuclideanNorm();
+
+                    if( d > maxExitDist )
+                        maxExitDist = d;
+                }
+
+                effectiveDist = std::max( 0.0, maxExitDist - 2.0 * offset );
+            }
+        }
+    }
+    else
+    {
+        // For round pads/vias, clamp effectiveDist so pointD stays inside the pad circle.
+        // The minimum-of-padRadius floor used for projOnTrack overshoots the pad when the
+        // teardrop axis (vecVia) is not radial: e.g. a two-segment teardrop where the first
+        // segment grazes the pad tangentially produces a projection close to zero, but the
+        // floor still pushes pointD outward by padRadius along -vecVia, creating a spike.
+        // Solve for the far intersection of the ray (intersection, -vecVia) with the pad
+        // circle and use that as the upper bound.
+        double R = static_cast<double>( padRadius );
+        double cx = intToPad.x;  // (aOtherPos - intersection)
+        double cy = intToPad.y;
+        double distCenterSq = cx * cx + cy * cy;
+
+        // Quadratic for ||intersection + (-vecVia)*t - aOtherPos||^2 = R^2
+        // expands to t^2 - 2*projOnTrack*t + (distCenterSq - R^2) = 0.
+        // The far root is projOnTrack + sqrt(projOnTrack^2 - (distCenterSq - R^2)).
+        double disc = projOnTrack * projOnTrack - ( distCenterSq - R * R );
+
+        if( disc >= 0 )
+        {
+            double farEdge = projOnTrack + std::sqrt( disc );
+            double maxAllowed = std::max( 0.0, farEdge - 2.0 * offset );
+
+            if( effectiveDist > maxAllowed )
+                effectiveDist = maxAllowed;
+        }
+    }
+
+    VECTOR2I pointD = intersection + VECTOR2I( KiROUND( -vecVia.x * ( effectiveDist + offset ) ),
+                                               KiROUND( -vecVia.y * ( effectiveDist + offset ) ) );
 
     VECTOR2I pointC, pointE;     // Point on pad/via outlines
-    std::vector<VECTOR2I> pts = { pointA, pointB, pointC, pointD, pointE };
+
+    // For two-segment teardrops, compute junction edge points where the track
+    // changes direction, and use the first segment side of the junction for
+    // the convex hull anchor so that C and E are oriented to the via entry axis.
+    VECTOR2I junctionB_seg2, junctionB_seg1, junctionA_seg2, junctionA_seg1;
+
+    if( twoSegments )
+    {
+        junctionB_seg2 = start + VECTOR2I( KiROUND( vecT.y * track_halfwidth ),
+                                           KiROUND( -vecT.x * track_halfwidth ) );
+        junctionA_seg2 = start + VECTOR2I( KiROUND( -vecT.y * track_halfwidth ),
+                                           KiROUND( vecT.x * track_halfwidth ) );
+        junctionB_seg1 = start + VECTOR2I( KiROUND( vecVia.y * track_halfwidth ),
+                                           KiROUND( -vecVia.x * track_halfwidth ) );
+        junctionA_seg1 = start + VECTOR2I( KiROUND( -vecVia.y * track_halfwidth ),
+                                           KiROUND( vecVia.x * track_halfwidth ) );
+    }
+
+    // On the inside of a bend, the seg2 junction point backtracks relative to
+    // seg1 and causes self-intersection. Detect with a dot product test and skip
+    // the seg2 point on whichever side would backtrack.
+    bool skipJunctionA = false;
+    bool skipJunctionB = false;
+
+    if( twoSegments )
+    {
+        VECTOR2D transA = VECTOR2D( junctionA_seg2 - junctionA_seg1 );
+        VECTOR2D anchorDirA = VECTOR2D( pointA - junctionA_seg1 );
+        skipJunctionA = ( transA.x * anchorDirA.x + transA.y * anchorDirA.y ) < 0;
+
+        VECTOR2D transB = VECTOR2D( junctionB_seg2 - junctionB_seg1 );
+        VECTOR2D anchorDirB = VECTOR2D( pointB - junctionB_seg1 );
+        skipJunctionB = ( transB.x * anchorDirB.x + transB.y * anchorDirB.y ) < 0;
+    }
+
+    VECTOR2I anchorA = twoSegments ? junctionA_seg1 : pointA;
+    VECTOR2I anchorB = twoSegments ? junctionB_seg1 : pointB;
+
+    std::vector<VECTOR2I> pts = { anchorA, anchorB, pointC, pointD, pointE };
 
     computeAnchorPoints( aParams, aTrack->GetLayer(), aOther, aOtherPos, pts );
 
+    // For off-center track connections, the convex hull produces asymmetric anchor points
+    // (C and E at different distances from the track axis). Recompute them to be symmetric
+    // so the teardrop flares out evenly from the track on both sides.
+    if( IsRound( aOther, layer ) )
+    {
+        VECTOR2D perpVia( -vecVia.y, vecVia.x );
+
+        // Perpendicular distance from pad center to the track axis
+        VECTOR2D padOffset = VECTOR2D( aOtherPos - intersection );
+        double perpDistToCenter = padOffset.x * perpVia.x + padOffset.y * perpVia.y;
+
+        // Only apply the symmetric adjustment when the track is significantly off-center.
+        if( std::abs( perpDistToCenter ) > padRadius * 0.1 )
+        {
+            double d = std::abs( perpDistToCenter );
+
+            if( d < padRadius )
+            {
+                // The maximum symmetric half-width is limited by the shorter side, which is
+                // the distance from the track axis to the nearest circle edge (R - d).
+                double maxSymmetric = static_cast<double>( padRadius ) - d;
+
+                // Apply the configured width ratio and max width constraints
+                int preferred_width = KiROUND( GetWidth( aOther, layer ) * aParams.m_BestWidthRatio );
+                int maxHalfWidth = preferred_width / 2;
+
+                if( aParams.m_TdMaxWidth > 0 )
+                    maxHalfWidth = std::min( maxHalfWidth, aParams.m_TdMaxWidth / 2 );
+
+                double symHalfWidth = std::min( maxSymmetric,
+                                                static_cast<double>( maxHalfWidth ) );
+
+                if( symHalfWidth > track_halfwidth )
+                {
+                    VECTOR2D center = VECTOR2D( aOtherPos );
+                    double R = static_cast<double>( padRadius );
+
+                    // Find C on the circle at perpendicular distance +symHalfWidth from track.
+                    // Line: p = (perpFoot + perpVia*symHalfWidth) + t * vecVia
+                    // Intersect with circle (center, R) and pick the point closest to
+                    // the intersection point (track entry side).
+                    auto findCircleLineIntersection =
+                        [&]( double perpDist ) -> VECTOR2I
+                        {
+                            double projAlongTrack = padOffset.x * vecVia.x
+                                                  + padOffset.y * vecVia.y;
+                            VECTOR2D lineOrigin = VECTOR2D( intersection )
+                                                + vecVia * projAlongTrack
+                                                + perpVia * perpDist;
+
+                            VECTOR2D oc = lineOrigin - center;
+                            double b_coeff = oc.x * vecVia.x + oc.y * vecVia.y;
+                            double c_coeff = oc.x * oc.x + oc.y * oc.y - R * R;
+                            double disc = b_coeff * b_coeff - c_coeff;
+
+                            if( disc < 0 )
+                                return VECTOR2I( KiROUND( lineOrigin.x ),
+                                                 KiROUND( lineOrigin.y ) );
+
+                            double sqrtDisc = std::sqrt( disc );
+                            double t1 = -b_coeff - sqrtDisc;
+                            double t2 = -b_coeff + sqrtDisc;
+
+                            // Pick the point on the intersection side (closer to the track entry)
+                            VECTOR2D p1 = lineOrigin + vecVia * t1;
+                            VECTOR2D p2 = lineOrigin + vecVia * t2;
+                            VECTOR2D intPt = VECTOR2D( intersection );
+
+                            if( ( p1 - intPt ).EuclideanNorm()
+                                < ( p2 - intPt ).EuclideanNorm() )
+                            {
+                                return VECTOR2I( KiROUND( p1.x ), KiROUND( p1.y ) );
+                            }
+
+                            return VECTOR2I( KiROUND( p2.x ), KiROUND( p2.y ) );
+                        };
+
+                    // pointA is offset in +perpVia from the track axis, pointB in -perpVia
+                    // (see the VECTOR2I pointA/pointB construction above). pts[2] is C,
+                    // which lies adjacent to pointB in the teardrop walk A->B->C->D->E->A,
+                    // so it must sit on pointB's (-perpVia) side. Likewise pts[4] is E,
+                    // adjacent to pointA on the +perpVia side. Assigning the opposite signs
+                    // folds the polygon into a bowtie and produces self-intersecting edges
+                    // whenever the track is off-center enough to trigger this branch.
+                    pts[2] = findCircleLineIntersection( -symHalfWidth );
+                    pts[4] = findCircleLineIntersection( symHalfWidth );
+                }
+            }
+        }
+    }
+
     if( !aParams.m_CurvedEdges )
     {
-        aCorners = std::move( pts );
+        if( twoSegments )
+        {
+            aCorners.push_back( pointA );
+            aCorners.push_back( pointB );
+
+            if( !skipJunctionB )
+                aCorners.push_back( junctionB_seg2 );
+
+            aCorners.push_back( pts[1] );  // junctionB_seg1
+            aCorners.push_back( pts[2] );  // C
+            aCorners.push_back( pts[3] );  // D
+            aCorners.push_back( pts[4] );  // E
+            aCorners.push_back( pts[0] );  // junctionA_seg1
+
+            if( !skipJunctionA )
+                aCorners.push_back( junctionA_seg2 );
+        }
+        else
+        {
+            aCorners = std::move( pts );
+        }
+
         return true;
     }
 
     // See if we can use curved teardrop shape
     if( IsRound( aOther, layer ) )
     {
-        computeCurvedForRoundShape( aParams, aCorners, layer, track_halfwidth, vecT, aOther, aOtherPos, pts );
+        if( twoSegments )
+        {
+            std::vector<VECTOR2I> curvePoly;
+            computeCurvedForRoundShape( aParams, curvePoly, layer, track_halfwidth,
+                                        vecVia, aOther, aOtherPos, pts );
+
+            aCorners.push_back( pointB );
+
+            if( !skipJunctionB )
+                aCorners.push_back( junctionB_seg2 );
+
+            for( const VECTOR2I& pt : curvePoly )
+                aCorners.push_back( pt );
+
+            if( !skipJunctionA )
+                aCorners.push_back( junctionA_seg2 );
+
+            aCorners.push_back( pointA );
+        }
+        else
+        {
+            computeCurvedForRoundShape( aParams, aCorners, layer, track_halfwidth,
+                                        vecT, aOther, aOtherPos, pts );
+        }
     }
     else
     {
@@ -1041,8 +1411,30 @@ bool TEARDROP_MANAGER::computeTeardropPolygon( const TEARDROP_PARAMETERS& aParam
         if( aParams.m_TdMaxWidth > 0 && aParams.m_TdMaxWidth < td_width )
             td_width = aParams.m_TdMaxWidth;
 
-        computeCurvedForRectShape( aParams, aCorners, td_width, track_halfwidth, pts, intersection,
-                                   aOther, aOtherPos, layer );
+        if( twoSegments )
+        {
+            std::vector<VECTOR2I> curvePoly;
+            computeCurvedForRectShape( aParams, curvePoly, td_width, track_halfwidth, pts,
+                                       intersection, aOther, aOtherPos, layer );
+
+            aCorners.push_back( pointB );
+
+            if( !skipJunctionB )
+                aCorners.push_back( junctionB_seg2 );
+
+            for( const VECTOR2I& pt : curvePoly )
+                aCorners.push_back( pt );
+
+            if( !skipJunctionA )
+                aCorners.push_back( junctionA_seg2 );
+
+            aCorners.push_back( pointA );
+        }
+        else
+        {
+            computeCurvedForRectShape( aParams, aCorners, td_width, track_halfwidth, pts,
+                                       intersection, aOther, aOtherPos, layer );
+        }
     }
 
     return true;

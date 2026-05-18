@@ -52,6 +52,7 @@
 #include <confirm.h>
 #include <design_block_library_adapter.h>
 
+#include <settings/common_settings.h>
 #include <settings/kicad_settings.h>
 #include <settings/settings_manager.h>
 #include <paths.h>
@@ -393,6 +394,15 @@ bool PGM_SINGLE_TOP::OnPgmInit()
 
     GetSettingsManager().RegisterSettings( new KICAD_SETTINGS );
 
+
+    if( const COMMON_SETTINGS* cfg = Pgm().GetCommonSettings() )
+    {
+        if( cfg->m_Appearance.app_theme == APP_THEME::DARK )
+            KIPLATFORM::APP::EnableDarkMode( true );
+        else if( cfg->m_Appearance.app_theme == APP_THEME::AUTO )
+            KIPLATFORM::APP::EnableDarkMode( false );
+    }
+
 #ifdef KICAD_IPC_API
     // Create the API server thread once the app event loop exists
     m_api_server = std::make_unique<KICAD_API_SERVER>();
@@ -486,6 +496,13 @@ bool PGM_SINGLE_TOP::OnPgmInit()
 
         frame->OpenProjectFiles( fileArgs );
     }
+
+    // In single-top mode, OpenProjectFiles() may switch to a different project. Preload
+    // libraries only after that so project-local libraries are loaded for the active project.
+    if( KIFACE* topFrame = Kiway.KiFACE( KIWAY::KifaceType( TOP_FRAME ) ) )
+        topFrame->PreloadLibraries( &Kiway );
+
+    PreloadDesignBlockLibraries( &Kiway );
 
 #ifdef KICAD_IPC_API
     m_api_server->SetReadyToReply();

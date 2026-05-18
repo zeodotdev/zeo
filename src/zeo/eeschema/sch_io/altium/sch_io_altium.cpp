@@ -29,6 +29,7 @@
 #include <io/altium/altium_binary_parser.h>
 #include <io/altium/altium_ascii_parser.h>
 #include <io/altium/altium_parser_utils.h>
+#include <io/altium/altium_project_variants.h>
 #include <sch_io/altium/sch_io_altium.h>
 
 #include <progress_reporter.h>
@@ -638,6 +639,106 @@ SCH_SHEET* SCH_IO_ALTIUM::LoadSchematicFile( const wxString& aFileName, SCHEMATI
     SCH_SCREENS allSheets( m_rootSheet );
     allSheets.UpdateSymbolLinks( &LOAD_INFO_REPORTER::GetInstance() ); // Update all symbol library links for all sheets.
     allSheets.ClearEditFlags();
+
+    // Apply Altium project variants to schematic symbols
+    if( aProperties && aProperties->count( "project_file" ) )
+    {
+        auto variants = ParseAltiumProjectVariants( aProperties->at( "project_file" ) );
+
+        if( !variants.empty() )
+        {
+            // Build lookups keyed by both UniqueId and designator. UniqueId is preferred
+            // because repeated-channel designs can have multiple components sharing a
+            // designator but with distinct UniqueIds.
+            using ENTRY_LIST =
+                    std::vector<std::pair<wxString, const ALTIUM_VARIANT_ENTRY*>>;
+
+            std::map<wxString, ENTRY_LIST> variantsByUid;
+            std::map<wxString, ENTRY_LIST> variantsByDesignator;
+
+            for( const ALTIUM_PROJECT_VARIANT& pv : variants )
+            {
+                m_schematic->AddVariant( pv.name );
+
+                if( !pv.description.empty() && pv.description != pv.name )
+                    m_schematic->SetVariantDescription( pv.name, pv.description );
+
+                for( const ALTIUM_VARIANT_ENTRY& entry : pv.variations )
+                {
+                    if( !entry.uniqueId.empty() )
+                        variantsByUid[entry.uniqueId].push_back( { pv.name, &entry } );
+
+                    variantsByDesignator[entry.designator].push_back( { pv.name, &entry } );
+                }
+            }
+
+            SCH_SHEET_LIST sheetList( m_rootSheet );
+
+            for( const SCH_SHEET_PATH& path : sheetList )
+            {
+                SCH_SCREEN* screen = path.LastScreen();
+
+                if( !screen )
+                    continue;
+
+                for( SCH_ITEM* item : screen->Items().OfType( SCH_SYMBOL_T ) )
+                {
+                    SCH_SYMBOL* symbol = static_cast<SCH_SYMBOL*>( item );
+
+                    const ENTRY_LIST* entries = nullptr;
+
+                    auto symUidIt = m_altiumSymbolToUid.find( symbol );
+
+                    if( symUidIt != m_altiumSymbolToUid.end() )
+                    {
+                        auto varIt = variantsByUid.find( symUidIt->second );
+
+                        if( varIt != variantsByUid.end() )
+                            entries = &varIt->second;
+                    }
+
+                    if( !entries )
+                    {
+                        wxString ref = symbol->GetRef( &path );
+                        auto     varIt = variantsByDesignator.find( ref );
+
+                        if( varIt != variantsByDesignator.end() )
+                            entries = &varIt->second;
+                    }
+
+                    if( !entries )
+                        continue;
+
+                    for( const auto& [variantName, entry] : *entries )
+                    {
+                        SCH_SYMBOL_VARIANT variant( variantName );
+                        variant.InitializeAttributes( *symbol );
+
+                        if( entry->kind == 1 )
+                        {
+                            variant.m_DNP = true;
+                            variant.m_ExcludedFromBOM = true;
+                            variant.m_ExcludedFromPosFiles = true;
+                        }
+                        else if( entry->kind == 0 )
+                        {
+                            for( const auto& [key, value] : entry->alternateFields )
+                            {
+                                if( key.CmpNoCase( wxS( "LibReference" ) ) == 0 )
+                                    variant.m_Fields[wxS( "Value" )] = value;
+                                else if( key.CmpNoCase( wxS( "Description" ) ) == 0 )
+                                    variant.m_Fields[wxS( "Description" )] = value;
+                                else if( key.CmpNoCase( wxS( "Footprint" ) ) == 0 )
+                                    variant.m_Fields[wxS( "Footprint" )] = value;
+                            }
+                        }
+
+                        symbol->AddVariant( path, variant );
+                    }
+                }
+            }
+        }
+    }
 
     // Set up the default netclass wire & bus width based on imported wires & buses.
     //
@@ -1680,7 +1781,10 @@ void SCH_IO_ALTIUM::ParseComponent( int aIndex, const std::map<wxString, wxStrin
     ksymbol->SetName( name );
     ksymbol->SetDescription( elem.componentdescription );
     ksymbol->SetLibId( libId );
-    ksymbol->SetUnitCount( elem.partcount - 1, true );
+
+    // Altium PARTCOUNT is one more than the actual unit count. The property may be missing
+    // (defaults to 0) or otherwise nonsensical, so clamp to a minimum of 1 unit.
+    ksymbol->SetUnitCount( std::max( 1, elem.partcount - 1 ), true );
     m_libSymbols.insert( { aIndex, ksymbol } );
 
     // each component has its own symbol for now
@@ -1730,6 +1834,9 @@ void SCH_IO_ALTIUM::ParseComponent( int aIndex, const std::map<wxString, wxStrin
     screen->Append( symbol );
 
     m_symbols.insert( { aIndex, symbol } );
+
+    if( !elem.uniqueid.empty() )
+        m_altiumSymbolToUid[symbol] = elem.uniqueid;
 }
 
 
@@ -1797,7 +1904,7 @@ void SCH_IO_ALTIUM::ParsePin( const std::map<wxString, wxString>& aProperties,
     pin->SetUnit( std::max( 0, elem.ownerpartid ) );
 
     pin->SetName( AltiumPinNamesToKiCad( elem.name ) );
-    pin->SetNumber( elem.designator );
+    pin->SetNumber( AltiumPinDesignatorToKiCad( elem.designator ) );
     pin->SetLength( elem.pinlength );
 
     if( elem.hidden )
@@ -1809,39 +1916,34 @@ void SCH_IO_ALTIUM::ParsePin( const std::map<wxString, wxString>& aProperties,
     if( !elem.showPinName )
         pin->SetNameTextSize( 0 );
 
-    // Altium gives the pin body end location.  Compute the connection point (electrical end)
-    // from the body end and pin length in the pin's orientation direction.
+    // Altium gives the pin body end location (elem.location) and the pre-computed
+    // electrical connection point (elem.kicadLocation) which accounts for pin length
+    // with combined integer+fractional arithmetic to avoid rounding errors.
     VECTOR2I bodyEnd = elem.location;
-    VECTOR2I pinLocation = bodyEnd;
+    VECTOR2I pinLocation = elem.kicadLocation;
 
     switch( elem.orientation )
     {
     case ASCH_RECORD_ORIENTATION::RIGHTWARDS:
         pin->SetOrientation( PIN_ORIENTATION::PIN_LEFT );
-        pinLocation.x += elem.pinlength;
         break;
 
     case ASCH_RECORD_ORIENTATION::UPWARDS:
         pin->SetOrientation( PIN_ORIENTATION::PIN_DOWN );
-        pinLocation.y -= elem.pinlength;
         break;
 
     case ASCH_RECORD_ORIENTATION::LEFTWARDS:
         pin->SetOrientation( PIN_ORIENTATION::PIN_RIGHT );
-        pinLocation.x -= elem.pinlength;
         break;
 
     case ASCH_RECORD_ORIENTATION::DOWNWARDS:
         pin->SetOrientation( PIN_ORIENTATION::PIN_UP );
-        pinLocation.y += elem.pinlength;
         break;
 
     default:
         m_errorMessages.emplace( _( "Pin has unexpected orientation." ), RPT_SEVERITY_WARNING );
         break;
     }
-
-    // TODO: position can be sometimes off a little bit!
 
     if( schSymbol )
     {
@@ -4841,7 +4943,9 @@ std::vector<LIB_SYMBOL*> SCH_IO_ALTIUM::ParseLibComponent( const std::map<wxStri
         LIB_ID libId = AltiumToKiCadLibID( getLibName(), symbol->GetName() );
         symbol->SetDescription( elem.componentdescription );
         symbol->SetLibId( libId );
-        symbol->SetUnitCount( elem.partcount - 1, true );
+        // Altium PARTCOUNT is one more than the actual unit count. The property may be
+        // missing (defaults to 0) or otherwise nonsensical, so clamp to a minimum of 1 unit.
+        symbol->SetUnitCount( std::max( 1, elem.partcount - 1 ), true );
         symbols.push_back( symbol );
     }
 

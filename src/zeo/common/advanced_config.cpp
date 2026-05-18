@@ -105,7 +105,6 @@ static const wxChar V3DRT_BevelHeight_um[] = wxT( "V3DRT_BevelHeight_um" );
 static const wxChar V3DRT_BevelExtentFactor[] = wxT( "V3DRT_BevelExtentFactor" );
 static const wxChar EnablePcbDesignBlocks[] = wxT( "EnablePcbDesignBlocks" );
 static const wxChar EnableGenerators[] = wxT( "EnableGenerators" );
-static const wxChar EnableDrcRuleEditor[] = wxT( "EnableDrcRuleEditor" );
 static const wxChar EnableLibWithText[] = wxT( "EnableLibWithText" );
 static const wxChar EnableLibDir[] = wxT( "EnableLibDir" );
 static const wxChar DisambiguationTime[] = wxT( "DisambiguationTime" );
@@ -139,6 +138,7 @@ static const wxChar MaxPastedTextLength[] = wxT( "MaxPastedTextLength" );
 static const wxChar PNSProcessClusterTimeout[] = wxT( "PNSProcessClusterTimeout" );
 static const wxChar FollowBranchTimeout[] = wxT( "FollowBranchTimeoutMs" );
 static const wxChar ImportSkipComponentBodies[] = wxT( "ImportSkipComponentBodies" );
+static const wxChar ImportSkipLayerMapping[] = wxT( "ImportSkipLayerMapping" );
 static const wxChar ScreenDPI[] = wxT( "ScreenDPI" );
 static const wxChar EnableUseAuiPerspective[] = wxT( "EnableUseAuiPerspective" );
 static const wxChar HistoryLockStaleTimeout[] = wxT( "HistoryLockStaleTimeout" );
@@ -272,10 +272,9 @@ ADVANCED_CFG::ADVANCED_CFG()
     m_ShowEventCounters = false;
     m_AllowManualCanvasScale = false;
     m_CompactSave = false;
-    m_UpdateUIEventInterval = 0;
+    m_UpdateUIEventInterval = 50;
     m_EnablePcbDesignBlocks = true;
     m_EnableGenerators = false;
-    m_EnableDrcRuleEditor = false;
     m_EnableLibWithText = false;
     m_EnableLibDir = false;
 
@@ -333,6 +332,7 @@ ADVANCED_CFG::ADVANCED_CFG()
     m_FollowBranchTimeout = 500; // Default: 500 ms
 
     m_ImportSkipComponentBodies = false;
+    m_ImportSkipLayerMapping = false;
 
     m_ScreenDPI = 91;
 
@@ -540,9 +540,6 @@ void ADVANCED_CFG::loadSettings( wxConfigBase& aCfg )
     m_entries.push_back( std::make_unique<PARAM_CFG_BOOL>( true, AC_KEYS::EnableGenerators, &m_EnableGenerators,
                                                            m_EnableGenerators ) );
 
-    m_entries.push_back( std::make_unique<PARAM_CFG_BOOL>( true, AC_KEYS::EnableDrcRuleEditor, &m_EnableDrcRuleEditor,
-                                                           m_EnableDrcRuleEditor ) );
-
     m_entries.push_back( std::make_unique<PARAM_CFG_BOOL>( true, AC_KEYS::EnableAPILogging, &m_EnableAPILogging,
                                                            m_EnableAPILogging ) );
 
@@ -647,6 +644,9 @@ void ADVANCED_CFG::loadSettings( wxConfigBase& aCfg )
 
     m_entries.push_back( std::make_unique<PARAM_CFG_BOOL>( true, AC_KEYS::ImportSkipComponentBodies,
                                                            &m_ImportSkipComponentBodies, m_ImportSkipComponentBodies ) );
+
+    m_entries.push_back( std::make_unique<PARAM_CFG_BOOL>( true, AC_KEYS::ImportSkipLayerMapping,
+                                                           &m_ImportSkipLayerMapping, m_ImportSkipLayerMapping ) );
 
     m_entries.push_back( std::make_unique<PARAM_CFG_INT>( true, AC_KEYS::ScreenDPI, &m_ScreenDPI, m_ScreenDPI, 50, 500 ) );
 

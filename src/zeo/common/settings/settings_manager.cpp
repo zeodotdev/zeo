@@ -38,6 +38,7 @@
 #include <macros.h>
 #include <pgm_base.h>
 #include <paths.h>
+#include <picosha2.h>
 
 #include <algorithm>
 #include <project.h>
@@ -48,6 +49,7 @@
 #include <settings/common_settings.h>
 #include <settings/json_settings_internals.h>
 #include <settings/settings_manager.h>
+#include <text_eval/text_eval_vcs.h>
 #include <wildcards_and_files_ext.h>
 #include <env_vars.h>
 #include <libraries/library_manager.h>
@@ -1022,6 +1024,24 @@ bool SETTINGS_MANAGER::LoadProject( const wxString& aFullPath, bool aSetActive )
         // set the cwd but don't impact kicad-cli
         if( !projectPath.GetPath().IsEmpty() && wxTheApp && wxTheApp->IsGUI() )
             wxSetWorkingDirectory( projectPath.GetPath() );
+
+        // Anchor text_eval VCS lookups to the project directory. The GUI relies on cwd,
+        // which is deliberately left untouched for kicad-cli; an explicit context is
+        // required so repo-scoped queries resolve correctly from either entry point.
+        // Force an absolute path because libgit2 resolves relative paths against the
+        // process cwd, which is what we are working around. Clear the context for an
+        // empty/null project load so VCS queries fall back to cwd rather than locking
+        // onto whatever directory happens to be current.
+        if( projectPath.GetPath().IsEmpty() )
+        {
+            TEXT_EVAL_VCS::SetContextPath( wxString() );
+        }
+        else
+        {
+            wxFileName vcsContext( projectPath );
+            vcsContext.MakeAbsolute();
+            TEXT_EVAL_VCS::SetContextPath( vcsContext.GetPath() );
+        }
     }
 
     bool success = loadProjectFile( *project );
@@ -1108,6 +1128,9 @@ bool SETTINGS_MANAGER::UnloadProject( PROJECT* aProject, bool aSave )
 
         // Remove the reference in the environment to the previous project
         wxSetEnv( PROJECT_VAR_NAME, wxS( "" ) );
+
+        // Drop the VCS context so lingering text_eval queries don't probe a stale project dir.
+        TEXT_EVAL_VCS::SetContextPath( wxString() );
 
 #ifdef _WIN32
         // On Windows, processes hold a handle to their current working directory, preventing
@@ -1389,9 +1412,124 @@ bool SETTINGS_MANAGER::unloadProjectFile( PROJECT* aProject, bool aSave )
 }
 
 
+wxString SETTINGS_MANAGER::projectKeySuffix( const PROJECT* aProject )
+{
+    if( !aProject )
+        return wxEmptyString;
+
+    wxString fullName = aProject->GetProjectFullName();
+
+    if( fullName.IsEmpty() )
+        return wxEmptyString;
+
+    std::string hashHex;
+    picosha2::hash256_hex_string( fullName.ToStdString( wxConvUTF8 ), hashHex );
+
+    return wxString::Format( wxS( "%s-%s" ), aProject->GetProjectName(),
+                             wxString::FromUTF8( hashHex.substr( 0, 12 ).c_str() ) );
+}
+
+
+const PROJECT& SETTINGS_MANAGER::resolveProject( const PROJECT* aProject ) const
+{
+    return aProject ? *aProject : Prj();
+}
+
+
+PROJECT* SETTINGS_MANAGER::GetProjectForPath( const wxString& aProjectPath ) const
+{
+    if( !IsProjectOpen() )
+        return nullptr;
+
+    wxString activePath = Prj().GetProjectPath();
+
+    if( activePath.IsSameAs( aProjectPath ) || activePath.IsSameAs( aProjectPath + wxFILE_SEP_PATH ) )
+        return &Prj();
+
+    return nullptr;
+}
+
+
 wxString SETTINGS_MANAGER::GetProjectBackupsPath() const
 {
-    return Prj().GetProjectPath() + Prj().GetProjectName() + PROJECT_BACKUPS_DIR_SUFFIX;
+    return GetBackupRootForProject( nullptr );
+}
+
+
+wxString SETTINGS_MANAGER::GetBackupRootForProject( const PROJECT* aProject ) const
+{
+    const PROJECT& project = resolveProject( aProject );
+    BACKUP_LOCATION location = GetCommonSettings()->m_Backup.location;
+
+    if( location == BACKUP_LOCATION::PROJECT_DIR )
+        return project.GetProjectPath() + project.GetProjectName() + PROJECT_BACKUPS_DIR_SUFFIX;
+
+    wxFileName root( PATHS::GetUserSettingsPath(), wxEmptyString );
+    root.AppendDir( wxS( "backups" ) );
+
+    wxString key = projectKeySuffix( &project );
+
+    if( !key.IsEmpty() )
+        root.AppendDir( key );
+
+    return root.GetPathWithSep();
+}
+
+
+wxString SETTINGS_MANAGER::GetLocalHistoryDirForProject( const PROJECT* aProject ) const
+{
+    const PROJECT& project = resolveProject( aProject );
+    BACKUP_LOCATION location = GetCommonSettings()->m_Backup.location;
+
+    if( location == BACKUP_LOCATION::PROJECT_DIR )
+    {
+        wxFileName p( project.GetProjectPath(), wxEmptyString );
+        p.AppendDir( wxS( ".history" ) );
+        return p.GetPath();
+    }
+
+    wxFileName root( PATHS::GetUserSettingsPath(), wxEmptyString );
+    root.AppendDir( wxS( "local_history" ) );
+
+    wxString key = projectKeySuffix( &project );
+
+    if( !key.IsEmpty() )
+        root.AppendDir( key );
+
+    return root.GetPath();
+}
+
+
+wxString SETTINGS_MANAGER::GetLocalHistoryDirForPath( const wxString& aProjectPath ) const
+{
+    if( GetCommonSettings()->m_Backup.location == BACKUP_LOCATION::PROJECT_DIR )
+    {
+        wxFileName p( aProjectPath, wxEmptyString );
+        p.AppendDir( wxS( ".history" ) );
+        return p.GetPath();
+    }
+
+    return GetLocalHistoryDirForProject( GetProjectForPath( aProjectPath ) );
+}
+
+
+wxString SETTINGS_MANAGER::GetAutosaveRootForProject( const PROJECT* aProject ) const
+{
+    const PROJECT& project = resolveProject( aProject );
+    BACKUP_LOCATION location = GetCommonSettings()->m_Backup.location;
+
+    if( location == BACKUP_LOCATION::PROJECT_DIR )
+        return project.GetProjectPath();
+
+    wxFileName root( PATHS::GetUserSettingsPath(), wxEmptyString );
+    root.AppendDir( wxS( "autosave" ) );
+
+    wxString key = projectKeySuffix( &project );
+
+    if( !key.IsEmpty() )
+        root.AppendDir( key );
+
+    return root.GetPathWithSep();
 }
 
 
@@ -1412,7 +1550,7 @@ bool SETTINGS_MANAGER::BackupProject( REPORTER& aReporter, wxFileName& aTarget )
         aTarget.SetExt( FILEEXT::ArchiveFileExtension );
     }
 
-    if( !aTarget.DirExists() && !wxMkdir( aTarget.GetPath() ) )
+    if( !aTarget.DirExists() && !PATHS::EnsurePathExists( aTarget.GetPath() ) )
     {
         wxLogTrace( traceSettings, wxT( "Could not create project backup path %s" ),
                     aTarget.GetPath() );
@@ -1469,6 +1607,12 @@ bool SETTINGS_MANAGER::TriggerBackupIfNeeded( REPORTER& aReporter ) const
     if( !settings.enabled )
         return true;
 
+    // The Format radio is exclusive: in INCREMENTAL mode the user has opted out of
+    // timestamped zip archives entirely.  Skip backup creation here so we do not
+    // produce a zip on every eligible save in addition to the git history snapshot.
+    if( settings.format != BACKUP_FORMAT::ZIP )
+        return true;
+
     wxString prefix = Prj().GetProjectName() + '-';
 
     auto modTime =
@@ -1481,23 +1625,29 @@ bool SETTINGS_MANAGER::TriggerBackupIfNeeded( REPORTER& aReporter ) const
                 return dt;
             };
 
-    wxFileName projectPath( Prj().GetProjectPath(), wxEmptyString, wxEmptyString );
-
-    // Skip backup if project path isn't valid or writable
-    if( !projectPath.IsOk() || !projectPath.Exists() || !projectPath.IsDirWritable() )
+    if( Prj().GetProjectFullName().IsEmpty() )
         return true;
 
     wxString backupPath = GetProjectBackupsPath();
 
-    if( !wxDirExists( backupPath ) )
+    // Ensure the backup root exists; this also covers user-dir mode where the parent
+    // directories may not yet have been created.
+    if( !PATHS::EnsurePathExists( backupPath ) )
     {
-        wxLogTrace( traceSettings, wxT( "Backup path %s doesn't exist, creating it" ), backupPath );
+        wxLogTrace( traceSettings, wxT( "Could not create backups path %s!  Skipping backup" ),
+                    backupPath );
+        return false;
+    }
 
-        if( !wxMkdir( backupPath ) )
-        {
-            wxLogTrace( traceSettings, wxT( "Could not create backups path!  Skipping backup" ) );
-            return false;
-        }
+    wxFileName backupRoot( backupPath, wxEmptyString, wxEmptyString );
+
+    // Skip backup if the resolved backup root isn't writable.  In USER_DIR mode this gates
+    // on the user data path; in PROJECT_DIR mode it gates on the project tree.
+    if( !backupRoot.IsDirWritable() )
+    {
+        wxLogTrace( traceSettings, wxT( "Backup directory %s is not writable!  Skipping backup" ),
+                    backupPath );
+        return true;
     }
 
     wxDir dir( backupPath );

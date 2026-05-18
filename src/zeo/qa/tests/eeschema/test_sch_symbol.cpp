@@ -33,6 +33,8 @@
 #include <sch_symbol.h>
 #include <sch_edit_frame.h>
 #include <wildcards_and_files_ext.h>
+#include <lib_symbol.h>
+#include <eda_search_data.h>
 
 
 class TEST_SCH_SYMBOL_FIXTURE : public KI_TEST::SCHEMATIC_TEST_FIXTURE
@@ -192,6 +194,138 @@ BOOST_AUTO_TEST_CASE( FieldAdditionByName )
     const SCH_FIELD* found = symbol->GetField( newFieldName );
     BOOST_REQUIRE( found != nullptr );
     BOOST_CHECK( found->GetText() == wxS( "test_model.lib" ) );
+}
+
+
+/**
+ * Regression test for backannotation unit-swap undo.
+ *
+ * Undo restores symbols by swapping the current item image with the saved one through
+ * SCH_ITEM::SwapItemData().  A symbol whose unit was changed by backannotation must come back
+ * with both its per-sheet unit selection and its cached base unit in sync, otherwise the UI can
+ * show the restored unit letter while still drawing the other unit's pin numbers.
+ */
+BOOST_AUTO_TEST_CASE( UndoSwapItemDataRestoresUnitPinDisplayState )
+{
+    LoadSchematic( SchematicQAPath( wxS( "component_classes" ) ) );
+    BOOST_REQUIRE( m_schematic );
+
+    SCH_SHEET_LIST hierarchy = m_schematic->Hierarchy();
+    BOOST_REQUIRE( !hierarchy.empty() );
+
+    const SCH_SHEET_PATH& sheet = hierarchy[0];
+    SCH_SYMBOL*           symbol = nullptr;
+
+    for( SCH_ITEM* item : m_schematic->RootScreen()->Items().OfType( SCH_SYMBOL_T ) )
+    {
+        SCH_SYMBOL* candidate = static_cast<SCH_SYMBOL*>( item );
+
+        if( candidate->GetRef( &sheet, false ) == wxS( "U1" )
+            && candidate->GetUnitSelection( &sheet ) == 1 )
+        {
+            symbol = candidate;
+            break;
+        }
+    }
+
+    BOOST_REQUIRE( symbol );
+
+    auto pinNumbers =
+            []( const std::vector<SCH_PIN*>& aPins )
+            {
+                std::set<wxString> numbers;
+
+                for( SCH_PIN* pin : aPins )
+                    numbers.insert( pin->GetNumber() );
+
+                return numbers;
+            };
+
+    const std::set<wxString> unitAPins = { wxS( "1" ), wxS( "2" ), wxS( "3" ) };
+    const std::set<wxString> unitBPins = { wxS( "5" ), wxS( "6" ), wxS( "7" ) };
+
+    BOOST_CHECK_EQUAL( symbol->GetUnitSelection( &sheet ), 1 );
+    BOOST_CHECK_EQUAL( symbol->GetUnit(), 1 );
+    BOOST_CHECK( pinNumbers( symbol->GetLibPins() ) == unitAPins );
+
+    std::unique_ptr<SCH_SYMBOL> undoImage( static_cast<SCH_SYMBOL*>( symbol->Clone() ) );
+
+    symbol->SetUnitSelection( &sheet, 2 );
+    symbol->SetUnit( 2 );
+
+    BOOST_CHECK_EQUAL( symbol->GetUnitSelection( &sheet ), 2 );
+    BOOST_CHECK_EQUAL( symbol->GetUnit(), 2 );
+    BOOST_CHECK( pinNumbers( symbol->GetLibPins() ) == unitBPins );
+
+    symbol->SwapItemData( undoImage.get() );
+    symbol->UpdatePins();
+
+    BOOST_CHECK_EQUAL( symbol->GetUnitSelection( &sheet ), 1 );
+    BOOST_CHECK_EQUAL( symbol->GetUnit(), 1 );
+    BOOST_CHECK( pinNumbers( symbol->GetLibPins() ) == unitAPins );
+
+    BOOST_CHECK_EQUAL( undoImage->GetUnitSelection( &sheet ), 2 );
+    BOOST_CHECK_EQUAL( undoImage->GetUnit(), 2 );
+    BOOST_CHECK( pinNumbers( undoImage->GetLibPins() ) == unitBPins );
+}
+
+
+/**
+ * Regression test for issue #23545.
+ *
+ * The symbol properties dialog called SetExcludedFromBoard() and SetExcludedFromPosFiles()
+ * without variant parameters, causing them to modify the base property instead of the variant
+ * override. When reading back via GetExcludedFromBoard/PosFiles with a variant name, the
+ * stale variant value (from InitializeAttributes at variant creation time) was returned instead
+ * of the user-intended value.
+ *
+ * This test simulates the dialog's TransferDataFromWindow call order to verify all five
+ * boolean attributes survive a batch commit to the same variant.
+ */
+BOOST_AUTO_TEST_CASE( VariantDialogBatchCommit )
+{
+    wxFileName fn;
+    fn.SetPath( KI_TEST::GetEeschemaTestDataDir() );
+    fn.AppendDir( wxS( "variant_test" ) );
+    fn.SetName( wxS( "variant_test" ) );
+    fn.SetExt( FILEEXT::KiCadSchematicFileExtension );
+
+    LoadSchematic( fn.GetFullPath() );
+
+    SCH_SYMBOL* symbol = GetFirstSymbol();
+    BOOST_REQUIRE( symbol );
+
+    SCH_SHEET_LIST        hierarchy = m_schematic->Hierarchy();
+    const SCH_SHEET_PATH& sheet = hierarchy[0];
+    wxString              variantName = wxS( "DialogTest" );
+
+    // All base properties should start false.
+    BOOST_CHECK( !symbol->GetDNP() );
+    BOOST_CHECK( !symbol->GetExcludedFromBOM() );
+    BOOST_CHECK( !symbol->GetExcludedFromSim() );
+    BOOST_CHECK( !symbol->GetExcludedFromBoard() );
+    BOOST_CHECK( !symbol->GetExcludedFromPosFiles() );
+
+    // Simulate dialog_symbol_properties TransferDataFromWindow call order.
+    // ExcludeFromSim is left unchecked (false), the other four are checked (true).
+    symbol->SetExcludedFromSim( false, &sheet, variantName );
+    symbol->SetExcludedFromBOM( true, &sheet, variantName );
+    symbol->SetExcludedFromBoard( true, &sheet, variantName );
+    symbol->SetExcludedFromPosFiles( true, &sheet, variantName );
+    symbol->SetDNP( true, &sheet, variantName );
+
+    // All four checked properties must read back as true through the variant.
+    BOOST_CHECK( symbol->GetDNP( &sheet, variantName ) );
+    BOOST_CHECK( symbol->GetExcludedFromBOM( &sheet, variantName ) );
+    BOOST_CHECK( symbol->GetExcludedFromBoard( &sheet, variantName ) );
+    BOOST_CHECK( symbol->GetExcludedFromPosFiles( &sheet, variantName ) );
+    BOOST_CHECK( !symbol->GetExcludedFromSim( &sheet, variantName ) );
+
+    // Base properties must remain unchanged.
+    BOOST_CHECK( !symbol->GetDNP() );
+    BOOST_CHECK( !symbol->GetExcludedFromBOM() );
+    BOOST_CHECK( !symbol->GetExcludedFromBoard() );
+    BOOST_CHECK( !symbol->GetExcludedFromPosFiles() );
 }
 
 
@@ -1043,6 +1177,108 @@ BOOST_AUTO_TEST_CASE( VariantSwitchInvalidatesBoundingBoxCache )
     m_schematic->SetCurrentVariant( wxEmptyString );
     BOX2I restoredTextBox = fpField->GetTextBox( nullptr );
     BOOST_CHECK_EQUAL( restoredTextBox.GetWidth(), defaultTextBox.GetWidth() );
+}
+
+
+/**
+ * Verify that variant attributes are initialized from the symbol defaults, not all-false.
+ *
+ * When a variant's attributes match the symbol's default, the serializer omits them.
+ * On reload the parser must initialize those attributes from the symbol's defaults rather
+ * than from the VARIANT constructor defaults (all false).
+ *
+ * This test verifies InitializeAttributes correctly copies from the symbol.
+ * Regression test for https://gitlab.com/kicad/code/kicad/-/issues/23347
+ */
+BOOST_AUTO_TEST_CASE( VariantAttributeInitFromSymbol )
+{
+    wxFileName fn;
+    fn.SetPath( KI_TEST::GetEeschemaTestDataDir() );
+    fn.AppendDir( wxS( "variant_test" ) );
+    fn.SetName( wxS( "variant_test" ) );
+    fn.SetExt( FILEEXT::KiCadSchematicFileExtension );
+
+    LoadSchematic( fn.GetFullPath() );
+    BOOST_REQUIRE( m_schematic );
+
+    SCH_SYMBOL* symbol = GetFirstSymbol();
+    BOOST_REQUIRE( symbol );
+
+    // Set all default attributes to true on the symbol
+    symbol->SetDNP( true );
+    symbol->SetExcludedFromBOM( true );
+    symbol->SetExcludedFromSim( true );
+    symbol->SetExcludedFromBoard( true );
+    symbol->SetExcludedFromPosFiles( true );
+
+    // Default-constructed variant has all-false attributes
+    SCH_SYMBOL_VARIANT defaultVariant( wxS( "Default" ) );
+    BOOST_CHECK( !defaultVariant.m_DNP );
+    BOOST_CHECK( !defaultVariant.m_ExcludedFromBOM );
+    BOOST_CHECK( !defaultVariant.m_ExcludedFromSim );
+    BOOST_CHECK( !defaultVariant.m_ExcludedFromBoard );
+    BOOST_CHECK( !defaultVariant.m_ExcludedFromPosFiles );
+
+    // InitializeAttributes should copy the symbol's attributes
+    SCH_SYMBOL_VARIANT initializedVariant( wxS( "Initialized" ) );
+    initializedVariant.InitializeAttributes( *symbol );
+
+    BOOST_CHECK_MESSAGE( initializedVariant.m_DNP,
+                         "InitializeAttributes should copy DNP from symbol" );
+    BOOST_CHECK_MESSAGE( initializedVariant.m_ExcludedFromBOM,
+                         "InitializeAttributes should copy ExcludedFromBOM from symbol" );
+    BOOST_CHECK_MESSAGE( initializedVariant.m_ExcludedFromSim,
+                         "InitializeAttributes should copy ExcludedFromSim from symbol" );
+    BOOST_CHECK_MESSAGE( initializedVariant.m_ExcludedFromBoard,
+                         "InitializeAttributes should copy ExcludedFromBoard from symbol" );
+    BOOST_CHECK_MESSAGE( initializedVariant.m_ExcludedFromPosFiles,
+                         "InitializeAttributes should copy ExcludedFromPosFiles from symbol" );
+}
+
+
+/**
+ * Regression test for issue #23518.
+ *
+ * Find-and-replace was matching power symbols derived from "+5V" (e.g. "+5VA") when
+ * searching for "+5V" with whole-word matching, because SCH_SYMBOL::Matches() was
+ * iterating the library template's fields instead of the instance's fields.  The lib
+ * template for "+5VA" still contained "+5V" in its value field.
+ */
+BOOST_AUTO_TEST_CASE( MatchesUsesInstanceFields )
+{
+    // Build a minimal lib symbol simulating "+5V"
+    LIB_SYMBOL* libSym = new LIB_SYMBOL( wxS( "+5V" ) );
+
+    // The lib symbol value field text stays as "+5V"
+    libSym->GetValueField().SetText( wxS( "+5V" ) );
+    libSym->GetValueField().SetVisible( true );
+
+    SCH_SYMBOL symbol( *libSym, libSym->GetLibId(), nullptr, 0, 0, VECTOR2I() );
+
+    // Change the instance value to "+5VA" (simulating a user-derived power symbol)
+    symbol.GetField( FIELD_T::VALUE )->SetText( wxS( "+5VA" ) );
+
+    SCH_SEARCH_DATA data;
+    data.findString = wxS( "+5V" );
+    data.matchMode = EDA_SEARCH_MATCH_MODE::WHOLEWORD;
+    data.searchAllFields = false;
+
+    // "+5VA" must NOT match a whole-word search for "+5V"
+    BOOST_CHECK_MESSAGE( !symbol.Matches( data, nullptr ),
+                         "'+5VA' symbol must not match whole-word search for '+5V'" );
+
+    // "+5VA" must match a plain search for "+5V" (substring)
+    data.matchMode = EDA_SEARCH_MATCH_MODE::PLAIN;
+    BOOST_CHECK_MESSAGE( symbol.Matches( data, nullptr ),
+                         "'+5VA' symbol must match plain search for '+5V'" );
+
+    // "+5VA" must match a whole-word search for "+5VA"
+    data.findString = wxS( "+5VA" );
+    data.matchMode = EDA_SEARCH_MATCH_MODE::WHOLEWORD;
+    BOOST_CHECK_MESSAGE( symbol.Matches( data, nullptr ),
+                         "'+5VA' symbol must match whole-word search for '+5VA'" );
+
+    delete libSym;
 }
 
 

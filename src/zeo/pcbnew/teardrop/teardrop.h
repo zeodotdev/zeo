@@ -26,13 +26,12 @@
 #define TEARDROP_H
 
 #include <tool/tool_manager.h>
-#include <board.h>
-#include <footprint.h>
-#include <pad.h>
-#include <pcb_track.h>
-#include <zone.h>
 #include <drc/drc_rtree.h>
 #include "teardrop_parameters.h"
+
+class BOARD;
+class PCB_TRACK;
+class ZONE;
 
 
 // A class to store tracks grouped by layer and netcode
@@ -136,6 +135,16 @@ private:
      * @return true if the given aViaPad + aTrack is located inside a zone of the same netname
      */
     bool areItemsInSameZone( BOARD_ITEM* aPadOrVia, PCB_TRACK* aTrack) const;
+
+    /**
+     * Return the length of the portion of aTrack that lies outside aOther's copper shape
+     * on aLayer. A track that only grazes a pad or via edge tangentially emerges by much
+     * less than its width and is not a credible teardrop anchor: using it misorients the
+     * teardrop axis along the grazing sliver instead of the track's real entry direction.
+     * Returns 0 if the track is fully covered or does not intersect the outline.
+     */
+    int computeEmergingTrackLength( PCB_TRACK* aTrack, BOARD_ITEM* aOther,
+                                    PCB_LAYER_ID aLayer ) const;
 
     /**
      * Compute the curve part points for teardrops connected to a round shape

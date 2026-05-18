@@ -50,6 +50,8 @@ PCB_GENERATOR* PCB_GENERATOR::DeepClone() const
     {
         if( member->Type() == PCB_GROUP_T )
             newGenerator->AddItem( static_cast<PCB_GROUP*>( member )->DeepClone() );
+        else if( member->Type() == PCB_GENERATOR_T )
+            newGenerator->AddItem( static_cast<PCB_GENERATOR*>( member )->DeepClone() );
         else
             newGenerator->AddItem( static_cast<BOARD_ITEM*>( member->Clone() ) );
     }

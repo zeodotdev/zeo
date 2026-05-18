@@ -129,6 +129,20 @@ public:
     /// Notify the adapter that the global library tables have changed
     void GlobalTablesChanged( std::initializer_list<LIBRARY_TABLE_TYPE> aChangedTables = {} );
 
+    /// Notify the adapter that the project library tables are about to be rebuilt.
+    /// Mirrors GlobalTablesChanged: aborts any in-progress loads and invalidates
+    /// cached LIB_DATA entries so raw LIBRARY_TABLE_ROW pointers do not dangle when
+    /// the backing LIBRARY_TABLE objects are destroyed and rebuilt. Entries are
+    /// reset in place (rather than erased) so their nicknames continue to mask
+    /// same-named global libraries until the project scope is repopulated.
+    void ProjectTablesChanged( std::initializer_list<LIBRARY_TABLE_TYPE> aChangedTables = {} );
+
+    /// Complements ProjectTablesChanged by erasing project-scope cache entries
+    /// whose nicknames no longer appear in the rebuilt project table. Must be
+    /// called AFTER the new project table is loaded; otherwise removed libraries
+    /// would be permanently masked by stale sentinels installed during the reset.
+    void ProjectTablesReloaded( std::initializer_list<LIBRARY_TABLE_TYPE> aChangedTables = {} );
+
     void CheckTableRow( LIBRARY_TABLE_ROW& aRow );
 
     /// Loads all available libraries for this adapter type in the background
@@ -158,6 +172,10 @@ public:
 
     void ReloadLibraryEntry( const wxString& aNickname,
                              LIBRARY_TABLE_SCOPE aScope = LIBRARY_TABLE_SCOPE::BOTH );
+
+    /// Synchronously loads the named library to LOADED state. Returns the resulting status,
+    /// or nullopt if the library is not found in any table.
+    std::optional<LIB_STATUS> LoadLibraryEntry( const wxString& aNickname );
 
     /// Return true if the given nickname exists and is not a read-only library
     virtual bool IsWritable( const wxString& aNickname ) const;
@@ -199,6 +217,15 @@ protected:
     /// Aborts any async load in progress; blocks until fully done aborting
     void abortLoad();
 
+    /// Aborts pending loads and resets every project-scope cache entry in place
+    /// (plugin and row cleared, status returned to INVALID) while preserving the
+    /// nickname keys. Keeping the keys acts as a sentinel: fetchIfLoaded() finds
+    /// the entry, sees it is no longer LOADED, and returns nullopt instead of
+    /// falling through to globalLibs(), which is what preserves project-over-
+    /// global shadowing across a project table reload. Shared between
+    /// ProjectChanged() and ProjectTablesChanged() so both hooks stay in sync.
+    void resetProjectCache();
+
     /// Creates a concrete plugin for the given row
     virtual LIBRARY_RESULT<IO_BASE*> createPlugin( const LIBRARY_TABLE_ROW* row ) = 0;
 
@@ -231,6 +258,8 @@ public:
     LIBRARY_MANAGER& operator=( const LIBRARY_MANAGER& ) = delete;
 
     static wxString DefaultGlobalTablePath( LIBRARY_TABLE_TYPE aType );
+
+    static wxString StockTablePath( LIBRARY_TABLE_TYPE aType );
 
     static bool IsTableValid( const wxString& aPath );
 
@@ -295,13 +324,18 @@ public:
      * @return the row, or a nullopt if it does not exist
      */
     std::optional<LIBRARY_TABLE_ROW*> GetRow( LIBRARY_TABLE_TYPE aType, const wxString &aNickname,
-                                              LIBRARY_TABLE_SCOPE aScope = LIBRARY_TABLE_SCOPE::BOTH ) const;
+                                              LIBRARY_TABLE_SCOPE aScope = LIBRARY_TABLE_SCOPE::BOTH );
 
     std::optional<LIBRARY_TABLE_ROW*> FindRowByURI( LIBRARY_TABLE_TYPE aType, const wxString &aUri,
                                                     LIBRARY_TABLE_SCOPE aScope = LIBRARY_TABLE_SCOPE::BOTH ) const;
 
     void ReloadLibraryEntry( LIBRARY_TABLE_TYPE aType, const wxString& aNickname,
                              LIBRARY_TABLE_SCOPE aScope = LIBRARY_TABLE_SCOPE::BOTH );
+
+    /// Synchronously loads the named library to LOADED state for the given type.
+    /// Returns the resulting status, or nullopt if the library is not found.
+    std::optional<LIB_STATUS> LoadLibraryEntry( LIBRARY_TABLE_TYPE aType,
+                                                const wxString& aNickname );
 
     void LoadProjectTables( const wxString& aProjectPath,
                             std::initializer_list<LIBRARY_TABLE_TYPE> aTablesToLoad = {} );
@@ -372,13 +406,24 @@ public:
      * @return the URI for the given library, or nullopt if the nickname is not a valid library
      */
     std::optional<wxString> GetFullURI( LIBRARY_TABLE_TYPE aType, const wxString& aNickname,
-                                        bool aSubstituted = false ) const;
+                                        bool aSubstituted = false );
 
     static wxString GetFullURI( const LIBRARY_TABLE_ROW* aRow, bool aSubstituted = false );
 
     static wxString ExpandURI( const wxString& aShortURI, const PROJECT& aProject );
 
     static bool UrisAreEquivalent( const wxString& aURI1, const wxString& aURI2 );
+
+    /**
+     * Return true if a library table row was added by the Plugin and Content Manager.
+     *
+     * PCM-managed rows are identified by the unexpanded URI template referencing the
+     * versioned 3RD_PARTY env var (as produced by PCM_LIB_TRAVERSER). Matching on the
+     * URI template, rather than on the expanded absolute path, prevents false positives
+     * when a user library uses a different env var whose expanded path is a descendant
+     * of the 3RD_PARTY directory (e.g. KICAD_USER_LIB pointing inside KICAD10_3RD_PARTY).
+     */
+    static bool IsPcmManagedRow( const LIBRARY_TABLE_ROW& aRow );
 
 private:
     void loadTables( const wxString& aTablePath, LIBRARY_TABLE_SCOPE aScope,
@@ -409,6 +454,11 @@ private:
     std::map<LIBRARY_TABLE_TYPE, std::unique_ptr<LIBRARY_MANAGER_ADAPTER>> m_adapters;
 
     mutable std::mutex m_adaptersMutex;
+
+    typedef std::tuple<LIBRARY_TABLE_TYPE, LIBRARY_TABLE_SCOPE, wxString> ROW_CACHE_KEY;
+
+    std::map<ROW_CACHE_KEY, LIBRARY_TABLE_ROW*> m_rowCache;
+    mutable std::mutex                          m_rowCacheMutex;
 };
 
 #endif //LIBRARY_MANAGER_H

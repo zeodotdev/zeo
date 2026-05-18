@@ -28,8 +28,8 @@
 
 #include <wx/bmpbndl.h>
 #include <wx/checkbox.h>
+#include <wx/dcbuffer.h>
 #include <wx/dcclient.h>
-#include <wx/log.h>
 #include <wx/stattext.h>
 
 
@@ -55,7 +55,10 @@ DRC_RE_BITMAP_OVERLAY_PANEL::~DRC_RE_BITMAP_OVERLAY_PANEL()
 
 void DRC_RE_BITMAP_OVERLAY_PANEL::OnPaint( wxPaintEvent& aEvent )
 {
-    wxPaintDC dc( this );
+    wxAutoBufferedPaintDC dc( this );
+
+    dc.SetBackground( wxBrush( GetBackgroundColour() ) );
+    dc.Clear();
 
     if( !m_bitmap.IsOk() )
         return;
@@ -141,22 +144,9 @@ void DRC_RE_BITMAP_OVERLAY_PANEL::PositionFields()
         if( !ctrl )
             continue;
 
-        // Calculate scaled position and size
         wxPoint scaledPos( pos.xStart, pos.yTop );
-        int width = pos.xEnd - pos.xStart;
+        int width = pos.xEnd - pos.xStart + DRC_RE_OVERLAY_WE;
         wxSize scaledSize( width, ctrl->GetBestSize().GetHeight() );
-
-        // Check bounds
-        if( m_bitmap.IsOk() )
-        {
-            wxSize bmpSize = m_bitmap.GetSize();
-
-            if( scaledPos.x + scaledSize.GetWidth() > bmpSize.GetWidth() ||
-                scaledPos.y + scaledSize.GetHeight() > bmpSize.GetHeight() )
-            {
-                wxLogWarning( "Field '%s' position exceeds bitmap bounds", field->GetFieldId() );
-            }
-        }
 
         ctrl->SetPosition( scaledPos );
         ctrl->SetSize( scaledSize );

@@ -47,6 +47,18 @@ PANEL_STARTWIZARD_LIBRARIES_BASE::PANEL_STARTWIZARD_LIBRARIES_BASE( wxWindow* pa
 
 	bSizer8->Add( m_rbImport, 0, wxALL, 5 );
 
+	wxBoxSizer* bSizer4;
+	bSizer4 = new wxBoxSizer( wxHORIZONTAL );
+
+	m_cbMigrateBuiltInLibraries = new wxCheckBox( this, wxID_ANY, _("Migrate built-in libraries to the latest version (recommended)"), wxDefaultPosition, wxDefaultSize, 0 );
+	m_cbMigrateBuiltInLibraries->SetValue(true);
+	m_cbMigrateBuiltInLibraries->SetToolTip( _("When enabled, KiCad will replace any existing references to built-in libraries with references to the latest version") );
+
+	bSizer4->Add( m_cbMigrateBuiltInLibraries, 0, wxALL, 5 );
+
+
+	bSizer8->Add( bSizer4, 0, wxLEFT, 20 );
+
 	m_rbBlankTables = new wxRadioButton( this, wxID_ANY, _("Start with no libraries"), wxDefaultPosition, wxDefaultSize, 0 );
 	bSizer8->Add( m_rbBlankTables, 0, wxALL, 5 );
 
@@ -73,8 +85,15 @@ PANEL_STARTWIZARD_LIBRARIES_BASE::PANEL_STARTWIZARD_LIBRARIES_BASE( wxWindow* pa
 
 	this->SetSizer( bPanelSizer );
 	this->Layout();
+	bPanelSizer->Fit( this );
+
+	// Connect Events
+	this->Connect( wxEVT_SIZE, wxSizeEventHandler( PANEL_STARTWIZARD_LIBRARIES_BASE::OnSize ) );
 }
 
 PANEL_STARTWIZARD_LIBRARIES_BASE::~PANEL_STARTWIZARD_LIBRARIES_BASE()
 {
+	// Disconnect Events
+	this->Disconnect( wxEVT_SIZE, wxSizeEventHandler( PANEL_STARTWIZARD_LIBRARIES_BASE::OnSize ) );
+
 }

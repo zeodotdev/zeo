@@ -25,6 +25,7 @@
 
 #include <widgets/webview_panel.h>
 #include <kiplatform/webview.h>
+#include <wx/evtloop.h>
 #include <wx/sizer.h>
 #include <wx/webviewarchivehandler.h>
 #include <wx/webviewfshandler.h>
@@ -87,35 +88,40 @@ WEBVIEW_PANEL::WEBVIEW_PANEL( wxWindow* aParent, wxWindowID aId, const wxPoint& 
         return;
     }
 
+    wxWebView* browser = GetWebView();
+
 #ifdef __WXMAC__
-    m_browser->RegisterHandler( wxSharedPtr<wxWebViewHandler>( new wxWebViewArchiveHandler( "wxfs" ) ) );
-    m_browser->RegisterHandler( wxSharedPtr<wxWebViewHandler>( new wxWebViewFSHandler( "memory" ) ) );
+    browser->RegisterHandler( wxSharedPtr<wxWebViewHandler>( new wxWebViewArchiveHandler( "wxfs" ) ) );
+    browser->RegisterHandler( wxSharedPtr<wxWebViewHandler>( new wxWebViewFSHandler( "memory" ) ) );
 #endif
-    m_browser->SetUserAgent( wxString::Format( "KiCad/%s WebView/%s", GetMajorMinorPatchVersion(), wxGetOsDescription() ) );
-    m_browser->Create( this, wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize );
+    browser->SetUserAgent( wxString::Format( "KiCad/%s WebView/%s", GetMajorMinorPatchVersion(), wxGetOsDescription() ) );
+    browser->Create( this, wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize );
 
     // Allow loading CDN resources (Tailwind CSS, xterm.js, etc.) from file:// pages.
     // SetPage() uses file:// as the base URL; WebKit2GTK blocks cross-origin requests
     // from file:// origins by default.
-    KIPLATFORM::WEBVIEW::AllowUniversalAccess( m_browser );
+    KIPLATFORM::WEBVIEW::AllowUniversalAccess( browser );
 
-    sizer->Add( m_browser, 1, wxEXPAND );
+    sizer->Add( browser, 1, wxEXPAND );
     SetSizer( sizer );
 
 #ifndef __WXMAC__
-    m_browser->RegisterHandler( wxSharedPtr<wxWebViewHandler>( new wxWebViewArchiveHandler( "wxfs" ) ) );
-    m_browser->RegisterHandler( wxSharedPtr<wxWebViewHandler>( new wxWebViewFSHandler( "memory" ) ) );
+    browser->RegisterHandler( wxSharedPtr<wxWebViewHandler>( new wxWebViewArchiveHandler( "wxfs" ) ) );
+    browser->RegisterHandler( wxSharedPtr<wxWebViewHandler>( new wxWebViewFSHandler( "memory" ) ) );
 #endif
 
-    Bind( wxEVT_WEBVIEW_NAVIGATING, &WEBVIEW_PANEL::OnNavigationRequest, this, m_browser->GetId() );
-    Bind( wxEVT_WEBVIEW_NEWWINDOW, &WEBVIEW_PANEL::OnNewWindow, this, m_browser->GetId() );
-    Bind( wxEVT_WEBVIEW_SCRIPT_MESSAGE_RECEIVED, &WEBVIEW_PANEL::OnScriptMessage, this, m_browser->GetId() );
-    Bind( wxEVT_WEBVIEW_SCRIPT_RESULT, &WEBVIEW_PANEL::OnScriptResult, this, m_browser->GetId() );
-    Bind( wxEVT_WEBVIEW_ERROR, &WEBVIEW_PANEL::OnError, this, m_browser->GetId() );
+    Bind( wxEVT_WEBVIEW_NAVIGATING, &WEBVIEW_PANEL::OnNavigationRequest, this, browser->GetId() );
+    Bind( wxEVT_WEBVIEW_NEWWINDOW, &WEBVIEW_PANEL::OnNewWindow, this, browser->GetId() );
+    Bind( wxEVT_WEBVIEW_SCRIPT_MESSAGE_RECEIVED, &WEBVIEW_PANEL::OnScriptMessage, this, browser->GetId() );
+    Bind( wxEVT_WEBVIEW_SCRIPT_RESULT, &WEBVIEW_PANEL::OnScriptResult, this, browser->GetId() );
+    Bind( wxEVT_WEBVIEW_ERROR, &WEBVIEW_PANEL::OnError, this, browser->GetId() );
+
+    m_initRetryTimer.Bind( wxEVT_TIMER, [this]( wxTimerEvent& ) { DoInitHandlers(); } );
 }
 
 WEBVIEW_PANEL::~WEBVIEW_PANEL()
 {
+    m_initRetryTimer.Stop();
 }
 
 void WEBVIEW_PANEL::BindLoadedEvent()
@@ -123,7 +129,12 @@ void WEBVIEW_PANEL::BindLoadedEvent()
     if( m_loadedEventBound || !m_browser )
         return;
 
-    Bind( wxEVT_WEBVIEW_LOADED, &WEBVIEW_PANEL::OnWebViewLoaded, this, m_browser->GetId() );
+    wxWebView* browser = GetWebView();
+
+    if( !browser )
+        return;
+
+    Bind( wxEVT_WEBVIEW_LOADED, &WEBVIEW_PANEL::OnWebViewLoaded, this, browser->GetId() );
     m_loadedEventBound = true;
 }
 
@@ -137,7 +148,10 @@ void WEBVIEW_PANEL::LoadURL( const wxString& aURL )
     if( aURL.starts_with( "file:/" ) && !aURL.starts_with( "file:///" ) )
     {
         wxString new_url = wxString( "file:///" ) + aURL.AfterFirst( '/' );
-        m_browser->LoadURL( new_url );
+
+        if( wxWebView* browser = GetWebView() )
+            browser->LoadURL( new_url );
+
         return;
     }
 
@@ -147,7 +161,8 @@ void WEBVIEW_PANEL::LoadURL( const wxString& aURL )
         return;
     }
 
-    m_browser->LoadURL( aURL );
+    if( wxWebView* browser = GetWebView() )
+        browser->LoadURL( aURL );
 }
 
 void WEBVIEW_PANEL::SetPage( const wxString& aHtmlContent )
@@ -156,7 +171,9 @@ void WEBVIEW_PANEL::SetPage( const wxString& aHtmlContent )
         return;
 
     wxLogTrace( "webview", "Setting page content" );
-    m_browser->SetPage( aHtmlContent, "file://" );
+
+    if( wxWebView* browser = GetWebView() )
+        browser->SetPage( aHtmlContent, "file://" );
 }
 
 bool WEBVIEW_PANEL::AddMessageHandler( const wxString& aName, MESSAGE_HANDLER aHandler )
@@ -174,8 +191,22 @@ bool WEBVIEW_PANEL::AddMessageHandler( const wxString& aName, MESSAGE_HANDLER aH
 
     if( m_initialized )
     {
-        if( !m_browser->AddScriptMessageHandler( aName ) )
-            wxLogTrace( "webview", "Could not add script message handler %s", aName );
+        wxWebView* browser = GetWebView();
+
+        if( !browser )
+            return true;
+
+        wxEventLoopBase* activeLoop = wxEventLoopBase::GetActive();
+
+        if( activeLoop && ( !activeLoop->IsMain() || activeLoop->IsYielding() ) )
+        {
+            m_initRetryTimer.StartOnce( 200 );
+        }
+        else
+        {
+            if( !browser->AddScriptMessageHandler( aName ) )
+                wxLogTrace( "webview", "Could not add script message handler %s", aName );
+        }
     }
 
     return true;
@@ -185,8 +216,11 @@ void WEBVIEW_PANEL::ClearMessageHandlers()
 {
     wxLogTrace( "webview", "Clearing all message handlers" );
 
-    for( const auto& handler : m_msgHandlers )
-        m_browser->RemoveScriptMessageHandler( handler.first );
+    if( wxWebView* browser = GetWebView() )
+    {
+        for( const auto& handler : m_msgHandlers )
+            browser->RemoveScriptMessageHandler( handler.first );
+    }
 
     m_msgHandlers.clear();
 }
@@ -206,54 +240,69 @@ void WEBVIEW_PANEL::OnNavigationRequest( wxWebViewEvent& aEvt )
     }
 }
 
+void WEBVIEW_PANEL::DoInitHandlers()
+{
+    wxWebView* browser = GetWebView();
+
+    if( !browser )
+        return;
+
+    // WebKit's AddScriptMessageHandler internally calls RunScript which yields the
+    // event loop via wxGUIEventLoop::DoYieldFor. If we're inside a nested event loop
+    // or the main loop is already mid-yield (e.g., wxProgressDialog pumping events),
+    // this causes WebKit's JSC to crash in sanitizeStackForVM when the reentrant
+    // yield tries to create a JS context. Re-defer until the loop is idle.
+    wxEventLoopBase* activeLoop = wxEventLoopBase::GetActive();
+
+    if( activeLoop && ( !activeLoop->IsMain() || activeLoop->IsYielding() ) )
+    {
+        m_initRetryTimer.StartOnce( 200 );
+        return;
+    }
+
+    for( const auto& handler : m_msgHandlers )
+    {
+        if( !browser->AddScriptMessageHandler( handler.first ) )
+            wxLogTrace( "webview", "Could not add script message handler %s", handler.first );
+    }
+
+    browser->AddUserScript( R"(
+        (function() {
+            // Change window.open to navigate in the same window
+            window.open = function(url) { if (url) window.location.href = url; return null; };
+            window.showModalDialog = function() { return null; };
+
+            if (window.external && window.external.invoke) {
+                function notifyHost() {
+                    window.external.invoke('navigation:' + window.location.href);
+                }
+                window.addEventListener('popstate', notifyHost);
+                window.addEventListener('pushstate', notifyHost);
+                window.addEventListener('replacestate', notifyHost);
+                ['pushState', 'replaceState'].forEach(function(type) {
+                    var orig = history[type];
+                    history[type] = function() {
+                        var rv = orig.apply(this, arguments);
+                        window.dispatchEvent(new Event(type.toLowerCase()));
+                        return rv;
+                    };
+                });
+            }
+        })();
+    )" );
+}
+
+
 void WEBVIEW_PANEL::OnWebViewLoaded( wxWebViewEvent& aEvt )
 {
     if( !m_initialized )
     {
-        // Defer handler registration to avoid running during modal dialog/yield
-        auto initFunc = [this]() {
-            for( const auto& handler : m_msgHandlers )
-            {
-                if( !m_browser->AddScriptMessageHandler( handler.first ) )
-                {
-                    wxLogTrace( "webview", "Could not add script message handler %s", handler.first );
-                }
-            }
-
-             // Inject navigation hook for SPA/JS navigation to prevent webkit crashing without new window
-            m_browser->AddUserScript( R"(
-                (function() {
-                    // Change window.open to navigate in the same window
-                    window.open = function(url) { if (url) window.location.href = url; return null; };
-                    window.showModalDialog = function() { return null; };
-
-                    if (window.external && window.external.invoke) {
-                        function notifyHost() {
-                            window.external.invoke('navigation:' + window.location.href);
-                        }
-                        window.addEventListener('popstate', notifyHost);
-                        window.addEventListener('pushstate', notifyHost);
-                        window.addEventListener('replacestate', notifyHost);
-                        ['pushState', 'replaceState'].forEach(function(type) {
-                            var orig = history[type];
-                            history[type] = function() {
-                                var rv = orig.apply(this, arguments);
-                                window.dispatchEvent(new Event(type.toLowerCase()));
-                                return rv;
-                            };
-                        });
-                    }
-                })();
-            )" );
-
-        };
+        m_initialized = true;
 
         if( m_toolManager && m_tool )
-            m_toolManager->RunMainStack( m_tool, initFunc );
+            m_toolManager->RunMainStack( m_tool, [this]() { DoInitHandlers(); } );
         else
-            CallAfter( initFunc );
-
-        m_initialized = true;
+            m_initRetryTimer.StartOnce( 1 );
     }
 
     aEvt.Skip();
@@ -261,7 +310,9 @@ void WEBVIEW_PANEL::OnWebViewLoaded( wxWebViewEvent& aEvt )
 
 void WEBVIEW_PANEL::OnNewWindow( wxWebViewEvent& aEvt )
 {
-    m_browser->LoadURL( aEvt.GetURL() );
+    if( wxWebView* browser = GetWebView() )
+        browser->LoadURL( aEvt.GetURL() );
+
     aEvt.Veto(); // Prevent default behavior of opening a new window
     wxLogTrace( "webview", "New window requested for URL: %s", aEvt.GetURL() );
     wxLogTrace( "webview", "Target: %s", aEvt.GetTarget() );

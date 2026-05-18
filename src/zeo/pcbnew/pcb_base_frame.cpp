@@ -33,7 +33,7 @@
 #include <boost/uuid/entropy_error.hpp>
 #endif
 
-#include <3d_viewer/eda_3d_viewer_frame.h>          // To include VIEWER3D_FRAMENAME
+#include <3d_viewer/eda_3d_viewer_frame.h>
 #include <advanced_config.h>
 #include <base_units.h>
 #include <board.h>
@@ -45,15 +45,18 @@
 #include <footprint_library_adapter.h>
 #include <lset.h>
 #include <kiface_base.h>
+#include <pad.h>
 #include <pcb_painter.h>
 #include <pcbnew_id.h>
 #include <pcbnew_settings.h>
 #include <pcb_base_frame.h>
 #include <pcb_draw_panel_gal.h>
+#include <pcb_track.h>
 #include <pgm_base.h>
 #include <project_pcb.h>
 #include <trace_helpers.h>
 #include <wildcards_and_files_ext.h>
+#include <zone.h>
 
 #include <math/vector2d.h>
 #include <math/vector2wx.h>
@@ -403,8 +406,23 @@ void PCB_BASE_FRAME::FocusOnItems( std::vector<BOARD_ITEM*> aItems, PCB_LAYER_ID
      * Perform a step-wise deflate to find the visual-center-of-mass
      */
 
+    if( itemPoly.IsEmpty() )
+    {
+        FocusOnLocation( focusPt, aAllowScroll );
+        GetCanvas()->Refresh();
+        return;
+    }
+
     BOX2I    bbox = itemPoly.BBox();
     int      step = std::min( bbox.GetWidth(), bbox.GetHeight() ) / 10;
+
+    // Tiny shapes can quantize to a zero deflate step
+    if( step <= 0 )
+    {
+        FocusOnLocation( bbox.Centre(), aAllowScroll );
+        GetCanvas()->Refresh();
+        return;
+    }
 
     while( !itemPoly.IsEmpty() )
     {
@@ -1052,6 +1070,9 @@ void PCB_BASE_FRAME::SetDisplayOptions( const PCB_DISPLAY_OPTIONS& aOptions, boo
     KIGFX::PCB_VIEW*    view   = static_cast<KIGFX::PCB_VIEW*>( canvas->GetView() );
 
     view->UpdateDisplayOptions( aOptions );
+    view->SetMirror( aOptions.m_FlipBoardView, view->IsMirroredY() );
+    view->RecacheAllItems();
+
     canvas->SetHighContrastLayer( GetActiveLayer() );
     OnDisplayOptionsChanged();
 

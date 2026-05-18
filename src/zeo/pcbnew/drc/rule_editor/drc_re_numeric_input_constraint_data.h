@@ -38,7 +38,7 @@ public:
     }
 
     explicit DRC_RE_NUMERIC_INPUT_CONSTRAINT_DATA( int aId, int aParentId,
-                                                   double aNumericInputValue, wxString aRuleName ) :
+                                                   double aNumericInputValue, const wxString& aRuleName ) :
             DRC_RE_BASE_CONSTRAINT_DATA( aId, aParentId, aRuleName ),
             m_numericInputValue( aNumericInputValue )
     {
@@ -48,12 +48,20 @@ public:
 
     BITMAPS GetOverlayBitmap() const override { return BITMAPS::constraint_minimum_track_width; }
 
-    std::vector<DRC_RE_FIELD_POSITION> GetFieldPositions() const override { return { { 20, 40, 20, 1 } }; }
+    std::vector<DRC_RE_FIELD_POSITION> GetFieldPositions() const override
+    {
+        return { { 20 + DRC_RE_OVERLAY_XO, 40 + DRC_RE_OVERLAY_XO, 20 + DRC_RE_OVERLAY_YO, 1 } };
+    }
 
     std::vector<wxString> GetConstraintClauses( const RULE_GENERATION_CONTEXT& aContext ) const override
     {
         wxString code = GetConstraintCode();
-        wxString valueStr = formatDouble( m_numericInputValue );
+        wxString valueStr;
+
+        if( code == "via_count" || code == "min_resolved_spokes" )
+            valueStr = wxString::Format( "%d", (int) m_numericInputValue );
+        else
+            valueStr = formatDouble( m_numericInputValue );
 
         if( code == "via_count" )
         {
@@ -66,10 +74,6 @@ public:
         else if( code == "track_angle" )
         {
             return { wxString::Format( "(constraint %s (min %sdeg))", code, valueStr ) };
-        }
-        else if( code == "maximum_allowed_deviation" )
-        {
-            return { wxString::Format( "(constraint %s (max %smm))", code, valueStr ) };
         }
         else
         {
@@ -85,6 +89,8 @@ public:
     double GetNumericInputValue() { return m_numericInputValue; }
 
     void SetNumericInputValue( double aNumericInput ) { m_numericInputValue = aNumericInput; }
+
+    virtual bool IsIntegerOnly() const { return false; }
 
     VALIDATION_RESULT Validate() const override
     {

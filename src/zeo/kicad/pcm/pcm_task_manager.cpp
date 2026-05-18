@@ -296,6 +296,18 @@ bool PCM_TASK_MANAGER::extract( const wxString& aFilePath, const wxString& aPack
             return false;
         }
 
+#ifndef __WXMSW__
+        if( const wxZipEntry* zipEntry = dynamic_cast<const wxZipEntry*>( entry ) )
+        {
+            int exec = zipEntry->GetMode() & ( wxPOSIX_USER_EXECUTE | wxPOSIX_GROUP_EXECUTE | wxPOSIX_OTHERS_EXECUTE );
+
+            wxStructStat stat;
+
+            if( exec && wxStat( fullname, &stat ) == 0 )
+                wxChmod( fullname, stat.st_mode | exec );
+        }
+#endif
+
         extracted++;
         m_reporter->SetPackageProgress( extracted, entries );
 
@@ -611,7 +623,17 @@ void PCM_TASK_MANAGER::RunQueue( wxWindow* aParent )
                 {
                     PCM_TASK task;
                     m_download_queue.pop( task );
-                    task();
+                    PCM_TASK_MANAGER::STATUS task_status = task();
+
+                    count_tasks++;
+
+                    if( task_status == PCM_TASK_MANAGER::STATUS::SUCCESS )
+                        count_success_tasks++;
+                    else if( task_status != PCM_TASK_MANAGER::STATUS::INITIALIZED )
+                        count_failed_tasks++;
+
+                    m_reporter->AdvancePhase();
+
                     condvar.notify_all();
                 }
 

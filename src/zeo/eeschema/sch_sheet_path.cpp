@@ -310,9 +310,14 @@ bool SCH_SHEET_PATH::GetExcludedFromSim( const wxString& aVariantName ) const
     if( aVariantName.IsEmpty() )
         return GetExcludedFromSim();
 
-    for( SCH_SHEET* sheet : m_sheets )
+    SCH_SHEET_PATH copy = *this;
+
+    while( !copy.empty() )
     {
-        if( sheet->GetExcludedFromSim( this, aVariantName ) )
+        SCH_SHEET* sheet = copy.Last();
+        copy.pop_back();
+
+        if( sheet->GetExcludedFromSim( &copy, aVariantName ) )
             return true;
     }
 
@@ -337,9 +342,14 @@ bool SCH_SHEET_PATH::GetExcludedFromBOM( const wxString& aVariantName ) const
     if( aVariantName.IsEmpty() )
         return GetExcludedFromBOM();
 
-    for( SCH_SHEET* sheet : m_sheets )
+    SCH_SHEET_PATH copy = *this;
+
+    while( !copy.empty() )
     {
-        if( sheet->GetExcludedFromBOM( this, aVariantName ) )
+        SCH_SHEET* sheet = copy.Last();
+        copy.pop_back();
+
+        if( sheet->GetExcludedFromBOM( &copy, aVariantName ) )
             return true;
     }
 
@@ -364,9 +374,14 @@ bool SCH_SHEET_PATH::GetExcludedFromBoard( const wxString& aVariantName ) const
     if( aVariantName.IsEmpty() )
         return GetExcludedFromBoard();
 
-    for( SCH_SHEET* sheet : m_sheets )
+    SCH_SHEET_PATH copy = *this;
+
+    while( !copy.empty() )
     {
-        if( sheet->GetExcludedFromBoard( this, aVariantName ) )
+        SCH_SHEET* sheet = copy.Last();
+        copy.pop_back();
+
+        if( sheet->GetExcludedFromBoard( &copy, aVariantName ) )
             return true;
     }
 
@@ -391,9 +406,14 @@ bool SCH_SHEET_PATH::GetDNP( const wxString& aVariantName ) const
     if( aVariantName.IsEmpty() )
         return GetDNP();
 
-    for( SCH_SHEET* sheet : m_sheets )
+    SCH_SHEET_PATH copy = *this;
+
+    while( !copy.empty() )
     {
-        if( sheet->GetDNP( this, aVariantName ) )
+        SCH_SHEET* sheet = copy.Last();
+        copy.pop_back();
+
+        if( sheet->GetDNP( &copy, aVariantName ) )
             return true;
     }
 
@@ -470,8 +490,22 @@ wxString SCH_SHEET_PATH::PathHumanReadable( bool aUseShortRootName,
         s = fn.GetName() + wxS( "/" );
     }
 
-    // Start at startIdx + 1 since we've already processed the root sheet.
-    for( unsigned i = startIdx + 1; i < size(); i++ )
+    // When the schematic has multiple top-level sheets, the top-level sheet
+    // belongs in the path: otherwise sibling top-level sheets collapse to the
+    // same prefix (just "/") and local labels with identical text on different
+    // top-level sheets end up sharing a net.
+    size_t loopStart = startIdx + 1;
+
+    if( aUseShortRootName && size() > startIdx )
+    {
+        SCH_SHEET* first = at( startIdx );
+        SCHEMATIC* schem = first ? first->Schematic() : nullptr;
+
+        if( schem && schem->GetTopLevelSheets().size() > 1 && first->IsTopLevelSheet() )
+            loopStart = startIdx;
+    }
+
+    for( unsigned i = loopStart; i < size(); i++ )
     {
         wxString sheetName = at( i )->GetField( FIELD_T::SHEET_NAME )->GetShownText( false );
 
@@ -543,24 +577,39 @@ void SCH_SHEET_PATH::UpdateAllScreenReferences() const
 }
 
 
-void SCH_SHEET_PATH::GetSymbols( SCH_REFERENCE_LIST& aReferences, bool aIncludePowerSymbols,
+static bool matchesSymbolFilter( const wxString& aReference, SYMBOL_FILTER aSymbolFilter )
+{
+    bool isPowerSymbol = !aReference.IsEmpty() && aReference[0] == wxT( '#' );
+
+    switch( aSymbolFilter )
+    {
+    case SYMBOL_FILTER_POWER: return isPowerSymbol;
+
+    case SYMBOL_FILTER_ALL: return true;
+
+    case SYMBOL_FILTER_NON_POWER:
+    default: return !isPowerSymbol;
+    }
+}
+
+
+void SCH_SHEET_PATH::GetSymbols( SCH_REFERENCE_LIST& aReferences, SYMBOL_FILTER aSymbolFilter,
                                  bool aForceIncludeOrphanSymbols ) const
 {
     for( SCH_ITEM* item : LastScreen()->Items().OfType( SCH_SYMBOL_T ) )
     {
         SCH_SYMBOL* symbol = static_cast<SCH_SYMBOL*>( item );
-        AppendSymbol( aReferences, symbol, aIncludePowerSymbols, aForceIncludeOrphanSymbols );
+        AppendSymbol( aReferences, symbol, aSymbolFilter, aForceIncludeOrphanSymbols );
     }
 }
 
 
-void SCH_SHEET_PATH::AppendSymbol( SCH_REFERENCE_LIST& aReferences, SCH_SYMBOL* aSymbol,
-                                   bool aIncludePowerSymbols,
+void SCH_SHEET_PATH::AppendSymbol( SCH_REFERENCE_LIST& aReferences, SCH_SYMBOL* aSymbol, SYMBOL_FILTER aSymbolFilter,
                                    bool aForceIncludeOrphanSymbols ) const
 {
     // Skip pseudo-symbols, which have a reference starting with #.  This mainly
     // affects power symbols.
-    if( aIncludePowerSymbols || aSymbol->GetRef( this )[0] != wxT( '#' ) )
+    if( matchesSymbolFilter( aSymbol->GetRef( this ), aSymbolFilter ) )
     {
         if( aSymbol->GetLibSymbolRef() || aForceIncludeOrphanSymbols )
         {
@@ -573,24 +622,22 @@ void SCH_SHEET_PATH::AppendSymbol( SCH_REFERENCE_LIST& aReferences, SCH_SYMBOL* 
 }
 
 
-void SCH_SHEET_PATH::GetMultiUnitSymbols( SCH_MULTI_UNIT_REFERENCE_MAP& aRefList,
-                                          bool aIncludePowerSymbols ) const
+void SCH_SHEET_PATH::GetMultiUnitSymbols( SCH_MULTI_UNIT_REFERENCE_MAP& aRefList, SYMBOL_FILTER aSymbolFilter ) const
 {
     for( SCH_ITEM* item : LastScreen()->Items().OfType( SCH_SYMBOL_T ) )
     {
         SCH_SYMBOL* symbol = static_cast<SCH_SYMBOL*>( item );
-        AppendMultiUnitSymbol( aRefList, symbol, aIncludePowerSymbols );
+        AppendMultiUnitSymbol( aRefList, symbol, aSymbolFilter );
     }
 }
 
 
-void SCH_SHEET_PATH::AppendMultiUnitSymbol( SCH_MULTI_UNIT_REFERENCE_MAP& aRefList,
-                                            SCH_SYMBOL* aSymbol,
-                                            bool aIncludePowerSymbols ) const
+void SCH_SHEET_PATH::AppendMultiUnitSymbol( SCH_MULTI_UNIT_REFERENCE_MAP& aRefList, SCH_SYMBOL* aSymbol,
+                                            SYMBOL_FILTER aSymbolFilter ) const
 {
     // Skip pseudo-symbols, which have a reference starting with #.  This mainly
     // affects power symbols.
-    if( !aIncludePowerSymbols && aSymbol->GetRef( this )[0] == wxT( '#' ) )
+    if( !matchesSymbolFilter( aSymbol->GetRef( this ), aSymbolFilter ) )
         return;
 
     LIB_SYMBOL* symbol = aSymbol->GetLibSymbolRef().get();
@@ -1331,23 +1378,21 @@ void SCH_SHEET_LIST::AnnotatePowerSymbols()
 }
 
 
-void SCH_SHEET_LIST::GetSymbols( SCH_REFERENCE_LIST& aReferences, bool aIncludePowerSymbols,
+void SCH_SHEET_LIST::GetSymbols( SCH_REFERENCE_LIST& aReferences, SYMBOL_FILTER aSymbolFilter,
                                  bool aForceIncludeOrphanSymbols ) const
 {
     for( const SCH_SHEET_PATH& sheet : *this )
-        sheet.GetSymbols( aReferences, aIncludePowerSymbols, aForceIncludeOrphanSymbols );
+        sheet.GetSymbols( aReferences, aSymbolFilter, aForceIncludeOrphanSymbols );
 }
 
 
-void SCH_SHEET_LIST::GetSymbolsWithinPath( SCH_REFERENCE_LIST&   aReferences,
-                                           const SCH_SHEET_PATH& aSheetPath,
-                                           bool                  aIncludePowerSymbols,
-                                           bool                  aForceIncludeOrphanSymbols ) const
+void SCH_SHEET_LIST::GetSymbolsWithinPath( SCH_REFERENCE_LIST& aReferences, const SCH_SHEET_PATH& aSheetPath,
+                                           SYMBOL_FILTER aSymbolFilter, bool aForceIncludeOrphanSymbols ) const
 {
     for( const SCH_SHEET_PATH& sheet : *this )
     {
         if( sheet.IsContainedWithin( aSheetPath ) )
-            sheet.GetSymbols( aReferences, aIncludePowerSymbols, aForceIncludeOrphanSymbols );
+            sheet.GetSymbols( aReferences, aSymbolFilter, aForceIncludeOrphanSymbols );
     }
 }
 
@@ -1381,13 +1426,12 @@ std::optional<SCH_SHEET_PATH> SCH_SHEET_LIST::GetSheetPathByKIIDPath( const KIID
 }
 
 
-void SCH_SHEET_LIST::GetMultiUnitSymbols( SCH_MULTI_UNIT_REFERENCE_MAP &aRefList,
-                                          bool aIncludePowerSymbols ) const
+void SCH_SHEET_LIST::GetMultiUnitSymbols( SCH_MULTI_UNIT_REFERENCE_MAP& aRefList, SYMBOL_FILTER aSymbolFilter ) const
 {
     for( auto it = begin(); it != end(); ++it )
     {
         SCH_MULTI_UNIT_REFERENCE_MAP tempMap;
-        ( *it ).GetMultiUnitSymbols( tempMap, aIncludePowerSymbols );
+        ( *it ).GetMultiUnitSymbols( tempMap, aSymbolFilter );
 
         for( SCH_MULTI_UNIT_REFERENCE_MAP::value_type& pair : tempMap )
         {

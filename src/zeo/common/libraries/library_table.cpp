@@ -28,6 +28,7 @@
 #include <trace_helpers.h>
 #include <wx_filename.h>
 #include <xnode.h>
+#include <ki_exception.h>
 #include <libraries/library_manager.h>
 
 
@@ -58,7 +59,7 @@ std::map<std::string, UTF8> LIBRARY_TABLE_ROW::GetOptionsMap() const
 }
 
 
-LIBRARY_TABLE::LIBRARY_TABLE( const wxFileName &aPath, LIBRARY_TABLE_SCOPE aScope ) :
+LIBRARY_TABLE::LIBRARY_TABLE( const wxFileName &aPath, LIBRARY_TABLE_SCOPE aScope, LIBRARY_TABLE_TYPE aExpectedType ) :
         m_scope( aScope )
 {
     LIBRARY_TABLE_PARSER parser;
@@ -75,10 +76,24 @@ LIBRARY_TABLE::LIBRARY_TABLE( const wxFileName &aPath, LIBRARY_TABLE_SCOPE aScop
         return;
     }
 
+    if( fn.GetSize() <= 1 ) // test for an empty file, 1 byte allowed for BOM
+    {
+        m_ok = true;
+        m_type = aExpectedType;
+        return;
+    }
+
     tl::expected<LIBRARY_TABLE_IR, LIBRARY_PARSE_ERROR> ir = parser.Parse( m_path.ToStdString() );
 
     if( ir.has_value() )
     {
+        if( aExpectedType != LIBRARY_TABLE_TYPE::UNINITIALIZED && ir->type != aExpectedType )
+        {
+            m_ok = false;
+            m_errorDescription = _( "The library table is of wrong type" );
+            return;
+        }
+
         m_ok = initFromIR( *ir );
     }
     else
@@ -172,7 +187,10 @@ void LIBRARY_TABLE::Format( OUTPUTFORMATTER* aOutput ) const
         { LIBRARY_TABLE_TYPE::DESIGN_BLOCK, "design_block_lib_table" }
     };
 
-    wxCHECK( types.contains( Type() ), /* void */ );
+    if( !types.contains( Type() ) )
+    {
+        THROW_IO_ERROR( "Unknown library table type: " + std::to_string( static_cast<int>( Type() ) ) );
+    }
 
     XNODE self( wxXML_ELEMENT_NODE, types.at( Type() ) );
 

@@ -122,6 +122,7 @@ set( BMAPS_SMALL
     pintype_openemit
     pintype_nic
     pintype_noconnect
+    small_bottom
     small_down
     small_edit
     small_folder
@@ -130,6 +131,7 @@ set( BMAPS_SMALL
     small_plus
     small_refresh
     small_sort_desc
+    small_top
     small_trash
     small_up
     small_warning
@@ -505,6 +507,7 @@ set( BMAPS_MID
     rotate_cw_z
     save_as
     save
+    save_all
     select_layer_pair
     select_w_layer
     select_same_sheet
@@ -734,6 +737,7 @@ set( BMAPS_CONSTRAINTS
     basic-clearance
     board-outline-clearance
     clearance
+    courtyard-clearance
     copper_to_edge_clearance
     copper-to-hole-clearance
     creepage-distance
@@ -742,6 +746,7 @@ set( BMAPS_CONSTRAINTS
     hole-to-hole-distance
     length
     matched-length-diff-pair
+    matched-length-diff-pair-v2
     maximum-allowed-deviation
     maximum-via-count
     minimum-angular-ring
@@ -749,13 +754,11 @@ set( BMAPS_CONSTRAINTS
     minimum-clearance
     minimum-connection-width
     silk-to-silk-clearance
-    minimum-soldermask-silver
+    minimum-soldermask-sliver
     minimum-text-height-and-thickness
     minimum_thermal_relief_spoke_count
     minimum-drill-size
     minimum-track-width
-    minimum-uvia-diameter
-    minimum-uvia-hole
     minimum-via-diameter
     permitted-layers
     routing-diff-pair

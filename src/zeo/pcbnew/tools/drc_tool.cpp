@@ -31,6 +31,7 @@
 #include <tools/drc_tool.h>
 #include <kiface_base.h>
 #include <dialog_drc.h>
+#include <footprint.h>
 #include <board_commit.h>
 #include <board_design_settings.h>
 #include <pgm_base.h>

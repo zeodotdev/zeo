@@ -79,14 +79,14 @@ protected:
 #if OCC_VERSION_HEX < OCC_VERSION_MIN
     virtual void Send( const TCollection_ExtendedString& theString,
                        const Message_Gravity theGravity,
-                       const Standard_Boolean theToPutEol ) const override
+                       const bool theToPutEol ) const override
     {
         Send( TCollection_AsciiString( theString ), theGravity, theToPutEol );
     }
 
     virtual void Send( const TCollection_AsciiString& theString,
                        const Message_Gravity theGravity,
-                       const Standard_Boolean theToPutEol ) const override
+                       const bool theToPutEol ) const override
 #else
     virtual void send( const TCollection_AsciiString& theString,
                        const Message_Gravity theGravity ) const override
@@ -197,6 +197,28 @@ bool EXPORTER_STEP::isLayerInBackdrillSpan( PCB_LAYER_ID aLayer, PCB_LAYER_ID aS
     int maxIdx = std::max( startIdx, endIdx );
 
     return ( layerIdx >= minIdx && layerIdx <= maxIdx );
+}
+
+
+bool EXPORTER_STEP::netFilterMatches( const wxString& netname ) const
+{
+    if( m_params.m_NetFilter.IsEmpty() )
+        return true;
+
+    wxArrayString parts = wxSplit( m_params.m_NetFilter, ',' );
+
+    for( wxString token : parts )
+    {
+        token.Trim( true ).Trim( false );
+
+        if( token.IsEmpty() )
+            continue;
+
+        if( netname.Matches( token ) )
+            return true;
+    }
+
+    return false;
 }
 
 
@@ -399,7 +421,7 @@ bool EXPORTER_STEP::buildFootprint3DShapes( FOOTPRINT* aFootprint, const VECTOR2
             }
         }
 
-        if( !m_params.m_NetFilter.IsEmpty() && !pad->GetNetname().Matches( m_params.m_NetFilter ) )
+        if( !netFilterMatches( pad->GetNetname() ) )
             continue;
 
         if( m_params.m_ExportPads )
@@ -634,9 +656,7 @@ bool EXPORTER_STEP::buildFootprint3DShapes( FOOTPRINT* aFootprint, const VECTOR2
 
 bool EXPORTER_STEP::buildTrack3DShape( PCB_TRACK* aTrack, const VECTOR2D& aOrigin )
 {
-    bool skipCopper = !m_params.m_ExportTracksVias
-                      || ( !m_params.m_NetFilter.IsEmpty()
-                           && !aTrack->GetNetname().Matches( m_params.m_NetFilter ) );
+    bool skipCopper = !m_params.m_ExportTracksVias || !netFilterMatches( aTrack->GetNetname() );
 
     if( m_params.m_ExportSoldermask && aTrack->IsOnLayer( F_Mask ) )
     {
@@ -889,8 +909,7 @@ void EXPORTER_STEP::buildZones3DShape( VECTOR2D aOrigin, bool aSolderMaskOnly )
         LSET layers = zone->GetLayerSet();
 
         // Filter by net if a net filter is specified and zone is on copper layer(s)
-        if( ( layers & LSET::AllCuMask() ).count() && !m_params.m_NetFilter.IsEmpty()
-            && !zone->GetNetname().Matches( m_params.m_NetFilter ) )
+        if( ( layers & LSET::AllCuMask() ).count() && !netFilterMatches( zone->GetNetname() ) )
         {
             continue;
         }
@@ -939,11 +958,8 @@ bool EXPORTER_STEP::buildGraphic3DShape( BOARD_ITEM* aItem, const VECTOR2D& aOri
     {
         PCB_SHAPE* graphic = static_cast<PCB_SHAPE*>( aItem );
 
-        if( IsCopperLayer( pcblayer ) && !m_params.m_NetFilter.IsEmpty()
-            && !graphic->GetNetname().Matches( m_params.m_NetFilter ) )
-        {
+        if( IsCopperLayer( pcblayer ) && !netFilterMatches( graphic->GetNetname() ) )
             return true;
-        }
 
         LINE_STYLE lineStyle = graphic->GetLineStyle();
 

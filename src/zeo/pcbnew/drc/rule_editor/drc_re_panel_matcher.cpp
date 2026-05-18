@@ -24,7 +24,7 @@
 #include "drc_re_panel_matcher.h"
 
 #include <algorithm>
-
+#include <drc/drc_rule_condition.h>
 
 /**
  * Panel Claim Priority System
@@ -134,15 +134,21 @@ void DRC_PANEL_MATCHER::initClaims()
             std::set<DRC_CONSTRAINT_T>{},
             30 );
 
-    m_claims.emplace_back(
-            HOLE_TO_HOLE_CLEARANCE,
+   m_claims.emplace_back(
+            HOLE_TO_HOLE_DISTANCE,
             std::set<DRC_CONSTRAINT_T>{ HOLE_TO_HOLE_CONSTRAINT },
             std::set<DRC_CONSTRAINT_T>{},
             30 );
 
-    m_claims.emplace_back(
+   m_claims.emplace_back(
             COURTYARD_CLEARANCE,
             std::set<DRC_CONSTRAINT_T>{ COURTYARD_CLEARANCE_CONSTRAINT },
+            std::set<DRC_CONSTRAINT_T>{},
+            30 );
+
+   m_claims.emplace_back(
+            MINIMUM_SOLDERMASK_SLIVER,
+            std::set<DRC_CONSTRAINT_T>{ SOLDER_MASK_SLIVER_CONSTRAINT },
             std::set<DRC_CONSTRAINT_T>{},
             30 );
 
@@ -222,8 +228,15 @@ void DRC_PANEL_MATCHER::initClaims()
     m_claims.emplace_back(
             MATCHED_LENGTH_DIFF_PAIR,
             std::set<DRC_CONSTRAINT_T>{ LENGTH_CONSTRAINT, SKEW_CONSTRAINT },
-            std::set<DRC_CONSTRAINT_T>{},
+            std::set<DRC_CONSTRAINT_T>{ },
             65 );
+
+    // Skew-only (when not combined with length) still goes to matched length diff pair
+    m_claims.emplace_back(
+            MATCHED_LENGTH_DIFF_PAIR,
+            std::set<DRC_CONSTRAINT_T>{ SKEW_CONSTRAINT },
+            std::set<DRC_CONSTRAINT_T>{},
+            55 );
 
     // Diff pair gap only (when not combined with track_width)
     m_claims.emplace_back(
@@ -231,6 +244,13 @@ void DRC_PANEL_MATCHER::initClaims()
             std::set<DRC_CONSTRAINT_T>{ DIFF_PAIR_GAP_CONSTRAINT },
             std::set<DRC_CONSTRAINT_T>{ MAX_UNCOUPLED_CONSTRAINT },
             15 );
+
+    // Diff pair uncoupled only (when not combined with track_width or gap)                                           
+    m_claims.emplace_back(
+            ROUTING_DIFF_PAIR,
+            std::set<DRC_CONSTRAINT_T>{ MAX_UNCOUPLED_CONSTRAINT },
+            std::set<DRC_CONSTRAINT_T>{},
+            10 );
 
     // Priority 5: Bool constraints
     m_claims.emplace_back(
@@ -268,6 +288,9 @@ bool DRC_PANEL_MATCHER::matchesClaim( const DRC_PANEL_CLAIM&            aClaim,
             claimed.insert( optional );
     }
 
+    if( claimed.empty() )
+        return false;
+
     if( aClaimedOut )
         *aClaimedOut = claimed;
 
@@ -301,6 +324,13 @@ std::vector<DRC_PANEL_MATCH> DRC_PANEL_MATCHER::MatchRule( const DRC_RULE& aRule
 
         if( matchesClaim( claim, remaining, &claimed ) )
         {
+            // VIAS_UNDER_SMD requires Pad_Type == 'SMD' in the condition
+            if( claim.panelType == VIAS_UNDER_SMD )
+            {
+                if( !aRule.m_Condition || !aRule.m_Condition->GetExpression().Contains( wxS( "Pad_Type == 'SMD'" ) ) )
+                    continue;
+            }
+
             matches.emplace_back( claim.panelType, claimed );
 
             // Remove claimed constraints from remaining set

@@ -1008,6 +1008,13 @@ TOOL_ACTION PCB_ACTIONS::updateFootprints( TOOL_ACTION_ARGS()
         .Tooltip( _( "Update footprints to include any changes from the library" ) )
         .Icon( BITMAPS::refresh ) );
 
+TOOL_ACTION PCB_ACTIONS::migrate3DModels( TOOL_ACTION_ARGS()
+        .Name( "pcbnew.GlobalEdit.migrate3DModels" )
+        .Scope( AS_GLOBAL )
+        .FriendlyName( _( "Migrate 3D Models..." ) )
+        .Tooltip( _( "Replace obsolete WRL 3D model references with current STEP models" ) )
+        .Icon( BITMAPS::refresh ) );
+
 TOOL_ACTION PCB_ACTIONS::removeUnusedPads( TOOL_ACTION_ARGS()
         .Name( "pcbnew.GlobalEdit.removeUnusedPads" )
         .Scope( AS_GLOBAL )
@@ -1223,7 +1230,7 @@ TOOL_ACTION PCB_ACTIONS::rescueAutosave( TOOL_ACTION_ARGS()
 TOOL_ACTION PCB_ACTIONS::openNonKicadBoard( TOOL_ACTION_ARGS()
         .Name( "pcbnew.EditorControl.openNonKicadBoard" )
         .Scope( AS_GLOBAL )
-        .FriendlyName( _( "Non-KiCad Board File..." ) )
+        .FriendlyName( _( "Import Non-KiCad Board File..." ) )
         .Tooltip( _( "Import board file from other applications" ) )
         .Icon( BITMAPS::import_brd_file ) );
 
@@ -1432,6 +1439,30 @@ TOOL_ACTION PCB_ACTIONS::zoneDuplicate( TOOL_ACTION_ARGS()
         .Scope( AS_GLOBAL )
         .FriendlyName( _( "Duplicate Zone onto Layer..." ) )
         .Icon( BITMAPS::zone_duplicate ) );
+
+TOOL_ACTION PCB_ACTIONS::zonePriorityMoveToTop( TOOL_ACTION_ARGS()
+        .Name( "pcbnew.EditorControl.zonePriorityMoveToTop" )
+        .Scope( AS_GLOBAL )
+        .FriendlyName( _( "Move to Top" ) )
+        .Icon( BITMAPS::go_up ) );
+
+TOOL_ACTION PCB_ACTIONS::zonePriorityRaise( TOOL_ACTION_ARGS()
+        .Name( "pcbnew.EditorControl.zonePriorityRaise" )
+        .Scope( AS_GLOBAL )
+        .FriendlyName( _( "Raise" ) )
+        .Icon( BITMAPS::small_up ) );
+
+TOOL_ACTION PCB_ACTIONS::zonePriorityLower( TOOL_ACTION_ARGS()
+        .Name( "pcbnew.EditorControl.zonePriorityLower" )
+        .Scope( AS_GLOBAL )
+        .FriendlyName( _( "Lower" ) )
+        .Icon( BITMAPS::small_down ) );
+
+TOOL_ACTION PCB_ACTIONS::zonePriorityMoveToBottom( TOOL_ACTION_ARGS()
+        .Name( "pcbnew.EditorControl.zonePriorityMoveToBottom" )
+        .Scope( AS_GLOBAL )
+        .FriendlyName( _( "Move to Bottom" ) )
+        .Icon( BITMAPS::go_down ) );
 
 TOOL_ACTION PCB_ACTIONS::placeFootprint( TOOL_ACTION_ARGS()
         .Name( "pcbnew.EditorControl.placeFootprint" )
@@ -1664,6 +1695,7 @@ TOOL_ACTION PCB_ACTIONS::flipBoard( TOOL_ACTION_ARGS()
         .Scope( AS_GLOBAL )
         .FriendlyName( _( "Flip Board View" ) )
         .Tooltip( _( "View board from the opposite side" ) )
+        .ToolbarState( TOOLBAR_STATE::TOGGLE )
         .Icon( BITMAPS::flip_board ) );
 
 TOOL_ACTION PCB_ACTIONS::rehatchShapes( TOOL_ACTION_ARGS()

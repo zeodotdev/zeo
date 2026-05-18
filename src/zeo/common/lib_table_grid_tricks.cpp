@@ -569,7 +569,7 @@ void LIB_TABLE_GRID_TRICKS::MoveUpHandler( WX_GRID* aGrid )
                 LIB_TABLE_GRID_DATA_MODEL* tbl = static_cast<LIB_TABLE_GRID_DATA_MODEL*>( aGrid->GetTable() );
                 int curRow = aGrid->GetGridCursorRow();
 
-                std::vector<LIBRARY_TABLE_ROW>& rows = tbl->Table().Rows();
+                std::deque<LIBRARY_TABLE_ROW>& rows = tbl->Table().Rows();
 
                 auto current = rows.begin() + curRow;
                 auto prev    = rows.begin() + curRow - 1;
@@ -590,7 +590,7 @@ void LIB_TABLE_GRID_TRICKS::MoveDownHandler( WX_GRID* aGrid )
             {
                 LIB_TABLE_GRID_DATA_MODEL* tbl = static_cast<LIB_TABLE_GRID_DATA_MODEL*>( aGrid->GetTable() );
                 int curRow = aGrid->GetGridCursorRow();
-                std::vector<LIBRARY_TABLE_ROW>& rows = tbl->Table().Rows();
+                std::deque<LIBRARY_TABLE_ROW>& rows = tbl->Table().Rows();
 
                 auto current = rows.begin() + curRow;
                 auto next    = rows.begin() + curRow + 1;

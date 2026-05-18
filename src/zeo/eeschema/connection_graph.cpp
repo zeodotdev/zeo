@@ -582,11 +582,8 @@ void CONNECTION_SUBGRAPH::UpdateItemConnections()
             continue;
         }
 
-        if( item != m_driver )
-        {
-            item_conn->Clone( *m_driver_connection );
-            item_conn->ClearDirty();
-        }
+        item_conn->Clone( *m_driver_connection );
+        item_conn->ClearDirty();
     }
 }
 
@@ -1419,6 +1416,19 @@ void CONNECTION_GRAPH::updateItemConnectivity( const SCH_SHEET_PATH& aSheet,
                 for( SCH_ITEM* test_item : overlapping_items )
                     connection_map[point].push_back( test_item );
             }
+
+            // Junctions connect wires that pass through their position as midpoints.
+            // This handles schematics where a wire was not split at a junction point,
+            // which can happen when a wire is placed over an existing junction without
+            // the schematic topology being updated.
+            if( item->Type() == SCH_JUNCTION_T )
+            {
+                VECTOR2I    point = item->GetPosition();
+                SCH_SCREEN* screen = aSheet.LastScreen();
+
+                for( SCH_LINE* wire : screen->GetBusesAndWires( point, true ) )
+                    connection_map[point].push_back( wire );
+            }
         }
     }
 
@@ -1968,9 +1978,12 @@ void CONNECTION_GRAPH::processSubGraphs()
                         if( prefix.empty() )
                             prefix = wxT( "BUS" ); // So result will be "BUS_1{...}"
 
-                        wxString oldName = aConn->Name().AfterFirst( '{' );
+                        // Use BusPrefix length to skip past any formatting markers
+                        // in the prefix (e.g. ~{RESET}) rather than AfterFirst('{')
+                        // which would split at a formatting brace.
+                        wxString members = aConn->Name().Mid( aConn->BusPrefix().length() );
 
-                        newName << prefix << wxT( "_" ) << suffixStr << wxT( "{" ) << oldName;
+                        newName << prefix << wxT( "_" ) << suffixStr << members;
 
                         aConn->ConfigureFromLabel( newName );
                     }
@@ -2239,7 +2252,8 @@ void CONNECTION_GRAPH::processSubGraphs()
                         subgraph->m_bus_neighbors[member].insert( candidate );
                         candidate->m_bus_parents[member].insert( subgraph );
                     }
-                    else if( !connection->IsBus()
+                    else if( ( !connection->IsBus()
+                              && !candidate->m_driver_connection->IsBus() )
                            || connection->Type() == candidate->m_driver_connection->Type() )
                     {
                         wxLogTrace( ConnTrace, wxS( "%lu (%s) absorbs neighbor %lu (%s)" ),
@@ -2359,6 +2373,133 @@ void CONNECTION_GRAPH::buildConnectionGraph( std::function<void( SCH_ITEM* )>* a
                             });
 
     results.wait();
+
+    // Build equivalence classes over global subgraphs that are linked by shared
+    // global label names. Two global subgraphs are in the same class whenever
+    // (transitively) some subgraph has a global driver named X and another
+    // subgraph has a global driver also named X, OR a single multi-driver
+    // subgraph has both X and Y as global drivers.
+    //
+    // This is the transitive closure over the relation "shares a global name".
+    // When users chain nets across sheets via differently-named global labels,
+    // every subgraph reachable through any sequence of shared names must end
+    // up on the same final net.
+    //
+    // The per-subgraph promote pass that follows is order-dependent and walks
+    // candidates by their *original* driver text rather than by their already-
+    // promoted name. As a result, when subgraph S2 promotes subgraph S1 to a
+    // new name, and then a third subgraph S3 later renames S2 again, S1 is
+    // left orphaned with the intermediate name. This pre-pass solves the
+    // transitivity problem before the order-dependent loop runs (issue 23719).
+    if( !global_subgraphs.empty() )
+    {
+        std::unordered_map<CONNECTION_SUBGRAPH*, CONNECTION_SUBGRAPH*> sg_root;
+
+        auto find_sg_root =
+                [&]( CONNECTION_SUBGRAPH* aSg ) -> CONNECTION_SUBGRAPH*
+                {
+                    CONNECTION_SUBGRAPH* cur = aSg;
+
+                    while( true )
+                    {
+                        auto it = sg_root.find( cur );
+
+                        if( it == sg_root.end() || it->second == cur )
+                            return cur;
+
+                        // Path compression. Hop the current node directly to its
+                        // grandparent on the way up so subsequent finds are O(1).
+                        auto parent_it = sg_root.find( it->second );
+
+                        if( parent_it != sg_root.end() && parent_it->second != it->second )
+                            it->second = parent_it->second;
+
+                        cur = it->second;
+                    }
+                };
+
+        // Pick the subgraph whose primary driver CONNECTION_SUBGRAPH::ResolveDrivers
+        // would have preferred as the representative for the equivalence class.
+        // Higher driver priority wins; ties broken by alphabetically lower current
+        // primary name (matching ResolveDrivers' candidate_cmp tie-break).
+        auto prefer_as_representative =
+                [&]( CONNECTION_SUBGRAPH* aA, CONNECTION_SUBGRAPH* aB ) -> bool
+                {
+                    CONNECTION_SUBGRAPH::PRIORITY pa =
+                            CONNECTION_SUBGRAPH::GetDriverPriority( aA->m_driver );
+                    CONNECTION_SUBGRAPH::PRIORITY pb =
+                            CONNECTION_SUBGRAPH::GetDriverPriority( aB->m_driver );
+
+                    if( pa != pb )
+                        return pa > pb;
+
+                    return aA->m_driver_connection->Name() < aB->m_driver_connection->Name();
+                };
+
+        auto union_sgs =
+                [&]( CONNECTION_SUBGRAPH* aA, CONNECTION_SUBGRAPH* aB )
+                {
+                    sg_root.try_emplace( aA, aA );
+                    sg_root.try_emplace( aB, aB );
+
+                    CONNECTION_SUBGRAPH* root_a = find_sg_root( aA );
+                    CONNECTION_SUBGRAPH* root_b = find_sg_root( aB );
+
+                    if( root_a == root_b )
+                        return;
+
+                    if( prefer_as_representative( root_a, root_b ) )
+                        sg_root[root_b] = root_a;
+                    else
+                        sg_root[root_a] = root_b;
+                };
+
+        std::unordered_map<wxString, std::vector<CONNECTION_SUBGRAPH*>> name_to_sgs;
+
+        for( CONNECTION_SUBGRAPH* subgraph : global_subgraphs )
+        {
+            for( SCH_ITEM* driver : subgraph->m_drivers )
+            {
+                if( CONNECTION_SUBGRAPH::GetDriverPriority( driver )
+                    < CONNECTION_SUBGRAPH::PRIORITY::GLOBAL_POWER_PIN )
+                {
+                    continue;
+                }
+
+                name_to_sgs[subgraph->GetNameForDriver( driver )].push_back( subgraph );
+            }
+        }
+
+        for( auto& [name, sgs] : name_to_sgs )
+        {
+            if( sgs.size() < 2 )
+                continue;
+
+            for( size_t ii = 1; ii < sgs.size(); ++ii )
+                union_sgs( sgs[0], sgs[ii] );
+        }
+
+        // Every subgraph in sg_root now maps (with path compression) to the
+        // representative of its equivalence class. Clone the representative's
+        // connection into each member that currently differs.
+        for( const auto& entry : sg_root )
+        {
+            CONNECTION_SUBGRAPH* sg   = entry.first;
+            CONNECTION_SUBGRAPH* root = find_sg_root( sg );
+
+            if( sg == root )
+                continue;
+
+            if( sg->m_driver_connection->Name() == root->m_driver_connection->Name() )
+                continue;
+
+            wxLogTrace( ConnTrace, wxS( "Global %lu (%s) canonicalized to %lu (%s)" ),
+                        sg->m_code, sg->m_driver_connection->Name(), root->m_code,
+                        root->m_driver_connection->Name() );
+
+            sg->m_driver_connection->Clone( *root->m_driver_connection );
+        }
+    }
 
     // Next time through the subgraphs, we do some post-processing to handle things like
     // connecting bus members to their neighboring subgraphs, and then propagate connections
@@ -2953,11 +3094,22 @@ void CONNECTION_GRAPH::propagateToNeighbors( CONNECTION_SUBGRAPH* aSubgraph, boo
                     // the names differ, check if the neighbor's current name still matches
                     // a member of this bus. If it does, the neighbor was updated by a different
                     // member of this same bus and we should preserve that (determinism).
-                    // If it doesn't match any member, the bus member was renamed and we should update.
-                    SCH_CONNECTION temp( nullptr, neighbor->m_sheet );
-                    temp.ConfigureFromLabel( neighbor_name );
+                    // If it doesn't match any member, the bus member was renamed and we should
+                    // update. We compare by name rather than VectorIndex because non-bus
+                    // connections (e.g., "GND" from power pin propagation) have a default
+                    // VectorIndex of 0 that falsely matches the first bus member.
+                    bool alreadyUpdatedByBusMember = false;
 
-                    if( matchBusMember( parent, &temp ) )
+                    for( const auto& m : parent->Members() )
+                    {
+                        if( m->Name() == neighbor_name )
+                        {
+                            alreadyUpdatedByBusMember = true;
+                            break;
+                        }
+                    }
+
+                    if( alreadyUpdatedByBusMember )
                         continue;
                 }
 
@@ -3174,8 +3326,8 @@ std::shared_ptr<SCH_CONNECTION> CONNECTION_GRAPH::getDefaultConnection( SCH_ITEM
 SCH_CONNECTION* CONNECTION_GRAPH::matchBusMember( SCH_CONNECTION* aBusConnection,
                                                   SCH_CONNECTION* aSearch )
 {
-    // Should we return a null pointer if the connection is not a bus connection?
-    wxASSERT( aBusConnection->IsBus() );
+    if( !aBusConnection->IsBus() )
+        return nullptr;
 
     SCH_CONNECTION* match = nullptr;
 
@@ -3216,6 +3368,41 @@ SCH_CONNECTION* CONNECTION_GRAPH::matchBusMember( SCH_CONNECTION* aBusConnection
             {
                 match = c.get();
                 break;
+            }
+        }
+
+        if( !match && aSearch->VectorIndex() >= 0 )
+        {
+            int flatIdx = 0;
+
+            for( const std::shared_ptr<SCH_CONNECTION>& c : aBusConnection->Members() )
+            {
+                if( c->Type() == CONNECTION_TYPE::BUS )
+                {
+                    for( const std::shared_ptr<SCH_CONNECTION>& bus_member : c->Members() )
+                    {
+                        if( flatIdx == aSearch->VectorIndex() )
+                        {
+                            match = bus_member.get();
+                            break;
+                        }
+
+                        flatIdx++;
+                    }
+                }
+                else
+                {
+                    if( flatIdx == aSearch->VectorIndex() )
+                    {
+                        match = c.get();
+                        break;
+                    }
+
+                    flatIdx++;
+                }
+
+                if( match )
+                    break;
             }
         }
     }
@@ -3847,6 +4034,34 @@ bool CONNECTION_GRAPH::ercCheckNoConnects( const CONNECTION_SUBGRAPH* aSubgraph 
 
     if( aSubgraph->m_no_connect != nullptr )
     {
+        // If this subgraph reaches the rest of the schematic only through a hier
+        // sheet pin (parent side) or hier label (inner side), and contains no real
+        // connection points of its own, suppress the warning.  The user's intent
+        // is to mark the hier link as unconnected -- whether the no-connect sits
+        // on the pin or at the end of a short wire stub.
+        if( !aSubgraph->m_hier_pins.empty() || !aSubgraph->m_hier_ports.empty() )
+        {
+            bool clean = true;
+
+            for( SCH_ITEM* item : aSubgraph->m_items )
+            {
+                switch( item->Type() )
+                {
+                case SCH_PIN_T:
+                case SCH_LABEL_T:
+                case SCH_GLOBAL_LABEL_T:
+                case SCH_DIRECTIVE_LABEL_T: clean = false; break;
+                default: break;
+                }
+
+                if( !clean )
+                    break;
+            }
+
+            if( clean )
+                return true;
+        }
+
         // Special case: If the subgraph being checked consists of only a hier port/pin and
         // a no-connect, we don't issue a "no-connect connected" warning just because
         // connections exist on the sheet on the other side of the link.
@@ -4294,12 +4509,42 @@ bool CONNECTION_GRAPH::ercCheckLabels( const CONNECTION_SUBGRAPH* aSubgraph )
         {
             size_t allPins = pinCount;
             size_t localPins = pinCount;
+            bool   hasLocalHierarchy = false;
 
-            // For local labels that are bus members, track local pins separately.
-            // A local label connected to a bus that crosses hierarchy boundaries should
-            // still have a local connection to component pins. Without this check, a label
-            // that only connects to pins through the hierarchical bus would not be flagged.
-            bool isBusMemberLabel = ( type == SCH_LABEL_T ) && !aSubgraph->m_bus_parents.empty();
+            if( !aSubgraph->m_hier_pins.empty() || !aSubgraph->m_hier_ports.empty() )
+            {
+                // A label bridging multiple hierarchical connections
+                // (e.g., connecting sheet pins from different sub-sheet
+                // instances) is serving a valid routing purpose even
+                // without local component pins.
+                std::set<wxString> uniquePortNames;
+                for( SCH_HIERLABEL* port : aSubgraph->m_hier_ports )
+                    uniquePortNames.insert( aSubgraph->GetNameForDriver( port ) );
+
+                if( aSubgraph->m_hier_pins.size() + uniquePortNames.size() > 1 )
+                {
+                    hasLocalHierarchy = true;
+                }
+
+                // Also check bus parents for bus-based hierarchical
+                // routing on the same sheet.
+                for( auto& [connection, busParents] : aSubgraph->m_bus_parents )
+                {
+                    for( const CONNECTION_SUBGRAPH* busParent : busParents )
+                    {
+                        if( busParent->m_sheet == sheet
+                            && ( !busParent->m_hier_pins.empty()
+                                 || !busParent->m_hier_ports.empty() ) )
+                        {
+                            hasLocalHierarchy = true;
+                            break;
+                        }
+                    }
+
+                    if( hasLocalHierarchy )
+                        break;
+                }
+            }
 
             auto it = m_net_name_to_subgraphs_map.find( netName );
 
@@ -4317,7 +4562,15 @@ bool CONNECTION_GRAPH::ercCheckLabels( const CONNECTION_SUBGRAPH* aSubgraph )
                     allPins += neighborPins;
 
                     if( neighbor->m_sheet == sheet )
+                    {
                         localPins += neighborPins;
+
+                        if( !neighbor->m_hier_pins.empty()
+                            || !neighbor->m_hier_ports.empty() )
+                        {
+                            hasLocalHierarchy = true;
+                        }
+                    }
                 }
             }
 
@@ -4327,9 +4580,13 @@ bool CONNECTION_GRAPH::ercCheckLabels( const CONNECTION_SUBGRAPH* aSubgraph )
                 ok = false;
             }
 
-            // For local bus member labels, check that there's at least one local pin connection.
-            // Labels that only connect to pins through a hierarchical bus should be flagged.
-            if( allPins == 0 || ( isBusMemberLabel && localPins == 0 && !has_nc ) )
+            // A local label that connects to other subgraphs with
+            // hierarchical connections on the same sheet (through bus
+            // parents or net-name neighbors) is routing signals and should
+            // not be flagged even without local component pins.
+            if( allPins == 0
+                || ( type == SCH_LABEL_T && localPins == 0 && allPins > 1
+                     && !has_nc && !hasLocalHierarchy ) )
             {
                 reportError( text, ERCE_LABEL_NOT_CONNECTED );
                 ok = false;

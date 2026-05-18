@@ -135,9 +135,12 @@ bool SCH_ITEM::IsGroupableType() const
     case SCH_HIER_LABEL_T:
     case SCH_RULE_AREA_T:
     case SCH_DIRECTIVE_LABEL_T:
-    case SCH_SHEET_PIN_T:
     case SCH_SHEET_T:
         return true;
+
+    // Don't group sheet pins directly, they go along with an SCH_SHEET, and all operations
+    // should be performed on that sheet.
+    case SCH_SHEET_PIN_T:
     default:
         return false;
     }
@@ -518,16 +521,21 @@ std::shared_ptr<NETCLASS> SCH_ITEM::GetEffectiveNetClass( const SCH_SHEET_PATH* 
     // where the PROJECT has been unloaded via our destroy hook; in that
     // case we must return a placeholder rather than deref a null
     // m_project inside schematic->Project().
-    if( schematic && schematic->IsValid() )
-    {
-        std::shared_ptr<NET_SETTINGS>& netSettings = schematic->Project().GetProjectFile().m_NetSettings;
-        SCH_CONNECTION* connection = Connection( aSheet );
+    if( !schematic || !schematic->IsValid() )
+        return nullNetclass;
 
-        if( connection )
-            return netSettings->GetEffectiveNetClass( connection->Name() );
-        else
-            return netSettings->GetDefaultNetclass();
-    }
+    std::shared_ptr<NET_SETTINGS>& netSettings = schematic->Project().GetProjectFile().m_NetSettings;
+
+    if( !netSettings )
+        return nullNetclass;
+
+    SCH_CONNECTION* connection = Connection( aSheet );
+
+    if( connection )
+        return netSettings->GetEffectiveNetClass( connection->Name() );
+
+    if( std::shared_ptr<NETCLASS> defaultNetclass = netSettings->GetDefaultNetclass() )
+        return defaultNetclass;
 
     return nullNetclass;
 }

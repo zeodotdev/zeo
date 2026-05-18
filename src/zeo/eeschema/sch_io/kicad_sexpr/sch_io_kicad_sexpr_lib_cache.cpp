@@ -298,9 +298,14 @@ void SCH_IO_KICAD_SEXPR_LIB_CACHE::Save( const std::optional<bool>& aOpt )
         // Write each file
         for( auto& [ filePath, symbols ] : symbolsByFile )
         {
+            wxFileName oldFn = filePath;
+
+            if( oldFn.GetPath() != m_libFileName.GetPath() )
+                oldFn.SetPath( m_libFileName.GetPath() );
+
             std::sort( symbols.begin(), symbols.end(), sortByInheritance );
 
-            auto formatter = std::make_unique<PRETTIFIED_FILE_OUTPUTFORMATTER>( filePath );
+            auto formatter = std::make_unique<PRETTIFIED_FILE_OUTPUTFORMATTER>( oldFn.GetFullPath() );
 
             formatLibraryHeader( *formatter.get() );
 
@@ -314,6 +319,17 @@ void SCH_IO_KICAD_SEXPR_LIB_CACHE::Save( const std::optional<bool>& aOpt )
             for( LIB_SYMBOL* symbol : symbols )
                 m_symbolSourceFiles[ symbol->GetName() ] = filePath;
         }
+
+        // Remove files for deleted symbols that are no longer needed
+        for( const wxString& deadFile : m_pendingFileDeletes )
+        {
+            if( symbolsByFile.find( deadFile ) == symbolsByFile.end() && wxFileExists( deadFile ) )
+            {
+                wxRemoveFile( deadFile );
+            }
+        }
+
+        m_pendingFileDeletes.clear();
     }
 
     m_fileModTime = GetLibModificationTime();
@@ -767,9 +783,22 @@ void SCH_IO_KICAD_SEXPR_LIB_CACHE::DeleteSymbol( const wxString& aSymbolName )
 
     LIB_SYMBOL* symbol = it->second;
 
+    auto recordSourceFileForDeletion = [this]( const wxString& aName )
+    {
+        auto srcIt = m_symbolSourceFiles.find( aName );
+
+        if( srcIt != m_symbolSourceFiles.end() )
+        {
+            m_pendingFileDeletes.insert( srcIt->second );
+            m_symbolSourceFiles.erase( srcIt );
+        }
+    };
+
     if( symbol->IsRoot() )
     {
         LIB_SYMBOL* rootSymbol = symbol;
+
+        recordSourceFileForDeletion( aSymbolName );
 
         // Remove the root symbol and all its children.
         m_symbols.erase( it );
@@ -781,6 +810,7 @@ void SCH_IO_KICAD_SEXPR_LIB_CACHE::DeleteSymbol( const wxString& aSymbolName )
             if( it1->second->IsDerived()
               && it1->second->GetParent().lock() == rootSymbol->SharedPtr() )
             {
+                recordSourceFileForDeletion( it1->first );
                 delete it1->second;
                 it1 = m_symbols.erase( it1 );
             }
@@ -794,6 +824,7 @@ void SCH_IO_KICAD_SEXPR_LIB_CACHE::DeleteSymbol( const wxString& aSymbolName )
     }
     else
     {
+        recordSourceFileForDeletion( aSymbolName );
         // Just remove the alias.
         m_symbols.erase( it );
         delete symbol;

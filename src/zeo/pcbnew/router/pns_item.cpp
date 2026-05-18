@@ -27,6 +27,9 @@
 #include <geometry/shape_compound.h>
 #include <geometry/shape_poly_set.h>
 
+#include <board_item.h>
+
+
 typedef VECTOR2I::extended_type ecoord;
 
 namespace PNS {
@@ -222,6 +225,9 @@ bool ITEM::collideSimple( const ITEM* aHead, const NODE* aNode, int aLayer,
 
         const SHAPE* shapeI = Shape( aLayer );
         const SHAPE* shapeH = aHead->Shape( aLayer );
+
+        if( !shapeI || !shapeH )
+            return false;
 
         if( checkCastellation || checkNetTie )
         {

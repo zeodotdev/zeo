@@ -347,6 +347,10 @@ DRC_ITEM DRC_ITEM::crossBoardVoltageDrop( DRCE_CROSS_BOARD_VOLTAGE_DROP,
         _HKI( "Cross-board: estimated voltage drop exceeds rule" ),
         wxT( "cross_board_voltage_drop" ) );
 
+DRC_ITEM DRC_ITEM::trackNotCenteredOnVia( DRCE_TRACK_NOT_CENTERED_ON_VIA,
+        _HKI( "Track endpoint not centered on via" ),
+        wxT( "track_not_centered_on_via" ) );
+
 std::vector<std::reference_wrapper<RC_ITEM>> DRC_ITEM::allItemTypes( {
         DRC_ITEM::heading_electrical,
         DRC_ITEM::shortingItems,
@@ -376,6 +380,7 @@ std::vector<std::reference_wrapper<RC_ITEM>> DRC_ITEM::allItemTypes( {
         DRC_ITEM::solderMaskBridge,
         DRC_ITEM::connectionWidth,
         DRC_ITEM::trackOnPostMachinedLayer,
+        DRC_ITEM::trackNotCenteredOnVia,
         DRC_ITEM::tuningProfileImplicitRules,
 
         DRC_ITEM::heading_schematic_parity,
@@ -507,14 +512,15 @@ std::shared_ptr<DRC_ITEM> DRC_ITEM::Create( int aErrorCode )
     case DRCE_NONMIRRORED_TEXT_ON_BACK_LAYER:      return std::make_shared<DRC_ITEM>( nonMirroredTextOnBackLayer );
     case DRCE_MISSING_TUNING_PROFILE:   return std::make_shared<DRC_ITEM>( missingTuningProfile );
     case DRCE_TRACK_ON_POST_MACHINED_LAYER: return std::make_shared<DRC_ITEM>( trackOnPostMachinedLayer );
-    case DRCE_CROSS_BOARD_BINDING:      return std::make_shared<DRC_ITEM>( crossBoardBinding );
-    case DRCE_CROSS_BOARD_CONSISTENCY:  return std::make_shared<DRC_ITEM>( crossBoardConsistency );
-    case DRCE_CROSS_BOARD_ORPHAN_PAD:   return std::make_shared<DRC_ITEM>( crossBoardOrphanPad );
-    case DRCE_CROSS_BOARD_POWER_PINS:   return std::make_shared<DRC_ITEM>( crossBoardPowerPins );
-    case DRCE_CROSS_BOARD_LENGTH:       return std::make_shared<DRC_ITEM>( crossBoardLength );
-    case DRCE_CROSS_BOARD_DIFF_PAIR:    return std::make_shared<DRC_ITEM>( crossBoardDiffPair );
-    case DRCE_CROSS_BOARD_CURRENT:      return std::make_shared<DRC_ITEM>( crossBoardCurrent );
-    case DRCE_CROSS_BOARD_VOLTAGE_DROP: return std::make_shared<DRC_ITEM>( crossBoardVoltageDrop );
+    case DRCE_CROSS_BOARD_BINDING:          return std::make_shared<DRC_ITEM>( crossBoardBinding );
+    case DRCE_CROSS_BOARD_CONSISTENCY:      return std::make_shared<DRC_ITEM>( crossBoardConsistency );
+    case DRCE_CROSS_BOARD_ORPHAN_PAD:       return std::make_shared<DRC_ITEM>( crossBoardOrphanPad );
+    case DRCE_CROSS_BOARD_POWER_PINS:       return std::make_shared<DRC_ITEM>( crossBoardPowerPins );
+    case DRCE_CROSS_BOARD_LENGTH:           return std::make_shared<DRC_ITEM>( crossBoardLength );
+    case DRCE_CROSS_BOARD_DIFF_PAIR:        return std::make_shared<DRC_ITEM>( crossBoardDiffPair );
+    case DRCE_CROSS_BOARD_CURRENT:          return std::make_shared<DRC_ITEM>( crossBoardCurrent );
+    case DRCE_CROSS_BOARD_VOLTAGE_DROP:     return std::make_shared<DRC_ITEM>( crossBoardVoltageDrop );
+    case DRCE_TRACK_NOT_CENTERED_ON_VIA:    return std::make_shared<DRC_ITEM>( trackNotCenteredOnVia );
     default:
         wxFAIL_MSG( wxT( "Unknown DRC error code" ) );
         return nullptr;

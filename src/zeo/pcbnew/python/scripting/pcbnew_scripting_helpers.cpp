@@ -159,18 +159,17 @@ BOARD* LoadBoard( const wxString& aFileName, PCB_IO_MGR::PCB_FILE_T aFormat, boo
     // By default only the BMP handler is available.
     wxInitAllImageHandlers();
 
-    PROJECT* project = GetSettingsManager()->GetProject( projectPath );
+    SETTINGS_MANAGER& settingsManager = PgmOrNull() ? Pgm().GetSettingsManager() : *GetSettingsManager();
+
+    PROJECT* project = settingsManager.GetProject( projectPath );
 
     if( !project )
     {
-        if( wxFileExists( projectPath ) )
-        {
-            // cli
-            GetSettingsManager()->LoadProject( projectPath, aSetActive );
-            project = GetSettingsManager()->GetProject( projectPath );
-        }
+        // cli
+        settingsManager.LoadProject( projectPath, aSetActive );
+        project = settingsManager.GetProject( projectPath );
     }
-    else if( s_PcbEditFrame && project == &GetSettingsManager()->Prj() )
+    else if( s_PcbEditFrame && project == &settingsManager.Prj() )
     {
         // Project is already loaded?  Then so is the board
         return s_PcbEditFrame->GetBoard();
@@ -614,13 +613,13 @@ bool WriteDRCReport( BOARD* aBoard, const wxString& aFileName, EDA_UNITS aUnits,
                 }
             } );
 
-    aBoard->RecordDRCExclusions();
-    aBoard->DeleteMARKERs( true, true );
+    // Run the engine. The violation handler above collects results into local vectors,
+    // so we deliberately do NOT mutate the board's marker list. Action plugins call this
+    // helper while the host frame still holds raw pointers to existing markers (in undo
+    // snapshots), and deleting them out from under those snapshots produces dangling
+    // pointers that crash on the next event loop iteration.
     engine->RunTests( aUnits, aReportAllTrackErrors, false );
     engine->ClearViolationHandler();
-
-    // Update the exclusion status on any excluded markers that still exist.
-    aBoard->ResolveDRCExclusions( false );
 
     // TODO: Unify this with DIALOG_DRC::writeReport
 

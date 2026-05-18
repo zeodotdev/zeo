@@ -24,6 +24,7 @@
 #include "drc_re_numeric_input_overlay_panel.h"
 #include "drc_re_numeric_input_constraint_data.h"
 #include "drc_rule_editor_utils.h"
+#include "drc_re_validator_numeric_ctrl.h"
 
 #include <dialogs/rule_editor_dialog_base.h>
 #include <eda_base_frame.h>
@@ -59,6 +60,8 @@ DRC_RE_NUMERIC_INPUT_OVERLAY_PANEL::DRC_RE_NUMERIC_INPUT_OVERLAY_PANEL(
                                                    valueField->GetLabel(), false, false );
     valueField->SetUnitBinder( m_valueBinder.get() );
 
+    valueField->GetControl()->SetValidator( VALIDATOR_NUMERIC_CTRL( false, m_data->IsIntegerOnly() ) );
+
     auto notifyModified = [this]( wxCommandEvent& )
     {
         RULE_EDITOR_DIALOG_BASE* dlg = RULE_EDITOR_DIALOG_BASE::GetDialog( this );
@@ -86,7 +89,17 @@ bool DRC_RE_NUMERIC_INPUT_OVERLAY_PANEL::TransferDataToWindow()
     if( !m_data )
         return false;
 
-    m_valueBinder->SetDoubleValue( pcbIUScale.mmToIU( m_data->GetNumericInputValue() ) );
+    if( m_data->IsIntegerOnly() )
+    {
+        auto* ctrl = dynamic_cast<wxTextCtrl*>( m_fields[0]->GetControl() );
+
+        if( ctrl )
+            ctrl->ChangeValue( wxString::Format( "%d", (int) m_data->GetNumericInputValue() ) );
+    }
+    else
+    {
+        m_valueBinder->ChangeDoubleValue( pcbIUScale.mmToIU( m_data->GetNumericInputValue() ) );
+    }
 
     return true;
 }
@@ -97,7 +110,21 @@ bool DRC_RE_NUMERIC_INPUT_OVERLAY_PANEL::TransferDataFromWindow()
     if( !m_data )
         return false;
 
-    m_data->SetNumericInputValue( pcbIUScale.IUTomm( m_valueBinder->GetDoubleValue() ) );
+    if( m_data->IsIntegerOnly() )
+    {
+        auto* ctrl = dynamic_cast<wxTextCtrl*>( m_fields[0]->GetControl() );
+
+        if( ctrl )
+        {
+            long val = 0;
+            ctrl->GetValue().Strip( wxString::both ).ToLong( &val );
+            m_data->SetNumericInputValue( static_cast<double>( val ) );
+        }
+    }
+    else
+    {
+        m_data->SetNumericInputValue( pcbIUScale.IUTomm( m_valueBinder->GetDoubleValue() ) );
+    }
 
     return true;
 }
@@ -106,6 +133,48 @@ bool DRC_RE_NUMERIC_INPUT_OVERLAY_PANEL::TransferDataFromWindow()
 bool DRC_RE_NUMERIC_INPUT_OVERLAY_PANEL::ValidateInputs( int* aErrorCount,
                                                          wxString* aValidationMessage )
 {
+    ClearFieldErrors();
+
+    wxTextCtrl* ctrl = dynamic_cast<wxTextCtrl*>( m_fields[0]->GetControl() ); // "value" field is index 0
+
+    if( ctrl )
+    {
+        wxValidator* validator = ctrl->GetValidator();
+
+        if( validator && !validator->Validate( this ) )
+        {
+            auto* numValidator = dynamic_cast<VALIDATOR_NUMERIC_CTRL*>( validator );
+
+            if( numValidator )
+            {
+                wxString errorMsg;
+
+                switch( numValidator->GetValidationState() )
+                {
+                case VALIDATOR_NUMERIC_CTRL::VALIDATION_STATE::Empty: errorMsg = wxS( "Value is required." ); break;
+                case VALIDATOR_NUMERIC_CTRL::VALIDATION_STATE::NotNumeric:
+                    errorMsg = wxS( "Value must be a number." );
+                    break;
+                case VALIDATOR_NUMERIC_CTRL::VALIDATION_STATE::NotInteger:
+                    errorMsg = wxS( "Value must be a whole number." );
+                    break;
+                case VALIDATOR_NUMERIC_CTRL::VALIDATION_STATE::NotGreaterThanZero:
+                    errorMsg = wxS( "Value must be greater than 0." );
+                    break;
+                default: break;
+                }
+
+                if( !errorMsg.IsEmpty() )
+                {
+                    ( *aErrorCount )++;
+                    *aValidationMessage += DRC_RULE_EDITOR_UTILS::FormatErrorMessage( *aErrorCount, errorMsg );
+                    ShowFieldError( wxS( "value" ) );
+                    return false;
+                }
+            }
+        }
+    }
+
     TransferDataFromWindow();
 
     VALIDATION_RESULT result = m_data->Validate();

@@ -30,6 +30,7 @@
 #include <component_classes/component_class_manager.h>
 #include <footprint.h>
 #include <lset.h>
+#include <pad.h>
 #include <pcb_group.h>
 #include <pcb_track.h>
 #include <pcb_shape.h>
@@ -112,6 +113,16 @@ COMMIT& BOARD_COMMIT::Stage( EDA_ITEM* aItem, CHANGE_TYPE aChangeType, BASE_SCRE
             for( EDA_ITEM* member : group->GetItems() )
                 Stage( member, aChangeType, aScreen, aRecurse );
         }
+    }
+
+    if( m_isBoardEditor && ( aChangeType & CHT_TYPE ) == CHT_REMOVE
+            && aItem->IsBOARD_ITEM()
+            && static_cast<BOARD_ITEM*>( aItem )->GetParentFootprint() )
+    {
+        if( m_deletedItems.find( { aItem, aScreen } ) == m_deletedItems.end() )
+            makeEntry( aItem, aChangeType, makeImage( aItem ), aScreen );
+
+        return *this;
     }
 
     return COMMIT::Stage( aItem, aChangeType );
@@ -401,6 +412,10 @@ void BOARD_COMMIT::Push( const wxString& aMessage, int aCommitFlags )
                     {
                         if( FOOTPRINT* parentFP = board->GetFirstFootprint() )
                             parentFP->Remove( boardItem );
+                    }
+                    else if( FOOTPRINT* parentFP = boardItem->GetParentFootprint() )
+                    {
+                        parentFP->Remove( boardItem );
                     }
                     else
                     {
@@ -788,6 +803,12 @@ void BOARD_COMMIT::Revert()
 
     if( bulkAddedItems.size() > 0 || bulkRemovedItems.size() > 0 || itemsChanged.size() > 0 )
         board->OnItemsCompositeUpdate( bulkAddedItems, bulkRemovedItems, itemsChanged );
+
+    if( m_isBoardEditor )
+    {
+        for( BOARD_ITEM* item : itemsToDelete )
+            connectivity->Remove( item );
+    }
 
     for( BOARD_ITEM* item : itemsToDelete )
         delete item;

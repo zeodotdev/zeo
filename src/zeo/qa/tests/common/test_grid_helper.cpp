@@ -419,4 +419,70 @@ BOOST_AUTO_TEST_CASE( AlignGridWithNonPageOrigin )
 }
 
 
+BOOST_AUTO_TEST_CASE( MovementFromOffGridAnchor )
+{
+    // Issue #23308 / #21800: When moving a footprint by its anchor, the reference point
+    // should be the actual anchor (not grid-snapped). The final position must still land
+    // exactly on-grid because AlignGrid now rounds VECTOR2D grid parameters correctly.
+
+    GRID_HELPER helper;
+    helper.SetGridSnapping( true );
+
+    constexpr int IU_PER_MM = 1000000;
+
+    struct TestCase
+    {
+        const char* name;
+        double      gridSizeMM;
+        int         anchorX;
+        int         anchorY;
+        int         mouseTargetX;
+        int         mouseTargetY;
+    };
+
+    std::vector<TestCase> cases = {
+        // Anchor at 0.05mm on a 0.1mm grid
+        { "0.1mm grid, anchor at half-grid",
+          0.1, 50000, 50000, 300000, 300000 },
+
+        // Anchor at 0.127mm on a 0.254mm (10 mil) grid
+        { "10mil grid, anchor at half-grid",
+          0.254, 127000, 127000, 762000, 508000 },
+
+        // Anchor at 0.3175mm on a 0.635mm (25 mil) grid
+        { "25mil grid, anchor at half-grid",
+          0.635, 317500, 317500, 1905000, 1270000 },
+    };
+
+    for( const auto& tc : cases )
+    {
+        BOOST_TEST_CONTEXT( tc.name )
+        {
+            int gridSizeIU = KiROUND( tc.gridSizeMM * IU_PER_MM );
+
+            VECTOR2D gridD( tc.gridSizeMM * IU_PER_MM, tc.gridSizeMM * IU_PER_MM );
+            VECTOR2D offsetD( 0, 0 );
+
+            // Simulate the cursor snapping to grid at the target mouse position. This is
+            // what BestSnapAnchor does during the move loop.
+            VECTOR2I snappedTarget = helper.AlignGrid( VECTOR2I( tc.mouseTargetX, tc.mouseTargetY ),
+                                                       gridD, offsetD );
+
+            // The movement delta starts from the actual anchor (off-grid), not a grid-snapped ref
+            VECTOR2I anchor( tc.anchorX, tc.anchorY );
+            VECTOR2I movement = snappedTarget - anchor;
+            VECTOR2I finalPos = anchor + movement;
+
+            // Final position must be exactly on-grid
+            BOOST_CHECK_EQUAL( finalPos.x % gridSizeIU, 0 );
+            BOOST_CHECK_EQUAL( finalPos.y % gridSizeIU, 0 );
+
+            // And it must equal the snapped target exactly
+            BOOST_CHECK_EQUAL( finalPos.x, snappedTarget.x );
+            BOOST_CHECK_EQUAL( finalPos.y, snappedTarget.y );
+        }
+    }
+}
+
+
 BOOST_AUTO_TEST_SUITE_END()

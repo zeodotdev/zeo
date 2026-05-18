@@ -91,6 +91,164 @@ static void TestOlympus0x20( const BLOCK_BASE& aBlock )
 
 
 /**
+ * Tests a V17.2 slot def
+ */
+static void TestBeagleBoneBlack_0x0F_SlotG1( const BLOCK_BASE& aBlock )
+{
+    BOOST_REQUIRE( aBlock.GetBlockType() == 0x0f );
+
+    const auto& blk = static_cast<const BLOCK<BLK_0x0F_FUNCTION_SLOT>&>( aBlock ).GetData();
+    BOOST_TEST( blk.m_Key == 0xbf0 );
+
+    BOOST_TEST( blk.m_Ptr0x06 == 0xb91 );
+    BOOST_TEST( blk.m_Next.value_or( 0 ) == 0xb91 ); // Last slot in component
+
+    BOOST_TEST( blk.m_SlotName == 0x2ba );
+    BOOST_TEST( blk.m_Ptr0x11 == 0x060aa );
+
+    BOOST_TEST( blk.GetCompDeviceTypeStr() == "RES_10K_1/16W_1%_0402_402_10K,1" );
+}
+
+
+/**
+ * Tests a V17.4 slot def
+ */
+static void TestOpenBreath_0x0F_SlotAM4096_G1( const BLOCK_BASE& aBlock )
+{
+    BOOST_REQUIRE( aBlock.GetBlockType() == 0x0f );
+
+    const auto& blk = static_cast<const BLOCK<BLK_0x0F_FUNCTION_SLOT>&>( aBlock ).GetData();
+    BOOST_TEST( blk.m_Key == 0x12d );
+
+    BOOST_TEST( blk.m_Ptr0x06 == 0x126 );
+    BOOST_TEST( blk.m_Next.value_or( 0 ) == 0x126 ); // Last slot in component
+
+    BOOST_TEST( blk.m_SlotName == 0x87 );
+    BOOST_TEST( blk.m_Ptr0x11 == 0x264 ); // ptr to "ZERO"
+
+    BOOST_TEST( blk.GetCompDeviceTypeStr() == "AM4096" );
+}
+
+
+/**
+ * This is a 1-layer SMD padstack in v16.3 format.
+ */
+static void TestParallellaV163_PS_56X55RT( const BLOCK_BASE& aBlock )
+{
+    BOOST_REQUIRE( aBlock.GetBlockType() == 0x1c );
+
+    const auto& blk = static_cast<const BLOCK<BLK_0x1C_PADSTACK>&>( aBlock ).GetData();
+
+    BOOST_TEST( blk.m_Key == 0x0acda700 );
+
+    BOOST_TEST( blk.GetLayerCount() == 1 );
+    BOOST_TEST( blk.m_Components.size() == 10 + 3 * 1);
+}
+
+
+static void TestParallellaV163_PS_28C128N( const BLOCK_BASE& aBlock )
+{
+    BOOST_REQUIRE( aBlock.GetBlockType() == 0x1c );
+
+    const auto& blk = static_cast<const BLOCK<BLK_0x1C_PADSTACK>&>( aBlock ).GetData();
+
+    BOOST_TEST( blk.m_Key == 0x0acd0920 );
+
+    const auto& hdr16x = std::get<BLK_0x1C_PADSTACK::HEADER_v16x>( blk.m_Header );
+
+    BOOST_TEST( blk.IsPlated() == false );
+
+    BOOST_TEST( hdr16x.m_DrillChar == 'L' );
+}
+
+
+static void TestParallellaV163_PS_P65X1P7SLT( const BLOCK_BASE& aBlock )
+{
+    BOOST_REQUIRE( aBlock.GetBlockType() == 0x1c );
+
+    const auto& blk = static_cast<const BLOCK<BLK_0x1C_PADSTACK>&>( aBlock ).GetData();
+
+    BOOST_TEST( blk.m_Key == 0x0acd1ea0 );
+
+    const auto& hdr16x = std::get<BLK_0x1C_PADSTACK::HEADER_v16x>( blk.m_Header );
+
+    BOOST_TEST( hdr16x.m_DrillSize == 2559 );
+
+    BOOST_TEST( hdr16x.m_SlotX == 2559 );
+    BOOST_TEST( hdr16x.m_SlotY == 6693 );
+
+    BOOST_TEST( blk.IsPlated() == true );
+}
+
+
+static void TestBeagleBoneBlack_PS_120X040SLOT( const BLOCK_BASE& aBlock )
+{
+    BOOST_REQUIRE( aBlock.GetBlockType() == 0x1c );
+
+    const auto& blk = static_cast<const BLOCK<BLK_0x1C_PADSTACK>&>( aBlock ).GetData();
+
+    BOOST_TEST( blk.m_Key == 0x1421 );
+    BOOST_TEST( blk.GetLayerCount() == 6 );
+
+    const auto& hdr17x = std::get<BLK_0x1C_PADSTACK::HEADER_v17x>( blk.m_Header );
+
+    BOOST_TEST( hdr17x.m_DrillSize == 4000 );
+
+    BOOST_TEST( hdr17x.m_SlotX == 12000 );
+    BOOST_TEST( hdr17x.m_SlotY == 4000 );
+
+    BOOST_TEST( hdr17x.m_TolerancePos == 300 );
+    BOOST_TEST( hdr17x.m_ToleranceNeg == 300 );
+    BOOST_TEST( hdr17x.m_ToleranceTravelPos == 300 );
+    BOOST_TEST( hdr17x.m_ToleranceTravelNeg == 300 );
+
+    BOOST_TEST( blk.IsPlated() == true );
+}
+
+
+static void TestBeagleBoneAI_PS_200C125D( const BLOCK_BASE& aBlock )
+{
+    BOOST_REQUIRE( aBlock.GetBlockType() == 0x1c );
+
+    const auto& blk = static_cast<const BLOCK<BLK_0x1C_PADSTACK>&>( aBlock ).GetData();
+
+    BOOST_TEST( blk.m_Key == 0x1fda );
+    BOOST_TEST( blk.GetLayerCount() == 12 );
+
+    BOOST_TEST( blk.GetDrillSize() == 125000 );
+
+    BOOST_TEST( blk.m_Components.size() == 21 + 4 * 12 );
+
+    BOOST_TEST( blk.m_Components[0].m_Type == PADSTACK_COMPONENT::TYPE_RECTANGLE );
+    BOOST_TEST( blk.m_Components[0].m_W == 244000 );
+    BOOST_TEST( blk.m_Components[0].m_H == 244000 );
+
+    BOOST_TEST( blk.IsPlated() == true );
+}
+
+
+static void TestCutiePiV166_PS_C50H340M700N( const BLOCK_BASE& aBlock )
+{
+    BOOST_REQUIRE( aBlock.GetBlockType() == 0x1c );
+
+    const auto& blk = static_cast<const BLOCK<BLK_0x1C_PADSTACK>&>( aBlock ).GetData();
+
+    BOOST_TEST( blk.m_Key == 0x0bfa9588 );
+
+    BOOST_TEST( blk.GetLayerCount() == 6 );
+    BOOST_TEST( blk.GetDrillSize() == 133858 );
+
+    BOOST_TEST( blk.m_Components.size() == 11 + 3 * 6 );
+
+    BOOST_TEST( blk.m_Components[0].m_Type == PADSTACK_COMPONENT::TYPE_CIRCLE );
+    BOOST_TEST( blk.m_Components[0].m_W == 275591 );
+    BOOST_TEST( blk.m_Components[0].m_H == 275591 );
+
+    BOOST_TEST( blk.IsPlated() == false );
+}
+
+
+/**
  * The registry of additional block tests, keyed by board name and block offset.
  *
  * The test function takes the parsed block as an argument, and can perform any additional
@@ -101,13 +259,25 @@ static void TestOlympus0x20( const BLOCK_BASE& aBlock )
 // clang-format off
 static const std::unordered_map<BLOCK_TEST_KEY, BLOCK_TEST_FUNC> additionalBlockTests{
     { { "Olympus_15061-1b_v165",      0x0131553c }, TestOlympus0x20 },
+
+    // 0x0F
+    { { "BeagleBone_Black_RevC",      0x0000c8b8 }, TestBeagleBoneBlack_0x0F_SlotG1 },
+    { { "OpenBreath_encoder_v174",    0x00001c3c }, TestOpenBreath_0x0F_SlotAM4096_G1 },
+
+    // Padstacks
+    { { "BeagleBone_Black_RevC",      0x0007c420 }, TestBeagleBoneBlack_PS_120X040SLOT },
+    { { "BeagleBone-AI",              0x00047f44 }, TestBeagleBoneAI_PS_200C125D },
+    { { "CutiePi_V2_3_v166",          0x0001ef8c }, TestCutiePiV166_PS_C50H340M700N },
+    { { "parallella_v163",            0x000368c8 }, TestParallellaV163_PS_56X55RT },
+    { { "parallella_v163",            0x0002cc08 }, TestParallellaV163_PS_28C128N },
+    { { "parallella_v163",            0x0002e168 }, TestParallellaV163_PS_P65X1P7SLT },
 };
 
 
 static const std::unordered_map<BLOCK_TEST_KEY, DB_OBJ_TEST_FUNC> additionalDbObjTests{
     { { "Olympus_15061-1b_v165",      0x0131553c }, []( const DB_OBJ& obj )
         {
-            BOOST_REQUIRE( obj.GetType() == DB_OBJ::TYPE::x20 );
+            BOOST_REQUIRE( obj.GetType() == BRD_x20 );
 
             const auto& blk = static_cast<const UNKNOWN_0x20&>( obj );
             BOOST_TEST( blk.m_Next.m_TargetKey == 0x824DF8F0 );
@@ -132,7 +302,7 @@ void KI_TEST::RunAdditionalBlockTest( const std::string& aBoardName, size_t aBlo
     }
     else
     {
-        BOOST_TEST_MESSAGE( "No additional test defined for this block" );
+        BOOST_TEST_FAIL( "No additional test defined for this block" );
     }
 }
 
@@ -151,6 +321,6 @@ void KI_TEST::RunAdditionalObjectTest( const std::string& aBoardName, size_t aBl
     }
     else
     {
-        BOOST_TEST_MESSAGE( "No additional test defined for this DB_OBJ" );
+        BOOST_TEST_FAIL( "No additional test defined for this DB_OBJ" );
     }
 }

@@ -26,14 +26,16 @@
 #include <pcb_board_outline.h>
 #include <board_design_settings.h>
 #include <footprint.h>
+#include <pad.h>
 #include <pcb_track.h>
+#include <zone.h>
 #include <geometry/seg.h>
 #include <geometry/shape_segment.h>
 #include <drc/drc_engine.h>
 #include <drc/drc_item.h>
 #include <drc/drc_rule.h>
 #include <drc/drc_test_provider.h>
-#include "drc_rtree.h"
+#include <drc/drc_rtree.h>
 
 /*
     Board edge clearance test. Checks all items for their mechanical clearances against the board
@@ -69,8 +71,8 @@ public:
 private:
     void resolveSilkDisposition( BOARD_ITEM* aItem, const SHAPE* aItemShape, const SHAPE_POLY_SET& aBoardOutline );
 
-    bool testAgainstEdge( BOARD_ITEM* item, SHAPE* itemShape, BOARD_ITEM* other, DRC_CONSTRAINT_T aConstraintType,
-                          PCB_DRC_CODE aErrorCode );
+    bool testAgainstEdge( BOARD_ITEM* item, SHAPE* itemShape, PCB_LAYER_ID shapeLayer, BOARD_ITEM* other,
+                          DRC_CONSTRAINT_T aConstraintType, PCB_DRC_CODE aErrorCode );
 
 private:
     std::vector<PAD*> m_castellatedPads;
@@ -175,8 +177,9 @@ void DRC_TEST_PROVIDER_EDGE_CLEARANCE::resolveSilkDisposition( BOARD_ITEM* aItem
 }
 
 
-bool DRC_TEST_PROVIDER_EDGE_CLEARANCE::testAgainstEdge( BOARD_ITEM* item, SHAPE* itemShape, BOARD_ITEM* edge,
-                                                        DRC_CONSTRAINT_T aConstraintType, PCB_DRC_CODE aErrorCode )
+bool DRC_TEST_PROVIDER_EDGE_CLEARANCE::testAgainstEdge( BOARD_ITEM* item, SHAPE* itemShape, PCB_LAYER_ID shapeLayer,
+                                                        BOARD_ITEM* edge, DRC_CONSTRAINT_T aConstraintType,
+                                                        PCB_DRC_CODE aErrorCode )
 {
     std::shared_ptr<SHAPE> shape;
 
@@ -217,7 +220,7 @@ bool DRC_TEST_PROVIDER_EDGE_CLEARANCE::testAgainstEdge( BOARD_ITEM* item, SHAPE*
 
             drcItem->SetItems( edge->m_Uuid, item->m_Uuid );
             drcItem->SetViolatingRule( constraint.GetParentRule() );
-            reportTwoItemGeometry( drcItem, pos, edge, item, Edge_Cuts, actual );
+            reportTwoItemGeometry( drcItem, pos, edge, item, shapeLayer, actual );
 
             if( aErrorCode == DRCE_SILK_EDGE_CLEARANCE )
                 m_silkDisposition[item] = CROSSES_EDGE;
@@ -281,15 +284,30 @@ bool DRC_TEST_PROVIDER_EDGE_CLEARANCE::Run()
                     // A single rectangle for the board would defeat the RTree, so convert to edges
                     if( shape->GetCornerRadius() > 0 )
                     {
-                        for( SHAPE* seg : shape->MakeEffectiveShapes( true ) )
+                        for( SHAPE* subshape : shape->MakeEffectiveShapes( true ) )
                         {
-                            wxCHECK2( dynamic_cast<SHAPE_SEGMENT*>( seg ), continue );
-
-                            edges.emplace_back( static_cast<PCB_SHAPE*>( shape->Clone() ) );
-                            edges.back()->SetShape( SHAPE_T::SEGMENT );
-                            edges.back()->SetStart( seg->GetStart() );
-                            edges.back()->SetEnd( seg->GetEnd() );
-                            edges.back()->SetStroke( stroke );
+                            if( SHAPE_SEGMENT* segment = dynamic_cast<SHAPE_SEGMENT*>( subshape ) )
+                            {
+                                edges.emplace_back( static_cast<PCB_SHAPE*>( shape->Clone() ) );
+                                edges.back()->SetShape( SHAPE_T::SEGMENT );
+                                edges.back()->SetStart( segment->GetStart() );
+                                edges.back()->SetEnd( segment->GetEnd() );
+                                edges.back()->SetStroke( stroke );
+                            }
+                            else if( SHAPE_ARC* arc = dynamic_cast<SHAPE_ARC*>( subshape ) )
+                            {
+                                edges.emplace_back( static_cast<PCB_SHAPE*>( shape->Clone() ) );
+                                edges.back()->SetShape( SHAPE_T::ARC );
+                                edges.back()->SetArcGeometry( arc->GetP0(), arc->GetArcMid(), arc->GetP1() );
+                                edges.back()->SetStroke( stroke );
+                            }
+                            else
+                            {
+                                wxFAIL_MSG(
+                                        wxString::Format( "Unexpected effective shape type %d for rounded rectangle",
+                                                          (int) subshape->Type() ) );
+                                continue;
+                            }
                         }
                     }
                     else
@@ -391,6 +409,13 @@ bool DRC_TEST_PROVIDER_EDGE_CLEARANCE::Run()
                 if( isInvisibleText( item ) )
                     return true;        // Continue with other items
 
+                if( item->Type() == PCB_ZONE_T )
+                {
+                    // Rule areas have no copper and are purely logical -- skip edge clearance.
+                    if( static_cast<ZONE*>( item )->GetIsRuleArea() )
+                        return true;
+                }
+
                 if( item->Type() == PCB_PAD_T )
                 {
                     PAD* pad = static_cast<PAD*>( item );
@@ -432,9 +457,8 @@ bool DRC_TEST_PROVIDER_EDGE_CLEARANCE::Run()
                             m_edgesTree.QueryColliding( item, shapeLayer, testLayer, nullptr,
                                     [&]( BOARD_ITEM* edge ) -> bool
                                     {
-                                        return testAgainstEdge( item, itemShape.get(), edge,
-                                                                EDGE_CLEARANCE_CONSTRAINT,
-                                                                DRCE_EDGE_CLEARANCE );
+                                        return testAgainstEdge( item, itemShape.get(), shapeLayer, edge,
+                                                                EDGE_CLEARANCE_CONSTRAINT, DRCE_EDGE_CLEARANCE );
                                     },
                                     m_largestEdgeClearance );
                         }
@@ -444,9 +468,8 @@ bool DRC_TEST_PROVIDER_EDGE_CLEARANCE::Run()
                             m_edgesTree.QueryColliding( item, shapeLayer, testLayer, nullptr,
                                     [&]( BOARD_ITEM* edge ) -> bool
                                     {
-                                        return testAgainstEdge( item, itemShape.get(), edge,
-                                                                SILK_CLEARANCE_CONSTRAINT,
-                                                                DRCE_SILK_EDGE_CLEARANCE );
+                                        return testAgainstEdge( item, itemShape.get(), shapeLayer, edge,
+                                                                SILK_CLEARANCE_CONSTRAINT, DRCE_SILK_EDGE_CLEARANCE );
                                     },
                                     m_largestEdgeClearance );
                         }

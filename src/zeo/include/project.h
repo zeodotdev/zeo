@@ -46,6 +46,7 @@
 /// default name for nameless projects
 #define NAMELESS_PROJECT _( "untitled" )
 
+struct HISTORY_FILE_DATA;
 class DESIGN_BLOCK_LIBRARY_ADAPTER;
 class LEGACY_SYMBOL_LIBS;
 class SEARCH_STACK;
@@ -463,14 +464,15 @@ public:
     LOCKFILE* GetProjectLock() const;
 
     /**
-     * Save project files (.kicad_pro and .kicad_prl) to the .history directory.
+     * Produce HISTORY_FILE_DATA entries for project files (.kicad_pro and .kicad_prl).
      *
+     * Uses sourcePath for file-copy semantics since project files are small.
      * This method is used as a saver callback for LOCAL_HISTORY during autosave operations.
      *
      * @param aProjectPath The path to check against this project's path
-     * @param aFiles Output vector to append absolute file paths for history inclusion
+     * @param aFileData Output vector to append file-copy data for history inclusion
      */
-    void SaveToHistory( const wxString& aProjectPath, std::vector<wxString>& aFiles );
+    void SaveToHistory( const wxString& aProjectPath, std::vector<HISTORY_FILE_DATA>& aFileData );
 
 private:
     friend class SETTINGS_MANAGER; // so that SM can set project path

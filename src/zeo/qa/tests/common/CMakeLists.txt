@@ -34,6 +34,7 @@ set( QA_COMMON_SRCS
     test_angle_item.cpp
 
     test_array_axis.cpp
+    test_backup_settings.cpp
     test_base_set.cpp
     test_bitmap_base.cpp
     test_clipboard.cpp
@@ -54,6 +55,7 @@ set( QA_COMMON_SRCS
     test_markup_parser.cpp
     test_kicad_string.cpp
     test_kicad_stroke_font.cpp
+    test_gerber_plotter.cpp
     test_pdf_unicode_plot.cpp
     test_kiid.cpp
     test_layer_ids.cpp
@@ -96,6 +98,7 @@ set( QA_COMMON_SRCS
     io/pads/test_pads_common.cpp
     io/pads/test_pads_unit_converter.cpp
 
+    test_throttle.cpp
     view/test_zoom_controller.cpp
 
     test_netname_validator.cpp
@@ -112,9 +115,17 @@ set( QA_COMMON_SRCS
 
     # Project file tests
     test_project_file.cpp
+    test_remote_provider_metadata.cpp
+    test_remote_provider_client.cpp
+    test_remote_provider_settings.cpp
+    test_oauth_loopback_server.cpp
+    test_oauth_pkce.cpp
+    test_secure_token_store.cpp
 
     # Job tests
+    test_job_export_pcb_variants.cpp
     test_job_export_sch_plot.cpp
+    test_job_sch_erc.cpp
     test_jobs_runner.cpp
 )
 
@@ -152,6 +163,10 @@ target_link_libraries( qa_common
     ZLIB::ZLIB
     )
 
+if( TARGET api_schema_build_copy )
+    add_dependencies( qa_common api_schema_build_copy )
+endif()
+
 include_directories(
     ${CMAKE_SOURCE_DIR}
     ${CMAKE_SOURCE_DIR}/kicad
@@ -161,6 +176,10 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/qa/mocks/include
     ${INC_AFTER}
 )
+
+set_source_files_properties( test_remote_provider_metadata.cpp test_remote_provider_client.cpp PROPERTIES
+        COMPILE_DEFINITIONS "QA_SRC_ROOT=(\"${CMAKE_SOURCE_DIR}\")"
+        )
 
 if( KICAD_TEST_DATABASE_LIBRARIES )
     set_source_files_properties( test_database.cpp PROPERTIES

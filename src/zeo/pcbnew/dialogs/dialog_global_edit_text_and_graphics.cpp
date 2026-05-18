@@ -37,6 +37,9 @@
 #include <pcb_text.h>
 #include <widgets/unit_binder.h>
 #include <widgets/font_choice.h>
+#include <widgets/bitmap_button.h>
+#include <bitmaps.h>
+#include <gr_text.h>
 #include <tool/tool_manager.h>
 #include <tools/global_edit_tool.h>
 #include <tools/footprint_editor_control.h>
@@ -80,6 +83,8 @@ protected:
     void onActionButtonChange( wxCommandEvent& event ) override;
     void onSpecifiedValueUpdateUI( wxUpdateUIEvent& event ) override;
     void onDimensionItemCheckbox( wxCommandEvent& aEvent ) override;
+    void onAutoTextThickness( wxCommandEvent& aEvent ) override;
+    void onTextSize( wxCommandEvent& aEvent ) override;
 
     void OnLayerFilterSelect( wxCommandEvent& event ) override
     {
@@ -140,6 +145,13 @@ DIALOG_GLOBAL_EDIT_TEXT_AND_GRAPHICS::DIALOG_GLOBAL_EDIT_TEXT_AND_GRAPHICS( PCB_
         m_footprintFilter->Show( false );
     }
 
+    // Allow indeterminate state in font control and rebuild list
+    m_fontCtrl->SetHasIndeterminateChoice();
+    m_fontCtrl->RefreshFonts();
+
+    m_autoTextThickness->SetIsCheckButton();
+    m_autoTextThickness->SetBitmap( KiBitmapBundle( BITMAPS::edit_cmp_symb_links ) );
+
     m_layerFilter->SetBoardFrame( m_parent );
     m_layerFilter->SetLayersHotkeys( false );
     m_layerFilter->Resync();
@@ -184,12 +196,13 @@ bool DIALOG_GLOBAL_EDIT_TEXT_AND_GRAPHICS::TransferDataToWindow()
 
     m_lineWidth.SetValue( INDETERMINATE_ACTION );
 
-    m_fontCtrl->Append( INDETERMINATE_ACTION );
     m_fontCtrl->SetStringSelection( INDETERMINATE_ACTION );
 
     m_textWidth.SetValue( INDETERMINATE_ACTION );
     m_textHeight.SetValue( INDETERMINATE_ACTION );
     m_thickness.SetValue( INDETERMINATE_ACTION );
+    m_autoTextThickness->Check( false );
+    m_thickness.Enable( true );
     m_bold->Set3StateValue( wxCHK_UNDETERMINED );
     m_italic->Set3StateValue( wxCHK_UNDETERMINED );
     m_keepUpright->Set3StateValue( wxCHK_UNDETERMINED );
@@ -246,12 +259,18 @@ bool DIALOG_GLOBAL_EDIT_TEXT_AND_GRAPHICS::TransferDataToWindow()
     SET_INT_VALUE( ROW_FAB,    COL_TEXT_THICKNESS, bds.m_TextThickness[ LAYER_CLASS_FAB ] );
     SET_INT_VALUE( ROW_OTHERS, COL_TEXT_THICKNESS, bds.m_TextThickness[ LAYER_CLASS_OTHERS ] );
 
+    attr = new wxGridCellAttr;
+    attr->SetAlignment( wxALIGN_CENTER, wxALIGN_CENTER ); \
+    m_grid->SetAttr( ROW_HEADER, COL_TEXT_ITALIC, attr ); \
     m_grid->SetCellValue(  ROW_HEADER, COL_TEXT_ITALIC, _( "Italic" ) );
     SET_BOOL_VALUE(  ROW_SILK,   COL_TEXT_ITALIC, bds.m_TextItalic[ LAYER_CLASS_SILK ] );
     SET_BOOL_VALUE(  ROW_COPPER, COL_TEXT_ITALIC, bds.m_TextItalic[ LAYER_CLASS_COPPER ] );
     SET_BOOL_VALUE(  ROW_FAB,    COL_TEXT_ITALIC, bds.m_TextItalic[ LAYER_CLASS_FAB ] );
     SET_BOOL_VALUE(  ROW_OTHERS, COL_TEXT_ITALIC, bds.m_TextItalic[ LAYER_CLASS_OTHERS ] );
 
+    attr = new wxGridCellAttr;
+    attr->SetAlignment( wxALIGN_CENTER, wxALIGN_CENTER ); \
+    m_grid->SetAttr( ROW_HEADER, COL_TEXT_UPRIGHT, attr ); \
     m_grid->SetCellValue(  ROW_HEADER, COL_TEXT_UPRIGHT, _( "Keep Upright" ) );
     SET_BOOL_VALUE(  ROW_SILK,   COL_TEXT_UPRIGHT, bds.m_TextUpright[ LAYER_CLASS_SILK ] );
     SET_BOOL_VALUE(  ROW_COPPER, COL_TEXT_UPRIGHT, bds.m_TextUpright[ LAYER_CLASS_COPPER ] );
@@ -276,7 +295,7 @@ void DIALOG_GLOBAL_EDIT_TEXT_AND_GRAPHICS::onActionButtonChange( wxCommandEvent&
     m_lineWidth.Enable( enable );
     m_textWidth.Enable( enable );
     m_textHeight.Enable( enable );
-    m_thickness.Enable( enable );
+    m_thickness.Enable( enable && !m_autoTextThickness->IsChecked() );
 
     m_fontLabel->Enable( enable );
     m_fontCtrl->Enable( enable );
@@ -304,6 +323,44 @@ void DIALOG_GLOBAL_EDIT_TEXT_AND_GRAPHICS::onDimensionItemCheckbox( wxCommandEve
 }
 
 
+void DIALOG_GLOBAL_EDIT_TEXT_AND_GRAPHICS::onAutoTextThickness( wxCommandEvent& aEvent )
+{
+    if( aEvent.IsChecked() )
+    {
+        m_autoTextThickness->Check( true );
+
+        wxCommandEvent dummy;
+        onTextSize( dummy );
+
+        if( m_textWidth.IsIndeterminate() || m_textHeight.IsIndeterminate() )
+            m_thickness.SetValue( _( "(auto)" ) );
+
+        m_thickness.Enable( false );
+    }
+    else
+    {
+        m_thickness.Enable( true );
+        m_thickness.SetValue( INDETERMINATE_ACTION );
+    }
+}
+
+
+void DIALOG_GLOBAL_EDIT_TEXT_AND_GRAPHICS::onTextSize( wxCommandEvent& aEvent )
+{
+    if( !m_autoTextThickness->IsChecked() )
+        return;
+
+    if( m_textWidth.IsIndeterminate() || m_textHeight.IsIndeterminate() )
+        return;
+
+    int  size = std::min( m_textWidth.GetValue(), m_textHeight.GetValue() );
+    bool bold = ( m_bold->Get3StateValue() == wxCHK_CHECKED );
+
+    m_thickness.SetValue( bold ? GetPenSizeForBold( size )
+                                : GetPenSizeForNormal( size ) );
+}
+
+
 void DIALOG_GLOBAL_EDIT_TEXT_AND_GRAPHICS::processItem( BOARD_COMMIT& aCommit, BOARD_ITEM* aItem )
 {
     aCommit.Modify( aItem );
@@ -328,7 +385,9 @@ void DIALOG_GLOBAL_EDIT_TEXT_AND_GRAPHICS::processItem( BOARD_COMMIT& aCommit, B
             if( !m_textHeight.IsIndeterminate() )
                 text->SetTextSize( VECTOR2I( text->GetTextSize().x, m_textHeight.GetIntValue() ) );
 
-            if( !m_thickness.IsIndeterminate() )
+            if( m_autoTextThickness->IsChecked() )
+                text->SetAutoThickness( true );
+            else if( !m_thickness.IsIndeterminate() )
                 text->SetTextThickness( m_thickness.GetIntValue() );
 
             // Must be after SetTextSize()
@@ -414,10 +473,10 @@ void DIALOG_GLOBAL_EDIT_TEXT_AND_GRAPHICS::visitItem( BOARD_COMMIT& aCommit, BOA
         {
             candidate = ( candidate->GetParentGroup() ? candidate->GetParentGroup()->AsEdaItem() : nullptr );
 
-            while( candidate && !candidate->IsSelected() )
+            while( candidate && !candidate->IsSelected() && candidate->GetParentGroup() )
                 candidate = candidate->GetParentGroup()->AsEdaItem();
 
-            if( !candidate )
+            if( !candidate || !candidate->IsSelected() )
                 return;
         }
     }

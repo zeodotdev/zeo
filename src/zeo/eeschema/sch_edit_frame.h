@@ -301,6 +301,8 @@ public:
 
     void RemoveVariant();
 
+    void EditVariantDescription();
+
     /**
      * Update the variant name control on the main toolbar.
      *
@@ -420,15 +422,16 @@ public:
      *                          could change previous annotation because time stamps are
      *                          used to handle annotation in complex hierarchies.
      * @param aReporter A sink for error messages.  Use NULL_REPORTER if you don't need errors.
+     * @param aSymbolFilter Filter for symbol handling. Ignored for non-selection scopes.
      *
      * When the sheet number is used in annotation, each sheet annotation starts from sheet
      * number * 100.  In other words the first sheet uses 100 to 199, the second sheet uses
      * 200 to 299, and so on.
      */
-    void AnnotateSymbols( SCH_COMMIT* aCommit, ANNOTATE_SCOPE_T aAnnotateScope,
-                          ANNOTATE_ORDER_T aSortOption, ANNOTATE_ALGO_T aAlgoOption,
-                          bool aRecursive, int aStartNumber, bool aResetAnnotation,
-                          bool aRegroupUnits, bool aRepairTimestamps, REPORTER& aReporter );
+    void AnnotateSymbols( SCH_COMMIT* aCommit, ANNOTATE_SCOPE_T aAnnotateScope, ANNOTATE_ORDER_T aSortOption,
+                          ANNOTATE_ALGO_T aAlgoOption, bool aRecursive, int aStartNumber, bool aResetAnnotation,
+                          bool aRegroupUnits, bool aRepairTimestamps, REPORTER& aReporter,
+                          SYMBOL_FILTER aSymbolFilter );
 
     /**
      * Check for annotation errors.
@@ -446,8 +449,8 @@ public:
      * @param aAnnotateScope See #ANNOTATE_SCOPE_T Check the current sheet only if true.
      *                       Otherwise check the entire schematic.
      */
-    int CheckAnnotate( ANNOTATION_ERROR_HANDLER aErrorHandler, ANNOTATE_SCOPE_T aAnnotateScope = ANNOTATE_ALL,
-                       bool aRecursive = true );
+    int CheckAnnotate( ANNOTATION_ERROR_HANDLER aErrorHandler, ANNOTATE_SCOPE_T aAnnotateScope,
+                       bool aRecursive, SYMBOL_FILTER aSymbolFilter );
 
     /**
      * Run a modal version of the annotate dialog for a specific purpose.
@@ -847,9 +850,6 @@ public:
 
     const BOX2I GetDocumentExtents( bool aIncludeAllVisible = true ) const override;
 
-    int    GetSchematicJunctionSize();
-    double GetSchematicHopOverScale();
-
     void FocusOnItem( EDA_ITEM* aItem, bool aAllowScroll = true ) override;
 
     bool IsSyncingSelection() { return m_syncingPcbToSchSelection; }
@@ -1142,7 +1142,7 @@ private:
     void OnExit( wxCommandEvent& event );
 
     void OnLoadFile( wxCommandEvent& event );
-    void OnImportProject( wxCommandEvent& event );
+    void OnImportProject();
 
     void OnClearFileHistory( wxCommandEvent& aEvent );
 
@@ -1198,10 +1198,6 @@ private:
      * @param aMap is a map to fill
      */
     void mapExistingAnnotation( std::map<wxString, wxString>& aMap );
-
-    bool updateAutoSaveFile();
-
-    const wxString& getAutoSaveFileName() const;
 
     wxWindow* createHighlightedNetNavigator();
 

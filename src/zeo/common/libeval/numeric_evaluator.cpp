@@ -214,7 +214,7 @@ bool NUMERIC_EVALUATOR::IsOldSchoolDecimalSeparator( wxUniChar ch, double* siSca
 
 
 // Limited version of above for 8-bit chars
-bool NUMERIC_EVALUATOR::isOldSchoolDecimalSeparator( char ch, double* siScaler )
+bool NUMERIC_EVALUATOR::IsOldSchoolDecimalSeparator( char ch, double* siScaler )
 {
     switch( ch )
     {

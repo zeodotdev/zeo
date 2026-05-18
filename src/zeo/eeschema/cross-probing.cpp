@@ -812,7 +812,7 @@ bool findSymbolsAndPins( const SCH_SHEET_LIST& aSchematicSheetList, const SCH_SH
 
     SCH_REFERENCE_LIST references;
 
-    aSheetPath.GetSymbols( references, false, true );
+    aSheetPath.GetSymbols( references, SYMBOL_FILTER_NON_POWER, true );
 
     for( unsigned ii = 0; ii < references.GetCount(); ii++ )
     {
@@ -898,7 +898,7 @@ bool sheetContainsOnlyWantedItems( const SCH_SHEET_LIST& aSchematicSheetList, co
     }
 
     SCH_REFERENCE_LIST references;
-    aSheetPath.GetSymbols( references, false, true );
+    aSheetPath.GetSymbols( references, SYMBOL_FILTER_NON_POWER, true );
 
     if( references.GetCount() == 0 ) // Empty sheet, obviously do not contain wanted items
     {
@@ -1307,6 +1307,7 @@ void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& mail )
 
             if( success )
             {
+                manager.AbortAsyncLoads();
                 manager.LoadProjectTables( { LIBRARY_TABLE_TYPE::SYMBOL } );
 
                 std::ranges::for_each( toLoad,
@@ -2116,7 +2117,7 @@ void SCH_EDIT_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& mail )
             wxString errors = adapter->GetLibraryLoadErrors();
 
             if( !errors.IsEmpty() )
-                statusBar->SetLoadWarningMessages( errors );
+                statusBar->AddWarningMessages( "load", errors );
         }
 
         break;

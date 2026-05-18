@@ -62,9 +62,8 @@ private:
 
     UNITS_PROVIDER m_unitsProvider;
 
-    std::unique_ptr<UNIT_BINDER> m_minLengthBinder;
     std::unique_ptr<UNIT_BINDER> m_optLengthBinder;
-    std::unique_ptr<UNIT_BINDER> m_maxLengthBinder;
+    std::unique_ptr<UNIT_BINDER> m_toleranceBinder;
 
     /// Cross-board scope toggle. Positioned below the bitmap diagram
     /// (outside the overlay's field grid). When checked, the rule

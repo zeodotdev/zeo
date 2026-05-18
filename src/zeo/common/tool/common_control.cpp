@@ -38,6 +38,8 @@
 #include <gal/graphics_abstraction_layer.h>
 #include <base_screen.h>
 #include <tool/common_control.h>
+
+#include <api/api_plugin_manager.h>
 #include <id.h>
 #include <kiface_base.h>
 #include <dialogs/dialog_configure_paths.h>
@@ -47,6 +49,8 @@
 #include <gestfich.h>
 #include <tools/kicad_manager_actions.h>
 #include <confirm.h>
+#include <reporter.h>
+#include <widgets/kistatusbar.h>
 
 #define URL_GET_INVOLVED wxS( "https://github.com/zeodotdev/" )
 #define URL_DOCUMENTATION wxS( "https://zeo.dev/docs" )
@@ -347,6 +351,23 @@ int COMMON_CONTROL::ReportBug( const TOOL_EVENT& aEvent )
 }
 
 
+int COMMON_CONTROL::ReloadPlugins( const TOOL_EVENT& aEvent )
+{
+#ifdef KICAD_IPC_API
+    if( Pgm().GetCommonSettings()->m_Api.enable_server )
+    {
+        std::shared_ptr<REPORTER> reporter;
+
+        if( KISTATUSBAR* statusBar = dynamic_cast<KISTATUSBAR*>( m_frame->GetStatusBar() ) )
+            reporter = std::make_shared<STATUSBAR_WARNING_REPORTER>( statusBar, wxS( "plugin" ) );
+
+        Pgm().GetPluginManager().ReloadPlugins( std::nullopt, reporter );
+    }
+#endif
+    return 0;
+}
+
+
 void COMMON_CONTROL::setTransitions()
 {
     Go( &COMMON_CONTROL::Quit,               ACTIONS::quit.MakeEvent() );
@@ -368,6 +389,7 @@ void COMMON_CONTROL::setTransitions()
     Go( &COMMON_CONTROL::GetInvolved,        ACTIONS::getInvolved.MakeEvent() );
     Go( &COMMON_CONTROL::ReportBug,          ACTIONS::reportBug.MakeEvent() );
     Go( &COMMON_CONTROL::About,              ACTIONS::about.MakeEvent() );
+    Go( &COMMON_CONTROL::ReloadPlugins,      ACTIONS::pluginsReload.MakeEvent() );
 }
 
 

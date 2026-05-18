@@ -349,6 +349,13 @@ public:
     void SaveBoard( const wxString& aFileName, BOARD* aBoard,
                     const std::map<std::string, UTF8>* aProperties = nullptr ) override;
 
+    /** Serialize a BOARD to an OUTPUTFORMATTER without file I/O or Prettify.
+     *  Handles init(), EmbedFonts/ClearEmbeddedFonts, header, Format(), and footer.
+     *  The caller owns the formatter and is responsible for flushing/closing it.
+     *  Skips GroupsSanityCheck (no UI interaction allowed from timer callbacks). */
+    void FormatBoardToFormatter( OUTPUTFORMATTER* aOut, BOARD* aBoard,
+                                 const std::map<std::string, UTF8>* aProperties = nullptr );
+
     BOARD* LoadBoard( const wxString& aFileName, BOARD* aAppendToMe,
                       const std::map<std::string, UTF8>* aProperties = nullptr,
                       PROJECT* aProject = nullptr ) override;

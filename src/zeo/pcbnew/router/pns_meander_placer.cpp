@@ -28,6 +28,8 @@
 #include "pns_solid.h"
 #include "pns_topology.h"
 
+#include <board_connected_item.h>
+
 #include <length_delay_calculation/tuning_profile_parameters_iface.h>
 
 namespace PNS {

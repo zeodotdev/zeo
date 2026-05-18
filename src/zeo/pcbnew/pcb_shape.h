@@ -222,6 +222,8 @@ protected:
 
     int getMaxError() const override;
 
+    SHAPE_POLY_SET getHatchingKnockouts() const override;
+
     struct cmp_drawings
     {
         bool operator()( const BOARD_ITEM* aFirst, const BOARD_ITEM* aSecond ) const;

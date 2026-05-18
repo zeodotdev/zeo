@@ -89,6 +89,7 @@ protected:
     PG_FPID_EDITOR*     m_fpEditorInstance;
     PG_URL_EDITOR*      m_urlEditorInstance;
 
-    static std::set<wxString> m_currentFieldNames;
+    static std::set<wxString> m_currentSymbolFieldNames;
+    static std::set<wxString> m_currentSheetFieldNames;
     wxPGChoices               m_nets;
 };

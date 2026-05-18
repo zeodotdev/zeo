@@ -42,6 +42,8 @@
 #include <board_stackup_manager/board_stackup.h>
 #include <footprint.h>
 #include <pad.h>
+#include <pcb_track.h>
+#include <base_units.h>
 
 #include <wx/dir.h>
 #include <wx/file.h>
@@ -125,6 +127,9 @@ static const std::vector<std::string> VALIDATION_TEST_BOARDS = {
     "issue7241.kicad_pcb",
     "issue10906.kicad_pcb",
     "issue22798.kicad_pcb",
+    "padstacks_complex.kicad_pcb",
+    "issue12609.kicad_pcb",
+    "issue22794.kicad_pcb",
 };
 
 } // anonymous namespace
@@ -257,14 +262,12 @@ BOOST_AUTO_TEST_CASE( SurfaceFinishExport )
 
     BOOST_REQUIRE( wxFileExists( tempPath ) );
 
-    // Verify SurfaceFinish element is present with correct type
-    // Upstream uses nested structure: <SurfaceFinish><Finish type="ENIG-N"/></SurfaceFinish>
+    // Verify SurfaceFinish element is present with correct type attribute
+    // Schema requires: <SurfaceFinish type="ENIG-N"/>
     BOOST_CHECK_MESSAGE( FileContainsPattern( tempPath, wxT( "<SurfaceFinish" ) ),
                          "SurfaceFinish element should be present" );
-    BOOST_CHECK_MESSAGE( FileContainsPattern( tempPath, wxT( "<Finish" ) ),
-                         "Finish element should be present" );
     BOOST_CHECK_MESSAGE( FileContainsPattern( tempPath, wxT( "type=\"ENIG-N\"" ) ),
-                         "Finish type should be ENIG-N" );
+                         "SurfaceFinish type should be ENIG-N" );
 
     // Verify coating layers are present
     BOOST_CHECK_MESSAGE( FileContainsPattern( tempPath, wxT( "COATING_TOP" ) ),
@@ -515,6 +518,248 @@ BOOST_AUTO_TEST_CASE( SmdPadSolderMaskExport_Issue16658 )
     // Also check for LayerFeature element with mask layer reference
     bool hasLayerFeature = FileContainsPattern( tempPath, wxT( "<LayerFeature" ) );
     BOOST_CHECK_MESSAGE( hasLayerFeature, "IPC-2581 export should contain LayerFeature elements" );
+}
+
+
+/**
+ * Test that footprints with empty references produce valid XML attributes.
+ *
+ * Footprints with blank GetReference() must not produce empty refDes,
+ * RefDes/@name, or PinRef/@componentRef attributes, which are
+ * schema-invalid qualified names.
+ */
+BOOST_AUTO_TEST_CASE( EmptyRefDesProducesValidXml )
+{
+    std::unique_ptr<BOARD> board = LoadBoard( "padstacks_complex.kicad_pcb" );
+    BOOST_REQUIRE( board );
+
+    for( char version : { 'B', 'C' } )
+    {
+        BOOST_TEST_CONTEXT( "Version " << version )
+        {
+            wxString tempPath = CreateTempFile();
+
+            std::map<std::string, UTF8> props;
+            props["units"] = "mm";
+            props["version"] = std::string( 1, version );
+            props["sigfig"] = "3";
+
+            m_ipc2581Plugin.SaveBoard( tempPath, board.get(), &props );
+            BOOST_REQUIRE( wxFileExists( tempPath ) );
+
+            BOOST_CHECK_MESSAGE( !FileContainsPattern( tempPath, wxT( "refDes=\"\"" ) ),
+                                 "Empty refDes attribute found" );
+            BOOST_CHECK_MESSAGE( !FileContainsPattern( tempPath, wxT( "<RefDes name=\"\"" ) ),
+                                 "Empty RefDes/@name attribute found" );
+            BOOST_CHECK_MESSAGE( !FileContainsPattern( tempPath, wxT( "componentRef=\"\"" ) ),
+                                 "Empty PinRef/@componentRef attribute found" );
+        }
+
+        m_ipc2581Plugin = PCB_IO_IPC2581();
+    }
+}
+
+
+/**
+ * Test that flipped component rotation is not inverted (Finding A / Issue #18013)
+ *
+ * IPC-2581C 3.3.2 defines positive rotation as CCW from board top.
+ * mirror="true" handles the X-axis negation for bottom components.
+ * The component rotation must be the normalized board-top angle,
+ * NOT its inverse.
+ */
+BOOST_AUTO_TEST_CASE( FlippedComponentRotation )
+{
+    std::unique_ptr<BOARD> board = LoadBoard( "issue12609.kicad_pcb" );
+    BOOST_REQUIRE( board );
+
+    wxString tempPath = CreateTempFile();
+
+    std::map<std::string, UTF8> props;
+    props["units"] = "mm";
+    props["version"] = "C";
+    props["sigfig"] = "3";
+
+    m_ipc2581Plugin.SaveBoard( tempPath, board.get(), &props );
+    BOOST_REQUIRE( wxFileExists( tempPath ) );
+
+    // C5 is on B.Cu at 90 degrees. Its Component Xform must be rotation="90.0",
+    // not the inverted "270.0". Check by finding Component refDes="C5" and verifying
+    // its Xform has rotation="90.0".
+    std::ifstream xmlFile( tempPath.ToStdString() );
+    BOOST_REQUIRE( xmlFile.is_open() );
+
+    std::string xmlContent( ( std::istreambuf_iterator<char>( xmlFile ) ),
+                            std::istreambuf_iterator<char>() );
+
+    // Find the C5 component and check its rotation
+    size_t c5Pos = xmlContent.find( "refDes=\"C5\"" );
+
+    if( c5Pos == std::string::npos )
+        c5Pos = xmlContent.find( "refDes=\"NOREF_" );
+
+    BOOST_REQUIRE_MESSAGE( c5Pos != std::string::npos,
+                           "C5 component should exist in export" );
+
+    // Look for the Xform within the next 200 chars after refDes="C5"
+    std::string c5Region = xmlContent.substr( c5Pos, 200 );
+    BOOST_CHECK_MESSAGE( c5Region.find( "rotation=\"90.0\"" ) != std::string::npos
+                         || c5Region.find( "rotation=\"90.00\"" ) != std::string::npos,
+                         "C5 component rotation should be 90, not inverted. Region: "
+                         + c5Region );
+}
+
+
+/**
+ * Test that Content section includes BomRef when BOM is emitted
+ */
+BOOST_AUTO_TEST_CASE( ContentBomRef )
+{
+    std::unique_ptr<BOARD> board = LoadBoard( "issue12609.kicad_pcb" );
+    BOOST_REQUIRE( board );
+
+    wxString tempPath = CreateTempFile();
+
+    std::map<std::string, UTF8> props;
+    props["units"] = "mm";
+    props["version"] = "C";
+    props["sigfig"] = "3";
+
+    m_ipc2581Plugin.SaveBoard( tempPath, board.get(), &props );
+    BOOST_REQUIRE( wxFileExists( tempPath ) );
+
+    bool hasBom = FileContainsPattern( tempPath, wxT( "<Bom " ) );
+    bool hasBomRef = FileContainsPattern( tempPath, wxT( "<BomRef " ) );
+
+    if( hasBom )
+    {
+        BOOST_CHECK_MESSAGE( hasBomRef,
+                             "Content should have BomRef when Bom section is present" );
+    }
+}
+
+
+/**
+ * Test that knockout text with holes emits schema-valid XML (Issue #23968)
+ *
+ * Knockout text renders as a filled polygon with each glyph contour becoming
+ * a separate outline. The IPC-2581 FeaturesType allows only one Feature child,
+ * so when a knockout text produces more than one Contour it must be wrapped
+ * in a UserSpecial (which itself is a Feature that may contain any number
+ * of child Features).
+ *
+ * test_copper_graphics.kicad_pcb contains a knockout text "Otherwise" on
+ * B.Cu, whose 'O' glyph produces two contours (outer and inner), which
+ * reproduces the multi-contour case.
+ */
+BOOST_AUTO_TEST_CASE( KnockoutTextMultiContour_Issue23968 )
+{
+    std::unique_ptr<BOARD> board = LoadBoard( "test_copper_graphics.kicad_pcb" );
+    BOOST_REQUIRE( board );
+
+    for( char version : { 'B', 'C' } )
+    {
+        BOOST_TEST_CONTEXT( "Version " << version )
+        {
+            wxString errorMsg;
+            bool valid = ExportAndValidate( board.get(), version, errorMsg );
+
+            BOOST_CHECK_MESSAGE( valid,
+                    wxString::Format( "Knockout text export should be schema-valid "
+                                      "(version %c): %s", version, errorMsg ) );
+        }
+
+        m_ipc2581Plugin = PCB_IO_IPC2581();
+    }
+}
+
+
+/**
+ * Verify IPC-2581 backdrill encoding matches the schema and expresses the
+ * correct must-not-cut layer.
+ *
+ * KiCad's PADSTACK::DRILL_PROPS::end is the must-cut layer (per the UI
+ * "must-cut" labels). The IPC-2581 standard expects the must-not-cut layer,
+ * which is the next signal layer past the must-cut layer. The exporter must
+ * emit one Spec containing three sibling Backdrill children with type
+ * START_LAYER, MUST_NOT_CUT_LAYER, and MAX_STUB_LENGTH, each carrying its
+ * value in a Property child.
+ */
+BOOST_AUTO_TEST_CASE( BackdrillSpecEncoding )
+{
+    // Build a minimal 6-layer synthetic board so we can place a via whose
+    // backdrill targets a specific must-cut layer.
+    BOARD board;
+    board.SetCopperLayerCount( 6 );
+
+    BOARD_DESIGN_SETTINGS& dsn = board.GetDesignSettings();
+    dsn.GetStackupDescriptor().BuildDefaultStackupList( &dsn, 6 );
+
+    // Front-side backdrill: drill from F_Cu, must cut through In3_Cu. The
+    // must-not-cut layer should therefore resolve to In4_Cu (the next signal
+    // layer past must-cut going inward from the start surface).
+    auto* via = new PCB_VIA( &board );
+    via->SetPosition( VECTOR2I( pcbIUScale.mmToIU( 5 ), pcbIUScale.mmToIU( 5 ) ) );
+    via->SetLayerPair( F_Cu, B_Cu );
+    via->SetDrill( pcbIUScale.mmToIU( 0.30 ) );
+    via->SetWidth( pcbIUScale.mmToIU( 0.60 ) );
+    via->SetSecondaryDrillSize( pcbIUScale.mmToIU( 0.40 ) );
+    via->SetSecondaryDrillStartLayer( F_Cu );
+    via->SetSecondaryDrillEndLayer( In3_Cu );
+    via->SetFrontPostMachiningMode( PAD_DRILL_POST_MACHINING_MODE::COUNTERSINK );
+    board.Add( via );
+
+    wxString tempPath = CreateTempFile();
+    std::map<std::string, UTF8> props;
+    props["units"] = "mm";
+    props["version"] = "C";
+    props["sigfig"] = "4";
+
+    BOOST_REQUIRE_NO_THROW( m_ipc2581Plugin.SaveBoard( tempPath, &board, &props ) );
+    BOOST_REQUIRE( wxFileExists( tempPath ) );
+
+    BOOST_CHECK_MESSAGE(
+            FileContainsPattern( tempPath, wxT( "<Backdrill type=\"START_LAYER\"" ) ),
+            "Backdrill spec should declare a START_LAYER child" );
+    BOOST_CHECK_MESSAGE(
+            FileContainsPattern( tempPath, wxT( "<Backdrill type=\"MUST_NOT_CUT_LAYER\"" ) ),
+            "Backdrill spec should declare a MUST_NOT_CUT_LAYER child" );
+    BOOST_CHECK_MESSAGE(
+            FileContainsPattern( tempPath, wxT( "<Backdrill type=\"MAX_STUB_LENGTH\"" ) ),
+            "Backdrill spec should declare a MAX_STUB_LENGTH child" );
+
+    // Schema requires layer references via Property layerOrGroupRef, not as
+    // Backdrill attributes.
+    BOOST_CHECK_MESSAGE( FileContainsPattern( tempPath, wxT( "layerOrGroupRef=" ) ),
+                         "Backdrill must convey layers through Property layerOrGroupRef" );
+    BOOST_CHECK_MESSAGE( !FileContainsPattern( tempPath, wxT( "startLayerRef=" ) ),
+                         "Backdrill should not use schema-invalid startLayerRef attribute" );
+    BOOST_CHECK_MESSAGE( !FileContainsPattern( tempPath, wxT( "mustNotCutLayerRef=" ) ),
+                         "Backdrill should not use schema-invalid mustNotCutLayerRef attribute" );
+    BOOST_CHECK_MESSAGE( !FileContainsPattern( tempPath, wxT( "maxStubLength=" ) ),
+                         "Backdrill should not use schema-invalid maxStubLength attribute" );
+    BOOST_CHECK_MESSAGE( !FileContainsPattern( tempPath, wxT( "postMachining=" ) ),
+                         "Backdrill should not use the non-standard postMachining attribute" );
+
+    // The must-not-cut layer for a backdrill from F_Cu through In3_Cu in a
+    // 6-layer stack must resolve to In4_Cu, not the must-cut layer itself.
+    BOOST_CHECK_MESSAGE(
+            FileContainsPattern( tempPath, wxT( "layerOrGroupRef=\"In4.Cu\"" ) ),
+            "Front backdrill must-not-cut layer should be In4.Cu" );
+
+    // The third (primary) backdrill spec slot has been removed; through-drills
+    // must not be exported as backdrill specs.
+    BOOST_CHECK_MESSAGE( !FileContainsPattern( tempPath, wxT( "BD_1C" ) ),
+                         "Exporter should not emit a primary backdrill spec slot" );
+
+    // Counterbore/countersink encoded as a Backdrill type=OTHER child with
+    // a comment, never as a non-standard postMachining attribute.
+    BOOST_CHECK_MESSAGE(
+            FileContainsPattern( tempPath, wxT( "<Backdrill type=\"OTHER\"" ) ),
+            "Post-machining hint should produce a Backdrill type=OTHER child" );
+    BOOST_CHECK_MESSAGE(
+            FileContainsPattern( tempPath, wxT( "comment=\"post-machining=COUNTERSINK\"" ) ),
+            "OTHER Backdrill should carry the post-machining comment" );
 }
 
 

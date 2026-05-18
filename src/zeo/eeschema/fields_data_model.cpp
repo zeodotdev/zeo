@@ -31,6 +31,49 @@
 #include "fields_data_model.h"
 
 
+/**      
+ * Cell renderer that shows the expanded result of text variables (e.g. "${VALUE}" is
+ * displayed as "10K").  The actual cell still stores the raw variable so it can be                                   
+ * edited directly.                                                                                                   
+ */
+class GRID_CELL_RESOLVED_TEXT_RENDERER : public wxGridCellStringRenderer
+{
+public:
+    GRID_CELL_RESOLVED_TEXT_RENDERER() :
+            wxGridCellStringRenderer()
+    {
+    }
+
+    void Draw( wxGrid& aGrid, wxGridCellAttr& aAttr, wxDC& aDC, const wxRect& aRect, int aRow, int aCol,
+               bool isSelected ) override
+    {
+        wxString value = aGrid.GetCellValue( aRow, aCol );
+
+        if( auto* model = dynamic_cast<FIELDS_EDITOR_GRID_DATA_MODEL*>( aGrid.GetTable() ) )
+            value = model->GetResolvedValue( aRow, aCol );
+
+        wxRect rect = aRect;
+        rect.Inflate( -1 );
+
+        wxGridCellRenderer::Draw( aGrid, aAttr, aDC, aRect, aRow, aCol, isSelected );
+        SetTextColoursAndFont( aGrid, aAttr, aDC, isSelected );
+        aGrid.DrawTextRectangle( aDC, value, rect, wxALIGN_LEFT, wxALIGN_CENTRE );
+    }
+
+    wxSize GetBestSize( wxGrid& aGrid, wxGridCellAttr& aAttr, wxDC& aDC, int aRow, int aCol ) override
+    {
+        wxString value = aGrid.GetCellValue( aRow, aCol );
+
+        if( auto* model = dynamic_cast<FIELDS_EDITOR_GRID_DATA_MODEL*>( aGrid.GetTable() ) )
+            value = model->GetResolvedValue( aRow, aCol );
+
+        return wxGridCellStringRenderer::DoGetBestSize( aAttr, aDC, value );
+    }
+
+    wxGridCellRenderer* Clone() const override { return new GRID_CELL_RESOLVED_TEXT_RENDERER(); }
+};
+
+
 /**
  * Create a unique key for the data store by combining the #KIID_PATH from the
  * #SCH_SHEET_PATH with the symbol's UUID.
@@ -227,7 +270,7 @@ void FIELDS_EDITOR_GRID_DATA_MODEL::updateDataStoreSymbolField( const SCH_REFERE
     {
         m_dataStore[key][aFieldName] = getAttributeValue( aSymbolRef, aFieldName, aVariantName );
     }
-    else if( const SCH_FIELD* field = symbol->GetField( aFieldName ) )
+    else if( const SCH_FIELD* field = symbol->FindFieldCaseInsensitive( aFieldName ) )
     {
         if( field->IsPrivate() )
         {
@@ -298,7 +341,7 @@ int FIELDS_EDITOR_GRID_DATA_MODEL::GetFieldNameCol( const wxString& aFieldName )
 {
     for( size_t i = 0; i < m_cols.size(); i++ )
     {
-        if( m_cols[i].m_fieldName == aFieldName )
+        if( m_cols[i].m_fieldName.CmpNoCase( aFieldName ) == 0 )
             return static_cast<int>( i );
     }
 
@@ -359,11 +402,18 @@ wxString FIELDS_EDITOR_GRID_DATA_MODEL::GetValue( int aRow, int aCol )
 }
 
 
+wxString FIELDS_EDITOR_GRID_DATA_MODEL::GetResolvedValue( int aRow, int aCol )
+{
+    return GetValue( m_rows[aRow], aCol, wxT( ", " ), wxT( "-" ), true, false );
+}
+
+
 wxGridCellAttr* FIELDS_EDITOR_GRID_DATA_MODEL::GetAttr( int aRow, int aCol, wxGridCellAttr::wxAttrKind aKind )
 {
     wxGridCellAttr* attr = nullptr;
     bool            needsUrlEditor = false;
     bool            needsVariantHighlight = false;
+    bool            needsTextVarRenderer = false;
     wxColour        highlightColor;
 
     // Check if we need URL editor
@@ -372,6 +422,16 @@ wxGridCellAttr* FIELDS_EDITOR_GRID_DATA_MODEL::GetAttr( int aRow, int aCol, wxGr
     {
         if( m_urlEditor )
             needsUrlEditor = true;
+    }
+
+    // Check if the raw value contains a text variable that should be resolved for display
+    if( aRow >= 0 && aRow < (int) m_rows.size() && aCol >= 0 && aCol < (int) m_cols.size() && !ColIsReference( aCol )
+        && !ColIsQuantity( aCol ) && !ColIsItemNumber( aCol ) )
+    {
+        wxString rawValue = GetValue( m_rows[aRow], aCol );
+
+        if( rawValue.Contains( wxT( "${" ) ) )
+            needsTextVarRenderer = true;
     }
 
     // Check if we need variant highlighting
@@ -424,7 +484,7 @@ wxGridCellAttr* FIELDS_EDITOR_GRID_DATA_MODEL::GetAttr( int aRow, int aCol, wxGr
     }
 
     // If we don't need any custom attributes, use the base class behavior
-    if( !needsUrlEditor && !needsVariantHighlight )
+    if( !needsUrlEditor && !needsVariantHighlight && !needsTextVarRenderer )
         return WX_GRID_TABLE_BASE::GetAttr( aRow, aCol, aKind );
 
     // URL cells: use m_urlEditor as base, potentially with variant highlight overlay
@@ -446,7 +506,7 @@ wxGridCellAttr* FIELDS_EDITOR_GRID_DATA_MODEL::GetAttr( int aRow, int aCol, wxGr
         return enhanceAttr( attr, aRow, aCol, aKind );
     }
 
-    // Non-URL cells with variant highlighting: start with column attributes if they exist.
+    // Non-URL cells: start with column attributes if they exist.
     // This preserves checkbox renderers and other column-specific settings.
     if( m_colAttrs.find( aCol ) != m_colAttrs.end() && m_colAttrs[aCol] )
     {
@@ -457,7 +517,27 @@ wxGridCellAttr* FIELDS_EDITOR_GRID_DATA_MODEL::GetAttr( int aRow, int aCol, wxGr
         attr = new wxGridCellAttr();
     }
 
-    attr->SetBackgroundColour( highlightColor );
+    if( needsVariantHighlight )
+        attr->SetBackgroundColour( highlightColor );
+
+    if( needsTextVarRenderer )
+    {
+        if( !m_textVarRenderer )
+            m_textVarRenderer = new GRID_CELL_RESOLVED_TEXT_RENDERER();
+
+        m_textVarRenderer->IncRef();
+        attr->SetRenderer( m_textVarRenderer );
+
+        // Tint text-var cells if not already highlighted by variant
+        if( !needsVariantHighlight )
+        {
+            wxColour bg = wxSystemSettings::GetColour( wxSYS_COLOUR_WINDOW );
+            bool     isDark = ( bg.Red() + bg.Green() + bg.Blue() ) < 384;
+
+            attr->SetBackgroundColour( isDark ? wxColour( 80, 70, 30 )       // Dark amber
+                                              : wxColour( 255, 252, 200 ) ); // Light yellow
+        }
+    }
 
     return enhanceAttr( attr, aRow, aCol, aKind );
 }
@@ -690,8 +770,8 @@ bool FIELDS_EDITOR_GRID_DATA_MODEL::cmp( const DATA_MODEL_ROW&          lhGroup,
     if( sortCol < 0 || sortCol >= dataModel->GetNumberCols() )
         sortCol = 0;
 
-    wxString lhs = dataModel->GetValue( lhGroup, sortCol ).Trim( true ).Trim( false );
-    wxString rhs = dataModel->GetValue( rhGroup, sortCol ).Trim( true ).Trim( false );
+    wxString lhs = dataModel->GetValue( lhGroup, sortCol, wxT( ", " ), wxT( "-" ), true ).Trim( true ).Trim( false );
+    wxString rhs = dataModel->GetValue( rhGroup, sortCol, wxT( ", " ), wxT( "-" ), true ).Trim( true ).Trim( false );
 
     if( lhs == rhs || dataModel->ColIsReference( sortCol ) )
     {
@@ -990,7 +1070,7 @@ void FIELDS_EDITOR_GRID_DATA_MODEL::RebuildRows()
             {
                 for( const wxString& variantName : m_variantNames )
                 {
-                    if( ref.GetSymbol()->GetDNP( &ref.GetSheetPath(), variantName )
+                    if( ref.GetSymbol()->ResolveDNP( &ref.GetSheetPath(), variantName )
                         || ref.GetSheetPath().GetDNP( variantName ) )
                     {
                         isDNP = true;
@@ -1000,7 +1080,7 @@ void FIELDS_EDITOR_GRID_DATA_MODEL::RebuildRows()
             }
             else
             {
-                isDNP = ref.GetSymbol()->GetDNP( &ref.GetSheetPath(), m_currentVariant )
+                isDNP = ref.GetSymbol()->ResolveDNP( &ref.GetSheetPath(), m_currentVariant )
                         || ref.GetSheetPath().GetDNP( m_currentVariant );
             }
 
@@ -1016,7 +1096,7 @@ void FIELDS_EDITOR_GRID_DATA_MODEL::RebuildRows()
             {
                 for( const wxString& variantName : m_variantNames )
                 {
-                    if( ref.GetSymbol()->GetExcludedFromBOM( &ref.GetSheetPath(), variantName )
+                    if( ref.GetSymbol()->ResolveExcludedFromBOM( &ref.GetSheetPath(), variantName )
                         || ref.GetSheetPath().GetExcludedFromBOM( variantName ) )
                     {
                         isExcluded = true;
@@ -1026,7 +1106,7 @@ void FIELDS_EDITOR_GRID_DATA_MODEL::RebuildRows()
             }
             else
             {
-                isExcluded = ref.GetSymbol()->GetExcludedFromBOM( &ref.GetSheetPath(), m_currentVariant )
+                isExcluded = ref.GetSymbol()->ResolveExcludedFromBOM( &ref.GetSheetPath(), m_currentVariant )
                              || ref.GetSheetPath().GetExcludedFromBOM( m_currentVariant );
             }
 
@@ -1217,7 +1297,13 @@ void FIELDS_EDITOR_GRID_DATA_MODEL::ApplyData( SCH_COMMIT& aCommit, TEMPLATES& a
             if( IsGeneratedField( srcName ) )
                 continue;
 
-            SCH_FIELD* destField = symbol->GetField( srcName );
+            SCH_FIELD* destField = symbol->FindFieldCaseInsensitive( srcName );
+
+            if( destField && !destField->IsMandatory() && destField->GetName() != srcName )
+            {
+                destField->SetName( srcName );
+                symbolModified = true;
+            }
 
             if( destField && destField->IsPrivate() )
             {
@@ -1268,7 +1354,15 @@ void FIELDS_EDITOR_GRID_DATA_MODEL::ApplyData( SCH_COMMIT& aCommit, TEMPLATES& a
             if( symbol->GetFields()[ii].IsMandatory() || symbol->GetFields()[ii].IsPrivate() )
                 continue;
 
-            if( fieldStore.count( symbol->GetFields()[ii].GetName() ) == 0 )
+            const wxString& existingName = symbol->GetFields()[ii].GetName();
+
+            bool stillTracked = std::any_of( fieldStore.begin(), fieldStore.end(),
+                                             [&]( const auto& kv )
+                                             {
+                                                 return kv.first.IsSameAs( existingName, false );
+                                             } );
+
+            if( !stillTracked )
             {
                 symbol->GetFields().erase( symbol->GetFields().begin() + ii );
                 symbolModified = true;

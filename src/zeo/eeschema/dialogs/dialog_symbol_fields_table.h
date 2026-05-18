@@ -85,6 +85,7 @@ private:
 
     void OnTableValueChanged( wxGridEvent& event ) override;
     void OnTableCellClick( wxGridEvent& event ) override;
+    void OnGridMouseMove( wxMouseEvent& aEvent );
     void OnTableColSize( wxGridSizeEvent& event ) override;
 
     void OnSidebarToggle( wxCommandEvent& event ) override;
@@ -117,6 +118,7 @@ private:
     void OnSchItemsRemoved( SCHEMATIC& aSch, std::vector<SCH_ITEM*>& aSchItem ) override;
     void OnSchItemsChanged( SCHEMATIC& aSch, std::vector<SCH_ITEM*>& aSchItem ) override;
     void OnSchSheetChanged( SCHEMATIC& aSch ) override;
+    void OnSchCurrentVariantChanged( SCHEMATIC& aSch ) override;
 
     void EnableSelectionEvents();
     void DisableSelectionEvents();
@@ -155,8 +157,10 @@ private:
     void onDeleteVariant( wxCommandEvent& aEvent ) override;
     void onRenameVariant( wxCommandEvent& aEvent ) override;
     void onCopyVariant( wxCommandEvent& aEvent ) override;
+    void onEditVariantDescription( wxCommandEvent& aEvent ) override;
     void onVariantSelectionChange( wxCommandEvent& aEvent ) override;
 
+    void syncVariantSelection( const wxString& aVariantName, bool aUpdateSchematic );
     void updateVariantButtonStates();
 
     wxString getSelectedVariant() const;
@@ -185,4 +189,6 @@ private:
     SCHEMATIC_SETTINGS&                m_schSettings;
 
     JOB_EXPORT_SCH_BOM* m_job;
+
+    bool m_syncingVariantSelection = false;
 };

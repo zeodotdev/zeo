@@ -699,6 +699,23 @@ protected:
      */
     virtual bool doAutoSave();
 
+    /**
+     * Check for autosave files newer than their source files for the given project.
+     * If found, present the user with the recovery dialog so they can pick what to
+     * do with each file (restore, keep current, or keep both as a sibling copy).
+     * Cancel leaves every autosave on disk so the dialog can offer it again next
+     * open.  The open always proceeds either way.
+     *
+     * Only meaningful when BACKUP_FORMAT::ZIP is selected.  In INCREMENTAL mode the
+     * user recovers via the Local History restore dialog instead.
+     *
+     * @param aProjectPath path to the project directory.
+     * @param aExtensions  Only autosave files whose source has one of these
+     *                     extensions are considered. PCB editor passes kicad_pcb,
+     *                     schematic editor passes kicad_sch.
+     */
+    void CheckForAutosaveFiles( const wxString& aProjectPath, const std::vector<wxString>& aExtensions );
+
     virtual bool canCloseWindow( wxCloseEvent& aCloseEvent ) { return true; }
     virtual void doCloseWindow() { }
 
@@ -769,6 +786,8 @@ protected:
     DECLARE_EVENT_TABLE()
 
 private:
+    void onUpdateUI( wxUpdateUIEvent& aEvent );
+
     /**
      * (with its unexpected name so it does not collide with the real OnWindowClose()
      * function provided in derived classes) is called just before a window
@@ -845,6 +864,9 @@ private:
 
     /// Map containing the UI update handlers registered with wx for each action.
     std::map<int, UIUpdateHandler> m_uiUpdateMap;
+
+    /// True once the single wxID_ANY UPDATE_UI handler has been bound.
+    bool m_uiUpdateHandlerBound;
 
     /// Set by the close window event handler after frames are asked if they can close.
     /// Allows other functions when called to know our state is cleanup.

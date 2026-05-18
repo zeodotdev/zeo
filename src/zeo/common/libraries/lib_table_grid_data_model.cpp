@@ -153,6 +153,7 @@ wxString LIB_TABLE_GRID_DATA_MODEL::GetValue( int aRow, int aCol )
         if( std::optional<LIBRARY_ERROR> error = m_adapter->LibraryError( r.Nickname() ) )
             return error->message;
 
+
         if( m_adapter->SupportsConfigurationDialog( r.Nickname() ) )
             return _( "Edit settings" );
         else if( r.Type() == LIBRARY_TABLE_ROW::TABLE_TYPE_NAME )
@@ -190,12 +191,6 @@ wxGridCellAttr* LIB_TABLE_GRID_DATA_MODEL::GetAttr( int aRow, int aCol, wxGridCe
 
     case COL_STATUS:
         if( !tableRow.IsOk() || tableRow.Conflict() )
-        {
-            m_warningAttr->IncRef();
-            return enhanceAttr( m_warningAttr, aRow, aCol, aKind );
-        }
-
-        if( std::optional<LIBRARY_ERROR> error = m_adapter->LibraryError( tableRow.Nickname() ) )
         {
             m_warningAttr->IncRef();
             return enhanceAttr( m_warningAttr, aRow, aCol, aKind );
@@ -299,6 +294,9 @@ void LIB_TABLE_GRID_DATA_MODEL::SetValue( int aRow, int aCol, const wxString& aV
                     GetView()->RefreshBlock( aRow, COL_STATUS, aRow, COL_STATUS );
                 } );
     }
+
+    if( m_changeCallback )
+        m_changeCallback();
 }
 
 
@@ -311,6 +309,9 @@ void LIB_TABLE_GRID_DATA_MODEL::SetValueAsBool( int aRow, int aCol, bool aValue 
         at( aRow ).SetDisabled( !aValue );
     else if( aCol == COL_VISIBLE )
         at( aRow ).SetHidden( !aValue );
+
+    if( m_changeCallback )
+        m_changeCallback();
 }
 
 
@@ -327,6 +328,9 @@ bool LIB_TABLE_GRID_DATA_MODEL::InsertRows( size_t aPos, size_t aNumRows  )
             wxGridTableMessage msg( this, wxGRIDTABLE_NOTIFY_ROWS_INSERTED, aPos, aNumRows );
             GetView()->ProcessTableMessage( msg );
         }
+
+        if( m_changeCallback )
+            m_changeCallback();
 
         return true;
     }
@@ -347,6 +351,9 @@ bool LIB_TABLE_GRID_DATA_MODEL::AppendRows( size_t aNumRows )
         GetView()->ProcessTableMessage( msg );
     }
 
+    if( m_changeCallback )
+        m_changeCallback();
+
     return true;
 }
 
@@ -365,6 +372,9 @@ bool LIB_TABLE_GRID_DATA_MODEL::DeleteRows( size_t aPos, size_t aNumRows )
             wxGridTableMessage msg( this, wxGRIDTABLE_NOTIFY_ROWS_DELETED, aPos, aNumRows );
             GetView()->ProcessTableMessage( msg );
         }
+
+        if( m_changeCallback )
+            m_changeCallback();
 
         return true;
     }
@@ -387,7 +397,7 @@ wxString LIB_TABLE_GRID_DATA_MODEL::GetColLabelValue( int aCol )
     case COL_DESCR:     return _( "Description" );
     case COL_ENABLED:   return _( "Enable" );
     case COL_VISIBLE:   return _( "Show" );
-    case COL_STATUS:    return wxEmptyString;
+    case COL_STATUS:    return wxS( " " );
 
     default:            return wxEmptyString;
     }
@@ -404,6 +414,19 @@ bool LIB_TABLE_GRID_DATA_MODEL::ContainsNickname( const wxString& aNickname )
             return true;
     }
     return false;
+}
+
+
+void LIB_TABLE_GRID_DATA_MODEL::RecheckRows()
+{
+    if( !m_adapter )
+        return;
+
+    for( size_t row = 0; row < size(); ++row )
+        m_adapter->CheckTableRow( at( row ) );
+
+    if( GetView() && GetNumberRows() > 0 )
+        GetView()->RefreshBlock( 0, COL_STATUS, GetNumberRows() - 1, COL_STATUS );
 }
 
 

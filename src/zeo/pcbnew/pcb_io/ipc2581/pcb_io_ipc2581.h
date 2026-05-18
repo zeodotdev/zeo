@@ -33,6 +33,7 @@
 #include <stroke_params.h>
 
 #include <wx/xml/xml.h>
+#include <array>
 #include <memory>
 #include <map>
 #include <set>
@@ -73,6 +74,7 @@ public:
         m_progress_reporter = nullptr;
         m_xml_doc = nullptr;
         m_xml_root = nullptr;
+        m_contentNode = nullptr;
         m_lastAppendedNode = nullptr;
     }
 
@@ -301,6 +303,7 @@ private:
     wxString                m_mfg;          //<! If set, field name containing the part manufacturer
     wxString                m_distpn;       //<! If set, field name containing the distributor part number
     wxString                m_dist;         //<! If set, field name containing the distributor name
+    wxString                m_bomRev;       //<! BOM revision string for the BomHeader element
 
     // Node pointer to the main enterprise node to be used for adding
     // enterprises later when forming the AVL
@@ -323,7 +326,7 @@ private:
     std::vector<wxXmlNode*>    m_padstacks;         //<! Holding vector for padstacks.  These need to be inserted prior to the components
     wxXmlNode*                 m_last_padstack;     //<! Pointer to padstack list where we can insert the VIA padstacks once we process tracks
 
-    std::map<wxString, std::pair<wxString, wxString>> m_padstack_backdrill_specs;
+    std::map<wxString, std::array<wxString, 2>>       m_padstack_backdrill_specs;
     std::map<wxString, wxXmlNode*>                    m_backdrill_spec_nodes;
     std::set<wxString>                                m_backdrill_spec_used;
     int                                               m_backdrill_spec_index;
@@ -365,6 +368,7 @@ private:
 
     wxXmlDocument*          m_xml_doc;
     wxXmlNode*              m_xml_root;
+    wxXmlNode*              m_contentNode;
 
     wxXmlNode*              m_lastAppendedNode;     ///< Optimization for appendNode to avoid O(n) child traversal
 };

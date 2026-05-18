@@ -93,10 +93,17 @@ static GLogWriterOutput nullLogWriter( GLogLevelFlags log_level, const GLogField
 
 bool KIPLATFORM::APP::Init()
 {
-#if !defined( KICAD_SHOW_GTK_MESSAGES )
-    // Attach a logger that will consume the annoying GTK error messages
-    g_log_set_writer_func( nullLogWriter, nullptr, nullptr );
-#endif
+    // Set KICAD_SHOW_GTK_MESSAGES=1 env var to show GTK messages,
+    // otherwise, we hide them to avoid message spam.
+
+    wxString showMessages;
+    wxGetEnv( wxT( "KICAD_SHOW_GTK_MESSAGES" ), &showMessages );
+
+    if( showMessages.IsEmpty() || showMessages != "1" )
+    {
+        // Attach a logger that will consume the annoying GTK error messages
+        g_log_set_writer_func( nullLogWriter, nullptr, nullptr );
+    }
 
     // Set up logging — redirect wxLogInfo/wxLogMessage to a file instead of
     // the default wxWidgets behaviour (popup dialogs on GTK).
@@ -174,6 +181,11 @@ bool KIPLATFORM::APP::Init()
     }
 
     return true;
+}
+
+
+void KIPLATFORM::APP::EnableDarkMode( bool aForce )
+{
 }
 
 

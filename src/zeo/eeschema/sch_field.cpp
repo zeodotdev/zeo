@@ -56,7 +56,6 @@ SCH_FIELD::SCH_FIELD() :
         m_isGeneratedField( false ),
         m_autoAdded( false ),
         m_showInChooser( true ),
-        m_renderCacheValid( false ),
         m_lastResolvedColor( COLOR4D::UNSPECIFIED )
 {
 }
@@ -116,21 +115,9 @@ SCH_FIELD::SCH_FIELD( const SCH_FIELD& aField ) :
     m_isGeneratedField = aField.m_isGeneratedField;
     m_autoAdded = aField.m_autoAdded;
     m_showInChooser = aField.m_showInChooser;
-
-    m_renderCache.clear();
-
-    for( const std::unique_ptr<KIFONT::GLYPH>& glyph : aField.m_renderCache )
-    {
-        if( KIFONT::OUTLINE_GLYPH* outline = dynamic_cast<KIFONT::OUTLINE_GLYPH*>( glyph.get() ) )
-            m_renderCache.emplace_back( std::make_unique<KIFONT::OUTLINE_GLYPH>( *outline ) );
-        else if( KIFONT::STROKE_GLYPH* stroke = dynamic_cast<KIFONT::STROKE_GLYPH*>( glyph.get() ) )
-            m_renderCache.emplace_back( std::make_unique<KIFONT::STROKE_GLYPH>( *stroke ) );
-    }
-
-    m_renderCacheValid = aField.m_renderCacheValid;
-    m_renderCachePos = aField.m_renderCachePos;
-
     m_lastResolvedColor = aField.m_lastResolvedColor;
+
+    m_renderCache.reset();
 }
 
 
@@ -145,21 +132,9 @@ SCH_FIELD& SCH_FIELD::operator=( const SCH_FIELD& aField )
     m_showName = aField.m_showName;
     m_allowAutoPlace = aField.m_allowAutoPlace;
     m_isGeneratedField = aField.m_isGeneratedField;
-
-    m_renderCache.clear();
-
-    for( const std::unique_ptr<KIFONT::GLYPH>& glyph : aField.m_renderCache )
-    {
-        if( KIFONT::OUTLINE_GLYPH* outline = dynamic_cast<KIFONT::OUTLINE_GLYPH*>( glyph.get() ) )
-            m_renderCache.emplace_back( std::make_unique<KIFONT::OUTLINE_GLYPH>( *outline ) );
-        else if( KIFONT::STROKE_GLYPH* stroke = dynamic_cast<KIFONT::STROKE_GLYPH*>( glyph.get() ) )
-            m_renderCache.emplace_back( std::make_unique<KIFONT::STROKE_GLYPH>( *stroke ) );
-    }
-
-    m_renderCacheValid = aField.m_renderCacheValid;
-    m_renderCachePos = aField.m_renderCachePos;
-
     m_lastResolvedColor = aField.m_lastResolvedColor;
+
+    m_renderCache.reset();
 
     return *this;
 }
@@ -226,7 +201,9 @@ wxString SCH_FIELD::GetShownText( bool aAllowExtraText, int aDepth ) const
         return GetShownText( &currentSheet, aAllowExtraText, aDepth, variantName );
     }
     else
+    {
         return GetShownText( nullptr, aAllowExtraText, aDepth );
+    }
 }
 
 
@@ -272,7 +249,7 @@ void SCH_FIELD::ClearCaches()
 void SCH_FIELD::ClearRenderCache()
 {
     EDA_TEXT::ClearRenderCache();
-    m_renderCacheValid = false;
+    m_renderCache.reset();
 }
 
 
@@ -285,21 +262,24 @@ SCH_FIELD::GetRenderCache( const wxString& forResolvedText, const VECTOR2I& forP
     {
         KIFONT::OUTLINE_FONT* outlineFont = static_cast<KIFONT::OUTLINE_FONT*>( font );
 
-        if( m_renderCache.empty() || !m_renderCacheValid )
+        if( !m_renderCache )
+            m_renderCache = std::make_unique<SCH_FIELD_RENDER_CACHE_DATA>();
+
+        if( m_renderCache->glyphs.empty() )
         {
-            m_renderCache.clear();
+            m_renderCache->glyphs.clear();
 
-            outlineFont->GetLinesAsGlyphs( &m_renderCache, forResolvedText, forPosition, aAttrs, GetFontMetrics() );
+            outlineFont->GetLinesAsGlyphs( &m_renderCache->glyphs, forResolvedText, forPosition, aAttrs,
+                                           GetFontMetrics() );
 
-            m_renderCachePos = forPosition;
-            m_renderCacheValid = true;
+            m_renderCache->pos = forPosition;
         }
 
-        if( m_renderCachePos != forPosition )
+        if( m_renderCache->pos != forPosition )
         {
-            VECTOR2I delta = forPosition - m_renderCachePos;
+            VECTOR2I delta = forPosition - m_renderCache->pos;
 
-            for( std::unique_ptr<KIFONT::GLYPH>& glyph : m_renderCache )
+            for( std::unique_ptr<KIFONT::GLYPH>& glyph : m_renderCache->glyphs )
             {
                 if( glyph->IsOutline() )
                     static_cast<KIFONT::OUTLINE_GLYPH*>( glyph.get() )->Move( delta );
@@ -307,10 +287,10 @@ SCH_FIELD::GetRenderCache( const wxString& forResolvedText, const VECTOR2I& forP
                     static_cast<KIFONT::STROKE_GLYPH*>( glyph.get() )->Move( delta );
             }
 
-            m_renderCachePos = forPosition;
+            m_renderCache->pos = forPosition;
         }
 
-        return &m_renderCache;
+        return &m_renderCache->glyphs;
     }
 
     return nullptr;
@@ -698,7 +678,7 @@ void SCH_FIELD::OnScintillaCharAdded( SCINTILLA_TRICKS* aScintillaTricks, wxStyl
                 SCH_REFERENCE_LIST refs;
                 SCH_SYMBOL*        refSymbol = nullptr;
 
-                schematic->Hierarchy().GetSymbols( refs );
+                schematic->Hierarchy().GetSymbols( refs, SYMBOL_FILTER_ALL );
 
                 for( size_t jj = 0; jj < refs.GetCount(); jj++ )
                 {
@@ -1296,6 +1276,12 @@ void SCH_FIELD::Plot( PLOTTER* aPlotter, bool aBackground, const SCH_PLOT_OPTS& 
         hjustify = GR_TEXT_H_ALIGN_CENTER;
         vjustify = GR_TEXT_V_ALIGN_CENTER;
         textpos = GetBoundingBox().Centre();
+    }
+    else if( m_parent && m_parent->Type() == LIB_SYMBOL_T )
+    {
+        // Library-symbol exports (CLI/symbol editor) provide an item offset in the same coordinate
+        // frame as body graphics/pins.  Apply the same transform+offset pipeline to field text.
+        textpos = renderSettings->TransformCoordinate( textpos ) + aOffset;
     }
     else if( m_parent && m_parent->Type() == SCH_GLOBAL_LABEL_T )
     {

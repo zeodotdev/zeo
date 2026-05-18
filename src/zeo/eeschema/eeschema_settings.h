@@ -27,6 +27,7 @@
 
 #include <map>
 
+#include <remote_provider_settings.h>
 #include <settings/app_settings.h>
 #include <sim/sim_preferences.h>
 
@@ -113,23 +114,6 @@ public:
         int  remote_symbol_panel_float_height;
     };
 
-    struct REMOTE_SYMBOL_CONFIG
-    {
-        REMOTE_SYMBOL_CONFIG()
-        {
-            ResetToDefaults();
-        }
-
-        wxString destination_dir;
-        wxString library_prefix;
-        bool     add_to_global_table;
-        std::map<wxString, wxString> user_ids;
-
-        void ResetToDefaults();
-        static wxString DefaultDestinationDir();
-        static wxString DefaultLibraryPrefix();
-    };
-
     struct AUTOPLACE_FIELDS
     {
         bool enable;
@@ -189,7 +173,6 @@ public:
         wxString            intersheets_ref_prefix;
         wxString            intersheets_ref_suffix;
         bool                auto_start_wires;
-        std::vector<double> junction_size_mult_list;
 
         // Pulldown index for user default junction dot size (e.g. none = 0, smallest = 1, small = 2, etc)
         int                 junction_size_choice;
@@ -348,7 +331,7 @@ private:
 public:
     APPEARANCE                m_Appearance;
     AUI_PANELS                m_AuiPanels;
-    REMOTE_SYMBOL_CONFIG      m_RemoteSymbol;
+    REMOTE_PROVIDER_SETTINGS  m_RemoteSymbol;
 
     DRAWING                   m_Drawing;
     INPUT                     m_Input;

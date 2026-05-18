@@ -69,6 +69,7 @@ set( QA_EESCHEMA_SRCS
     erc/test_erc_wire_bus_entry.cpp
     erc/test_erc_ground_pins.cpp
     erc/test_erc_bus_member_label_local_pins.cpp
+    erc/test_erc_marker_deduplication.cpp
 
     test_annotation_refdes_tracker_units.cpp
     test_annotation_units_conflicts.cpp
@@ -76,6 +77,7 @@ set( QA_EESCHEMA_SRCS
     test_connectivity_algo.cpp
     test_issue18119_bus_hierarchy.cpp
     test_issue18299_bus_member_rename.cpp
+    test_issue23840_bus_group_to_vector.cpp
     test_issue20173_paste_subsheet.cpp
     test_issue22286_pin_alternate.cpp
     test_issue22620_group_annotation.cpp
@@ -83,7 +85,15 @@ set( QA_EESCHEMA_SRCS
     test_issue22864_align_sheet_pins.cpp
     test_issue22938_local_power.cpp
     test_issue23058_jumper_pin_groups.cpp
+    test_issue23143_junction_midpoint.cpp
+    test_issue23403_shared_subsheet_screen.cpp
     test_issue22576_subsheet_standalone.cpp
+    test_issue22694_global_hier_label.cpp
+    test_issue24044_expression_net_names.cpp
+    test_issue23719_global_label_chain.cpp
+    test_issue24107_multiunit_grouping.cpp
+    test_issue24072_symbol_arc_edit_mode.cpp
+    test_issue24290_local_labels_across_top_sheets.cpp
     test_issue16915_bus_netclass.cpp
     test_nc_pin_connectivity.cpp
     test_crossing_label.cpp
@@ -123,6 +133,7 @@ set( QA_EESCHEMA_SRCS
     test_flat_hierarchy.cpp
     test_multi_top_level_sheets.cpp
     test_save_load_schematic.cpp
+    test_project_name_instances.cpp
     test_legacy_load.cpp
     test_symbol_library_manager.cpp
     test_symbol_import_manager.cpp
@@ -130,6 +141,10 @@ set( QA_EESCHEMA_SRCS
     test_stacked_pin_conversion.cpp
     test_pin_stacked_layout.cpp
     test_pin_text_overlap.cpp
+    test_remote_symbol_download_security.cpp
+    test_remote_symbol_import.cpp
+    test_remote_symbol_load_from_payload.cpp
+    test_backannotate_unit_swap.cpp
     test_netlist_exporter_xml_stacked.cpp
     test_resolve_drivers.cpp
     test_saveas_copy_subsheets.cpp

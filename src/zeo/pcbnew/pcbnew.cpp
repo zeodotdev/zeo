@@ -42,6 +42,7 @@
 #include <gestfich.h>
 #include <paths.h>
 #include <pcbnew_settings.h>
+#include <footprint.h>
 #include <footprint_editor_settings.h>
 #include <settings/settings_manager.h>
 #include <settings/cvpcb_settings.h>
@@ -225,7 +226,7 @@ static wxString filterFootprints( const wxString& aFilterJson )
 
         return wxString::FromUTF8( output.dump() );
     }
-    catch( const std::exception& e )
+    catch( const std::exception& )
     {
         return wxS( "[]" );
     }
@@ -414,7 +415,7 @@ static struct IFACE : public KIFACE_BASE, public UNITS_PROVIDER
             for( ACTION_TOOLBAR_CONTROL* control : ACTION_TOOLBAR::GetCustomControlList( FRAME_FOOTPRINT_EDITOR ) )
                 controls.push_back( control );
 
-            return new PANEL_TOOLBAR_CUSTOMIZATION( aParent, cfg, tb, actions, controls );
+            return new PANEL_TOOLBAR_CUSTOMIZATION( aParent, cfg, tb, FRAME_FOOTPRINT_EDITOR, actions, controls );
         }
 
         case PANEL_FP_COLORS:
@@ -485,7 +486,7 @@ static struct IFACE : public KIFACE_BASE, public UNITS_PROVIDER
             for( ACTION_TOOLBAR_CONTROL* control : ACTION_TOOLBAR::GetCustomControlList( FRAME_PCB_EDITOR ) )
                 controls.push_back( control );
 
-            return new PANEL_TOOLBAR_CUSTOMIZATION( aParent, cfg, tb, actions, controls );
+            return new PANEL_TOOLBAR_CUSTOMIZATION( aParent, cfg, tb, FRAME_PCB_EDITOR, actions, controls );
         }
 
         case PANEL_PCB_ACTION_PLUGINS:
@@ -514,7 +515,7 @@ static struct IFACE : public KIFACE_BASE, public UNITS_PROVIDER
             for( ACTION_TOOLBAR_CONTROL* control : ACTION_TOOLBAR::GetCustomControlList( FRAME_PCB_DISPLAY3D ) )
                 controls.push_back( control );
 
-            return new PANEL_TOOLBAR_CUSTOMIZATION( aParent, cfg, tb, actions, controls );
+            return new PANEL_TOOLBAR_CUSTOMIZATION( aParent, cfg, tb, FRAME_PCB_DISPLAY3D, actions, controls );
         }
 
         default:
@@ -725,7 +726,7 @@ void IFACE::SaveFileAs( const wxString& aProjectBasePath, const wxString& aSrcPr
                 {
                     if( token == "sheetfile" )
                     {
-                        for( const wxString& extension : { wxT( ".sch" ), wxT( ".kicad_sch" ) } )
+                        for( const wxString extension : { wxT( ".sch" ), wxT( ".kicad_sch" ) } )
                         {
                             if( value == aSrcProjectName + extension )
                             {

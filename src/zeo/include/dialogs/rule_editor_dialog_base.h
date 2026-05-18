@@ -32,9 +32,9 @@
 
 #include <dialog_shim.h>
 #include <dialogs/rule_editor_data_base.h>
+#include <widgets/std_bitmap_button.h>
 
 class WX_INFOBAR;
-class wxDragImage;
 
 /**
  * Enumeration representing the available context menu options for the rule editor tree.
@@ -466,21 +466,21 @@ private:
     void onClose( wxCloseEvent& aEvt );
 
 protected:
-    wxTreeCtrl*       m_ruleTreeCtrl;
-    WX_INFOBAR*       m_infoBar;
-    wxPanel*          m_contentPanel;
-    wxScrolledWindow* m_scrolledContentWin;
-    wxSplitterWindow* m_splitter;
-    wxSearchCtrl*     m_filterSearch;
-    wxTextCtrl*       m_filterText;
-    wxBoxSizer*       m_buttonsSizer;
-    wxBitmapButton*   m_addRuleButton;
-    wxBitmapButton*   m_copyRuleButton;
-    wxBitmapButton*   m_moveTreeItemUpButton;
-    wxBitmapButton*   m_moveTreeItemDownButton;
-    wxBitmapButton*   m_deleteRuleButton;
-    wxButton*         m_saveRuleButton;
-    wxButton*         m_cancelRuleButton;
+    wxTreeCtrl*        m_ruleTreeCtrl;
+    WX_INFOBAR*        m_infoBar;
+    wxPanel*           m_contentPanel;
+    wxScrolledWindow*  m_scrolledContentWin;
+    wxSplitterWindow*  m_splitter;
+    wxSearchCtrl*      m_filterSearch;
+    wxTextCtrl*        m_filterText;
+    wxBoxSizer*        m_buttonsSizer;
+    STD_BITMAP_BUTTON* m_addRuleButton;
+    STD_BITMAP_BUTTON* m_copyRuleButton;
+    STD_BITMAP_BUTTON* m_moveTreeItemUpButton;
+    STD_BITMAP_BUTTON* m_moveTreeItemDownButton;
+    STD_BITMAP_BUTTON* m_deleteRuleButton;
+    wxButton*          m_saveRuleButton;
+    wxButton*          m_cancelRuleButton;
 
 private:
     bool m_isDragging;
@@ -490,6 +490,7 @@ private:
     bool m_enableDuplicateRule;
     bool m_enableDeleteRule;
     bool m_modified;
+    bool m_suppressSelectionEvents;
     int  m_defaultSashPosition;
 
     wxString                    m_title;
@@ -497,7 +498,7 @@ private:
     RULE_TREE_ITEM_DATA*        m_selectedData;
     wxTreeItemId                m_previousId;
     wxTreeItemId                m_draggedItem;
-    wxDragImage*                m_dragImage;
+    wxTreeItemId                m_dropTargetItem;
 
     std::unordered_map<int, std::tuple<wxString, std::vector<int>, wxTreeItemId>> m_treeHistoryData;
 };

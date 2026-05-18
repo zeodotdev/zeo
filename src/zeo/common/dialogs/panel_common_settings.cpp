@@ -69,6 +69,14 @@ PANEL_COMMON_SETTINGS::PANEL_COMMON_SETTINGS( wxWindow* aParent ) :
     m_rbIconThemeAuto->Show( false );
 #endif
 
+    // It's common on Windows to have separate app and system settings for light/dark
+#ifndef __WXMSW__
+    m_stAppTheme->Show( false );
+    m_rbAppThemeLight->Show( false );
+    m_rbAppThemeDark->Show( false );
+    m_rbAppThemeAuto->Show( false );
+#endif
+
    	/*
    	 * Automatic canvas scaling works fine on all supported platforms, so manual scaling is disabled
    	 */
@@ -188,6 +196,13 @@ bool PANEL_COMMON_SETTINGS::TransferDataFromWindow()
     else if( m_rbIconThemeAuto->GetValue() )
         commonSettings->m_Appearance.icon_theme = ICON_THEME::AUTO;
 
+    if( m_rbAppThemeLight->GetValue() )
+        commonSettings->m_Appearance.app_theme = APP_THEME::LIGHT;
+    else if( m_rbAppThemeDark->GetValue() )
+        commonSettings->m_Appearance.app_theme = APP_THEME::DARK;
+    else if( m_rbAppThemeAuto->GetValue() )
+        commonSettings->m_Appearance.app_theme = APP_THEME::AUTO;
+
     if( m_rbIconSizeSmall->GetValue() )
         commonSettings->m_Appearance.toolbar_icon_size = 16;
     else if( m_rbIconSizeNormal->GetValue() )
@@ -217,6 +232,21 @@ bool PANEL_COMMON_SETTINGS::TransferDataFromWindow()
 
     commonSettings->m_Backup.enabled             = m_cbBackupEnabled->GetValue();
     commonSettings->m_Backup.limit_total_size    = m_backupLimitTotalSize->GetValue() * 1024ULL * 1024ULL;
+
+    // The radio-box choice order is constructed to match these enum values; if the enum
+    // is reordered in common_settings.h the ternaries below silently flip without these.
+    static_assert( static_cast<int>( BACKUP_FORMAT::INCREMENTAL ) == 0 );
+    static_assert( static_cast<int>( BACKUP_FORMAT::ZIP ) == 1 );
+    static_assert( static_cast<int>( BACKUP_LOCATION::PROJECT_DIR ) == 0 );
+    static_assert( static_cast<int>( BACKUP_LOCATION::USER_DIR ) == 1 );
+
+    commonSettings->m_Backup.format = ( m_choiceBackupFormat->GetSelection() == 0 )
+                                              ? BACKUP_FORMAT::INCREMENTAL
+                                              : BACKUP_FORMAT::ZIP;
+
+    commonSettings->m_Backup.location = ( m_choiceBackupLocation->GetSelection() == 0 )
+                                                ? BACKUP_LOCATION::PROJECT_DIR
+                                                : BACKUP_LOCATION::USER_DIR;
 
     commonSettings->m_Session.remember_open_files = m_cbRememberOpenFiles->GetValue();
 
@@ -274,6 +304,13 @@ void PANEL_COMMON_SETTINGS::applySettingsToPanel( COMMON_SETTINGS& aSettings )
     case ICON_THEME::AUTO:  m_rbIconThemeAuto->SetValue( true );    break;
     }
 
+    switch( aSettings.m_Appearance.app_theme )
+    {
+    case APP_THEME::LIGHT: m_rbAppThemeLight->SetValue( true ); break;
+    case APP_THEME::DARK: m_rbAppThemeDark->SetValue( true ); break;
+    case APP_THEME::AUTO: m_rbAppThemeAuto->SetValue( true ); break;
+    }
+
     switch( aSettings.m_Appearance.toolbar_icon_size )
     {
     case 16: m_rbIconSizeSmall->SetValue( true );   break;
@@ -302,6 +339,12 @@ void PANEL_COMMON_SETTINGS::applySettingsToPanel( COMMON_SETTINGS& aSettings )
 
     m_cbBackupEnabled->SetValue( aSettings.m_Backup.enabled );
     m_backupLimitTotalSize->SetValue( aSettings.m_Backup.limit_total_size / ( 1024 * 1024 ) );
+
+    m_choiceBackupFormat->SetSelection(
+            aSettings.m_Backup.format == BACKUP_FORMAT::INCREMENTAL ? 0 : 1 );
+
+    m_choiceBackupLocation->SetSelection(
+            aSettings.m_Backup.location == BACKUP_LOCATION::PROJECT_DIR ? 0 : 1 );
 
     m_showScrollbars->SetValue( aSettings.m_Appearance.show_scrollbars );
 }

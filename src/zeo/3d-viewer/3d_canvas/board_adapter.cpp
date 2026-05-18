@@ -24,8 +24,11 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
-#include <gal/3d/camera.h>
 #include "board_adapter.h"
+
+#include <wx/log.h>
+
+#include <gal/3d/camera.h>
 #include <board_design_settings.h>
 #include <board_stackup_manager/board_stackup.h>
 #include <board_stackup_manager/stackup_predefined_prms.h>
@@ -34,6 +37,7 @@
 #include <project.h>
 #include <project/project_file.h>
 #include <dialogs/dialog_color_picker.h>
+#include <footprint.h>
 #include <layer_range.h>
 #include <3d_math.h>
 #include "3d_fastmath.h"
@@ -42,7 +46,7 @@
 #include <pgm_base.h>
 #include <settings/color_settings.h>
 #include <settings/settings_manager.h>
-#include <wx/log.h>
+#include <pcb_track.h>
 #include <pcbnew_settings.h>
 #include <advanced_config.h>
 
@@ -356,7 +360,7 @@ void BOARD_ADAPTER::InitSettings( REPORTER* aStatusReporter, REPORTER* aWarningR
     BOX2I bbbox;
 
     if( m_board )
-        bbbox = m_board->ComputeBoundingBox( !m_board->IsFootprintHolder() && haveOutline );
+        bbbox = m_board->ComputeBoundingBox( !m_board->IsFootprintHolder() && haveOutline, true );
 
     // Gives a non null size to avoid issues in zoom / scale calculations
     if( ( bbbox.GetWidth() == 0 ) && ( bbbox.GetHeight() == 0 ) )

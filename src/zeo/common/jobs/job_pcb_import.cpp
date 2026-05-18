@@ -18,14 +18,14 @@
  */
 
 #include <jobs/job_pcb_import.h>
-#include <jobs/job_registry.h>
+#include <wx/intl.h>
 #include <i18n_utility.h>
 
 
 NLOHMANN_JSON_SERIALIZE_ENUM( JOB_PCB_IMPORT::FORMAT,
                               {
                                   { JOB_PCB_IMPORT::FORMAT::AUTO, "auto" },
-                                  { JOB_PCB_IMPORT::FORMAT::PADS, "pads" },
+                                  { JOB_PCB_IMPORT::FORMAT::PADS_ASCII, "pads" },
                                   { JOB_PCB_IMPORT::FORMAT::ALTIUM, "altium" },
                                   { JOB_PCB_IMPORT::FORMAT::EAGLE, "eagle" },
                                   { JOB_PCB_IMPORT::FORMAT::CADSTAR, "cadstar" },
@@ -47,8 +47,6 @@ JOB_PCB_IMPORT::JOB_PCB_IMPORT() :
         JOB( "pcb_import", false )
 {
     m_params.emplace_back( new JOB_PARAM<FORMAT>( "format", &m_format, m_format ) );
-    m_params.emplace_back( new JOB_PARAM<wxString>( "layer_map_file", &m_layerMapFile, m_layerMapFile ) );
-    m_params.emplace_back( new JOB_PARAM<bool>( "auto_map", &m_autoMap, m_autoMap ) );
     m_params.emplace_back( new JOB_PARAM<REPORT_FORMAT>( "report_format", &m_reportFormat, m_reportFormat ) );
     m_params.emplace_back( new JOB_PARAM<wxString>( "report_file", &m_reportFile, m_reportFile ) );
 }
@@ -64,6 +62,3 @@ wxString JOB_PCB_IMPORT::GetSettingsDialogTitle() const
 {
     return _( "PCB Import Job Settings" );
 }
-
-
-REGISTER_JOB( pcb_import, _HKI( "PCB: Import" ), KIWAY::FACE_PCB, JOB_PCB_IMPORT );

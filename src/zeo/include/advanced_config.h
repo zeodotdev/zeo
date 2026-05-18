@@ -553,15 +553,6 @@ public:
     bool m_EnableGenerators;
 
     /**
-     * Enable the graphical DRC rule editor.
-     *
-     * Setting name: "EnableDrcRuleEditor"
-     * Valid values: 0 or 1
-     * Default value: 0
-     */
-    bool m_EnableDrcRuleEditor;
-
-    /**
      * Enable option to load lib files with text editor.
      *
      * Setting name: "EnableLibWithText"
@@ -874,6 +865,18 @@ public:
      * Default value: 0
      */
     bool m_ImportSkipComponentBodies;
+
+    /**
+     * Skip the layer mapping step when importing.
+     *
+     * This can be convenient to speed up imports when testing other aspects of the import,
+     * as you don't need to interact with the layer mapping dialog.
+     *
+     * Setting name: "ImportSkipLayerMapping"
+     * Valid values: 0 or 1
+     * Default value: 0
+     */
+    bool m_ImportSkipLayerMapping;
 
     /**
      * Screen DPI setting for display calculations.

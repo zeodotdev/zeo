@@ -77,6 +77,8 @@
 #include <dialogs/dialog_tuning_pattern_properties.h>
 
 #include <generators/pcb_tuning_pattern.h>
+#include <project/project_file.h>
+#include <project/tuning_profiles.h>
 #include <properties/property.h>
 #include <properties/property_mgr.h>
 
@@ -463,7 +465,14 @@ PCB_TUNING_PATTERN* PCB_TUNING_PATTERN::CreateNew( GENERATOR_TOOL* aTool,
         }
         else if( aStartItem->GetEffectiveNetClass()->HasTuningProfile() )
         {
-            pattern->m_settings.m_isTimeDomain = true;
+            // Check if the tuning profile has time domain tuning enabled
+            const std::shared_ptr<TUNING_PROFILES> tuningParams =
+                    board->GetProject()->GetProjectFile().TuningProfileParameters();
+            TUNING_PROFILE& profile =
+                    tuningParams->GetTuningProfile( aStartItem->GetEffectiveNetClass()->GetTuningProfile() );
+
+            if( profile.m_EnableTimeDomainTuning )
+                pattern->m_settings.m_isTimeDomain = true;
         }
     }
     else
@@ -2453,11 +2462,14 @@ int DRAWING_TOOL::PlaceTuningPattern( const TOOL_EVENT& aEvent )
             {
                 auto* placer = static_cast<PNS::MEANDER_PLACER_BASE*>( router->Placer() );
 
-                placer->SpacingStep( evt->IsAction( &PCB_ACTIONS::spacingIncrease ) ? 1 : -1 );
-                m_tuningPattern->SetSpacing( placer->MeanderSettings().m_spacing );
-                meanderSettings.m_spacing = placer->MeanderSettings().m_spacing;
+                if( placer )
+                {
+                    placer->SpacingStep( evt->IsAction( &PCB_ACTIONS::spacingIncrease ) ? 1 : -1 );
+                    m_tuningPattern->SetSpacing( placer->MeanderSettings().m_spacing );
+                    meanderSettings.m_spacing = placer->MeanderSettings().m_spacing;
 
-                updateTuningPattern();
+                    updateTuningPattern();
+                }
             }
             else
             {
@@ -2471,11 +2483,14 @@ int DRAWING_TOOL::PlaceTuningPattern( const TOOL_EVENT& aEvent )
             {
                 auto* placer = static_cast<PNS::MEANDER_PLACER_BASE*>( router->Placer() );
 
-                placer->AmplitudeStep( evt->IsAction( &PCB_ACTIONS::amplIncrease ) ? 1 : -1 );
-                m_tuningPattern->SetMaxAmplitude( placer->MeanderSettings().m_maxAmplitude );
-                meanderSettings.m_maxAmplitude = placer->MeanderSettings().m_maxAmplitude;
+                if( placer )
+                {
+                    placer->AmplitudeStep( evt->IsAction( &PCB_ACTIONS::amplIncrease ) ? 1 : -1 );
+                    m_tuningPattern->SetMaxAmplitude( placer->MeanderSettings().m_maxAmplitude );
+                    meanderSettings.m_maxAmplitude = placer->MeanderSettings().m_maxAmplitude;
 
-                updateTuningPattern();
+                    updateTuningPattern();
+                }
             }
             else
             {

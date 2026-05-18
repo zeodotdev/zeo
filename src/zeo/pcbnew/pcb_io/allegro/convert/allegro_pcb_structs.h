@@ -31,6 +31,7 @@
 #include <cstdint>
 #include <optional>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <variant>
@@ -206,8 +207,11 @@ struct COND_GE_LT : public COND_FIELD_BASE<T>
 
 enum BOARD_UNITS
 {
-    IMPERIAL = 0x01,
-    METRIC = 0x03,
+    MILS = 0x01,
+    INCHES = 0x02,
+    MILLIMETERS = 0x03,
+    CENTIMETERS = 0x04,
+    MICROMETERS = 0x05,
 };
 
 
@@ -403,6 +407,7 @@ struct LAYER_INFO
         VIA_KEEPOUT          = 0x13,
         ANTI_ETCH            = 0x14,
         BOUNDARY             = 0x15,
+        CONSTRAINTS_REGION   = 0x16,
     };
 
     /**
@@ -413,6 +418,8 @@ struct LAYER_INFO
     enum SUBCLASS
     {
         // BOARD_GEOMETRY
+        // BGEOM_PASTEMASK_BOTTOM     = 0x??
+        // BGEOM_PASTEMASK_TOP        = 0x??
         BGEOM_OUTLINE                 = 0xEA,
         BGEOM_CONSTRAINT_AREA         = 0xEB,
         BGEOM_OFF_GRID_AREA           = 0xEC,
@@ -432,6 +439,7 @@ struct LAYER_INFO
         BGEOM_TOOLING_CORNERS         = 0xFA,
         BGEOM_ASSEMBLY_NOTES          = 0xFB,
         BGEOM_PLATING_BAR             = 0xFC,
+        BGEOM_DESIGN_OUTLINE          = 0xFD,
 
         // COMPONENT_VALUE / DEVICE_TYPE / USER_PART_NUMBER
         // REF_DES / TOLERANCE
@@ -458,8 +466,10 @@ struct LAYER_INFO
         DFMT_OUTLINE                 = 0xFD,
 
         // PACKAGE_GEOMETRY
-        DFA_BOUND_BOTTOM             = 0xEE,
-        DFA_BOUND_TOP                = 0xEF,
+        PGEOM_PASTEMASK_BOTTOM       = 0xEC,
+        PGEOM_PASTEMASK_TOP          = 0xED,
+        PGEOM_DFA_BOUND_BOTTOM       = 0xEE,
+        PGEOM_DFA_BOUND_TOP          = 0xEF,
         PGEOM_DISPLAY_BOTTOM         = 0xF1,
         PGEOM_DISPLAY_TOP            = 0xF2,
         PGEOM_SOLDERMASK_BOTTOM      = 0xF3,
@@ -489,6 +499,17 @@ struct LAYER_INFO
         MFR_NO_GLOSS_TOP             = 0xFB,
         MFR_NO_GLOSS_ALL             = 0xFC,
         MFR_PHOTOPLOT_OUTLINE        = 0xFD,
+
+        // CONSTRAINTS_REGION
+        CREG_ALL                     = 0xFD,
+
+        // PACKAGE_KEEPIN / ROUTE_KEEPIN
+        KEEPIN_ALL                   = 0xFD,
+
+        // PACKAGE_KEEPOUT / ROUTE_KEEPOUT / VIA_KEEPOUT
+        KEEPOUT_BOTTOM               = 0xFB,
+        KEEPOUT_TOP                  = 0xFC,
+        KEEPOUT_ALL                  = 0xFD,
     };
 
     uint8_t m_Class;
@@ -712,6 +733,11 @@ struct BLK_0x08_PIN_NUMBER
     COND_GE<FMT_VER::V_172, uint32_t> m_Unknown1;
 
     uint32_t m_Ptr4;
+
+    uint32_t GetStrPtr() const
+    {
+        return m_StrPtr.value_or( m_StrPtr16x.value_or( 0 ) );
+    }
 };
 
 
@@ -764,6 +790,23 @@ struct BLK_0x0A_DRC
  */
 struct BLK_0x0C_PIN_DEF
 {
+    enum MARKER_SHAPE
+    {
+        // These are in the same order as the pad shapes, at least for the 'simple' shapes
+        CIRCLE = 0x02,
+        OCTAGON = 0x03,
+        CROSS = 0x04,
+        SQUARE = 0x05,
+        RECTANGLE = 0x06,
+        DIAMOND = 0x07,
+        PENTAGON = 0x0a,
+        OBLONG_X = 0x0b,
+        OBLONG_Y = 0x0c,
+        HEXAGON_X = 0x0f,
+        HEXAGON_Y = 0x10,
+        TRIANGLE = 0x12,
+    };
+
     uint8_t    m_T;
     LAYER_INFO m_Layer;
     uint32_t m_Key;
@@ -782,12 +825,21 @@ struct BLK_0x0C_PIN_DEF
 
     uint32_t m_Unknown4;
 
+    COND_GE<FMT_VER::V_180, uint32_t> m_Unknown5;
+
     std::array<int32_t, 2> m_Coords;
     std::array<int32_t, 2> m_Size;
 
-    std::array<uint32_t, 3> m_UnknownArray;
+    uint32_t m_GroupPtr;
+    uint32_t m_Unknown6;
+    uint32_t m_Unknown7;
 
-    COND_GE<FMT_VER::V_174, uint32_t> m_Unknown6;
+    COND_GE_LT<FMT_VER::V_174, FMT_VER::V_180, uint32_t> m_Unknown8;
+
+    uint32_t GetShape() const
+    {
+        return m_Shape16x.value_or( m_Shape.value_or( 0 ) );
+    }
 };
 
 
@@ -854,16 +906,22 @@ struct BLK_0x0F_FUNCTION_SLOT
 
     uint32_t m_SlotName;
 
+    COND_GE<FMT_VER::V_174, uint32_t> m_Unknown1;
+
     std::array<char, 32> m_CompDeviceType;
+
+    COND_GE<FMT_VER::V_172, uint32_t> m_Next;
 
     uint32_t m_Ptr0x06;
     uint32_t m_Ptr0x11;
 
-    uint32_t m_Unknown1;
+    uint32_t m_Unknown2;
 
-    COND_GE<FMT_VER::V_172, uint32_t> m_Unknown2;
-
-    COND_GE<FMT_VER::V_174, uint32_t> m_Unknown3;
+    std::string GetCompDeviceTypeStr() const
+    {
+        // The string is stored as a fixed-length array, but is null-terminated
+        return std::string( m_CompDeviceType.data(), strnlen( m_CompDeviceType.data(), m_CompDeviceType.size() ) );
+    }
 };
 
 
@@ -1057,15 +1115,17 @@ struct PADSTACK_COMPONENT
 
     COND_GE<FMT_VER::V_172, uint32_t> m_Unknown1;
 
+    // Pad size
     int32_t m_W;
     int32_t m_H;
 
-    COND_GE<FMT_VER::V_172, int16_t> m_Z1;
+    // In rounded rectangles, this is the corner radius.
+    // In chamfered rectangles, this is the chamfer size.
+    COND_GE<FMT_VER::V_172, int32_t> m_Z1;
 
+    // This is the pad component offset
     int32_t m_X3;
     int32_t m_X4;
-
-    COND_GE<FMT_VER::V_172, int16_t> m_Z;
 
     /**
      * Seems to point to various things:
@@ -1089,6 +1149,121 @@ struct PADSTACK_COMPONENT
  */
 struct BLK_0x1C_PADSTACK
 {
+    struct HEADER_v16x
+    {
+        /**
+         * Pad flags are founds in a byte of the pad info
+         */
+        enum PAD_FLAGS
+        {
+            FLAG_PLATED = 0x01,
+            // NPTHs seem to have this instead of 0x01
+            // SMDs seems to have this or 0x01, no clear pattern identified
+            FLAG_UNKNOWN1 = 0x02,
+        };
+
+        uint32_t m_DrillSize;
+        uint32_t m_UnknownStr;
+        uint32_t m_DrillMarkSizeX;
+        uint32_t m_DrillMarkSizeY;
+        // Not sure these are in the right place but they're in here somewhere (usually zero)
+        uint32_t m_DrillOffsetX;
+        uint32_t m_DrillOffsetY;
+
+        // Drill char presumably somewhere in here - can cross-match with 0x0C PIN_DEF to find
+        uint8_t m_DrillMarkShape;
+        // Mask or enum of pad flags, including plating
+        uint8_t m_Flags;
+        // An ASCII char, or 0x00
+        uint8_t m_DrillChar;
+        uint8_t m_D;
+
+        // Probably some kind of type:
+        // 0x0000 for through-hole
+        // 0x0002 for SMD
+        // 0x0400 for slots
+        uint16_t m_Unknown_1;
+
+        uint16_t m_ArrayNX;
+        uint16_t m_ArrayNY;
+
+        uint16_t m_LayerCount;
+        // Also unsure if these are in the right place (all usually 0?)
+        uint32_t m_ClearanceX;
+        uint32_t m_ClearanceY;
+
+        uint32_t m_TolerancePos;
+        uint32_t m_ToleranceNeg;
+        uint32_t m_Unknown_2;
+        uint32_t m_SlotX;
+        uint32_t m_SlotY;
+        uint32_t m_Unknown_3;
+
+        COND_GE<FMT_VER::V_165, uint32_t> m_Unknown_4;
+    };
+
+    struct HEADER_v17x
+    {
+        /**
+         * Pad flags are founds in a byte of the pad info
+         */
+        enum PAD_FLAGS
+        {
+            // Some through-holes have this, some don't
+            FLAG_UNKNOWN1   = 0x01,
+            FLAG_PLATED     = 0x20,
+        };
+
+        // Presumably the same as the one in the v16x header
+        uint32_t m_UnknownStr;
+        uint32_t m_Unknown1; // 0?
+        uint32_t m_Unknown2; // 0?
+
+        PAD_TYPE m_PadType;
+
+        // Not sure if this is really a substruct
+        uint8_t m_A; // Only lower 4 bits (top 4 are type)
+        uint8_t m_B;
+        /// Mask of @c PAD_FLAGS values
+        uint8_t m_Flags;
+        uint8_t m_D;
+
+        uint32_t m_unknown3; // 1?
+        uint32_t m_Unknown4; // 0?
+
+        uint16_t m_ArrayNX;
+        uint16_t m_ArrayNY;
+        uint16_t m_LayerCount;
+        uint16_t m_Unknown5; // 0?
+
+        // Again, these are tentatively placed, they're always zero so far,
+        // so it's hard to say where they go.
+        // Assuming they follow the v16x layout and come after the layer count
+        uint32_t m_ClearanceX;
+        uint32_t m_ClearanceY;
+        uint32_t m_Unknown6a;
+        uint32_t m_Unknown6b;
+
+        uint32_t m_DrillSize;
+        uint32_t m_TolerancePos;
+        uint32_t m_ToleranceNeg;
+        uint32_t m_SlotX;
+        uint32_t m_SlotY;
+        uint32_t m_ToleranceTravelPos; // "TOLERANCE_TRAVEL" in BeagleBone_Black drill table
+        uint32_t m_ToleranceTravelNeg;
+
+        uint32_t m_DrillMarkSizeX;
+        uint32_t m_DrillMarkSizeY;
+        uint32_t m_DrillMarkShape;
+        uint32_t m_DrillChars; // Presumably 4 drill chars
+
+        // Probably holds secondary drill parameters and other new V17.2 features
+        std::array<uint32_t, 21> m_UnknownArr3;
+
+        // To check - this could be another component?
+        COND_GE<FMT_VER::V_180, std::array<uint32_t, 8>> m_UnknownArr_v180;
+    };
+
     uint8_t m_UnknownByte1;
 
     /**
@@ -1098,65 +1273,13 @@ struct BLK_0x1C_PADSTACK
     uint8_t  m_UnknownByte2;
     uint32_t m_Key;
     uint32_t m_Next;
+
+    // The name of the padstack
     uint32_t m_PadStr;
 
-    /**
-     * In < V172, this is the drill diameter in internal coordinates.
-     * In >= V172, the drill diameter moved to m_DrillArr[DRILL_DIAMETER].
-     */
-    uint32_t m_Drill;
-    uint32_t m_Unknown2;
-    uint32_t m_PadPath;
-
-    COND_LT<FMT_VER::V_172, uint32_t> m_Unknown3;
-    COND_LT<FMT_VER::V_172, uint32_t> m_Unknown4;
-    COND_LT<FMT_VER::V_172, uint32_t> m_Unknown5;
-    COND_LT<FMT_VER::V_172, uint32_t> m_Unknown6;
-
-    PAD_TYPE m_Type;
-
-    // Not sure if this is really a substruct
-    // Only lower 4 bits (top 4 are type)
-    uint8_t m_A;
-    uint8_t m_B;
-    uint8_t m_C;
-    uint8_t m_D;
-
-    COND_GE<FMT_VER::V_172, uint32_t> m_Unknown7;
-    COND_GE<FMT_VER::V_172, uint32_t> m_Unknown8;
-    COND_GE<FMT_VER::V_172, uint32_t> m_Unknown9;
-
-    COND_LT<FMT_VER::V_172, uint16_t> m_Unknown10;
-
-    uint16_t m_LayerCount;
-
-    // Presumably the counterpart to m_Unknown10
-    // Or just padding (?)
-    COND_GE<FMT_VER::V_172, uint16_t> m_Unknown11;
-
-    /**
-     * In >= V172, elements [4] and [7] hold drill dimensions:
-     *   [4] = drill diameter (or width for oblong drills)
-     *   [7] = drill height for oblong drills (0 for round)
-     * All values are in internal coordinate units (mils * divisor).
-     */
-    std::array<uint32_t, 8> m_DrillArr;
-
-    /**
-     * In V172+, elements [0] and [3] hold the true slot outline dimensions (X, Y)
-     * in internal coordinate units. For routed slots (round drill bit routed along a path),
-     * m_DrillArr holds only the bit diameter while this array holds the full slot envelope.
-     * For punched oblong drills, these values match m_DrillArr[4] and [7].
-     */
-    COND_GE<FMT_VER::V_172, std::array<uint32_t, 28>> m_SlotAndUnknownArr;
-
-    COND_GE_LT<FMT_VER::V_165, FMT_VER::V_172, std::array<uint32_t, 8>> m_UnknownArr8_2;
-
-    /**
-     * V180 inserts 8 extra uint32s between the fixed arrays and the component table.
-     * Despite the name, this is read before the components, not after.
-     */
-    COND_GE<FMT_VER::V_180, std::array<uint32_t, 8>> m_V180Trailer;
+    // The header fields arevery different between v16x and v17.x+
+    using HEADER = std::variant<HEADER_v16x, HEADER_v17x>;
+    HEADER m_Header;
 
     /**
      * Fixed slot indices in the component table.
@@ -1166,12 +1289,18 @@ struct BLK_0x1C_PADSTACK
      *
      * All fixed slots are technical layers (solder mask, paste mask, film mask,
      * assembly variant, etc). The exact slot-to-layer mapping is version-dependent
-     * and not fully contiguous. Verified mappings from WORKLOG reverse engineering:
+     * and not fully contiguous.
      *
-     * V<172 (10 fixed):
+     * V<165 (10 fixed)
      *   Slot 0  = ~TSM (top solder mask)
      *   Slot 5  = ~TPM (top paste mask)
      *   Slot 7  = ~TFM (top film mask)
+     *
+     * V<172 (11 fixed):
+     *   Slot 0  = ??? (looks the same size as a solder mask)
+     *   Slot 1  = ~TSM (top solder mask)
+     *   Slot 6  = ~TPM (top paste mask)
+     *   Slot 8  = ~TFM (top film mask)
      *
      * V>=172 (21 fixed):
      *   Slot 14 = ~TSM (top solder mask)
@@ -1212,7 +1341,7 @@ struct BLK_0x1C_PADSTACK
      * *  < 17.2: 10 + layer_count * 3
      * * >= 17.2: 21 + layer_count * 4
      *
-     * The first 10/21 components seem to be a fixed set of technical layers.
+     * The first 10/11/21 components seem to be a fixed set of technical layers.
      *
      * Then, a set of groups of 3/4 components for each layer.
      */
@@ -1231,6 +1360,52 @@ struct BLK_0x1C_PADSTACK
      * * >= 17.2: 10
      */
     std::vector<uint32_t> m_UnknownArrN;
+
+
+    // Dispatch common properties to the header variant
+    uint32_t GetDrillSize() const
+    {
+        if( std::holds_alternative<HEADER_v16x>( m_Header ) )
+        {
+            return std::get<HEADER_v16x>( m_Header ).m_DrillSize;
+        }
+        else if( std::holds_alternative<HEADER_v17x>( m_Header ) )
+        {
+            return std::get<HEADER_v17x>( m_Header ).m_DrillSize;
+        }
+        else
+        {
+            throw std::runtime_error( "Unknown header variant" );
+        }
+    }
+
+    uint32_t GetLayerCount() const
+    {
+        if( std::holds_alternative<HEADER_v16x>( m_Header ) )
+        {
+            return std::get<HEADER_v16x>( m_Header ).m_LayerCount;
+        }
+        else if( std::holds_alternative<HEADER_v17x>( m_Header ) )
+        {
+            return std::get<HEADER_v17x>( m_Header ).m_LayerCount;
+        }
+        else
+        {
+            throw std::runtime_error( "Unknown header variant" );
+        }
+    }
+
+    bool IsPlated() const
+    {
+        if( std::holds_alternative<HEADER_v17x>( m_Header ) )
+        {
+            return ( std::get<HEADER_v17x>( m_Header ).m_Flags & HEADER_v17x::PAD_FLAGS::FLAG_PLATED ) != 0;
+        }
+        else
+        {
+            return ( std::get<HEADER_v16x>( m_Header ).m_Flags & HEADER_v16x::PAD_FLAGS::FLAG_PLATED ) != 0;
+        }
+    }
 };
 
 
@@ -1358,7 +1533,7 @@ struct BLK_0x22_UNKNOWN
     uint16_t m_T2;
     uint32_t m_Key;
 
-    COND_GE<FMT_VER::V_174, uint32_t> m_Unknown1;
+    COND_GE<FMT_VER::V_172, uint32_t> m_Unknown1;
 
     std::array<uint32_t, 8> m_UnknownArray;
 };
@@ -1475,18 +1650,23 @@ struct BLK_0x28_SHAPE
 
     uint32_t m_Ptr2;
     uint32_t m_Ptr3;
-    uint32_t m_Ptr4;
+    uint32_t m_FirstKeepoutPtr;
     uint32_t m_FirstSegmentPtr;
     uint32_t m_Unknown4;
     uint32_t m_Unknown5;
 
-    COND_GE<FMT_VER::V_172, uint32_t> m_Ptr7;
+    COND_GE<FMT_VER::V_172, uint32_t> m_TablePtr;
 
     uint32_t m_Ptr6;
 
-    COND_LT<FMT_VER::V_172, uint32_t> m_Ptr7_16x;
+    COND_LT<FMT_VER::V_172, uint32_t> m_TablePtr_16x;
 
     std::array<int32_t, 4> m_Coords;
+
+    uint32_t GetTablePtr() const
+    {
+        return m_TablePtr.value_or( m_TablePtr_16x.value_or( 0 ) );
+    }
 };
 
 
@@ -1591,8 +1771,36 @@ struct BLK_0x2B_FOOTPRINT_DEF
  */
 struct BLK_0x2C_TABLE
 {
+    /**
+     * The subtype of a table.
+     *
+     * Not all of these are clear, but these are the ones that have been observed so far.
+     */
+    enum SUBTYPE
+    {
+        SUBTYPE_UNKNOWN = 0,
+
+        SUBTYPE_0x05 = 0x05,
+
+        SUBTYPE_0x06 = 0x06,
+        SUBTYPE_0x0c = 0x0c,
+        SUBTYPE_0x15 = 0x15,
+        SUBTYPE_0x16 = 0x16,
+        SUBTYPE_0x20 = 0x20,
+        SUBTYPE_0x23 = 0x23,
+
+        /// Some kind of net match group
+        SUBTYPE_0x102 = 0x102,
+        /// Diff pair
+        SUBTYPE_0x103 = 0x103,
+        SUBTYPE_0x107 = 0x107,
+
+        /// Used for drill charts and x-section charts
+        SUBTYPE_GRAPHICAL_GROUP = 0x110,
+    };
+
     uint8_t  m_Type;
-    uint16_t m_T2;
+    uint16_t m_SubType;
     uint32_t m_Key;
     uint32_t m_Next;
 
@@ -1656,6 +1864,11 @@ struct BLK_0x2D_FOOTPRINT_INST
     uint32_t m_AreasPtr;
     uint32_t m_UnknownPtr1;
     uint32_t m_UnknownPtr2;
+
+    uint32_t GetInstRef() const
+    {
+        return m_InstRef.value_or( m_InstRef16x.value_or( 0 ) );
+    }
 };
 
 
@@ -1876,7 +2089,7 @@ struct BLK_0x34_KEEPOUT
     COND_GE<FMT_VER::V_172, uint32_t> m_Unknown1;
 
     uint32_t m_Flags;
-    uint32_t m_Ptr2;
+    uint32_t m_FirstSegmentPtr;
     uint32_t m_Ptr3;
     uint32_t m_Unknown2;
 };
@@ -1934,6 +2147,9 @@ struct BLK_0x36_DEF_TABLE
     struct X05
     {
         std::array<uint8_t, 28> m_Unknown;
+
+        // This is in Nvidia Jetson (17.4), not in EVK BaseBoard (17.2)
+        COND_GE<FMT_VER::V_174, uint32_t> m_Unknown2;
     };
 
     struct X06
@@ -1955,7 +2171,10 @@ struct BLK_0x36_DEF_TABLE
 
         COND_GE<FMT_VER::V_174, uint32_t> m_Unknown2;
 
-        std::array<uint32_t, 4> m_Xs;
+        uint32_t m_CharacterSpace;
+        uint32_t m_LineSpace;
+        uint32_t m_Unknown3;    // Always 0?
+        uint32_t m_StrokeWidth; // Aka "photo width"
 
         COND_GE<FMT_VER::V_172, std::array<uint32_t, 8>> m_Ys;
     };
@@ -1990,7 +2209,14 @@ struct BLK_0x36_DEF_TABLE
         COND_GE<FMT_VER::V_180, uint32_t> m_Unknown2;
     };
 
-    using SubstructVariant = std::variant<X02, X03, X05, X06, FontDef_X08, X0B, X0C, X0D, X0F, X10>;
+    // So far only seen in a V175 file (Jetson)
+    struct X12
+    {
+        // No point reading this before we can use it
+        // std::array<uint8_t, 1052> m_Unknown;
+    };
+
+    using SubstructVariant = std::variant<X02, X03, X05, X06, FontDef_X08, X0B, X0C, X0D, X0F, X10, X12>;
 
     std::vector<SubstructVariant> m_Items;
 };
@@ -2006,15 +2232,15 @@ struct BLK_0x37_PTR_ARRAY
     uint8_t  m_T;
     uint16_t m_T2;
     uint32_t m_Key;
-    uint32_t m_Ptr1;
-    uint32_t m_Unknown1;
+    uint32_t m_GroupPtr;
+    uint32_t m_Next;
     uint32_t m_Capacity;
     uint32_t m_Count;
     uint32_t m_Unknown2;
 
-    std::array<uint32_t, 100> m_Ptrs;
+    COND_GE<FMT_VER::V_174, uint32_t> m_Unknown3;
 
-    COND_GE<FMT_VER::V_174, uint32_t> m_UnknownArr;
+    std::array<uint32_t, 100> m_Ptrs;
 };
 
 

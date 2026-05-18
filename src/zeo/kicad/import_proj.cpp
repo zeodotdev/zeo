@@ -238,9 +238,28 @@ void IMPORT_PROJ_HELPER::AltiumProjectHandler()
     long groupid;
 
     std::set<wxString> sch_file;
-    std::set<wxString> pcb_file;
     std::set<wxString> sch_libs;
     std::set<wxString> pcb_libs;
+
+    wxString pcb_file;
+    int      pcb_file_type = PCB_IO_MGR::ALTIUM_DESIGNER;
+
+    auto matchPcbExt = []( const wxString& aExt ) -> int
+    {
+        if( !aExt.CmpNoCase( wxS( "PcbDoc" ) ) )
+            return PCB_IO_MGR::ALTIUM_DESIGNER;
+
+        if( !aExt.CmpNoCase( wxS( "CSPcbDoc" ) ) )
+            return PCB_IO_MGR::ALTIUM_CIRCUIT_STUDIO;
+
+        if( !aExt.CmpNoCase( wxS( "CMPcbDoc" ) ) )
+            return PCB_IO_MGR::ALTIUM_CIRCUIT_MAKER;
+
+        if( !aExt.CmpNoCase( wxS( "SWPcbDoc" ) ) )
+            return PCB_IO_MGR::SOLIDWORKS_PCB;
+
+        return -1;
+    };
 
     for( bool more = config.GetFirstGroup( groupname, groupid ); more;
          more = config.GetNextGroup( groupname, groupid ) )
@@ -264,8 +283,13 @@ void IMPORT_PROJ_HELPER::AltiumProjectHandler()
         if( !fname.IsAbsolute() )
             fname.MakeAbsolute( m_InputFile.GetPath() );
 
-        if( !fname.GetExt().CmpNoCase( "PCBDOC" ) )
-            pcb_file.insert( fname.GetFullPath() );
+        int pcbType = matchPcbExt( fname.GetExt() );
+
+        if( pcbType >= 0 && pcb_file.empty() )
+        {
+            pcb_file = fname.GetFullPath();
+            pcb_file_type = pcbType;
+        }
 
         if( !fname.GetExt().CmpNoCase( "SCHDOC" ) )
             sch_file.insert( fname.GetFullPath() );
@@ -294,7 +318,7 @@ void IMPORT_PROJ_HELPER::AltiumProjectHandler()
         doImport( "", FRAME_SCH, SCH_IO_MGR::SCH_ALTIUM );
 
     if( !pcb_file.empty() )
-        doImport( *pcb_file.begin(), FRAME_PCB_EDITOR, PCB_IO_MGR::ALTIUM_DESIGNER );
+        doImport( pcb_file, FRAME_PCB_EDITOR, pcb_file_type );
 }
 
 

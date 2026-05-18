@@ -19,22 +19,28 @@
  * with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include <deque>
-#include <gal/color4d.h>
+#include "router_preview_item.h"
 
+#include <deque>
+
+#include <board_item.h>
+#include <board_connected_item.h>
+#include <gal/color4d.h>
 #include <gal/graphics_abstraction_layer.h>
 #include <geometry/shape_rect.h>
 #include <geometry/shape_simple.h>
 #include <pcb_painter.h>
 #include <trigo.h>
 
-#include "router_preview_item.h"
-
 #include "pns_arc.h"
 #include "pns_line.h"
 #include "pns_segment.h"
 #include "pns_via.h"
 #include "pns_kicad_iface.h"
+
+#include <pcb_painter.h>
+#include <netinfo.h>
+#include <layer_ids.h>
 
 using namespace KIGFX;
 
@@ -136,7 +142,7 @@ void ROUTER_PREVIEW_ITEM::Update( const PNS::ITEM* aItem )
         m_originLayer = 0;
 
     m_layer = m_originLayer;
-    m_color = getLayerColor( m_originLayer );
+    m_color = getLayerColor( m_originLayer, aItem );
     m_color.a = 0.8;
     m_depth = m_originDepth - ( ( aItem->Layers().Start() + 1 ) * LayerDepthFactor );
 
@@ -537,11 +543,30 @@ void ROUTER_PREVIEW_ITEM::ViewDraw( int aLayer, KIGFX::VIEW* aView ) const
 }
 
 
-const COLOR4D ROUTER_PREVIEW_ITEM::getLayerColor( int aLayer ) const
+const COLOR4D ROUTER_PREVIEW_ITEM::getLayerColor( int aLayer, const PNS::ITEM* aItem ) const
 {
     auto settings = static_cast<PCB_RENDER_SETTINGS*>( m_view->GetPainter()->GetSettings() );
 
     COLOR4D color = settings->GetLayerColor( aLayer );
+
+    if( aItem && aItem->Net() && settings->GetNetColorMode() == NET_COLOR_MODE::ALL && IsCopperLayer( aLayer ) )
+    {
+        NETINFO_ITEM* ni = static_cast<NETINFO_ITEM*>( aItem->Net() );
+
+        auto ii = settings->GetNetColorMap().find( ni->GetNetCode() );
+
+        if( ii != settings->GetNetColorMap().end() && ii->second != COLOR4D::UNSPECIFIED )
+        {
+            color = ii->second;
+        }
+        else
+        {
+            NETCLASS* nc = ni->GetNetClass();
+
+            if( nc && nc->HasPcbColor() )
+                color = nc->GetPcbColor();
+        }
+    }
 
     if( m_flags & PNS_HEAD_TRACE )
         return color.Saturate( 1.0 );

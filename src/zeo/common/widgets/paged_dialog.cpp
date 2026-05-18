@@ -158,7 +158,14 @@ void PAGED_DIALOG::finishInitialization()
     m_treebook->GetTreeCtrl()->SetMinSize( ctrlSize );
     m_treebook->Layout();
 
-    finishDialogSettings();
+    // Note: do NOT call finishDialogSettings() here.  At this point the lazy pages have not
+    // yet been resolved, so the sizer minimum is computed from empty placeholder pages.
+    // On GTK+X11, finishDialogSettings() stores a "resize to sizer minimum" operation that
+    // is deferred until the window is realized by the window manager.  If that deferred
+    // operation fires after onPageChanged() has already grown the dialog to fit the real
+    // page content, it shrinks the dialog back to the placeholder minimum, cutting off the
+    // bottom of the page.  The dialog minimum and size are correctly established by
+    // onPageChanged() once the selected page is resolved.
 }
 
 
@@ -352,6 +359,7 @@ void PAGED_DIALOG::onCharHook( wxKeyEvent& aEvent )
     if( dynamic_cast<wxTextEntry*>( aEvent.GetEventObject() )
             || dynamic_cast<wxStyledTextCtrl*>( aEvent.GetEventObject() )
             || dynamic_cast<wxListView*>( aEvent.GetEventObject() )
+            || dynamic_cast<wxTreeCtrl*>( aEvent.GetEventObject() )
             || dynamic_cast<wxGrid*>( FindFocus() ) )
     {
         aEvent.Skip();
@@ -364,7 +372,9 @@ void PAGED_DIALOG::onCharHook( wxKeyEvent& aEvent )
 
         if( page >= 1 )
         {
-            if( m_treebook->GetPage( page - 1 )->GetChildren().IsEmpty() )
+            wxWindow* prevPage = m_treebook->GetPage( page - 1 );
+
+            if( !prevPage || prevPage->GetChildren().IsEmpty() )
                 m_treebook->SetSelection( std::max( page - 2, 0 ) );
             else
                 m_treebook->SetSelection( page - 1 );
@@ -389,11 +399,21 @@ void PAGED_DIALOG::onCharHook( wxKeyEvent& aEvent )
 
 void PAGED_DIALOG::onPageChanged( wxBookCtrlEvent& event )
 {
-    size_t page = event.GetSelection();
+    int sel = event.GetSelection();
 
-    // Use the first sub-page when a tree level node is selected.
-    if( m_treebook->GetCurrentPage()->GetChildren().IsEmpty()
-            && page + 1 < m_treebook->GetPageCount() )
+    if( sel == wxNOT_FOUND )
+        return;
+
+    size_t page = static_cast<size_t>( sel );
+
+    // Use the first sub-page when a tree level node is selected, but only if the node is
+    // expanded. When the user collapses a branch, wxTreebook auto-selects the parent node.
+    // Redirecting to the first child here would undo the collapse.
+    wxWindow* currentPage = m_treebook->GetCurrentPage();
+
+    if( currentPage && currentPage->GetChildren().IsEmpty()
+            && page + 1 < m_treebook->GetPageCount()
+            && m_treebook->IsNodeExpanded( page ) )
     {
         m_treebook->ChangeSelection( ++page );
     }

@@ -359,6 +359,18 @@ TOOL_ACTION SCH_ACTIONS::showHiddenFields( TOOL_ACTION_ARGS()
         .ToolbarState( TOOLBAR_STATE::TOGGLE )
         .Icon( BITMAPS::text_sketch ) );
 
+TOOL_ACTION SCH_ACTIONS::previousSymbol( TOOL_ACTION_ARGS()
+        .Name( "eeschema.SymbolLibraryControl.previousSymbol" )
+        .Scope( AS_GLOBAL )
+        .FriendlyName( _( "Display previous symbol" ) )
+        .Icon( BITMAPS::lib_previous ) );
+
+TOOL_ACTION SCH_ACTIONS::nextSymbol( TOOL_ACTION_ARGS()
+        .Name( "eeschema.SymbolLibraryControl.nextSymbol" )
+        .Scope( AS_GLOBAL )
+        .FriendlyName( _( "Display next symbol" ) )
+        .Icon( BITMAPS::lib_next ) );
+
 
 // SYMBOL_EDITOR_DRAWING_TOOLS
 //
@@ -1068,7 +1080,7 @@ TOOL_ACTION SCH_ACTIONS::setExcludeFromBOM( TOOL_ACTION_ARGS()
         .FriendlyName( _( "Exclude from Bill of Materials" ) )
         .Tooltip( _( "Set the exclude from bill of materials attribute" ) ) );
 
-TOOL_ACTION SCH_ACTIONS::setExcludeFromSimulation( TOOL_ACTION_ARGS()
+TOOL_ACTION SCH_ACTIONS::setExcludeFromSim( TOOL_ACTION_ARGS()
         .Name( "eeschema.EditorControl.setExcludeFromSimulation" )
         .Scope( AS_GLOBAL )
         .FriendlyName( _( "Exclude from Simulation" ) )
@@ -1283,6 +1295,13 @@ TOOL_ACTION SCH_ACTIONS::importGraphics( TOOL_ACTION_ARGS()
         .Tooltip( _( "Import 2D drawing file" ) )
         .Icon( BITMAPS::import_vector )
         .Flags( AF_ACTIVATE ) );
+
+TOOL_ACTION SCH_ACTIONS::importNonKicadSchematic( TOOL_ACTION_ARGS()
+        .Name( "eeschema.EditorControl.importNonKicadSchematic" )
+        .Scope( AS_GLOBAL )
+        .FriendlyName( _( "Import Non-KiCad Schematic..." ) )
+        .Tooltip( _( "Replace current schematic sheet with one imported from another application" ) )
+        .Icon( BITMAPS::import_document ) );
 
 TOOL_ACTION SCH_ACTIONS::showPcbNew( TOOL_ACTION_ARGS()
         .Name( "eeschema.EditorControl.showPcbNew" )
@@ -1865,5 +1884,11 @@ TOOL_ACTION SCH_ACTIONS::removeVariant( TOOL_ACTION_ARGS()
         .Scope( AS_GLOBAL )
         .FriendlyName( _( "Remove Design Variant..." ) )
         .Tooltip( _( "Remove an existing design variant from the schematic." ) ) );
+
+TOOL_ACTION SCH_ACTIONS::editVariantDescription( TOOL_ACTION_ARGS()                                                   
+        .Name( "eeschema.EditorControl.editVariantDescription" )
+        .Scope( AS_GLOBAL )
+        .FriendlyName( _( "Edit Variant Description..." ) )
+        .Tooltip( _( "Edit the description of an existing design variant." ) ) );
 
 // clang-format on

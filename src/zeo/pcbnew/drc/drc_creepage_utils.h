@@ -23,6 +23,7 @@
 
 #pragma once
 
+#include <memory>
 #include <unordered_set>
 
 #include <common.h>
@@ -365,11 +366,17 @@ public:
         m_start = aStart;
         m_end = aEnd;
         m_width = aWidth;
+        m_pos = ( aStart + aEnd ) / 2;
     }
 
     VECTOR2I GetStart() const { return m_start; };
     VECTOR2I GetEnd() const { return m_end; };
     double   GetWidth() const { return m_width; };
+
+    int GetRadius() const override
+    {
+        return (int) ( ( m_start - m_end ).EuclideanNorm() / 2 ) + (int) ( m_width / 2 );
+    };
 
     std::vector<PATH_CONNECTION> Paths( const BE_SHAPE_POINT& aS2, double aMaxWeight,
                                         double aMaxSquaredWeight ) const override;
@@ -405,7 +412,6 @@ public:
         m_radius = aRadius;
     }
 
-    VECTOR2I GetPos() const { return m_pos; };
     int      GetRadius() const override { return m_radius; };
 
     std::vector<PATH_CONNECTION> Paths( const BE_SHAPE_POINT& aS2, double aMaxWeight,
@@ -426,7 +432,6 @@ public:
                                         double aMaxSquaredWeight ) const override;
 
 protected:
-    VECTOR2I m_pos = VECTOR2I( 0, 0 );
     double   m_radius = 1;
 };
 
@@ -848,6 +853,7 @@ public:
 public:
     BOARD&                                         m_board;
     std::vector<BOARD_ITEM*>                       m_boardEdge;
+    std::vector<std::unique_ptr<PCB_SHAPE>>        m_ownedBoardEdges;
     SHAPE_POLY_SET*                                m_boardOutline;
     std::vector<std::shared_ptr<GRAPH_NODE>>       m_nodes;
     std::vector<std::shared_ptr<GRAPH_CONNECTION>> m_connections;
@@ -862,4 +868,3 @@ private:
     double m_creepageTarget;
     double m_creepageTargetSquared;
 };
-

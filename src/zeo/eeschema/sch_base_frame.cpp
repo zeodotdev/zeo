@@ -25,6 +25,8 @@
 
 #include <advanced_config.h>
 #include <base_units.h>
+#include <kiplatform/io.h>
+#include <wildcards_and_files_ext.h>
 #include <background_jobs_monitor.h>
 #include <kiway.h>
 #include <lib_tree_model_adapter.h>
@@ -120,6 +122,8 @@ SCH_BASE_FRAME::SCH_BASE_FRAME( KIWAY* aKiway, wxWindow* aParent, FRAME_T aWindo
         m_selectionFilterPanel( nullptr ),
         m_findReplaceDialog( nullptr ),
         m_base_frame_defaults( nullptr, "base_Frame_defaults" ),
+        m_watcherTimestamp( 0 ),
+        m_watcherIsDir( false ),
         m_inSymChangeTimerEvent( false )
 {
     m_findReplaceData = std::make_unique<SCH_SEARCH_DATA>();
@@ -838,14 +842,26 @@ void SCH_BASE_FRAME::setSymWatcher( const LIB_ID* aID )
     wxString tmp = ExpandEnvVarSubstitutions( *uri, &Prj() );
 
     wxLogTrace( traceLibWatch, "Setting up watcher for %s", tmp );
-    m_watcherFileName.Assign( tmp );
 
-    if( !m_watcherFileName.FileExists() )
-        return;
+    if( wxFileName::DirExists( tmp ) )
+    {
+        m_watcherFileName.AssignDir( tmp );
+        m_watcherIsDir = true;
+        m_watcherTimestamp = KIPLATFORM::IO::TimestampDir(
+                m_watcherFileName.GetPath(),
+                wxS( "*." ) + wxString( FILEEXT::KiCadSymbolLibFileExtension ) );
+    }
+    else
+    {
+        m_watcherFileName.Assign( tmp );
+        m_watcherIsDir = false;
 
-    wxLog::EnableLogging( false );
-    m_watcherLastModified = m_watcherFileName.GetModificationTime();
-    wxLog::EnableLogging( true );
+        if( !m_watcherFileName.FileExists() )
+            return;
+
+        wxLogNull silence;
+        m_watcherTimestamp = m_watcherFileName.GetModificationTime().GetValue().GetValue();
+    }
 
     // File system watcher requires an active event loop. If we're being called during
     // library enumeration before the main event loop is running, skip watcher creation.
@@ -870,16 +886,26 @@ void SCH_BASE_FRAME::setSymWatcher( const LIB_ID* aID )
 
 void SCH_BASE_FRAME::OnSymChange( wxFileSystemWatcherEvent& aEvent )
 {
-    LEGACY_SYMBOL_LIBS* libs = PROJECT_SCH::LegacySchLibs( &Prj() );
-
     wxLogTrace( traceLibWatch, "OnSymChange: %s, watcher file: %s",
                 aEvent.GetPath().GetFullPath(), m_watcherFileName.GetFullPath() );
 
-    if( !libs || !m_watcher || !m_watcher.get() || m_watcherFileName.GetPath().IsEmpty() )
+    if( !m_watcher || !m_watcher.get() || m_watcherFileName.GetPath().IsEmpty() )
         return;
 
-    if( aEvent.GetPath() != m_watcherFileName )
-        return;
+    if( m_watcherIsDir )
+    {
+        // For directory-based libraries, accept events for any file within the directory
+        wxString eventPath = aEvent.GetPath().GetFullPath();
+        wxString dirPath = m_watcherFileName.GetPath();
+
+        if( !eventPath.StartsWith( dirPath ) )
+            return;
+    }
+    else
+    {
+        if( aEvent.GetPath() != m_watcherFileName )
+            return;
+    }
 
     // Start the debounce timer (set to 1 second)
     if( !m_watcherDebounceTimer.StartOnce( 1000 ) )
@@ -902,19 +928,45 @@ void SCH_BASE_FRAME::OnSymChangeDebounceTimer( wxTimerEvent& aEvent )
     {
         wxLogTrace( traceLibWatch, "Restarting debounce timer" );
         m_watcherDebounceTimer.StartOnce( 3000 );
+        return;
+    }
+
+    // If the frame is currently disabled then a quasi-modal/modal dialog is open on top
+    // of it (for example the symbol properties dialog).  Reloading the library now would
+    // delete the LIB_SYMBOL the dialog is editing and crash on dialog close.  Defer the
+    // reload until the dialog is dismissed.
+    if( !IsEnabled() )
+    {
+        wxLogTrace( traceLibWatch, "Frame disabled (dialog open); restarting debounce timer" );
+        m_watcherDebounceTimer.StartOnce( 1000 );
+        return;
     }
 
     wxLogTrace( traceLibWatch, "OnSymChangeDebounceTimer" );
 
-    // Disable logging to avoid spurious messages and check if the file has changed
-    wxLog::EnableLogging( false );
-    wxDateTime lastModified = m_watcherFileName.GetModificationTime();
-    wxLog::EnableLogging( true );
+    long long currentTimestamp = 0;
 
-    if( lastModified == m_watcherLastModified || !lastModified.IsValid() )
+    if( m_watcherIsDir )
+    {
+        currentTimestamp = KIPLATFORM::IO::TimestampDir(
+                m_watcherFileName.GetPath(),
+                wxS( "*." ) + wxString( FILEEXT::KiCadSymbolLibFileExtension ) );
+    }
+    else
+    {
+        wxLogNull silence;
+        wxDateTime lastModified = m_watcherFileName.GetModificationTime();
+
+        if( !lastModified.IsValid() )
+            return;
+
+        currentTimestamp = lastModified.GetValue().GetValue();
+    }
+
+    if( currentTimestamp == m_watcherTimestamp )
         return;
 
-    m_watcherLastModified = lastModified;
+    m_watcherTimestamp = currentTimestamp;
 
     m_inSymChangeTimerEvent = true;
 
@@ -923,7 +975,13 @@ void SCH_BASE_FRAME::OnSymChangeDebounceTimer( wxTimerEvent& aEvent )
                         "Do you want to reload the library?" ) ) )
     {
         wxLogTrace( traceLibWatch, "Sending refresh symbol mail" );
-        std::string libName = m_watcherFileName.GetFullPath().ToStdString();
+
+        // For directory libraries, GetFullPath() appends a trailing separator which
+        // won't match the library table URI. Use GetPath() for directories instead.
+        std::string libName = m_watcherIsDir
+                ? m_watcherFileName.GetPath().ToStdString()
+                : m_watcherFileName.GetFullPath().ToStdString();
+
         Kiway().ExpressMail( FRAME_SCH_VIEWER, MAIL_REFRESH_SYMBOL, libName );
         Kiway().ExpressMail( FRAME_SCH_SYMBOL_EDITOR, MAIL_REFRESH_SYMBOL, libName );
     }

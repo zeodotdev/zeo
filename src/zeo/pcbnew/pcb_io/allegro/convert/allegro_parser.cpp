@@ -25,7 +25,6 @@
 #include "convert/allegro_parser.h"
 
 #include <array>
-#include <chrono>
 #include <cstring>
 
 #include <wx/sstream.h>
@@ -33,6 +32,7 @@
 #include <wx/translation.h>
 
 #include <core/profile.h>
+#include <core/throttle.h>
 #include <core/type_helpers.h>
 #include <ki_exception.h>
 
@@ -117,6 +117,10 @@ static T ReadField( FILE_STREAM& aStream, FMT_VER aFmtVer )
     else if constexpr( std::is_same_v<T, int16_t> )
     {
         field = aStream.ReadS16();
+    }
+    else if constexpr( std::is_same_v<T, int32_t> )
+    {
+        field = aStream.ReadS32();
     }
     else if constexpr( std::is_same_v<T, FILE_HEADER::LINKED_LIST> )
     {
@@ -277,9 +281,16 @@ std::unique_ptr<ALLEGRO::FILE_HEADER> HEADER_PARSER::ParseHeader()
 
         switch( units )
         {
-        case BOARD_UNITS::IMPERIAL:
-        case BOARD_UNITS::METRIC: header->m_BoardUnits = static_cast<BOARD_UNITS>( units ); break;
-        default: THROW_IO_ERROR( wxString::Format( "Unknown board units %d", units ) );
+        case BOARD_UNITS::MILS:
+        case BOARD_UNITS::INCHES:
+        case BOARD_UNITS::MILLIMETERS:
+        case BOARD_UNITS::CENTIMETERS:
+        case BOARD_UNITS::MICROMETERS:
+            header->m_BoardUnits = static_cast<BOARD_UNITS>( units );
+            break;
+
+        default:
+            THROW_IO_ERROR( wxString::Format( "Unknown board units %d", units ) );
         }
 
         m_stream.Skip( 3 );
@@ -725,6 +736,7 @@ static std::unique_ptr<BLOCK_BASE> ParseBlock_0x0C( FILE_STREAM& aStream, FMT_VE
     ReadCond( aStream, aVer, data.m_Unknown_16x );
 
     data.m_Unknown4 = aStream.ReadU32();
+    ReadCond( aStream, aVer, data.m_Unknown5 );
 
     for( size_t i = 0; i < data.m_Coords.size(); ++i )
     {
@@ -736,12 +748,11 @@ static std::unique_ptr<BLOCK_BASE> ParseBlock_0x0C( FILE_STREAM& aStream, FMT_VE
         data.m_Size[i] = aStream.ReadS32();
     }
 
-    for( size_t i = 0; i < data.m_UnknownArray.size(); ++i )
-    {
-        data.m_UnknownArray[i] = aStream.ReadU32();
-    }
+    data.m_GroupPtr = aStream.ReadU32();
+    data.m_Unknown6 = aStream.ReadU32();
+    data.m_Unknown7 = aStream.ReadU32();
 
-    ReadCond( aStream, aVer, data.m_Unknown6 );
+    ReadCond( aStream, aVer, data.m_Unknown8 );
 
     return block;
 }
@@ -821,14 +832,16 @@ static std::unique_ptr<BLOCK_BASE> ParseBlock_0x0F( FILE_STREAM& stream, FMT_VER
 
     data.m_Key = stream.ReadU32();
     data.m_SlotName = stream.ReadU32();
+
+    ReadCond( stream, aVer, data.m_Unknown1 );
+
     stream.ReadBytes( data.m_CompDeviceType.data(), data.m_CompDeviceType.size() );
+
+    ReadCond( stream, aVer, data.m_Next );
 
     data.m_Ptr0x06 = stream.ReadU32();
     data.m_Ptr0x11 = stream.ReadU32();
-    data.m_Unknown1 = stream.ReadU32();
-
-    ReadCond( stream, aVer, data.m_Unknown2 );
-    ReadCond( stream, aVer, data.m_Unknown3 );
+    data.m_Unknown2 = stream.ReadU32();
 
     return block;
 }
@@ -976,6 +989,32 @@ static std::unique_ptr<BLOCK_BASE> ParseBlock_0x1B_NET( FILE_STREAM& stream, FMT
 }
 
 
+static PAD_TYPE decodePadType( uint8_t aVal )
+{
+    // clang-format off
+    switch( (aVal & 0xF0) )
+    {
+    case 0x00:
+        return PAD_TYPE::THROUGH_VIA;
+    case 0x10:
+        return PAD_TYPE::VIA;
+        break;
+    case 0x20:
+    case 0xa0: // Unclear what the difference is
+        return PAD_TYPE::SMD_PIN;
+    case 0x30:
+        return PAD_TYPE::SLOT;
+        break;
+    case 0x80:
+        return PAD_TYPE::NPTH;
+        break;
+    default:
+        THROW_IO_ERROR( wxString::Format( "Unknown padstack type 0x%x", aVal ) );
+        break;
+    }
+};
+
+
 static std::unique_ptr<BLOCK_BASE> ParseBlock_0x1C_PADSTACK( FILE_STREAM& aStream, FMT_VER aVer )
 {
     auto block = std::make_unique<BLOCK<BLK_0x1C_PADSTACK>>( 0x1C, aStream.Position() );
@@ -988,79 +1027,102 @@ static std::unique_ptr<BLOCK_BASE> ParseBlock_0x1C_PADSTACK( FILE_STREAM& aStrea
 
     data.m_Key = aStream.ReadU32();
     data.m_Next = aStream.ReadU32();
-
     data.m_PadStr = aStream.ReadU32();
-    data.m_Drill = aStream.ReadU32();
-    data.m_Unknown2 = aStream.ReadU32();
-    data.m_PadPath = aStream.ReadU32();
 
-    ReadCond( aStream, aVer, data.m_Unknown3 );
-    ReadCond( aStream, aVer, data.m_Unknown4 );
-    ReadCond( aStream, aVer, data.m_Unknown5 );
-    ReadCond( aStream, aVer, data.m_Unknown6 );
-
+    if( aVer < FMT_VER::V_172 )
     {
-        const uint8_t t = aStream.ReadU8();
+        BLK_0x1C_PADSTACK::HEADER_v16x& hdr = data.m_Header.emplace<BLK_0x1C_PADSTACK::HEADER_v16x>();
 
-        // clang-format off
-        switch( (t & 0xF0) >> 4 )
-        {
-        case 0x00:
-            data.m_Type = PAD_TYPE::THROUGH_VIA;
-            break;
-        case 0x01:
-            data.m_Type = PAD_TYPE::VIA;
-            break;
-        case 0x02:
-        case 0x0a: // Unclear what the difference is
-            data.m_Type = PAD_TYPE::SMD_PIN;
-            break;
-        case 0x03:
-            data.m_Type = PAD_TYPE::SLOT;
-            break;
-        case 0x08:
-            data.m_Type = PAD_TYPE::NPTH;
-            break;
-        default:
-            THROW_IO_ERROR( wxString::Format( "Unknown padstack type 0x%x", t ) );
-            break;
-        }
-        // clang-format on
-        data.m_A = ( t & 0x0F );
+        hdr.m_DrillSize = aStream.ReadU32();
+        hdr.m_UnknownStr = aStream.ReadU32();
+        hdr.m_DrillMarkSizeX = aStream.ReadU32();
+        hdr.m_DrillMarkSizeY = aStream.ReadU32();
+        hdr.m_DrillOffsetX = aStream.ReadU32();
+        hdr.m_DrillOffsetY = aStream.ReadU32();
+
+        hdr.m_DrillMarkShape = aStream.ReadU8();
+        hdr.m_Flags = aStream.ReadU8();
+        hdr.m_DrillChar = aStream.ReadU8();
+        hdr.m_D = aStream.ReadU8();
+        hdr.m_Unknown_1 = aStream.ReadU16();
+
+        hdr.m_ArrayNX = aStream.ReadU16();
+        hdr.m_ArrayNY = aStream.ReadU16();
+
+        hdr.m_LayerCount = aStream.ReadU16();
+        hdr.m_ClearanceX = aStream.ReadU32();
+        hdr.m_ClearanceY = aStream.ReadU32();
+        hdr.m_TolerancePos = aStream.ReadU32();
+        hdr.m_ToleranceNeg = aStream.ReadU32();
+
+        hdr.m_Unknown_2 = aStream.ReadU32();
+        hdr.m_SlotX = aStream.ReadU32();
+        hdr.m_SlotY = aStream.ReadU32();
+        hdr.m_Unknown_3 = aStream.ReadU32();
+
+        ReadCond( aStream, aVer, hdr.m_Unknown_4 );
+    }
+    else
+    {
+        BLK_0x1C_PADSTACK::HEADER_v17x& hdr = data.m_Header.emplace<BLK_0x1C_PADSTACK::HEADER_v17x>();
+
+        hdr.m_UnknownStr = aStream.ReadU32();
+        hdr.m_Unknown1 = aStream.ReadU32();
+        hdr.m_Unknown2 = aStream.ReadU32();
+
+        uint8_t padTypeAndA = aStream.ReadU8();
+        hdr.m_PadType = decodePadType( padTypeAndA );
+        hdr.m_A = ( padTypeAndA & 0x0F );
+
+        hdr.m_B = aStream.ReadU8();
+        hdr.m_Flags = aStream.ReadU8();
+        hdr.m_D = aStream.ReadU8();
+
+        hdr.m_unknown3 = aStream.ReadU32();
+        hdr.m_Unknown4 = aStream.ReadU32();
+        hdr.m_ArrayNX = aStream.ReadU16();
+        hdr.m_ArrayNY = aStream.ReadU16();
+        hdr.m_LayerCount = aStream.ReadU16();
+        hdr.m_Unknown5 = aStream.ReadU16();
+
+        hdr.m_ClearanceX = aStream.ReadU32();
+        hdr.m_ClearanceY = aStream.ReadU32();
+
+        hdr.m_Unknown6a = aStream.ReadU32();
+        hdr.m_Unknown6b = aStream.ReadU32();
+
+        hdr.m_DrillSize = aStream.ReadU32();
+        hdr.m_TolerancePos = aStream.ReadU32();
+        hdr.m_ToleranceNeg = aStream.ReadU32();
+
+        hdr.m_SlotX = aStream.ReadU32();
+        hdr.m_SlotY = aStream.ReadU32();
+
+        hdr.m_ToleranceTravelPos = aStream.ReadU32();
+        hdr.m_ToleranceTravelNeg = aStream.ReadU32();
+
+        hdr.m_DrillMarkSizeX = aStream.ReadU32();
+        hdr.m_DrillMarkSizeY = aStream.ReadU32();
+        hdr.m_DrillMarkShape = aStream.ReadU32();
+        hdr.m_DrillChars = aStream.ReadU32();
+
+        ReadArrayU32( aStream, hdr.m_UnknownArr3 );
+
+        ReadCond( aStream, aVer, hdr.m_UnknownArr_v180 );
     }
 
-    data.m_B = aStream.ReadU8();
-    data.m_C = aStream.ReadU8();
-    data.m_D = aStream.ReadU8();
+    // Work out how many fixed slots we have
+    if( aVer < FMT_VER::V_165 )
+        data.m_NumFixedCompEntries = 10;
+    else if( aVer < FMT_VER::V_172 )
+        data.m_NumFixedCompEntries = 11;
+    else
+        data.m_NumFixedCompEntries = 21;
 
-    ReadCond( aStream, aVer, data.m_Unknown7 );
-    ReadCond( aStream, aVer, data.m_Unknown8 );
-    ReadCond( aStream, aVer, data.m_Unknown9 );
-
-    ReadCond( aStream, aVer, data.m_Unknown10 );
-    data.m_LayerCount = aStream.ReadU16();
-
-    if( data.m_LayerCount > 256 )
-    {
-        THROW_IO_ERROR( wxString::Format( "Padstack layer count %u exceeds maximum at offset %#010zx",
-                                          data.m_LayerCount, aStream.Position() ) );
-    }
-
-    ReadCond( aStream, aVer, data.m_Unknown11 );
-
-    ReadArrayU32( aStream, data.m_DrillArr );
-
-    ReadCond( aStream, aVer, data.m_SlotAndUnknownArr );
-    ReadCond( aStream, aVer, data.m_UnknownArr8_2 );
-
-    // V180 has 8 extra uint32s between the fixed arrays and the component table
-    ReadCond( aStream, aVer, data.m_V180Trailer );
-
-    // Work out how many fixed slots we have, and how many per-layer slots
-    data.m_NumFixedCompEntries = aVer < FMT_VER::V_172 ? 10 : 21;
+    // ...and how many per-layer slots
     data.m_NumCompsPerLayer = aVer < FMT_VER::V_172 ? 3 : 4;
 
-    const size_t nComps = data.m_NumFixedCompEntries + ( data.m_LayerCount * data.m_NumCompsPerLayer );
+    const size_t nComps = data.m_NumFixedCompEntries + ( data.GetLayerCount() * data.m_NumCompsPerLayer );
 
     data.m_Components.reserve( nComps );
     for( size_t i = 0; i < nComps; ++i )
@@ -1083,12 +1145,10 @@ static std::unique_ptr<BLOCK_BASE> ParseBlock_0x1C_PADSTACK( FILE_STREAM& aStrea
         comp.m_X3 = aStream.ReadS32();
         comp.m_X4 = aStream.ReadS32();
 
-        ReadCond( aStream, aVer, comp.m_Z );
-
         comp.m_StrPtr = aStream.ReadU32();
 
         // The last component has a different size only in < 17.2
-        if( !( aVer < FMT_VER::V_172 && i == nComps - 1 ) )
+        if( aVer >= FMT_VER::V_172 || i < nComps - 1 )
         {
             comp.m_Z2 = aStream.ReadU32();
         }
@@ -1399,16 +1459,16 @@ static std::unique_ptr<BLOCK_BASE> ParseBlock_0x28_SHAPE( FILE_STREAM& aStream, 
 
     data.m_Ptr2 = aStream.ReadU32();
     data.m_Ptr3 = aStream.ReadU32();
-    data.m_Ptr4 = aStream.ReadU32();
+    data.m_FirstKeepoutPtr = aStream.ReadU32();
     data.m_FirstSegmentPtr = aStream.ReadU32();
     data.m_Unknown4 = aStream.ReadU32();
     data.m_Unknown5 = aStream.ReadU32();
 
-    ReadCond( aStream, aVer, data.m_Ptr7 );
+    ReadCond( aStream, aVer, data.m_TablePtr );
 
     data.m_Ptr6 = aStream.ReadU32();
 
-    ReadCond( aStream, aVer, data.m_Ptr7_16x );
+    ReadCond( aStream, aVer, data.m_TablePtr_16x );
 
     for( size_t i = 0; i < data.m_Coords.size(); ++i )
     {
@@ -1532,7 +1592,7 @@ static std::unique_ptr<BLOCK_BASE> ParseBlock_0x2C_TABLE( FILE_STREAM& aStream, 
     auto& data = block->GetData();
 
     data.m_Type = aStream.ReadU8();
-    data.m_T2 = aStream.ReadU16();
+    data.m_SubType = aStream.ReadU16();
     data.m_Key = aStream.ReadU32();
     data.m_Next = aStream.ReadU32();
 
@@ -1849,7 +1909,7 @@ static std::unique_ptr<BLOCK_BASE> ParseBlock_0x34_KEEPOUT( FILE_STREAM& aStream
     ReadCond( aStream, aVer, data.m_Unknown1 );
 
     data.m_Flags = aStream.ReadU32();
-    data.m_Ptr2 = aStream.ReadU32();
+    data.m_FirstSegmentPtr = aStream.ReadU32();
     data.m_Ptr3 = aStream.ReadU32();
     data.m_Unknown2 = aStream.ReadU32();
 
@@ -1899,9 +1959,21 @@ static std::unique_ptr<BLOCK_BASE> ParseBlock_0x36( FILE_STREAM& aStream, FMT_VE
                 data.m_NumItems, aStream.Position() ) );
     }
 
-    data.m_Items.reserve( data.m_NumItems );
+    if( data.m_Count > data.m_NumItems )
+    {
+        THROW_IO_ERROR( wxString::Format(
+                "Block 0x36 filled count %u exceeds capacity %u at offset %#010zx",
+                data.m_Count, data.m_NumItems, aStream.Position() ) );
+    }
+
+    // Each block has m_NumItems slots but only m_Count are populated; the rest are
+    // zeroes. Iterate all slots to stride across them correctly, but only keep the
+    // actual existing items.
+    data.m_Items.reserve( data.m_Count );
     for( uint32_t i = 0; i < data.m_NumItems; ++i )
     {
+        const bool keep = i < data.m_Count;
+
         switch( data.m_Code )
         {
         case 0x02:
@@ -1913,7 +1985,8 @@ static std::unique_ptr<BLOCK_BASE> ParseBlock_0x36( FILE_STREAM& aStream, FMT_VE
             ReadCond( aStream, aVer, item.m_Ys );
             ReadCond( aStream, aVer, item.m_Zs );
 
-            data.m_Items.emplace_back( std::move( item ) );
+            if( keep )
+                data.m_Items.emplace_back( std::move( item ) );
             break;
         }
         case 0x03:
@@ -1926,7 +1999,8 @@ static std::unique_ptr<BLOCK_BASE> ParseBlock_0x36( FILE_STREAM& aStream, FMT_VE
 
             ReadCond( aStream, aVer, item.m_Unknown1 );
 
-            data.m_Items.emplace_back( std::move( item ) );
+            if( keep )
+                data.m_Items.emplace_back( std::move( item ) );
             break;
         }
         case 0x05:
@@ -1934,8 +2008,10 @@ static std::unique_ptr<BLOCK_BASE> ParseBlock_0x36( FILE_STREAM& aStream, FMT_VE
             BLK_0x36_DEF_TABLE::X05 item;
 
             aStream.ReadBytes( item.m_Unknown.data(), item.m_Unknown.size() );
+            ReadCond( aStream, aVer, item.m_Unknown2 );
 
-            data.m_Items.emplace_back( std::move( item ) );
+            if( keep )
+                data.m_Items.emplace_back( std::move( item ) );
             break;
         }
         case 0x06:
@@ -1949,7 +2025,8 @@ static std::unique_ptr<BLOCK_BASE> ParseBlock_0x36( FILE_STREAM& aStream, FMT_VE
 
             ReadCond( aStream, aVer, item.m_Unknown2 );
 
-            data.m_Items.emplace_back( std::move( item ) );
+            if( keep )
+                data.m_Items.emplace_back( std::move( item ) );
             break;
         }
         case 0x08:
@@ -1962,31 +2039,40 @@ static std::unique_ptr<BLOCK_BASE> ParseBlock_0x36( FILE_STREAM& aStream, FMT_VE
             item.m_CharWidth = aStream.ReadU32();
 
             ReadCond( aStream, aVer, item.m_Unknown2 );
-            ReadArrayU32( aStream, item.m_Xs );
+
+            item.m_CharacterSpace = aStream.ReadU32();
+            item.m_LineSpace = aStream.ReadU32();
+            item.m_Unknown3 = aStream.ReadU32();
+            item.m_StrokeWidth = aStream.ReadU32();
+
             ReadCond( aStream, aVer, item.m_Ys );
 
-            data.m_Items.emplace_back( std::move( item ) );
+            if( keep )
+                data.m_Items.emplace_back( std::move( item ) );
             break;
         }
         case 0x0B:
         {
             BLK_0x36_DEF_TABLE::X0B item;
             aStream.ReadBytes( item.m_Unknown.data(), item.m_Unknown.size() );
-            data.m_Items.emplace_back( std::move( item ) );
+            if( keep )
+                data.m_Items.emplace_back( std::move( item ) );
             break;
         }
         case 0x0C:
         {
             BLK_0x36_DEF_TABLE::X0C item;
             aStream.ReadBytes( item.m_Unknown.data(), item.m_Unknown.size() );
-            data.m_Items.emplace_back( std::move( item ) );
+            if( keep )
+                data.m_Items.emplace_back( std::move( item ) );
             break;
         }
         case 0x0D:
         {
             BLK_0x36_DEF_TABLE::X0D item;
             aStream.ReadBytes( item.m_Unknown.data(), item.m_Unknown.size() );
-            data.m_Items.emplace_back( std::move( item ) );
+            if( keep )
+                data.m_Items.emplace_back( std::move( item ) );
             break;
         }
         case 0x0F:
@@ -1995,7 +2081,8 @@ static std::unique_ptr<BLOCK_BASE> ParseBlock_0x36( FILE_STREAM& aStream, FMT_VE
             item.m_Key = aStream.ReadU32();
             ReadArrayU32( aStream, item.m_Ptrs );
             item.m_Ptr2 = aStream.ReadU32();
-            data.m_Items.emplace_back( std::move( item ) );
+            if( keep )
+                data.m_Items.emplace_back( std::move( item ) );
             break;
         }
         case 0x10:
@@ -2003,7 +2090,17 @@ static std::unique_ptr<BLOCK_BASE> ParseBlock_0x36( FILE_STREAM& aStream, FMT_VE
             BLK_0x36_DEF_TABLE::X10 item;
             aStream.ReadBytes( item.m_Unknown.data(), item.m_Unknown.size() );
             ReadCond( aStream, aVer, item.m_Unknown2 );
-            data.m_Items.emplace_back( std::move( item ) );
+            if( keep )
+                data.m_Items.emplace_back( std::move( item ) );
+            break;
+        }
+        case 0x12:
+        {
+            BLK_0x36_DEF_TABLE::X12 item;
+            // aStream.ReadBytes( item.m_Unknown.data(), item.m_Unknown.size() );
+            aStream.Skip( 1052 );
+            if( keep )
+                data.m_Items.emplace_back( std::move( item ) );
             break;
         }
         default: THROW_IO_ERROR( wxString::Format( "Unknown substruct type %#02x in block 0x36", data.m_Code ) );
@@ -2023,15 +2120,15 @@ static std::unique_ptr<BLOCK_BASE> ParseBlock_0x37( FILE_STREAM& aStream, FMT_VE
     data.m_T = aStream.ReadU8();
     data.m_T2 = aStream.ReadU16();
     data.m_Key = aStream.ReadU32();
-    data.m_Ptr1 = aStream.ReadU32();
-    data.m_Unknown1 = aStream.ReadU32();
+    data.m_GroupPtr = aStream.ReadU32();
+    data.m_Next = aStream.ReadU32();
     data.m_Capacity = aStream.ReadU32();
     data.m_Count = aStream.ReadU32();
     data.m_Unknown2 = aStream.ReadU32();
 
-    ReadArrayU32( aStream, data.m_Ptrs );
+    ReadCond( aStream, aVer, data.m_Unknown3 );
 
-    ReadCond( aStream, aVer, data.m_UnknownArr );
+    ReadArrayU32( aStream, data.m_Ptrs );
 
     return block;
 }
@@ -2468,7 +2565,7 @@ void ALLEGRO::PARSER::readObjects( BRD_DB& aBoard )
 
     BLOCK_PARSER blockParser( m_stream, ver, aBoard.m_Header->Get_0x27_End() );
 
-    auto lastRefresh = std::chrono::steady_clock::now();
+    THROTTLE refreshThrottle( std::chrono::milliseconds( 100 ) );
 
     while( true )
     {
@@ -2542,7 +2639,7 @@ void ALLEGRO::PARSER::readObjects( BRD_DB& aBoard )
             {
                 THROW_IO_ERROR( wxString::Format(
                         "Do not have parser for block index %zu type %#02x available at offset %#010zx",
-                        aBoard.GetObjectCount(), blockTypeByte, offset ) );
+                        aBoard.GetObjectCount() + 1, blockTypeByte, offset ) );
             }
             else
             {
@@ -2556,13 +2653,10 @@ void ALLEGRO::PARSER::readObjects( BRD_DB& aBoard )
         }
         else
         {
-            if( wxLog::IsAllowedTraceMask( traceAllegroParser ) )
-            {
-                wxLogTrace( traceAllegroParserBlocks,
-                            wxString::Format( "Added block %zu, type %#04x from %#010zx to %#010zx",
-                                              aBoard.GetObjectCount(), block->GetBlockType(), offset,
-                                              m_stream.Position() ) );
-            }
+            wxLogTrace( traceAllegroParserBlocks,
+                        wxString::Format( "Added block %zu, type %#04x from %#010zx to %#010zx",
+                                          aBoard.GetObjectCount(), block->GetBlockType(), offset,
+                                          m_stream.Position() ) );
 
             aBoard.InsertBlock( std::move( block ) );
 
@@ -2570,16 +2664,8 @@ void ALLEGRO::PARSER::readObjects( BRD_DB& aBoard )
             {
                 m_progressReporter->AdvanceProgress();
 
-                if( ( aBoard.GetObjectCount() & 0x3F ) == 0 )
-                {
-                    auto now = std::chrono::steady_clock::now();
-
-                    if( now - lastRefresh >= std::chrono::milliseconds( 100 ) )
-                    {
-                        m_progressReporter->KeepRefreshing();
-                        lastRefresh = now;
-                    }
-                }
+                if( ( aBoard.GetObjectCount() & 0x3F ) == 0 && refreshThrottle.Ready() )
+                    m_progressReporter->KeepRefreshing();
             }
         }
     }
@@ -2593,10 +2679,10 @@ void dumpLL( const char* name, const T& aLL )
     {
         wxLogTrace( traceAllegroParser, "  LL %-20s head=%#010x tail=%#010x", name, aLL.m_Head, aLL.m_Tail );
     }
-    else if constexpr( std::is_same_v<T, COND_FIELD_BASE<FILE_HEADER::LINKED_LIST>> )
+    else if constexpr( std::is_base_of_v<COND_FIELD_BASE<FILE_HEADER::LINKED_LIST>, T> )
     {
         if( aLL.has_value() )
-            dumpLL( aLL.value() );
+            dumpLL( name, aLL.value() );
     }
 }
 

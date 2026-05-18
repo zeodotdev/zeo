@@ -25,7 +25,10 @@
 #ifndef PCBEXPR_EVALUATOR_H
 #define PCBEXPR_EVALUATOR_H
 
+#include <set>
+#include <map>
 #include <unordered_map>
+#include <core/typeinfo.h>
 
 #include <layer_ids.h>
 
@@ -48,6 +51,11 @@ public:
     virtual std::unique_ptr<LIBEVAL::VAR_REF> CreateVarRef( const wxString& aVar,
                                                             const wxString& aField ) override;
     virtual LIBEVAL::FUNC_CALL_REF CreateFuncCall( const wxString& aName ) override;
+
+    bool HasGeometryDependentFunctions() const { return m_hasGeometryDependentFunctions; }
+
+private:
+    bool m_hasGeometryDependentFunctions = false;
 };
 
 
@@ -68,6 +76,10 @@ public:
         m_items[1] = b;
     }
 
+    void SetTypeOverride( const BOARD_ITEM* aItem, KICAD_T aType ) { m_typeOverrides[aItem] = aType; }
+
+    KICAD_T GetEffectiveType( const BOARD_ITEM* aItem ) const;
+
     BOARD* GetBoard() const;
 
     int GetConstraint() const              { return m_constraint; }
@@ -75,9 +87,10 @@ public:
     PCB_LAYER_ID GetLayer() const          { return m_layer; }
 
 private:
-    int          m_constraint;
-    BOARD_ITEM*  m_items[2];
-    PCB_LAYER_ID m_layer;
+    int                                  m_constraint;
+    BOARD_ITEM*                          m_items[2];
+    PCB_LAYER_ID                         m_layer;
+    std::map<const BOARD_ITEM*, KICAD_T> m_typeOverrides;
 };
 
 
@@ -190,22 +203,33 @@ public:
         return m_funcs[ name ];
     }
 
+    bool IsGeometryDependent( const wxString& name ) const
+    {
+        return m_geometryDependentFuncs.count( name ) > 0;
+    }
+
     const wxArrayString GetSignatures() const
     {
         return m_funcSigs;
     }
 
-    void RegisterFunc( const wxString& funcSignature, LIBEVAL::FUNC_CALL_REF funcPtr )
+    void RegisterFunc( const wxString& funcSignature, LIBEVAL::FUNC_CALL_REF funcPtr,
+                       bool aIsGeometryDependent = false )
     {
         wxString funcName = funcSignature.BeforeFirst( '(' );
-        m_funcs[std::string( funcName.Lower() )] = std::move( funcPtr );
+        wxString lower = funcName.Lower();
+        m_funcs[std::string( lower )] = std::move( funcPtr );
         m_funcSigs.Add( funcSignature );
+
+        if( aIsGeometryDependent )
+            m_geometryDependentFuncs.insert( lower );
     }
 
     void RegisterAllFunctions();
 
 private:
     std::map<wxString, LIBEVAL::FUNC_CALL_REF> m_funcs;
+    std::set<wxString>                         m_geometryDependentFuncs;
 
     wxArrayString m_funcSigs;
 };

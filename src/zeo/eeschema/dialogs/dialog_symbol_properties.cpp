@@ -338,6 +338,8 @@ DIALOG_SYMBOL_PROPERTIES::DIALOG_SYMBOL_PROPERTIES( SCH_EDIT_FRAME* aParent, SCH
                                                             } ) );
     m_fieldsGrid->SetSelectionMode( wxGrid::wxGridSelectRows );
     m_fieldsGrid->ShowHideColumns( "0 1 2 3 4 5 6 7" );
+    m_fieldsGrid->SetMinSize( wxSize( -1, 160 ) );
+    m_fieldsGrid->OverrideMinSize( 1.0, 1.0 );
     m_shownColumns = m_fieldsGrid->GetShownColumns();
 
     if( m_symbol->GetEmbeddedFiles() )
@@ -574,18 +576,8 @@ bool DIALOG_SYMBOL_PROPERTIES::TransferDataToWindow()
     if( m_embeddedFiles && !m_embeddedFiles->TransferDataToWindow() )
         return false;
 
-    // Recalculate the dialog size now that the grid is populated. On first run, the dialog was
-    // sized before data was available, so the grid had zero height. Recalculating ensures the
-    // minimum size accounts for the actual grid content.
     m_fieldsGrid->Layout();
     Layout();
-    GetSizer()->SetSizeHints( this );
-
-    wxSize minSize = GetMinSize();
-    wxSize curSize = GetSize();
-
-    if( curSize.y < minSize.y )
-        SetSize( wxSize( curSize.x, minSize.y ) );
 
     return true;
 }
@@ -841,8 +833,8 @@ bool DIALOG_SYMBOL_PROPERTIES::TransferDataFromWindow()
 
     m_symbol->SetExcludedFromSim( m_cbExcludeFromSim->IsChecked(), &currentSheet, currentVariant );
     m_symbol->SetExcludedFromBOM( m_cbExcludeFromBom->IsChecked(), &currentSheet, currentVariant );
-    m_symbol->SetExcludedFromBoard( m_cbExcludeFromBoard->IsChecked() );
-    m_symbol->SetExcludedFromPosFiles( m_cbExcludeFromPosFiles->IsChecked() );
+    m_symbol->SetExcludedFromBoard( m_cbExcludeFromBoard->IsChecked(), &currentSheet, currentVariant );
+    m_symbol->SetExcludedFromPosFiles( m_cbExcludeFromPosFiles->IsChecked(), &currentSheet, currentVariant );
     m_symbol->SetDNP( m_cbDNP->IsChecked(), &currentSheet, currentVariant );
 
     // Update any assignments

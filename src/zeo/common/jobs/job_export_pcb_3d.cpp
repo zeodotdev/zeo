@@ -28,7 +28,7 @@ NLOHMANN_JSON_SERIALIZE_ENUM( JOB_EXPORT_PCB_3D::FORMAT,
                                       { JOB_EXPORT_PCB_3D::FORMAT::STEPZ,   "stpz" },
                                       { JOB_EXPORT_PCB_3D::FORMAT::STEP,    "step" },
                                       { JOB_EXPORT_PCB_3D::FORMAT::BREP,    "brep" },
-                                      { JOB_EXPORT_PCB_3D::FORMAT::GLB,     "step" },
+                                      { JOB_EXPORT_PCB_3D::FORMAT::GLB,     "glb" },
                                       { JOB_EXPORT_PCB_3D::FORMAT::VRML,    "vrml" },
                                       { JOB_EXPORT_PCB_3D::FORMAT::XAO,     "xao" },
                                       { JOB_EXPORT_PCB_3D::FORMAT::PLY,     "ply" },
@@ -146,6 +146,7 @@ JOB_EXPORT_PCB_3D::JOB_EXPORT_PCB_3D() :
     m_params.emplace_back( new JOB_PARAM<JOB_EXPORT_PCB_3D::FORMAT>( "format", &m_format, m_format ) );
     m_params.emplace_back( new JOB_PARAM<EXPORTER_STEP_PARAMS::FORMAT>( "occt_format", &m_3dparams.m_Format,
                                                                         m_3dparams.m_Format ) );
+    m_params.emplace_back( new JOB_PARAM<wxString>( "variant", &m_variant, m_variant ) );
 }
 
 

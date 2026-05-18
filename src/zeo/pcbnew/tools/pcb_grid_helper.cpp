@@ -29,6 +29,7 @@
 #include <algorithm>
 
 #include <advanced_config.h>
+#include <board_item.h>
 #include <pcb_dimension.h>
 #include <pcb_shape.h>
 #include <footprint.h>
@@ -443,6 +444,7 @@ VECTOR2I PCB_GRID_HELPER::AlignToArc( const VECTOR2I& aPoint, const SHAPE_ARC& a
 
 VECTOR2I PCB_GRID_HELPER::SnapToPad( const VECTOR2I& aMousePos, std::deque<PAD*>& aPads )
 {
+    wxLogTrace( traceSnap, "SnapToPad: mouse pos (%d, %d), pads count: %zu", aMousePos.x, aMousePos.y, aPads.size() );
     clearAnchors();
 
     for( BOARD_ITEM* item : aPads )
@@ -472,11 +474,42 @@ VECTOR2I PCB_GRID_HELPER::SnapToPad( const VECTOR2I& aMousePos, std::deque<PAD*>
 }
 
 
+void PCB_GRID_HELPER::OnBoardItemRemoved( BOARD& aBoard, BOARD_ITEM* aRemovedItem )
+{
+    // If the item being removed is involved in the snap, clear the snap item
+    if( m_snapItem )
+    {
+        for( EDA_ITEM* eda_item : m_snapItem->items )
+        {
+            if( eda_item->IsBOARD_ITEM() )
+            {
+                BOARD_ITEM* item = static_cast<BOARD_ITEM*>( eda_item );
+
+                if( item == aRemovedItem || item->GetParentFootprint() == aRemovedItem )
+                {
+                    m_snapItem = std::nullopt;
+                    break;
+                }
+            }
+        }
+    }
+}
+
+
+void PCB_GRID_HELPER::OnBoardItemsRemoved( BOARD& aBoard, std::vector<BOARD_ITEM*>& aBoardItems )
+{
+    // This is a bulk-remove.  Simply clearing the snap item will be the most performant.
+    m_snapItem = std::nullopt;
+}
+
+
 VECTOR2I PCB_GRID_HELPER::BestDragOrigin( const VECTOR2I &aMousePos,
                                           std::vector<BOARD_ITEM*>& aItems,
                                           GRID_HELPER_GRIDS aGrid,
                                           const PCB_SELECTION_FILTER_OPTIONS* aSelectionFilter )
 {
+    wxLogTrace( traceSnap, "BestDragOrigin: mouse pos (%d, %d), items count: %zu", aMousePos.x, aMousePos.y,
+                aItems.size() );
     clearAnchors();
 
     computeAnchors( aItems, aMousePos, true, aSelectionFilter, nullptr, true );
@@ -493,6 +526,9 @@ VECTOR2I PCB_GRID_HELPER::BestDragOrigin( const VECTOR2I &aMousePos,
     {
         minDist = nearestOrigin->Distance( aMousePos );
         best = nearestOrigin;
+
+        wxLogTrace( traceSnap, "  nearest origin winning at (%d, %d), distance=%f", nearestOrigin->pos.x,
+                    nearestOrigin->pos.y, minDist );
     }
 
     if( nearestCorner )
@@ -503,6 +539,9 @@ VECTOR2I PCB_GRID_HELPER::BestDragOrigin( const VECTOR2I &aMousePos,
         {
             minDist = dist;
             best = nearestCorner;
+
+            wxLogTrace( traceSnap, "  nearest corner winning at (%d, %d), distance=%f", nearestCorner->pos.x,
+                        nearestCorner->pos.y, dist );
         }
     }
 
@@ -511,10 +550,17 @@ VECTOR2I PCB_GRID_HELPER::BestDragOrigin( const VECTOR2I &aMousePos,
         double dist = nearestOutline->Distance( aMousePos );
 
         if( minDist > lineSnapMinCornerDistance && dist < minDist )
+        {
             best = nearestOutline;
+
+            wxLogTrace( traceSnap, "  nearest outline winning at (%d, %d), distance=%f", nearestOutline->pos.x,
+                        nearestOutline->pos.y, dist );
+        }
     }
 
-    return best ? best->pos : aMousePos;
+    VECTOR2I ret = best ? best->pos : aMousePos;
+    wxLogTrace( traceSnap, "  have best: %s, returning (%d, %d)", best ? "yes" : "no", ret.x, ret.y );
+    return ret;
 }
 
 
@@ -1545,25 +1591,32 @@ void PCB_GRID_HELPER::computeAnchors( BOARD_ITEM* aItem, const VECTOR2I& aRefPos
             addAnchor( pt->GetPosition(), ORIGIN | SNAPPABLE, footprint, POINT_TYPE::PT_CENTER );
         }
 
-        if( !footprintVisible )
+        // When computing drag origins (aFrom=true), always proceed to add the footprint
+        // position anchor regardless of the visibility state. The footprint is already
+        // selected, so its anchor must be reachable as a drag point even if the active layer
+        // or zoom level causes checkVisibility to return false. Snapping TO an external
+        // footprint (aFrom=false) should still respect visibility.
+        if( !footprintVisible && !aFrom )
             break;
 
         if( aFrom && aSelectionFilter && !aSelectionFilter->footprints )
             break;
 
-        // If the cursor is not over a pad, snap to the anchor (if visible) or the center
-        // (if markedly different from the anchor).
+        // Snap to the footprint origin so that move operations keep the part aligned to
+        // the grid regardless of anchor layer visibility, but not when the footprint's
+        // side is hidden.
+        int fpRenderLayer = ( footprint->GetLayer() == F_Cu ) ? LAYER_FOOTPRINTS_FR
+                            : ( footprint->GetLayer() == B_Cu ) ? LAYER_FOOTPRINTS_BK
+                                                                 : LAYER_ANCHOR;
+
+        if( !view->IsLayerVisible( fpRenderLayer ) )
+            break;
+
         VECTOR2I position = footprint->GetPosition();
         VECTOR2I center = footprint->GetBoundingBox( false ).Centre();
         VECTOR2I grid( GetGrid() );
 
-        // Don't snap to invisible anchors, which may be invisible because anchors are off,
-        // or the footprint is on a layer not currently visible.
-        if( view->IsLayerVisible( LAYER_ANCHOR )
-            && footprint->ViewGetLOD( LAYER_ANCHOR, view ) < view->GetScale() )
-        {
-            addAnchor( position, ORIGIN | SNAPPABLE, footprint, POINT_TYPE::PT_CENTER );
-        }
+        addAnchor( position, ORIGIN | SNAPPABLE, footprint, POINT_TYPE::PT_CENTER );
 
         if( ( center - position ).SquaredEuclideanNorm() > grid.SquaredEuclideanNorm() )
             addAnchor( center, ORIGIN | SNAPPABLE, footprint, POINT_TYPE::PT_CENTER );

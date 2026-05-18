@@ -49,6 +49,7 @@
 #include <richio.h>
 #include <settings/settings_manager.h>
 #include <settings/kicad_settings.h>
+#include <settings/common_settings.h>
 #include <../include/startwizard/startwizard.h>
 #include <systemdirsappend.h>
 #include <thread_pool.h>
@@ -194,6 +195,13 @@ bool PGM_KICAD::OnPgmInit()
     GetSettingsManager().SetKiway( &Kiway );
     m_bm.Init();
 
+    if( const COMMON_SETTINGS* cfg = Pgm().GetCommonSettings() )
+    {
+        if( cfg->m_Appearance.app_theme == APP_THEME::DARK )
+            KIPLATFORM::APP::EnableDarkMode( true );
+        else if( cfg->m_Appearance.app_theme == APP_THEME::AUTO )
+            KIPLATFORM::APP::EnableDarkMode( false );
+    }
 
     // Add search paths to feed the PGM_KICAD::SysSearch() function,
     // currently limited in support to only look for project templates
@@ -418,6 +426,11 @@ int PGM_KICAD::OnPgmRun()
 
 void PGM_KICAD::OnPgmExit()
 {
+    // Signal all background library preloads to abort before waiting for the thread pool.
+    // The design block preload runs on the global thread pool and checks this flag; without
+    // setting it here the pool wait below can block for up to 120 seconds.
+    m_libraryPreloadAbort.store( true );
+
     // Abort and wait on any background jobs
     GetKiCadThreadPool().purge();
     GetKiCadThreadPool().wait();

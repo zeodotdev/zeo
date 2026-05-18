@@ -25,6 +25,7 @@
 #include <widgets/wx_html_report_box.h>
 #include <widgets/paged_dialog.h>
 #include <wx/log.h>
+#include <wx/regex.h>
 
 #include <pgm_base.h>
 #include <settings/settings_manager.h>
@@ -48,6 +49,7 @@
 #include <tools/drc_tool.h>
 #include <pcbexpr_evaluator.h>
 #include <string_utils.h>
+#include <drc_rules_lexer.h>
 
 #include <drc/drc_rule_parser.h>
 #include <drc/rule_editor/panel_drc_rule_editor.h>
@@ -61,6 +63,8 @@
 #include "drc_re_numeric_input_overlay_panel.h"
 #include "drc_re_bool_input_overlay_panel.h"
 #include "drc_re_allowed_orientation_overlay_panel.h"
+#include "drc_re_matched_length_diff_pair_overlay_panel.h"
+#include "drc_re_vias_under_smd_overlay_panel.h"
 #include "drc_re_permitted_layers_overlay_panel.h"
 
 #include <eda_units.h>
@@ -73,7 +77,9 @@
 #include "drc_re_routing_width_constraint_data.h"
 #include "drc_re_permitted_layers_constraint_data.h"
 #include "drc_re_allowed_orientation_constraint_data.h"
+#include "drc_re_vias_under_smd_constraint_data.h"
 #include "drc_re_custom_rule_constraint_data.h"
+#include "drc_re_custom_rule_panel.h"
 #include <properties/property.h>
 #include <properties/property_mgr.h>
 
@@ -86,7 +92,6 @@ static bool constraintNeedsTwoObjects( DRC_RULE_EDITOR_CONSTRAINT_NAME aConstrai
     case MINIMUM_CLEARANCE:
     case CREEPAGE_DISTANCE:
     case COPPER_TO_HOLE_CLEARANCE:
-    case HOLE_TO_HOLE_CLEARANCE:
     case PHYSICAL_CLEARANCE:
     case HOLE_TO_HOLE_DISTANCE: return true;
     default: return false;
@@ -106,6 +111,8 @@ PANEL_DRC_RULE_EDITOR::PANEL_DRC_RULE_EDITOR( wxWindow* aParent, BOARD* aBoard,
 {
     wxLogTrace( KI_TRACE_DRC_RULE_EDITOR, wxS( "[PANEL_DRC_RULE_EDITOR] ctor START" ) );
 
+    SetBorders( true, false, false, false );
+
     m_constraintType = aConstraintType;
     m_constraintPanel = getConstraintPanel( this, aConstraintType );
     wxLogTrace( KI_TRACE_DRC_RULE_EDITOR, wxS( "[PANEL_DRC_RULE_EDITOR] adding constraint panel to sizer" ) );
@@ -117,12 +124,14 @@ PANEL_DRC_RULE_EDITOR::PANEL_DRC_RULE_EDITOR( wxWindow* aParent, BOARD* aBoard,
     m_layerCategory = DRC_RULE_EDITOR_UTILS::GetLayerCategoryForConstraint( aConstraintType );
     populateLayerSelector( m_layerCategory );
     m_LayersComboBoxSizer->Add( m_layerListChoiceCtrl, 0, wxALL | wxEXPAND, 5 );
-    m_layerListChoiceCtrl->Bind( wxEVT_CHOICE, [this]( wxCommandEvent& )
-    {
-        RULE_EDITOR_DIALOG_BASE* dlg = RULE_EDITOR_DIALOG_BASE::GetDialog( this );
-        if( dlg )
-            dlg->SetModified();
-    } );
+    m_layerListChoiceCtrl->Bind( wxEVT_CHOICE,
+                                 [this]( wxCommandEvent& )
+                                 {
+                                     RULE_EDITOR_DIALOG_BASE* dlg = RULE_EDITOR_DIALOG_BASE::GetDialog( this );
+
+                                     if( dlg )
+                                         dlg->SetModified();
+                                 } );
 
     // Hide layer selector for constraints where it doesn't apply
     if( m_layerCategory == DRC_LAYER_CATEGORY::NO_LAYER_SELECTOR )
@@ -168,51 +177,65 @@ PANEL_DRC_RULE_EDITOR::PANEL_DRC_RULE_EDITOR( wxWindow* aParent, BOARD* aBoard,
     // Each condition row has its own custom query text control
     wxLogTrace( KI_TRACE_DRC_RULE_EDITOR, wxS( "[PANEL_DRC_RULE_EDITOR] creating conditionGroupPanel" ) );
     m_conditionGroupPanel = new DRC_RE_CONDITION_GROUP_PANEL( this, m_board, twoObjects );
-    m_conditionGroupPanel->SetChangeCallback( [this]() {
-        ResetShowMatchesButton();
+    m_conditionGroupPanel->SetChangeCallback(
+            [this]()
+            {
+                ResetShowMatchesButton();
 
-        RULE_EDITOR_DIALOG_BASE* dlg = RULE_EDITOR_DIALOG_BASE::GetDialog( this );
-        if( dlg )
-        {
-            dlg->SetModified();
-            dlg->RefreshContentScrollArea();
-        }
-    } );
+                RULE_EDITOR_DIALOG_BASE* dlg = RULE_EDITOR_DIALOG_BASE::GetDialog( this );
+
+                if( dlg )
+                {
+                    dlg->SetModified();
+                    dlg->RefreshContentScrollArea();
+                }
+            } );
+
     wxLogTrace( KI_TRACE_DRC_RULE_EDITOR, wxS( "[PANEL_DRC_RULE_EDITOR] inserting conditionGroupPanel" ) );
     m_conditionControlsSizer->Insert( 0, m_conditionGroupPanel, 0, wxEXPAND | wxBOTTOM, 5 );
 
-    m_nameCtrl->Bind( wxEVT_TEXT, [this]( wxCommandEvent& )
+    if( aConstraintType == CUSTOM_RULE )
     {
-        RULE_EDITOR_DIALOG_BASE* dlg = RULE_EDITOR_DIALOG_BASE::GetDialog( this );
-        if( dlg )
-            dlg->SetModified();
-    });
+        m_conditionGroupPanel->Hide();
+        m_conditionHeaderTitle->Hide();
+        m_syntaxHelp->Hide();
+        m_staticline8->Hide();
+        m_LayersComboBoxSizer->Show( false );
+        m_staticText711->Hide();
+        m_staticline111->Hide();
+    }
 
-    m_commentCtrl->Bind( wxEVT_TEXT, [this]( wxCommandEvent& )                                                            
-    {                                                                                                                   
-        RULE_EDITOR_DIALOG_BASE* dlg = RULE_EDITOR_DIALOG_BASE::GetDialog( this );                                        
-        if( dlg )                                                                                                         
-            dlg->SetModified();
-    });
+    m_commentCtrl->Bind( wxEVT_TEXT,
+                         [this]( wxCommandEvent& )
+                         {
+                             RULE_EDITOR_DIALOG_BASE* dlg = RULE_EDITOR_DIALOG_BASE::GetDialog( this );
+
+                             if( dlg )
+                                 dlg->SetModified();
+                         });
 
     // Hide the base class syntax check controls since we use inline validation
     m_checkSyntaxBtnCtrl->Hide();
     m_syntaxErrorReport->Hide();
 
-    m_netClassRegex.Compile( "^NetClass\\s*[!=]=\\s*$", wxRE_ADVANCED );
-    m_netNameRegex.Compile( "^NetName\\s*[!=]=\\s*$", wxRE_ADVANCED );
-    m_typeRegex.Compile( "^Type\\s*[!=]=\\s*$", wxRE_ADVANCED );
-    m_viaTypeRegex.Compile( "^Via_Type\\s*[!=]=\\s*$", wxRE_ADVANCED );
-    m_padTypeRegex.Compile( "^Pad_Type\\s*[!=]=\\s*$", wxRE_ADVANCED );
-    m_pinTypeRegex.Compile( "^Pin_Type\\s*[!=]=\\s*$", wxRE_ADVANCED );
-    m_fabPropRegex.Compile( "^Fabrication_Property\\s*[!=]=\\s*$", wxRE_ADVANCED );
-    m_shapeRegex.Compile( "^Shape\\s*[!=]=\\s*$", wxRE_ADVANCED );
-    m_padShapeRegex.Compile( "^Pad_Shape\\s*[!=]=\\s*$", wxRE_ADVANCED );
-    m_padConnectionsRegex.Compile( "^Pad_Connections\\s*[!=]=\\s*$", wxRE_ADVANCED );
-    m_zoneConnStyleRegex.Compile( "^Zone_Connection_Style\\s*[!=]=\\s*$", wxRE_ADVANCED );
-    m_lineStyleRegex.Compile( "^Line_Style\\s*[!=]=\\s*$", wxRE_ADVANCED );
-    m_hJustRegex.Compile( "^Horizontal_Justification\\s*[!=]=\\s*$", wxRE_ADVANCED );
-    m_vJustRegex.Compile( "^Vertical_Justification\\s*[!=]=\\s*$", wxRE_ADVANCED );
+    m_nameCtrl->Bind( wxEVT_TEXT,
+                      [this]( wxCommandEvent& )
+                      {
+                          RULE_EDITOR_DIALOG_BASE* dlg = RULE_EDITOR_DIALOG_BASE::GetDialog( this );
+                          if( dlg )
+                              dlg->SetModified();
+
+                          if( m_constraintType == CUSTOM_RULE )
+                          {
+                              auto* customPanel = dynamic_cast<DRC_RE_CUSTOM_RULE_PANEL*>( m_constraintPanel );
+
+                              if( customPanel )
+                                  customPanel->UpdateRuleName( m_nameCtrl->GetValue() );
+                          }
+                      } );
+
+    // Regex patterns are compiled as function-local statics in onScintillaCharAdded()
+    // to avoid recompilation on every panel creation.
 }
 
 
@@ -229,8 +252,8 @@ bool PANEL_DRC_RULE_EDITOR::TransferDataToWindow()
 {
     if( m_constraintData )
     {
-        m_nameCtrl->SetValue( m_constraintData->GetRuleName() );
-        m_commentCtrl->SetValue( m_constraintData->GetComment() );
+        m_nameCtrl->ChangeValue( m_constraintData->GetRuleName() );
+        m_commentCtrl->ChangeValue( m_constraintData->GetComment() );
         setSelectedLayers( m_constraintData->GetLayers(), m_constraintData->GetLayerSource() );
         wxString cond = m_constraintData->GetRuleCondition();
 
@@ -259,10 +282,27 @@ wxString PANEL_DRC_RULE_EDITOR::getSelectedLayerSource() const
 
     switch( layerValue )
     {
-    case LAYER_SEL_OUTER: return wxS( "outer" );
-    case LAYER_SEL_INNER: return wxS( "inner" );
-    case LAYER_SEL_TOP: return m_board ? m_board->GetLayerName( F_Cu ) : wxString();
-    case LAYER_SEL_BOTTOM: return m_board ? m_board->GetLayerName( B_Cu ) : wxString();
+    case LAYER_SEL_OUTER: return DRC_RULES_LEXER::TokenName( DRCRULE_T::T_outer );
+    case LAYER_SEL_INNER: return DRC_RULES_LEXER::TokenName( DRCRULE_T::T_inner );
+    case LAYER_SEL_TOP:
+        switch( m_constraintType )
+        {
+        case COURTYARD_CLEARANCE:          return wxS( "F.CrtYd" );
+        case SILK_TO_SOLDERMASK_CLEARANCE: return wxS( "F.SilkS" );
+        case VIAS_UNDER_SMD:
+        case ALLOWED_ORIENTATION:          return wxS( "F.Cu" );
+        default:                           return m_board ? m_board->GetLayerName( F_Cu ) : wxString();
+        }
+
+    case LAYER_SEL_BOTTOM:
+        switch( m_constraintType )
+        {
+        case COURTYARD_CLEARANCE:          return wxS( "B.CrtYd" );
+        case SILK_TO_SOLDERMASK_CLEARANCE: return wxS( "B.SilkS" );
+        case VIAS_UNDER_SMD:
+        case ALLOWED_ORIENTATION:          return wxS( "B.Cu" );
+        default:                           return m_board ? m_board->GetLayerName( B_Cu ) : wxString();
+        }
     default:
         if( layerValue >= 0 && m_board )
             return m_board->GetLayerName( static_cast<PCB_LAYER_ID>( layerValue ) );
@@ -352,11 +392,20 @@ PANEL_DRC_RULE_EDITOR::getConstraintPanel( wxWindow* aParent, const DRC_RULE_EDI
                 aParent,
                 dynamic_pointer_cast<DRC_RE_ALLOWED_ORIENTATION_CONSTRAINT_DATA>( m_constraintData ).get() );
 
+    case VIAS_UNDER_SMD:
+        return new DRC_RE_VIAS_UNDER_SMD_OVERLAY_PANEL(
+                aParent, dynamic_pointer_cast<DRC_RE_VIAS_UNDER_SMD_CONSTRAINT_DATA>( m_constraintData ).get() );
+
     case CUSTOM_RULE:
         return new DRC_RE_CUSTOM_RULE_PANEL(
                 aParent, dynamic_pointer_cast<DRC_RE_CUSTOM_RULE_CONSTRAINT_DATA>( m_constraintData ) );
 
     case MATCHED_LENGTH_DIFF_PAIR:
+        return new DRC_RE_MATCHED_LENGTH_DIFF_PAIR_OVERLAY_PANEL(
+                aParent,
+                dynamic_pointer_cast<DRC_RE_MATCHED_LENGTH_DIFF_PAIR_CONSTRAINT_DATA>( m_constraintData ).get(),
+                units );
+
     case ABSOLUTE_LENGTH:
         return new DRC_RE_ABS_LENGTH_TWO_OVERLAY_PANEL(
                 aParent,
@@ -658,7 +707,22 @@ void PANEL_DRC_RULE_EDITOR::onScintillaCharAdded( wxStyledTextEvent& aEvent )
         }
         else if( expr_context == EXPR_CONTEXT_T::STRING )
         {
-            if( m_netClassRegex.Matches( last ) )
+            static wxRegEx netClassRegex( wxS( "^NetClass\\s*[!=]=\\s*$" ), wxRE_ADVANCED );
+            static wxRegEx netNameRegex( wxS( "^NetName\\s*[!=]=\\s*$" ), wxRE_ADVANCED );
+            static wxRegEx typeRegex( wxS( "^Type\\s*[!=]=\\s*$" ), wxRE_ADVANCED );
+            static wxRegEx viaTypeRegex( wxS( "^Via_Type\\s*[!=]=\\s*$" ), wxRE_ADVANCED );
+            static wxRegEx padTypeRegex( wxS( "^Pad_Type\\s*[!=]=\\s*$" ), wxRE_ADVANCED );
+            static wxRegEx pinTypeRegex( wxS( "^Pin_Type\\s*[!=]=\\s*$" ), wxRE_ADVANCED );
+            static wxRegEx fabPropRegex( wxS( "^Fabrication_Property\\s*[!=]=\\s*$" ), wxRE_ADVANCED );
+            static wxRegEx shapeRegex( wxS( "^Shape\\s*[!=]=\\s*$" ), wxRE_ADVANCED );
+            static wxRegEx padShapeRegex( wxS( "^Pad_Shape\\s*[!=]=\\s*$" ), wxRE_ADVANCED );
+            static wxRegEx padConnectionsRegex( wxS( "^Pad_Connections\\s*[!=]=\\s*$" ), wxRE_ADVANCED );
+            static wxRegEx zoneConnStyleRegex( wxS( "^Zone_Connection_Style\\s*[!=]=\\s*$" ), wxRE_ADVANCED );
+            static wxRegEx lineStyleRegex( wxS( "^Line_Style\\s*[!=]=\\s*$" ), wxRE_ADVANCED );
+            static wxRegEx hJustRegex( wxS( "^Horizontal_Justification\\s*[!=]=\\s*$" ), wxRE_ADVANCED );
+            static wxRegEx vJustRegex( wxS( "^Vertical_Justification\\s*[!=]=\\s*$" ), wxRE_ADVANCED );
+
+            if( netClassRegex.Matches( last ) )
             {
                 BOARD_DESIGN_SETTINGS&         bds = m_board->GetDesignSettings();
                 std::shared_ptr<NET_SETTINGS>& netSettings = bds.m_NetSettings;
@@ -666,12 +730,12 @@ void PANEL_DRC_RULE_EDITOR::onScintillaCharAdded( wxStyledTextEvent& aEvent )
                 for( const auto& [name, netclass] : netSettings->GetNetclasses() )
                     tokens += wxT( "|" ) + name;
             }
-            else if( m_netNameRegex.Matches( last ) )
+            else if( netNameRegex.Matches( last ) )
             {
                 for( const wxString& netnameCandidate : m_board->GetNetClassAssignmentCandidates() )
                     tokens += wxT( "|" ) + netnameCandidate;
             }
-            else if( m_typeRegex.Matches( last ) )
+            else if( typeRegex.Matches( last ) )
             {
                 tokens = wxT( "Bitmap|"
                               "Dimension|"
@@ -687,20 +751,20 @@ void PANEL_DRC_RULE_EDITOR::onScintillaCharAdded( wxStyledTextEvent& aEvent )
                               "Via|"
                               "Zone" );
             }
-            else if( m_viaTypeRegex.Matches( last ) )
+            else if( viaTypeRegex.Matches( last ) )
             {
                 tokens = wxT( "Through|"
                               "Blind/buried|"
                               "Micro" );
             }
-            else if( m_padTypeRegex.Matches( last ) )
+            else if( padTypeRegex.Matches( last ) )
             {
                 tokens = wxT( "Through-hole|"
                               "SMD|"
                               "Edge connector|"
                               "NPTH, mechanical" );
             }
-            else if( m_pinTypeRegex.Matches( last ) )
+            else if( pinTypeRegex.Matches( last ) )
             {
                 tokens = wxT( "Input|"
                               "Output|"
@@ -715,7 +779,7 @@ void PANEL_DRC_RULE_EDITOR::onScintillaCharAdded( wxStyledTextEvent& aEvent )
                               "Open emitter|"
                               "Unconnected" );
             }
-            else if( m_fabPropRegex.Matches( last ) )
+            else if( fabPropRegex.Matches( last ) )
             {
                 tokens = wxT( "None|"
                               "BGA pad|"
@@ -725,7 +789,7 @@ void PANEL_DRC_RULE_EDITOR::onScintillaCharAdded( wxStyledTextEvent& aEvent )
                               "Heatsink pad|"
                               "Castellated pad" );
             }
-            else if( m_shapeRegex.Matches( last ) )
+            else if( shapeRegex.Matches( last ) )
             {
                 tokens = wxT( "Segment|"
                               "Rectangle|"
@@ -734,7 +798,7 @@ void PANEL_DRC_RULE_EDITOR::onScintillaCharAdded( wxStyledTextEvent& aEvent )
                               "Polygon|"
                               "Bezier" );
             }
-            else if( m_padShapeRegex.Matches( last ) )
+            else if( padShapeRegex.Matches( last ) )
             {
                 tokens = wxT( "Circle|"
                               "Rectangle|"
@@ -744,7 +808,7 @@ void PANEL_DRC_RULE_EDITOR::onScintillaCharAdded( wxStyledTextEvent& aEvent )
                               "Chamfered rectangle|"
                               "Custom" );
             }
-            else if( m_padConnectionsRegex.Matches( last ) )
+            else if( padConnectionsRegex.Matches( last ) )
             {
                 tokens = wxT( "Inherited|"
                               "None|"
@@ -752,14 +816,14 @@ void PANEL_DRC_RULE_EDITOR::onScintillaCharAdded( wxStyledTextEvent& aEvent )
                               "Thermal reliefs|"
                               "Thermal reliefs for PTH" );
             }
-            else if( m_zoneConnStyleRegex.Matches( last ) )
+            else if( zoneConnStyleRegex.Matches( last ) )
             {
                 tokens = wxT( "Inherited|"
                               "None|"
                               "Solid|"
                               "Thermal reliefs" );
             }
-            else if( m_lineStyleRegex.Matches( last ) )
+            else if( lineStyleRegex.Matches( last ) )
             {
                 tokens = wxT( "Default|"
                               "Solid|"
@@ -768,13 +832,13 @@ void PANEL_DRC_RULE_EDITOR::onScintillaCharAdded( wxStyledTextEvent& aEvent )
                               "Dash-Dot|"
                               "Dash-Dot-Dot" );
             }
-            else if( m_hJustRegex.Matches( last ) )
+            else if( hJustRegex.Matches( last ) )
             {
                 tokens = wxT( "Left|"
                               "Center|"
                               "Right" );
             }
-            else if( m_vJustRegex.Matches( last ) )
+            else if( vJustRegex.Matches( last ) )
             {
                 tokens = wxT( "Top|"
                               "Center|"
@@ -1017,9 +1081,9 @@ void PANEL_DRC_RULE_EDITOR::populateLayerSelector( DRC_LAYER_CATEGORY aCategory 
     switch( aCategory )
     {
     case DRC_LAYER_CATEGORY::COPPER_ONLY:
-        m_layerListChoiceCtrl->Append( _( "outer" ) );
+        m_layerListChoiceCtrl->Append( DRC_RULES_LEXER::TokenName( DRCRULE_T::T_outer ) );
         m_layerIDs.push_back( LAYER_SEL_OUTER );
-        m_layerListChoiceCtrl->Append( _( "inner" ) );
+        m_layerListChoiceCtrl->Append( DRC_RULES_LEXER::TokenName( DRCRULE_T::T_inner ) );
         m_layerIDs.push_back( LAYER_SEL_INNER );
 
         for( PCB_LAYER_ID id : m_board->GetEnabledLayers().CuStack() )
@@ -1104,10 +1168,10 @@ wxString PANEL_DRC_RULE_EDITOR::buildLayerClause() const
         switch( layerValue )
         {
         case LAYER_SEL_OUTER:
-            return wxS( "(layer outer)" );
+            return wxString::Format( wxS( "(layer %s)" ), DRC_RULES_LEXER::TokenName( DRCRULE_T::T_outer ) );
 
         case LAYER_SEL_INNER:
-            return wxS( "(layer inner)" );
+            return wxString::Format( wxS( "(layer %s)" ), DRC_RULES_LEXER::TokenName( DRCRULE_T::T_inner ) );
 
         case LAYER_SEL_TOP:
             return DRC_RULE_EDITOR_UTILS::TranslateTopBottomLayer( m_constraintType, true );
@@ -1132,7 +1196,12 @@ std::vector<PCB_LAYER_ID> PANEL_DRC_RULE_EDITOR::getSelectedLayers()
     int sel = m_layerListChoiceCtrl->GetSelection();
 
     if( sel <= 0 )
+    {
+        if( m_layerCategory == DRC_LAYER_CATEGORY::SILKSCREEN_ONLY )
+            return { F_SilkS, B_SilkS };
+
         return {};
+    }
 
     int layerValue = m_layerIDs[sel - 1];
 
@@ -1141,11 +1210,11 @@ std::vector<PCB_LAYER_ID> PANEL_DRC_RULE_EDITOR::getSelectedLayers()
     {
         switch( layerValue )
         {
-        case LAYER_SEL_OUTER: return { F_Cu, B_Cu };
-        case LAYER_SEL_INNER: return { In1_Cu };
-        case LAYER_SEL_TOP: return { F_Cu };
+        case LAYER_SEL_OUTER:  return { F_Cu, B_Cu };
+        case LAYER_SEL_INNER:  return { In1_Cu };
+        case LAYER_SEL_TOP:    return { F_Cu };
         case LAYER_SEL_BOTTOM: return { B_Cu };
-        default: return {};
+        default:               return {};
         }
     }
 
@@ -1157,7 +1226,7 @@ void PANEL_DRC_RULE_EDITOR::setSelectedLayers( const std::vector<PCB_LAYER_ID>& 
                                                 const wxString& aLayerSource )
 {
     // Check for synthetic layer keywords first (for round-trip preservation)
-    if( aLayerSource == wxS( "outer" ) )
+    if( aLayerSource == DRC_RULES_LEXER::TokenName( DRCRULE_T::T_outer ) )
     {
         for( size_t i = 0; i < m_layerIDs.size(); ++i )
         {
@@ -1169,7 +1238,7 @@ void PANEL_DRC_RULE_EDITOR::setSelectedLayers( const std::vector<PCB_LAYER_ID>& 
         }
     }
 
-    if( aLayerSource == wxS( "inner" ) )
+    if( aLayerSource == DRC_RULES_LEXER::TokenName( DRCRULE_T::T_inner ) )
     {
         for( size_t i = 0; i < m_layerIDs.size(); ++i )
         {

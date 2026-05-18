@@ -148,16 +148,21 @@ KICAD_CURL_EASY::KICAD_CURL_EASY() :
 #ifdef _WIN32
     long sslOpts = CURLSSLOPT_NATIVE_CA;
 
-    POLICY_CURL_SSL_REVOKE policyState = KIPLATFORM::POLICY::GetPolicyEnum<POLICY_CURL_SSL_REVOKE>(
-            POLICY_KEY_REQUESTS_CURL_REVOKE );
+    std::optional<POLICY_CURL_SSL_REVOKE> policyState =
+            KIPLATFORM::POLICY::GetPolicyEnum<POLICY_CURL_SSL_REVOKE>( POLICY_KEY_REQUESTS_CURL_REVOKE );
 
-    if( policyState == POLICY_CURL_SSL_REVOKE::BEST_EFFORT )
+    if( policyState )
     {
-        sslOpts |= CURLSSLOPT_REVOKE_BEST_EFFORT;
+        if( *policyState == POLICY_CURL_SSL_REVOKE::BEST_EFFORT )
+            sslOpts |= CURLSSLOPT_REVOKE_BEST_EFFORT;
+        else if( *policyState == POLICY_CURL_SSL_REVOKE::NONE )
+            sslOpts |= CURLSSLOPT_NO_REVOKE;
     }
-    else if( policyState == POLICY_CURL_SSL_REVOKE::NONE )
+    else
     {
-        sslOpts |= CURLSSLOPT_NO_REVOKE;
+        // Some networks/countries may restrict access to revocation servers, 
+        // so use best-effort policy if not configured
+        sslOpts |= CURLSSLOPT_REVOKE_BEST_EFFORT;
     }
 
     // We need this to use the Windows Certificate store
@@ -354,6 +359,20 @@ bool KICAD_CURL_EASY::SetOutputStream( const std::ostream* aOutput )
 bool KICAD_CURL_EASY::SetConnectTimeout( long aTimeoutSecs )
 {
     return setOption( CURLOPT_CONNECTTIMEOUT, aTimeoutSecs ) == CURLE_OK;
+}
+
+
+bool KICAD_CURL_EASY::SetTimeout( long aTimeoutSecs )
+{
+    return setOption( CURLOPT_TIMEOUT, aTimeoutSecs ) == CURLE_OK;
+}
+
+
+bool KICAD_CURL_EASY::SetStallTimeout( long aMinBytesPerSec, long aDurationSecs )
+{
+    bool ok = setOption( CURLOPT_LOW_SPEED_LIMIT, aMinBytesPerSec ) == CURLE_OK;
+    ok &= setOption( CURLOPT_LOW_SPEED_TIME, aDurationSecs ) == CURLE_OK;
+    return ok;
 }
 
 

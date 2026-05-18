@@ -306,10 +306,8 @@ void PCB_BASE_EDIT_FRAME::handleActivateEvent( wxActivateEvent& aEvent )
 
 void PCB_BASE_EDIT_FRAME::onDarkModeToggle( wxSysColourChangedEvent& aEvent )
 {
-    if( !m_appearancePanel )
-        return;
-
-    m_appearancePanel->OnDarkModeToggle();
+    if( m_appearancePanel )
+        m_appearancePanel->OnDarkModeToggle();
 
     EDA_3D_VIEWER_FRAME* viewer = Get3DViewerFrame();
 

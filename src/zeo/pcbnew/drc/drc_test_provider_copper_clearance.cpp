@@ -93,9 +93,16 @@ private:
 
     void testZonesToZones();
 
+    void testTeardropClearances();
+
     void testItemAgainstZone( BOARD_ITEM* aItem, ZONE* aZone, PCB_LAYER_ID aLayer );
 
     void testKnockoutTextAgainstZone( BOARD_ITEM* aText, NETINFO_ITEM** aInheritedNet, ZONE* aZone );
+
+    int sub_e( int aClearance )
+    {
+        return std::max( 0, aClearance - m_drcEpsilon );
+    };
 
 private:
     int m_drcEpsilon;
@@ -166,6 +173,11 @@ bool DRC_TEST_PROVIDER_COPPER_CLEARANCE::Run()
             return false;   // DRC cancelled
 
         testZonesToZones();
+
+        if( !reportPhase( _( "Checking teardrop clearances..." ) ) )
+            return false; // DRC cancelled
+
+        testTeardropClearances();
     }
     else if( !m_drcEngine->IsErrorLimitExceeded( DRCE_ZONES_INTERSECT ) )
     {
@@ -267,7 +279,7 @@ bool DRC_TEST_PROVIDER_COPPER_CLEARANCE::testSingleLayerItemAgainstItem( BOARD_I
             }
         }
 
-        if( itemShape->Collide( otherShape, clearance - m_drcEpsilon, &actual, &pos ) )
+        if( itemShape->Collide( otherShape, sub_e( clearance ), &actual, &pos ) )
         {
             if( itemNet && m_drcEngine->IsNetTieExclusion( itemNet->GetNetCode(), layer, pos, other ) )
             {
@@ -343,8 +355,7 @@ bool DRC_TEST_PROVIDER_COPPER_CLEARANCE::testSingleLayerItemAgainstItem( BOARD_I
             // inside (or intersect) the hole.
             if( constraint.GetSeverity() != RPT_SEVERITY_IGNORE )
             {
-                if( a_shape[ii]->Collide( holeShape.get(), std::max( 0, clearance - m_drcEpsilon ),
-                                          &actual, &pos ) )
+                if( a_shape[ii]->Collide( holeShape.get(), sub_e( clearance ), &actual, &pos ) )
                 {
                     std::shared_ptr<DRC_ITEM> drcItem = DRC_ITEM::Create( DRCE_HOLE_CLEARANCE );
                     drcItem->SetErrorDetail( formatMsg( clearance ? _( "(%s clearance %s; actual %s)" )
@@ -458,8 +469,7 @@ void DRC_TEST_PROVIDER_COPPER_CLEARANCE::testItemAgainstZone( BOARD_ITEM* aItem,
     {
         std::shared_ptr<SHAPE> itemShape = aItem->GetEffectiveShape( aLayer, FLASHING::DEFAULT );
 
-        if( zoneTree->QueryColliding( itemBBox, itemShape.get(), aLayer,
-                                      std::max( 0, clearance - m_drcEpsilon ), &actual, &pos ) )
+        if( zoneTree->QueryColliding( itemBBox, itemShape.get(), aLayer, sub_e( clearance ), &actual, &pos ) )
         {
             std::shared_ptr<DRC_ITEM> drcItem = DRC_ITEM::Create( DRCE_CLEARANCE );
             drcItem->SetErrorDetail( formatMsg( _( "(%s clearance %s; actual %s)" ),
@@ -493,9 +503,7 @@ void DRC_TEST_PROVIDER_COPPER_CLEARANCE::testItemAgainstZone( BOARD_ITEM* aItem,
 
             if( constraint.GetSeverity() != RPT_SEVERITY_IGNORE && clearance > 0 )
             {
-                if( zoneTree->QueryColliding( itemBBox, holeShape.get(), aLayer,
-                                              std::max( 0, clearance - m_drcEpsilon ),
-                                              &actual, &pos ) )
+                if( zoneTree->QueryColliding( itemBBox, holeShape.get(), aLayer, sub_e( clearance ), &actual, &pos ) )
                 {
                     std::shared_ptr<DRC_ITEM> drcItem = DRC_ITEM::Create( DRCE_HOLE_CLEARANCE );
                     drcItem->SetErrorDetail( formatMsg( _( "(%s clearance %s; actual %s)" ),
@@ -565,8 +573,7 @@ void DRC_TEST_PROVIDER_COPPER_CLEARANCE::testKnockoutTextAgainstZone( BOARD_ITEM
 
     if( constraint.GetSeverity() != RPT_SEVERITY_IGNORE && clearance >= 0 )
     {
-        if( zoneTree->QueryColliding( itemBBox, itemShape.get(), layer,
-                                      std::max( 0, clearance - m_drcEpsilon ), &actual, &pos ) )
+        if( zoneTree->QueryColliding( itemBBox, itemShape.get(), layer, sub_e( clearance ), &actual, &pos ) )
         {
             std::shared_ptr<DRC_ITEM> drcItem;
 
@@ -815,11 +822,6 @@ bool DRC_TEST_PROVIDER_COPPER_CLEARANCE::testPadAgainstItem( PAD* pad, SHAPE* pa
     int                    actual = 0;
     VECTOR2I               pos;
     bool                   has_error = false;
-
-    auto sub_e = [this]( int aclearance )
-                 {
-                     return std::max( 0, aclearance - m_drcEpsilon );
-                 };
 
     if( otherPad && pad->SameLogicalPadAs( otherPad ) )
     {
@@ -1206,6 +1208,38 @@ void DRC_TEST_PROVIDER_COPPER_CLEARANCE::testGraphicClearances()
 }
 
 
+void DRC_TEST_PROVIDER_COPPER_CLEARANCE::testTeardropClearances()
+{
+    LSET boardCopperLayers = LSET::AllCuMask( m_board->GetCopperLayerCount() );
+
+    for( ZONE* teardrop : m_board->m_DRCCopperZones )
+    {
+        if( !teardrop->IsTeardropArea() )
+            continue;
+
+        for( PCB_LAYER_ID layer : LSET( teardrop->GetLayerSet() & boardCopperLayers ) )
+        {
+            if( m_drcEngine->IsCancelled() )
+                return;
+
+            for( ZONE* zone : m_board->m_DRCCopperZones )
+            {
+                if( zone == teardrop )
+                    continue;
+
+                if( !zone->GetLayerSet().Contains( layer ) )
+                    continue;
+
+                testItemAgainstZone( teardrop, zone, layer );
+
+                if( m_drcEngine->IsCancelled() )
+                    return;
+            }
+        }
+    }
+}
+
+
 void DRC_TEST_PROVIDER_COPPER_CLEARANCE::testZonesToZones()
 {
     bool testClearance = !m_drcEngine->IsErrorLimitExceeded( DRCE_CLEARANCE );
@@ -1310,6 +1344,10 @@ void DRC_TEST_PROVIDER_COPPER_CLEARANCE::testZonesToZones()
     for ( size_t ii = 0; ii < m_board->m_DRCCopperZones.size(); ii++ )
     {
         ZONE* zone = m_board->m_DRCCopperZones[ii];
+
+        // Teardrop areas are tested as tracks, not zones
+        if( zone->IsTeardropArea() )
+            continue;
 
         for( PCB_LAYER_ID layer : zone->GetLayerSet() )
         {

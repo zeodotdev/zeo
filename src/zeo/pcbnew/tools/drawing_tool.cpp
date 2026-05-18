@@ -71,6 +71,7 @@
 #include <footprint.h>
 #include <macros.h>
 #include <gal/painter.h>
+#include <pad.h>
 #include <pcb_edit_frame.h>
 #include <pcb_group.h>
 #include <pcb_point.h>
@@ -79,6 +80,7 @@
 #include <pcb_textbox.h>
 #include <pcb_table.h>
 #include <pcb_tablecell.h>
+#include <pcb_track.h>
 #include <pcb_dimension.h>
 #include <pcbnew_id.h>
 #include <scoped_set_reset.h>
@@ -634,6 +636,7 @@ int DRAWING_TOOL::PlaceReferenceImage( const TOOL_EVENT& aEvent )
     VECTOR2I             cursorPos = getViewControls()->GetCursorPosition();
     PCB_SELECTION_TOOL*  selectionTool = m_toolMgr->GetTool<PCB_SELECTION_TOOL>();
     BOARD_COMMIT         commit( m_frame );
+    SCOPED_DRAW_MODE     scopedDrawMode( m_mode, MODE::IMAGE );
 
     m_toolMgr->RunAction( ACTIONS::selectionClear );
 
@@ -918,7 +921,8 @@ int DRAWING_TOOL::PlacePoint( const TOOL_EVENT& aEvent )
 
     REENTRANCY_GUARD guard( &m_inDrawingTool );
 
-    POINT_PLACER placer( *this, *frame() );
+    POINT_PLACER     placer( *this, *frame() );
+    SCOPED_DRAW_MODE scopedDrawMode( m_mode, MODE::MD_POINT );
 
     doInteractiveItemPlacement( aEvent, &placer, _( "Place point" ), IPO_REPEAT | IPO_SINGLE_CLICK );
 
@@ -1189,6 +1193,7 @@ int DRAWING_TOOL::DrawTable( const TOOL_EVENT& aEvent )
     PCB_TABLE*                   table = nullptr;
     const BOARD_DESIGN_SETTINGS& bds = m_frame->GetDesignSettings();
     BOARD_COMMIT                 commit( m_frame );
+    SCOPED_DRAW_MODE             scopedDrawMode( m_mode, MODE::TABLE );
     PCB_GRID_HELPER              grid( m_toolMgr, m_frame->GetMagneticItemsSettings() );
 
     // We might be running as the same shape in another co-routine.  Make sure that one
@@ -1426,6 +1431,7 @@ int DRAWING_TOOL::DrawBarcode( const TOOL_EVENT& aEvent )
 
     PCB_BARCODE*                 barcode = nullptr;
     BOARD_COMMIT                 commit( m_frame );
+    SCOPED_DRAW_MODE             scopedDrawMode( m_mode, MODE::BARCODE );
     PCB_GRID_HELPER              grid( m_toolMgr, m_frame->GetMagneticItemsSettings() );
     const BOARD_DESIGN_SETTINGS& bds = m_frame->GetDesignSettings();
 
@@ -2436,12 +2442,21 @@ bool DRAWING_TOOL::drawShape( const TOOL_EVENT& aTool, PCB_SHAPE** aGraphic,
 
         grid.SetSnap( !evt->Modifier( MD_SHIFT ) );
         auto angleSnap = GetAngleSnapMode();
-        if( evt->Modifier( MD_CTRL ) )
-            angleSnap = LEADER_MODE::DIRECT;
 
-        // Rectangular shapes never get zero-size snapping
-        if( shape == SHAPE_T::RECTANGLE && angleSnap == LEADER_MODE::DEG90 )
-            angleSnap = LEADER_MODE::DEG45;
+        // Drawing rectangles and circles ignore the snap behavior by default, but constrains
+        // when the modifier key is pressed
+        if( shape == SHAPE_T::RECTANGLE || shape == SHAPE_T::CIRCLE)
+        {
+            if( evt->Modifier( MD_CTRL ) )
+                angleSnap = LEADER_MODE::DEG45;
+            else
+                angleSnap = LEADER_MODE::DIRECT;
+        }
+        else {
+            // All other drawing uses the snap mode, except that is disabled with the modifier key
+            if( evt->Modifier( MD_CTRL ) )
+                angleSnap = LEADER_MODE::DIRECT;
+        }
 
         grid.SetUseGrid( getView()->GetGAL()->GetGridSnapping() && !evt->DisableGridSnapping() );
         cursorPos = GetClampedCoords( grid.BestSnapAnchor( m_controls->GetMousePosition(), { m_layer }, GRID_GRAPHICS ),
@@ -3664,6 +3679,11 @@ int DRAWING_TOOL::DrawVia( const TOOL_EVENT& aEvent )
         int                         m_worstClearance;
         bool                        m_allowDRCViolations;
 
+        int sub_e( int aClearance )
+        {
+            return std::max( 0, aClearance - m_drcEpsilon );
+        };
+
         VIA_PLACER( PCB_BASE_EDIT_FRAME* aFrame ) :
                 m_frame( aFrame ),
                 m_gridHelper( aFrame->GetToolManager(), aFrame->GetMagneticItemsSettings() ),
@@ -3831,7 +3851,7 @@ int DRAWING_TOOL::DrawVia( const TOOL_EVENT& aEvent )
                     std::shared_ptr<SHAPE> viaShape = aVia->GetEffectiveShape( layer );
                     std::shared_ptr<SHAPE> otherShape = aOther->GetEffectiveShape( layer );
 
-                    if( viaShape->Collide( otherShape.get(), clearance - m_drcEpsilon ) )
+                    if( viaShape->Collide( otherShape.get(), sub_e( clearance ) ) )
                         return true;
                 }
             }
@@ -3845,7 +3865,7 @@ int DRAWING_TOOL::DrawVia( const TOOL_EVENT& aEvent )
                 {
                     std::shared_ptr<SHAPE> viaShape = aVia->GetEffectiveShape( UNDEFINED_LAYER );
 
-                    if( viaShape->Collide( aOther->GetEffectiveHoleShape().get(), clearance - m_drcEpsilon ) )
+                    if( viaShape->Collide( aOther->GetEffectiveHoleShape().get(), sub_e( clearance ) ) )
                         return true;
                 }
             }

@@ -77,14 +77,6 @@ DIALOG_LIB_NEW_SYMBOL::DIALOG_LIB_NEW_SYMBOL( EDA_DRAW_FRAME*      aParent,
                                         wxCommandEventHandler( DIALOG_LIB_NEW_SYMBOL::onCheckTransferUserFields ),
                                         nullptr, this );
 
-    // Trigger the event handler to show/hide the info bar message.
-    wxCommandEvent dummyEvent;
-    onParentSymbolSelect( dummyEvent );
-
-    // Trigger the event handler to handle other check boxes
-    onPowerCheckBox( dummyEvent );
-    onCheckTransferUserFields( dummyEvent );
-
     // initial focus should be on first editable field.
     m_textName->SetFocus();
 
@@ -113,6 +105,22 @@ bool DIALOG_LIB_NEW_SYMBOL::TransferDataToWindow()
         m_comboInheritanceSelect->SetSelectedString( UnescapeString( m_inheritFromSymbolName ) );
         m_textName->ChangeValue( UnescapeString( getDerivativeName( m_inheritFromSymbolName ) ) );
     }
+
+    CallAfter(
+            [&]()
+            {
+                /* The combo box `m_comboInheritanceSelect` must first process an update event before the string can be read again.
+                 * The CallAfter() method ensures that the string is available when onParentSymbolSelect() reads it again.
+                 */
+                wxCommandEvent dummyEvent;
+
+                // Trigger the event handler to show/hide the info bar message.
+                onParentSymbolSelect( dummyEvent );
+                onCheckTransferUserFields( dummyEvent );
+
+                // Trigger the event handler to handle power boxes
+                onPowerCheckBox( dummyEvent );
+            } );
 
     return true;
 }
@@ -147,6 +155,9 @@ void DIALOG_LIB_NEW_SYMBOL::onParentSymbolSelect( wxCommandEvent& aEvent )
     }
 
     syncControls( !parent.IsEmpty() );
+
+    /* The banner changes the size of the dialog box, so it needs to be adjusted. */
+    Fit();
 }
 
 

@@ -35,7 +35,7 @@ class DRC_RE_CUSTOM_RULE_CONSTRAINT_DATA : public DRC_RE_BASE_CONSTRAINT_DATA
 public:
     DRC_RE_CUSTOM_RULE_CONSTRAINT_DATA() = default;
 
-    DRC_RE_CUSTOM_RULE_CONSTRAINT_DATA( int aId, int aParentId, wxString aRuleName ) :
+    DRC_RE_CUSTOM_RULE_CONSTRAINT_DATA( int aId, int aParentId, const wxString& aRuleName ) :
             DRC_RE_BASE_CONSTRAINT_DATA( aId, aParentId, aRuleName )
     {
     }
@@ -48,6 +48,35 @@ public:
     wxString GetRuleText() const { return m_ruleText; }
 
     void SetRuleText( const wxString& aText ) { m_ruleText = aText; }
+
+    wxString GenerateRule( const RULE_GENERATION_CONTEXT& aContext ) override
+    {
+        if( m_ruleText.IsEmpty() )
+            return wxEmptyString;
+
+        wxString ruleName = aContext.ruleName;
+        ruleName.Replace( wxS( "\"" ), wxS( "\\\"" ) );
+
+        wxString rule;
+        rule << wxS( "(rule \"" ) << ruleName << wxS( "\"\n" );
+
+        if( !aContext.comment.IsEmpty() )
+        {
+            wxArrayString lines = wxSplit( aContext.comment, '\n', '\0' );
+
+            for( const wxString& line : lines )
+            {
+                if( line.IsEmpty() )
+                    continue;
+
+                rule << wxS( "\t# " ) << line << wxS( "\n" );
+            }
+        }
+
+        rule << m_ruleText << wxS( ")" );
+
+        return rule;
+    }
 
     VALIDATION_RESULT Validate() const override
     {

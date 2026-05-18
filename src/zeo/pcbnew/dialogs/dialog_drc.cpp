@@ -24,6 +24,7 @@
  */
 
 #include <confirm.h>
+#include <core/throttle.h>
 #include <dialog_drc.h>
 #include <board_design_settings.h>
 #include <kiface_base.h>
@@ -39,10 +40,12 @@
 #include <tools/pcb_actions.h>
 #include <wildcards_and_files_ext.h>
 #include <pcb_marker.h>
+#include <pcb_track.h>
 #include <pgm_base.h>
 #include <wx/app.h>
 #include <wx/filedlg.h>
 #include <wx/msgdlg.h>
+#include <wx/statusbr.h>
 #include <wx/wupdlock.h>
 #include <widgets/appearance_controls.h>
 #include <widgets/ui_common.h>
@@ -81,7 +84,10 @@ DIALOG_DRC::DIALOG_DRC( PCB_EDIT_FRAME* aEditorFrame, wxWindow* aParent ) :
         m_markersTreeModel( nullptr ),
         m_unconnectedTreeModel( nullptr ),
         m_fpWarningsTreeModel( nullptr ),
-        m_lastUpdateUi( std::chrono::steady_clock::now() )
+        m_updateThrottle( std::chrono::milliseconds( 100 ) ),
+        m_yieldThrottle( std::chrono::milliseconds( 2000 ) ),
+        m_drcStatusBar( nullptr ),
+        m_lastTickSeconds( -1 )
 {
     SetName( DIALOG_DRC_WINDOW_NAME ); // Set a window name to be able to find it
     KIPLATFORM::UI::SetFloatLevel( this );
@@ -159,6 +165,15 @@ DIALOG_DRC::DIALOG_DRC( PCB_EDIT_FRAME* aEditorFrame, wxWindow* aParent ) :
     // DPI fix
     bSizerViolationsBox->SetMinSize( FromDIP( bSizerViolationsBox->GetMinSize() ) );
 
+    m_drcStatusBar = new wxStatusBar( this, wxID_ANY, wxSTB_DEFAULT_STYLE );
+    m_drcStatusBar->SetFieldsCount( 2 );
+
+    int statusBarWidths[2] = { FromDIP( 12 ), -1 };
+    m_drcStatusBar->SetStatusWidths( 2, statusBarWidths );
+
+    if( wxSizer* mainSizer = GetSizer() )
+        mainSizer->Add( m_drcStatusBar, 0, wxEXPAND );
+
     Layout(); // adding the units above expanded Clearance text, now resize.
 
     SetFocus();
@@ -227,17 +242,38 @@ bool DIALOG_DRC::updateUI()
         m_gauge->SetValue( newValue );
     }
 
-    // There is significant overhead on at least Windows when updateUi is called constantly thousands of times
-    // in the drc process and safeyieldfor is called each time.
-    // Gate the yield to a limited rate which still allows the UI to function without slowing down the main thread
-    // which is also running DRC
-    std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
-    if( std::chrono::duration_cast<std::chrono::milliseconds>( now - m_lastUpdateUi ).count()
-        > 100 )
+    if( m_running && m_drcStatusBar )
     {
-        Pgm().App().SafeYieldFor( this, wxEVT_CATEGORY_NATIVE_EVENTS );
-        m_lastUpdateUi = now;
+        int elapsed = static_cast<int>(
+                std::chrono::duration_cast<std::chrono::seconds>( std::chrono::steady_clock::now() - m_drcStartTime )
+                        .count() );
+
+        if( elapsed != m_lastTickSeconds )
+        {
+            m_lastTickSeconds = elapsed;
+
+            wxString tick;
+
+            if( elapsed >= 60 )
+                tick = wxString::Format( wxT( "%1$d min %2$d s" ), elapsed / 60, elapsed % 60 );
+            else
+                tick = wxString::Format( wxT( "%d s" ), elapsed );
+
+            m_drcStatusBar->SetStatusText( wxString::Format( _( "Elapsed: %s" ), tick ), 1 );
+        }
     }
+
+    // Repaint the dialog at ~10Hz using Update() which processes only pending expose/
+    // draw events without entering the full platform event loop.
+    if( m_updateThrottle.Ready() )
+        Update();
+
+    // Yield to the event loop infrequently so the cancel button remains functional.
+    // On some Linux systems with glycin-enabled gdk-pixbuf (2.44+), entering the GTK event
+    // loop triggers heavyweight sandbox process spawning that can add hundreds of milliseconds
+    // per call, so we keep this interval long.
+    if( m_yieldThrottle.Ready() )
+        Pgm().App().SafeYieldFor( this, wxEVT_CATEGORY_NATIVE_EVENTS );
 
     return !m_cancelled;
 }
@@ -351,6 +387,12 @@ void DIALOG_DRC::OnRunDRCClick( wxCommandEvent& aEvent )
         return;
     }
 
+    m_footprintTestsRun = false;
+    m_cancelled = false;
+
+    m_frame->GetBoard()->RecordDRCExclusions();
+    deleteAllMarkers( true );
+
     // This is not the time to have stale or buggy rules.  Ensure they're up-to-date
     // and that they at least parse.
     try
@@ -376,12 +418,6 @@ void DIALOG_DRC::OnRunDRCClick( wxCommandEvent& aEvent )
         KIPLATFORM::UI::SetFloatLevel( this );
         return;
     }
-
-    m_footprintTestsRun = false;
-    m_cancelled = false;
-
-    m_frame->GetBoard()->RecordDRCExclusions();
-    deleteAllMarkers( true );
 
     std::vector<std::reference_wrapper<RC_ITEM>> violations = DRC_ITEM::GetItemsWithSeverities();
     m_ignoredList->DeleteAllItems();
@@ -414,15 +450,45 @@ void DIALOG_DRC::OnRunDRCClick( wxCommandEvent& aEvent )
     m_DeleteAllMarkersButton->Enable( false );
     m_saveReport->Enable( false );
 
+    m_drcStartTime = std::chrono::steady_clock::now();
+    m_lastTickSeconds = -1;
+
+    if( m_drcStatusBar )
+        m_drcStatusBar->SetStatusText( _( "Elapsed: 0 s" ), 1 );
+
     {
     wxBusyCursor dummy;
     drcTool->RunTests( this, refillZones, m_report_all_track_errors, testFootprints );
     }
 
+    double elapsedMs =
+            std::chrono::duration<double, std::milli>( std::chrono::steady_clock::now() - m_drcStartTime ).count();
+
+    auto formatElapsed = []( double aMsecs ) -> wxString
+    {
+        int totalSeconds = static_cast<int>( aMsecs / 1000.0 + 0.5 );
+
+        if( totalSeconds >= 60 )
+            return wxString::Format( _( "%1$d min %2$d s" ), totalSeconds / 60, totalSeconds % 60 );
+
+        return wxString::Format( _( "%.2f s" ), aMsecs / 1000.0 );
+    };
+
     if( m_cancelled )
+    {
         m_messages->Report( _( "-------- DRC canceled by user.<br><br>" ) );
+
+        if( m_drcStatusBar )
+            m_drcStatusBar->SetStatusText( wxString::Format( _( "Canceled after %s" ), formatElapsed( elapsedMs ) ),
+                                           1 );
+    }
     else
+    {
         m_messages->Report( _( "Done.<br><br>" ) );
+
+        if( m_drcStatusBar )
+            m_drcStatusBar->SetStatusText( wxString::Format( _( "Completed in %s" ), formatElapsed( elapsedMs ) ), 1 );
+    }
 
     Raise();
     wxSafeYield();                                // Allow time slice to refresh Messages
@@ -555,22 +621,33 @@ void DIALOG_DRC::OnDRCItemSelected( wxDataViewEvent& aEvent )
     {
         principalLayer = UNDEFINED_LAYER;
 
-        if( a || b || c || d )
-            violationLayers = LSET::AllLayersMask();
-
-        // Try to initialize principalLayer to a valid layer.  Note that some markers have
-        // a layer set to UNDEFINED_LAYER, so we may need to keep looking.
-
-        for( BOARD_ITEM* it: { a, b, c, d } )
+        // The marker's layer is set by the test provider
+        if( auto* marker = dynamic_cast<PCB_MARKER*>( rc_item->GetParent() ) )
         {
-            if( !it )
-                continue;
+            PCB_LAYER_ID markerLayer = marker->GetLayer();
 
-            LSET layersList = getActiveLayers( it );
-            violationLayers &= layersList;
+            if( markerLayer > UNDEFINED_LAYER )
+                principalLayer = markerLayer;
+        }
 
-            if( principalLayer <= UNDEFINED_LAYER && layersList.count() )
-                principalLayer = layersList.Seq().front();
+        // Fall back to intersecting the contributing items layer sets.
+        if( principalLayer <= UNDEFINED_LAYER )
+        {
+            if( a || b || c || d )
+                violationLayers = LSET::AllLayersMask();
+
+            for( BOARD_ITEM* it: { a, b, c, d } )
+            {
+                if( !it )
+                    continue;
+
+                LSET layersList = getActiveLayers( it );
+                violationLayers &= layersList;
+
+                if( principalLayer <= UNDEFINED_LAYER && layersList.count() )
+                    principalLayer = layersList.Seq().front();
+
+            }
         }
     }
 
@@ -782,14 +859,14 @@ void DIALOG_DRC::OnDRCItemRClick( wxDataViewEvent& aEvent )
         menu.Append( ID_SET_SEVERITY_TO_ERROR,
                      wxString::Format( _( "Change severity to Error for all '%s' violations" ),
                                        rcItem->GetErrorText( true ) ),
-                     _( "Violation severities can also be edited in the Board Setup... dialog" ) );
+                     _( "Violation severities can also be edited in Board Setup" ) );
     }
     else
     {
         menu.Append( ID_SET_SEVERITY_TO_WARNING,
                      wxString::Format( _( "Change severity to Warning for all '%s' violations" ),
                                        rcItem->GetErrorText( true ) ),
-                     _( "Violation severities can also be edited in the Board Setup... dialog" ) );
+                     _( "Violation severities can also be edited in Board Setup" ) );
     }
 
     menu.Append( ID_SET_SEVERITY_TO_IGNORE,
@@ -800,7 +877,7 @@ void DIALOG_DRC::OnDRCItemRClick( wxDataViewEvent& aEvent )
 
     menu.Append( ID_EDIT_SEVERITIES,
                  _( "Edit violation severities..." ),
-                 _( "Open the Board Setup... dialog" ) );
+                 _( "Open the Board Setup dialog" ) );
 
     bool modified = false;
     int  command = GetPopupMenuSelectionFromUser( menu );
@@ -1029,9 +1106,9 @@ void DIALOG_DRC::OnIgnoredItemRClick( wxListEvent& event )
     int    errorCode = (int) event.m_item.GetData();
     wxMenu menu;
 
-    menu.Append( RPT_SEVERITY_ERROR,   _( "Error" ),   wxEmptyString, wxITEM_CHECK );
-    menu.Append( RPT_SEVERITY_WARNING, _( "Warning" ), wxEmptyString, wxITEM_CHECK );
-    menu.Append( RPT_SEVERITY_IGNORE,  _( "Ignore" ),  wxEmptyString, wxITEM_CHECK );
+    menu.Append( RPT_SEVERITY_ERROR,   _( "Error" ),   wxEmptyString, wxITEM_RADIO );
+    menu.Append( RPT_SEVERITY_WARNING, _( "Warning" ), wxEmptyString, wxITEM_RADIO );
+    menu.Append( RPT_SEVERITY_IGNORE,  _( "Ignore" ),  wxEmptyString, wxITEM_RADIO );
 
     menu.Check( bds().GetSeverity( errorCode ), true );
 

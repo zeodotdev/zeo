@@ -71,7 +71,7 @@ public:
     }
 
     void SetRuleNameValidationCallback(
-            std::function<bool( int aNodeId, wxString aRuleName )> aCallbackRuleNameValidation )
+            std::function<bool( int aNodeId, const wxString& aRuleName )> aCallbackRuleNameValidation )
     {
         m_callBackRuleNameValidation = aCallbackRuleNameValidation;
     }
@@ -188,23 +188,8 @@ private:
     std::function<void( int aNodeId )>                     m_callBackSave;
     std::function<void( int aNodeId )>                     m_callBackRemove;
     std::function<void( int aNodeId )>                     m_callBackClose;
-    std::function<bool( int aNodeId, wxString aRuleName )> m_callBackRuleNameValidation;
+    std::function<bool( int aNodeId, const wxString& aRuleName )> m_callBackRuleNameValidation;
     std::function<int( int aNodeId )> m_callBackShowMatches;
-
-    wxRegEx m_netClassRegex;
-    wxRegEx m_netNameRegex;
-    wxRegEx m_typeRegex;
-    wxRegEx m_viaTypeRegex;
-    wxRegEx m_padTypeRegex;
-    wxRegEx m_pinTypeRegex;
-    wxRegEx m_fabPropRegex;
-    wxRegEx m_shapeRegex;
-    wxRegEx m_padShapeRegex;
-    wxRegEx m_padConnectionsRegex;
-    wxRegEx m_zoneConnStyleRegex;
-    wxRegEx m_lineStyleRegex;
-    wxRegEx m_hJustRegex;
-    wxRegEx m_vJustRegex;
 
     HTML_MESSAGE_BOX* m_helpWindow;
 };

@@ -34,13 +34,97 @@
 #include <altium_pcb_compound_file.h>
 #include <io/io_utils.h>
 #include <io/altium/altium_binary_parser.h>
+#include <io/altium/altium_project_variants.h>
 #include <pcb_io/pcb_io.h>
 #include <reporter.h>
 
 #include <board.h>
+#include <footprint.h>
 
 #include <compoundfilereader.h>
 #include <utf.h>
+
+
+void ApplyAltiumProjectVariantsToBoard( BOARD* aBoard,
+                                        const std::vector<ALTIUM_PROJECT_VARIANT>& aVariants )
+{
+    std::map<wxString, FOOTPRINT*> fpByRef;
+    std::map<KIID, FOOTPRINT*>     fpByUid;
+
+    for( FOOTPRINT* fp : aBoard->Footprints() )
+    {
+        fpByRef[fp->GetReference()] = fp;
+
+        // The Altium PCB importer stores sourceUniqueID as the last element of the
+        // footprint path. Use it to disambiguate repeated designators.
+        const KIID_PATH& path = fp->GetPath();
+
+        if( path.size() >= 2 )
+            fpByUid[path.back()] = fp;
+    }
+
+    for( const ALTIUM_PROJECT_VARIANT& pv : aVariants )
+    {
+        aBoard->AddVariant( pv.name );
+
+        if( !pv.description.empty() && pv.description != pv.name )
+            aBoard->SetVariantDescription( pv.name, pv.description );
+
+        for( const ALTIUM_VARIANT_ENTRY& entry : pv.variations )
+        {
+            FOOTPRINT* target = nullptr;
+
+            // Prefer UniqueId matching to handle repeated designators correctly
+            if( !entry.uniqueId.empty() )
+            {
+                wxString normalizedUid = entry.uniqueId;
+
+                if( normalizedUid.starts_with( wxT( "\\" ) ) )
+                    normalizedUid = normalizedUid.Mid( 1 );
+
+                auto it = fpByUid.find( KIID( normalizedUid ) );
+
+                if( it != fpByUid.end() )
+                    target = it->second;
+            }
+
+            if( !target )
+            {
+                auto it = fpByRef.find( entry.designator );
+
+                if( it != fpByRef.end() )
+                    target = it->second;
+            }
+
+            if( !target )
+                continue;
+
+            FOOTPRINT_VARIANT* fpVariant = target->AddVariant( pv.name );
+
+            if( !fpVariant )
+                continue;
+
+            if( entry.kind == 1 )
+            {
+                fpVariant->SetDNP( true );
+                fpVariant->SetExcludedFromBOM( true );
+                fpVariant->SetExcludedFromPosFiles( true );
+            }
+            else if( entry.kind == 0 )
+            {
+                for( const auto& [key, value] : entry.alternateFields )
+                {
+                    if( key.CmpNoCase( wxS( "LibReference" ) ) == 0 )
+                        fpVariant->SetFieldValue( wxS( "Value" ), value );
+                    else if( key.CmpNoCase( wxS( "Description" ) ) == 0 )
+                        fpVariant->SetFieldValue( wxS( "Description" ), value );
+                    else if( key.CmpNoCase( wxS( "Footprint" ) ) == 0 )
+                        fpVariant->SetFieldValue( wxS( "Footprint" ), value );
+                }
+            }
+        }
+    }
+}
 
 PCB_IO_ALTIUM_DESIGNER::PCB_IO_ALTIUM_DESIGNER() :
         PCB_IO( wxS( "Altium Designer" ) )
@@ -148,6 +232,14 @@ BOARD* PCB_IO_ALTIUM_DESIGNER::LoadBoard( const wxString& aFileName, BOARD* aApp
     catch( CFB::CFBException& exception )
     {
         THROW_IO_ERROR( exception.what() );
+    }
+
+    if( m_props && m_props->count( "project_file" ) )
+    {
+        auto variants = ParseAltiumProjectVariants( m_props->at( "project_file" ) );
+
+        if( !variants.empty() )
+            ApplyAltiumProjectVariantsToBoard( m_board, variants );
     }
 
     return m_board;

@@ -188,10 +188,10 @@ private:
     void closeRuleEntryView( int aNodeId );
 
     /**
-     * Highlights board items matching the current rule condition.
+     * Highlights board items matching the current rule.
      *
      * @param aNodeId The ID of the rule node (currently unused).
-     * @return The number of matching items, or -1 if the condition has a syntax error.
+     * @return The number of matching items, or -1 if the rule has a syntax error.
      */
     int highlightMatchingItems( int aNodeId );
 
@@ -203,7 +203,7 @@ private:
      *
      * @return True if the rule name is unique, false otherwise.
      */
-    bool validateRuleName( int aNodeId, wxString aRuleName );
+    bool validateRuleName( int aNodeId, const wxString& aRuleName );
 
     /**
      * Deletes a rule tree node by its ID.

@@ -41,6 +41,9 @@
 
 #include <glm/mat4x4.hpp>
 
+class PAD;
+class PCB_VIA;
+
 /// Vector of materials.
 typedef std::vector< BLINN_PHONG_MATERIAL > MODEL_MATERIALS;
 

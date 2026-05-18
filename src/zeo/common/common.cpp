@@ -262,7 +262,10 @@ wxString ExpandTextVars( const wxString& aSource, const std::function<bool( wxSt
                     // Also evaluate math expressions after expanding variables
                     if( token.Contains( wxT( "@{" ) ) )
                     {
-                        static EXPRESSION_EVALUATOR evaluator;
+                        // Must not be static. ExpandTextVars runs on parallel workers
+                        // (e.g. CONNECTION_GRAPH) and a shared evaluator races on its
+                        // internal error collector.
+                        EXPRESSION_EVALUATOR evaluator;
                         token = evaluator.Evaluate( token );
                     }
                 }
@@ -301,7 +304,10 @@ wxString ResolveTextVars( const wxString& aSource, const std::function<bool( wxS
     wxString  text = aSource;
     const int maxDepth = ADVANCED_CFG::GetCfg().m_ResolveTextRecursionDepth;
 
-    static EXPRESSION_EVALUATOR evaluator;
+    // Must not be static. ResolveTextVars runs on parallel workers (e.g.
+    // CONNECTION_GRAPH) and a shared evaluator races on its internal error
+    // collector.
+    EXPRESSION_EVALUATOR evaluator;
 
     while( ( text.Contains( wxT( "${" ) ) || text.Contains( wxT( "@{" ) ) ) && ++aDepth <= maxDepth )
     {
@@ -495,6 +501,30 @@ wxString KIwxExpandEnvVars( const wxString& str, const PROJECT* aProject, std::s
                         strResult << str[n - 1];
 
                 strResult << str_n << strVarName;
+            }
+
+            // When a versioned-wildcard branch matched but no env var was found, emit
+            // the original ${VARNAME} text so the closing-bracket handler can append the
+            // closing bracket.  Without this, the handler emits only '}', producing a
+            // garbage path like "}/Device.kicad_sym" instead of the full unexpanded var.
+            if( !expanded && bracket != Bracket_None )
+            {
+                auto isVersionedWildcard =
+                        strVarName.Contains( wxT( "KISYS3DMOD" ) )
+                        || strVarName.Matches( wxT( "KICAD*_3DMODEL_DIR" ) )
+                        || strVarName.Matches( wxT( "KICAD*_SYMBOL_DIR" ) )
+                        || strVarName.Matches( wxT( "KICAD*_FOOTPRINT_DIR" ) )
+                        || strVarName.Matches( wxT( "KICAD*_3RD_PARTY" ) );
+
+                if( isVersionedWildcard )
+                {
+#ifdef __WINDOWS__
+                    if( bracket != Bracket_Windows )
+#endif
+                        strResult << str[n - 1];
+
+                    strResult << str_n << strVarName;
+                }
             }
 
             // check the closing bracket

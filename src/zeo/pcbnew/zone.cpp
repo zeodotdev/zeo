@@ -169,7 +169,7 @@ void ZONE::InitDataFromSrcInCopyCtor( const ZONE& aZone, PCB_LAYER_ID aLayer )
     m_minIslandArea           = aZone.m_minIslandArea;
 
     m_isFilled                = aZone.m_isFilled;
-    m_needRefill              = aZone.m_needRefill;
+    m_needRefill              = aZone.m_needRefill.load();
     m_teardropType            = aZone.m_teardropType;
 
     m_thermalReliefGap        = aZone.m_thermalReliefGap;
@@ -626,13 +626,26 @@ double ZONE::ViewGetLOD( int aLayer, const KIGFX::VIEW* aView ) const
 
     if( FOOTPRINT* parentFP = GetParentFootprint() )
     {
-        bool flipped = parentFP->GetLayer() == B_Cu;
+        const LSET zl = GetLayerSet();
+        bool       onFront = ( zl & LSET::FrontMask() ).any();
+        bool       onBack = ( zl & LSET::BackMask() ).any();
 
-        // Handle Render tab switches
-        if( !flipped && !aView->IsLayerVisible( LAYER_FOOTPRINTS_FR ) )
+        if( !onFront && !onBack )
+        {
+            onFront = parentFP->GetLayer() == F_Cu;
+            onBack = parentFP->GetLayer() == B_Cu;
+        }
+
+        const bool frHidden = !aView->IsLayerVisible( LAYER_FOOTPRINTS_FR );
+        const bool bkHidden = !aView->IsLayerVisible( LAYER_FOOTPRINTS_BK );
+
+        if( onFront && !onBack && frHidden )
             return LOD_HIDE;
 
-        if( flipped && !aView->IsLayerVisible( LAYER_FOOTPRINTS_BK ) )
+        if( onBack && !onFront && bkHidden )
+            return LOD_HIDE;
+
+        if( onFront && onBack && frHidden && bkHidden )
             return LOD_HIDE;
     }
 
@@ -1030,7 +1043,14 @@ void ZONE::Move( const VECTOR2I& offset )
     /* move outlines */
     m_Poly->Move( offset );
 
-    HatchBorder();
+    // Translate existing hatch lines instead of regenerating them. HatchBorder() is expensive
+    // (O(n*m) segment intersections + point-in-polygon tests) and the hatch pattern is
+    // invariant under translation.
+    for( SEG& seg : m_borderHatchLines )
+    {
+        seg.A += offset;
+        seg.B += offset;
+    }
 
     /* move fills */
     for( std::pair<const PCB_LAYER_ID, std::shared_ptr<SHAPE_POLY_SET>>& pair : m_FilledPolysList )
@@ -1352,10 +1372,10 @@ void ZONE::swapData( BOARD_ITEM* aImage )
 
 void ZONE::CacheTriangulation( PCB_LAYER_ID aLayer )
 {
-    std::lock_guard<std::mutex> lock( m_filledPolysListMutex );
-
     if( aLayer == UNDEFINED_LAYER )
     {
+        std::lock_guard<std::mutex> lock( m_filledPolysListMutex );
+
         for( auto& [ layer, poly ] : m_FilledPolysList )
             poly->CacheTriangulation();
 
@@ -1363,8 +1383,22 @@ void ZONE::CacheTriangulation( PCB_LAYER_ID aLayer )
     }
     else
     {
-        if( m_FilledPolysList.count( aLayer ) )
-            m_FilledPolysList[ aLayer ]->CacheTriangulation();
+        // Grab a shared_ptr copy under the lock, then triangulate outside it.
+        // Each layer's SHAPE_POLY_SET is independent, so concurrent triangulation
+        // of different layers is safe once we have the shared_ptr.
+        std::shared_ptr<SHAPE_POLY_SET> poly;
+
+        {
+            std::lock_guard<std::mutex> lock( m_filledPolysListMutex );
+
+            auto it = m_FilledPolysList.find( aLayer );
+
+            if( it != m_FilledPolysList.end() )
+                poly = it->second;
+        }
+
+        if( poly )
+            poly->CacheTriangulation();
     }
 }
 
@@ -1621,6 +1655,11 @@ void ZONE::TransformSmoothedOutlineToPolygon( SHAPE_POLY_SET& aBuffer, int aClea
 
 std::shared_ptr<SHAPE> ZONE::GetEffectiveShape( PCB_LAYER_ID aLayer, FLASHING aFlash ) const
 {
+    // Rule areas are never filled, so fall back to the outline.  DRC relies on this
+    // to collide tracks, vias and pads against keepout areas.
+    if( GetIsRuleArea() )
+        return std::make_shared<SHAPE_POLY_SET>( *Outline() );
+
     std::lock_guard<std::mutex> lock( m_filledPolysListMutex );
 
     if( m_FilledPolysList.find( aLayer ) == m_FilledPolysList.end() )
@@ -1976,6 +2015,10 @@ static struct ZONE_DESC
                                       isCopperZone );
         propMgr.OverrideAvailability( TYPE_HASH( ZONE ), TYPE_HASH( BOARD_CONNECTED_ITEM ), _HKI( "Net Class" ),
                                       isCopperZone );
+
+        propMgr.AddProperty( new PROPERTY<ZONE, unsigned>( _HKI( "Priority" ), &ZONE::SetAssignedPriority,
+                                                           &ZONE::GetAssignedPriority ) )
+                .SetAvailableFunc( isCopperZone );
 
         propMgr.AddProperty( new PROPERTY<ZONE, wxString>( _HKI( "Name" ),
                     &ZONE::SetZoneName, &ZONE::GetZoneName ) );

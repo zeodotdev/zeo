@@ -32,6 +32,7 @@
 
 #include <board.h>
 #include <footprint.h>
+#include <exporters/place_file_exporter.h>
 #include <pcbnew/netlist_reader/kicad_netlist_parser.h>
 #include <pcbnew/netlist_reader/pcb_netlist.h>
 #include <pcb_io/kicad_sexpr/pcb_io_kicad_sexpr.h>
@@ -1100,6 +1101,188 @@ BOOST_AUTO_TEST_CASE( VariantTestProjectLoad )
             }
         }
     }
+}
+
+
+/**
+ * Test that PLACE_FILE_EXPORTER uses variant-specific Value fields (issue #23547).
+ * When a variant overrides a component's Value, the pos file export must reflect
+ * the variant's value, not the default footprint value. Both ASCII and CSV formats
+ * must respect the variant.
+ */
+BOOST_AUTO_TEST_CASE( PosExportVariantValue )
+{
+    BOARD board;
+
+    board.AddVariant( "AltPop" );
+
+    FOOTPRINT* fp = new FOOTPRINT( &board );
+    fp->SetReference( "R1" );
+    fp->SetValue( "10K" );
+
+    FOOTPRINT_VARIANT altPopVariant( "AltPop" );
+    altPopVariant.SetFieldValue( fp->Value().GetName(), "22K" );
+    fp->SetVariant( altPopVariant );
+
+    board.Add( fp, ADD_MODE::INSERT );
+
+    auto runExport = [&]( const wxString& aVariant, bool aCsv ) -> std::string
+    {
+        PLACE_FILE_EXPORTER exporter( &board,
+                                      true,    // mm
+                                      false,   // all footprints
+                                      false,   // include TH
+                                      false,   // don't exclude DNP
+                                      false,   // don't exclude BOM
+                                      true,    // front
+                                      true,    // back
+                                      aCsv,    // format
+                                      false,   // no aux origin
+                                      false ); // don't negate X
+        exporter.SetVariant( aVariant );
+        return exporter.GenPositionData();
+    };
+
+    // ASCII format
+    std::string defaultAscii = runExport( wxEmptyString, false );
+    BOOST_CHECK( defaultAscii.find( "10K" ) != std::string::npos );
+    BOOST_CHECK( defaultAscii.find( "22K" ) == std::string::npos );
+
+    std::string altPopAscii = runExport( wxS( "AltPop" ), false );
+    BOOST_CHECK( altPopAscii.find( "22K" ) != std::string::npos );
+    BOOST_CHECK( altPopAscii.find( "10K" ) == std::string::npos );
+
+    // CSV format
+    std::string defaultCsv = runExport( wxEmptyString, true );
+    BOOST_CHECK( defaultCsv.find( "10K" ) != std::string::npos );
+    BOOST_CHECK( defaultCsv.find( "22K" ) == std::string::npos );
+
+    std::string altPopCsv = runExport( wxS( "AltPop" ), true );
+    BOOST_CHECK( altPopCsv.find( "22K" ) != std::string::npos );
+    BOOST_CHECK( altPopCsv.find( "10K" ) == std::string::npos );
+
+    // GenReportData should also respect the variant
+    auto runReport = [&]( const wxString& aVariant ) -> std::string
+    {
+        PLACE_FILE_EXPORTER exporter( &board, true, false, false, false, false,
+                                      true, true, false, false, false );
+        exporter.SetVariant( aVariant );
+        return exporter.GenReportData();
+    };
+
+    std::string defaultReport = runReport( wxEmptyString );
+    BOOST_CHECK( defaultReport.find( "10K" ) != std::string::npos );
+    BOOST_CHECK( defaultReport.find( "22K" ) == std::string::npos );
+
+    std::string altPopReport = runReport( wxS( "AltPop" ) );
+    BOOST_CHECK( altPopReport.find( "22K" ) != std::string::npos );
+    BOOST_CHECK( altPopReport.find( "10K" ) == std::string::npos );
+}
+
+
+/**
+ * Regression test for issue #23564: stale footprint variant data must be cleaned up
+ * when the netlist contains no variant overrides for a component.
+ *
+ * The netlist exporter uses delta encoding and omits variant properties that match
+ * the base symbol. When ALL of a variant's properties match the base, no variant
+ * data is emitted, making the component's variant list empty. The excess-variants
+ * cleanup in applyComponentVariants must still run in this case.
+ */
+BOOST_AUTO_TEST_CASE( ExcessVariantsCleanedWhenNetlistEmpty )
+{
+    BOARD board;
+    FOOTPRINT fp( &board );
+    fp.SetReference( "C1" );
+    fp.SetFPID( LIB_ID( wxT( "Capacitor_SMD" ), wxT( "C_0805" ) ) );
+    fp.SetDNP( false );
+    fp.SetExcludedFromBOM( false );
+    fp.SetExcludedFromPosFiles( false );
+
+    board.AddVariant( "TestVariant" );
+
+    // Simulate a previous netlist update that applied DNP=true for this variant
+    FOOTPRINT_VARIANT* fpVariant = fp.AddVariant( "TestVariant" );
+    BOOST_REQUIRE( fpVariant );
+    fpVariant->SetDNP( true );
+    fpVariant->SetExcludedFromBOM( true );
+
+    BOOST_CHECK( fp.GetVariant( "TestVariant" ) != nullptr );
+    BOOST_CHECK( fp.GetDNPForVariant( "TestVariant" ) );
+    BOOST_CHECK( fp.GetExcludedFromBOMForVariant( "TestVariant" ) );
+
+    // Simulate what applyComponentVariants does when the netlist has no variant
+    // data for this component (all variant properties now match the base).
+    // With the fix, the function no longer returns early on empty variants,
+    // so the excess-variants cleanup runs.
+
+    std::set<wxString> excessVariants;
+
+    for( const auto& [variantName, _] : fp.GetVariants() )
+        excessVariants.insert( variantName );
+
+    // No netlist variants to process, so nothing is erased from excessVariants.
+    // All footprint variants are excess.
+    BOOST_CHECK_EQUAL( excessVariants.size(), 1 );
+    BOOST_CHECK( excessVariants.count( "TestVariant" ) == 1 );
+
+    for( const wxString& excess : excessVariants )
+        fp.DeleteVariant( excess );
+
+    BOOST_CHECK_MESSAGE( fp.GetVariant( "TestVariant" ) == nullptr,
+                         "Stale variant must be removed when netlist has no variant data" );
+    BOOST_CHECK_MESSAGE( fp.GetVariants().empty(),
+                         "All variants should be cleaned up" );
+}
+
+
+/**
+ * Verify that excess-variants cleanup is selective: only variants NOT in the
+ * netlist are removed, while variants present in the netlist are preserved.
+ */
+BOOST_AUTO_TEST_CASE( ExcessVariantsSelectiveCleanup )
+{
+    BOARD board;
+    FOOTPRINT fp( &board );
+    fp.SetReference( "U1" );
+    fp.SetFPID( LIB_ID( wxT( "Package_SO" ), wxT( "SOIC-8" ) ) );
+    fp.SetDNP( false );
+
+    board.AddVariant( "Production" );
+    board.AddVariant( "Debug" );
+
+    // Both variants were previously applied to the footprint
+    FOOTPRINT_VARIANT* prodVariant = fp.AddVariant( "Production" );
+    BOOST_REQUIRE( prodVariant );
+    prodVariant->SetDNP( true );
+
+    FOOTPRINT_VARIANT* debugVariant = fp.AddVariant( "Debug" );
+    BOOST_REQUIRE( debugVariant );
+    debugVariant->SetExcludedFromBOM( true );
+
+    BOOST_CHECK_EQUAL( fp.GetVariants().size(), 2 );
+
+    // Simulate netlist update where only "Production" has variant data.
+    // "Debug" variant properties now match the base so it was omitted from the netlist.
+    std::set<wxString> excessVariants;
+
+    for( const auto& [variantName, _] : fp.GetVariants() )
+        excessVariants.insert( variantName );
+
+    // Erase variants that ARE in the netlist
+    excessVariants.erase( "Production" );
+
+    BOOST_CHECK_EQUAL( excessVariants.size(), 1 );
+    BOOST_CHECK( excessVariants.count( "Debug" ) == 1 );
+
+    for( const wxString& excess : excessVariants )
+        fp.DeleteVariant( excess );
+
+    BOOST_CHECK_MESSAGE( fp.GetVariant( "Production" ) != nullptr,
+                         "Production variant should be preserved (in netlist)" );
+    BOOST_CHECK_MESSAGE( fp.GetVariant( "Debug" ) == nullptr,
+                         "Debug variant should be removed (not in netlist)" );
+    BOOST_CHECK_EQUAL( fp.GetVariants().size(), 1 );
 }
 
 

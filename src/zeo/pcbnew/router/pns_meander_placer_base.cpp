@@ -18,10 +18,12 @@
  * You should have received a copy of the GNU General Public License along
  * with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
+#include <core/typeinfo.h> 
 
 #include "pns_meander_placer_base.h"
 #include "pns_meander.h"
 #include "pns_router.h"
+#include "pns_segment.h"
 #include "pns_solid.h"
 #include "pns_arc.h"
 

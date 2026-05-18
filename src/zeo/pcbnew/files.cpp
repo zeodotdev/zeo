@@ -28,6 +28,7 @@
 #include <string>
 #include <vector>
 
+#include <advanced_config.h>
 #include <confirm.h>
 #include <kidialog.h>
 #include <core/arraydim.h>
@@ -561,7 +562,7 @@ bool PCB_EDIT_FRAME::OpenProjectFiles( const std::vector<wxString>& aFileSet, in
     GetInfoBar()->Dismiss();
 
     if( KISTATUSBAR* statusBar = dynamic_cast<KISTATUSBAR*>( GetStatusBar() ) )
-        statusBar->ClearLoadWarningMessages();
+        statusBar->ClearWarningMessages( "load" );
 
     WX_PROGRESS_REPORTER progressReporter( this, is_new ? _( "Create PCB" ) : _( "Load PCB" ), 1,
                                            PR_CAN_ABORT );
@@ -624,6 +625,11 @@ bool PCB_EDIT_FRAME::OpenProjectFiles( const std::vector<wxString>& aFileSet, in
         Prj().SetReadOnly( !pro.Exists() && !converted );
     }
 
+    // Crash-recovery: when zip-format autosave is active, look for autosave files newer than
+    // the saved board and offer to recover them before the load happens.
+    if( !is_new )
+        CheckForAutosaveFiles( wx_filename.GetPath(), { FILEEXT::KiCadPcbFileExtension } );
+
     if( is_new )
     {
         // Link the existing blank board to the new project
@@ -640,8 +646,11 @@ bool PCB_EDIT_FRAME::OpenProjectFiles( const std::vector<wxString>& aFileSet, in
 
         if( LAYER_MAPPABLE_PLUGIN* mappable_pi = dynamic_cast<LAYER_MAPPABLE_PLUGIN*>( pi.get() ) )
         {
-            mappable_pi->RegisterCallback( std::bind( DIALOG_MAP_LAYERS::RunModal,
-                                                      this, std::placeholders::_1 ) );
+            if( !ADVANCED_CFG::GetCfg().m_ImportSkipLayerMapping )
+            {
+                mappable_pi->RegisterCallback( std::bind( DIALOG_MAP_LAYERS::RunModal,
+                                                          this, std::placeholders::_1 ) );
+            }
         }
 
         if( PROJECT_CHOOSER_PLUGIN* chooser_pi = dynamic_cast<PROJECT_CHOOSER_PLUGIN*>( pi.get() ) )
@@ -737,7 +746,7 @@ bool PCB_EDIT_FRAME::OpenProjectFiles( const std::vector<wxString>& aFileSet, in
 
             // Show any messages collected before the failure
             if( KISTATUSBAR* statusBar = dynamic_cast<KISTATUSBAR*>( GetStatusBar() ) )
-                statusBar->SetLoadWarningMessages( loadReporter.GetMessages() );
+                statusBar->AddWarningMessages( "load", loadReporter.GetMessages() );
 
             return false;
         }
@@ -1078,7 +1087,7 @@ bool PCB_EDIT_FRAME::OpenProjectFiles( const std::vector<wxString>& aFileSet, in
     }
 
     if( KISTATUSBAR* statusBar = dynamic_cast<KISTATUSBAR*>( GetStatusBar() ) )
-        statusBar->SetLoadWarningMessages( loadReporter.GetMessages() );
+        statusBar->AddWarningMessages( "load", loadReporter.GetMessages() );
 
     return true;
 }
@@ -1279,9 +1288,19 @@ bool PCB_EDIT_FRAME::SavePcbFile( const wxString& aFileName, bool addToHistory,
     UpdateTitle();
     UpdateStatusBar();
 
-    // Capture entire project state for PCB save events.
-    Kiway().LocalHistory().CommitFullProjectSnapshot( pcbFileName.GetPath(), wxS( "PCB Save" ) );
-    Kiway().LocalHistory().TagSave( pcbFileName.GetPath(), wxS( "pcb" ) );
+    // Capture entire project state for PCB save events. Skip when running standalone
+    // without a project loaded - the save path can land anywhere on the filesystem and
+    // there is no project context for a snapshot to live under.
+    if( !Prj().IsNullProject() )
+    {
+        Kiway().LocalHistory().RunRegisteredSaversAndCommit( Prj().GetProjectPath(), wxS( "PCB Save" ), wxS( "pcb" ) );
+
+        // Drop the autosave file for the board we just persisted.  Scope to the PCB
+        // source so a concurrent open eeschema does not lose recovery data for an
+        // unsaved schematic sheet.  RunRegisteredSaversAndCommit above is a no-op when
+        // format is ZIP; this call is conversely a no-op in INCREMENTAL mode.
+        Kiway().LocalHistory().RemoveAutosaveFiles( Prj().GetProjectPath(), { pcbFileName.GetFullPath() } );
+    }
 
     if( m_autoSaveTimer )
         m_autoSaveTimer->Stop();

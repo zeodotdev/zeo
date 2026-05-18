@@ -46,7 +46,7 @@
 const wxRegEx versionedEnvVarRegex( wxS( "KICAD[0-9]+_[A-Z0-9_]+(_DIR)?" ) );
 
 ///! Update the schema version whenever a migration is required
-const int commonSchemaVersion = 5;
+const int commonSchemaVersion = 6;
 
 COMMON_SETTINGS::~COMMON_SETTINGS() = default;
 
@@ -74,6 +74,13 @@ COMMON_SETTINGS::COMMON_SETTINGS() :
             &m_Appearance.icon_theme, ICON_THEME::AUTO, ICON_THEME::LIGHT, ICON_THEME::AUTO ) );
 #else
     m_Appearance.icon_theme = ICON_THEME::AUTO;
+#endif
+
+#if defined( __WXMSW__ )
+    m_params.emplace_back( new PARAM_ENUM<APP_THEME>( "appearance.app_theme", &m_Appearance.app_theme,
+                                                       APP_THEME::AUTO, APP_THEME::LIGHT, APP_THEME::AUTO ) );
+#else
+    m_Appearance.app_theme = APP_THEME::AUTO;
 #endif
 
     /*
@@ -121,6 +128,13 @@ COMMON_SETTINGS::COMMON_SETTINGS() :
             &m_Appearance.zoom_correction_factor, 1.0, 0.1, 10.0 ) );
 
     m_params.emplace_back( new PARAM<bool>( "auto_backup.enabled", &m_Backup.enabled, true ) );
+
+    m_params.emplace_back( new PARAM_ENUM<BACKUP_FORMAT>( "auto_backup.format", &m_Backup.format,
+            BACKUP_FORMAT::INCREMENTAL, BACKUP_FORMAT::INCREMENTAL, BACKUP_FORMAT::ZIP ) );
+
+    m_params.emplace_back( new PARAM_ENUM<BACKUP_LOCATION>( "auto_backup.location",
+            &m_Backup.location, BACKUP_LOCATION::PROJECT_DIR, BACKUP_LOCATION::PROJECT_DIR,
+            BACKUP_LOCATION::USER_DIR ) );
 
     m_params.emplace_back( new PARAM<unsigned long long>( "auto_backup.limit_total_size",
             &m_Backup.limit_total_size, 104857600 ) );
@@ -371,6 +385,12 @@ COMMON_SETTINGS::COMMON_SETTINGS() :
     m_params.emplace_back( new PARAM<bool>( "do_not_show_again.update_check_prompt",
             &m_DoNotShowAgain.update_check_prompt, false ) );
 
+    m_params.emplace_back( new PARAM<bool>( "do_not_show_again.migrate_wrl_prompt",
+            &m_DoNotShowAgain.migrate_wrl_prompt, false ) );
+
+    m_params.emplace_back( new PARAM_LIST<wxString>( "system.extra_3d_search_dirs",
+            &m_Extra3DSearchDirs, {} ) );
+
     m_params.emplace_back( new PARAM<bool>( "session.remember_open_files",
             &m_Session.remember_open_files, false ) );
 
@@ -492,6 +512,7 @@ COMMON_SETTINGS::COMMON_SETTINGS() :
     registerMigration( 2, 3, std::bind( &COMMON_SETTINGS::migrateSchema2to3, this ) );
     registerMigration( 3, 4, std::bind( &COMMON_SETTINGS::migrateSchema3to4, this ) );
     registerMigration( 4, 5, std::bind( &COMMON_SETTINGS::migrateSchema4to5, this ) );
+    registerMigration( 5, 6, std::bind( &COMMON_SETTINGS::migrateSchema5to6, this ) );
 }
 
 
@@ -705,6 +726,30 @@ bool COMMON_SETTINGS::migrateSchema4to5()
     {
         wxLogTrace( traceSettings,
                     wxT( "COMMON_SETTINGS::Migrate 4->5: dialog.controls not found" ) );
+    }
+
+    return true;
+}
+
+
+bool COMMON_SETTINGS::migrateSchema5to6()
+{
+    // Schema 6 introduces auto_backup.format and auto_backup.location.  Pre-schema-6
+    // installs unconditionally produced timestamped zip archives whenever a save was
+    // eligible for backup, so the new INCREMENTAL default would silently disable archive
+    // creation for users who already had auto_backup.enabled set.  Write ZIP into the
+    // upgraded config to preserve their backup behavior; new installs skip the migration
+    // path entirely and keep the new default.  The location default (PROJECT_DIR) already
+    // matches the legacy on-disk layout, so we leave it absent.
+    try
+    {
+        if( !Contains( "auto_backup.format" ) )
+            Set<int>( "auto_backup.format", static_cast<int>( BACKUP_FORMAT::ZIP ) );
+    }
+    catch( ... )
+    {
+        wxLogTrace( traceSettings,
+                    wxT( "COMMON_SETTINGS::Migrate 5->6: failed to set auto_backup.format" ) );
     }
 
     return true;

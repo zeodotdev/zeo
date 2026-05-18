@@ -26,6 +26,7 @@
 #define ZONE_H
 
 
+#include <atomic>
 #include <mutex>
 #include <vector>
 #include <map>
@@ -275,11 +276,6 @@ public:
     double GetOutlineArea()
     {
         return m_outlinearea;
-    }
-
-    std::mutex& GetLock()
-    {
-        return m_lock;
     }
 
     int GetFillFlag( PCB_LAYER_ID aLayer )
@@ -893,7 +889,7 @@ protected:
      * m_needRefill = false does not imply filled areas are up to date, just
      * the zone was refilled after edition, and does not need refilling
      */
-    bool             m_needRefill;
+    std::atomic<bool> m_needRefill;
 
     int              m_thermalReliefGap;        // Width of the gap in thermal reliefs.
     int              m_thermalReliefSpokeWidth; // Width of the copper bridge in thermal reliefs.
@@ -940,8 +936,6 @@ protected:
     double                    m_area;              // The filled zone area
     double                    m_outlinearea;       // The outline zone area
 
-    /// Lock used for multi-threaded filling on multi-layer zones
-    std::mutex                m_lock;
 };
 
 

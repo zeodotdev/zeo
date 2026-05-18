@@ -129,6 +129,7 @@ protected:
     wxFileName m_metaIconFile;
     wxBitmap*  m_metaIcon;
     wxString   m_title;
+    wxString   m_error;
 
 public:
 
@@ -180,6 +181,8 @@ public:
      * Get the title of the project (extracted from the html title tag)
      */
     wxString* GetTitle();
+
+    const wxString& GetError() const { return m_error; }
 
     /**
      * Get a vector list of filenames for the template. The files are the source files,

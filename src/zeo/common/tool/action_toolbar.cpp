@@ -527,7 +527,6 @@ void ACTION_TOOLBAR::AddGroup( std::unique_ptr<ACTION_GROUP> aGroup )
     for( const auto& act : aGroup->GetActions() )
         isToggleEntry |= act->CheckToolbarState( TOOLBAR_STATE::TOGGLE );
 
-
     m_toolKinds[ groupId ]    = isToggleEntry;
     m_toolActions[ groupId ]  = defaultAction;
     m_actionGroups[ groupId ] = std::move( aGroup );
@@ -732,16 +731,68 @@ void ACTION_TOOLBAR::onToolEvent( wxAuiToolBarEvent& aEvent )
 
     bool handled = false;
 
-    if( m_toolManager && type == wxEVT_COMMAND_TOOL_CLICKED  && id >= TOOL_ACTION::GetBaseUIId() )
+    if( m_toolManager && type == wxEVT_COMMAND_TOOL_CLICKED )
     {
         const auto actionIt = m_toolActions.find( id );
+        const auto cancelIt = m_toolCancellable.find( id );
+        const auto groupIt  = m_actionGroups.find( id );
+
+        // Determine if the tool is actually cancellable
+        bool isCancellable = ( cancelIt != m_toolCancellable.end() ) ? cancelIt->second : false;
+
+        // The selection tool is a special case because it is the "default" tool and does not show
+        // up on the tool stack. We want to toggle through selection modes only when the tool is
+        // already active.
+        bool selectionSpecialCase = false;
+
+        if( actionIt != m_toolActions.end() )
+        {
+            selectionSpecialCase = m_parent->ToolStackIsEmpty()
+                                   && ( actionIt->second->GetId() == ACTIONS::selectSetRect.GetId()
+                                        || actionIt->second->GetId() == ACTIONS::selectSetLasso.GetId() );
+        }
 
         // The toolbar item is toggled before the event is sent, so we check for it not being
         // toggled to see if it was toggled originally
-        if( m_toolCancellable[id] && !GetToolToggled( id ) )
+        if( isCancellable && !GetToolToggled( id ) )
         {
             // Send a cancel event
             m_toolManager->CancelTool();
+            handled = true;
+        }
+        else if( groupIt != m_actionGroups.end()
+                 && ( selectionSpecialCase
+                      || std::none_of( groupIt->second->GetActions().begin(),
+                                       groupIt->second->GetActions().end(),
+                                       []( const TOOL_ACTION* a )
+                                       {
+                                           return a->IsActivation();
+                                       } ) ) )
+        {
+            // For non-tool toggle groups (units, crosshair, line modes), cycle to the next
+            // action on click. Tool groups (route track, etc.) fall through and just dispatch
+            // the currently displayed action.
+            ACTION_GROUP*                          group   = groupIt->second.get();
+            const std::vector<const TOOL_ACTION*>& actions = group->GetActions();
+            const TOOL_ACTION*                     current = actionIt->second;
+
+            const TOOL_ACTION* next = actions[0];
+
+            for( size_t i = 0; i < actions.size(); ++i )
+            {
+                if( actions[i]->GetId() == current->GetId() )
+                {
+                    next = actions[( i + 1 ) % actions.size()];
+                    break;
+                }
+            }
+
+            evt = next->MakeEvent();
+            evt->SetHasPosition( false );
+            m_toolManager->ProcessEvent( *evt );
+            m_toolManager->GetToolHolder()->RefreshCanvas();
+
+            doSelectAction( group, *next );
             handled = true;
         }
         else if( actionIt != m_toolActions.end() )
@@ -1001,7 +1052,8 @@ void ACTION_TOOLBAR::popupPalette( wxAuiToolBarItem* aItem )
     }
 
     // Release the mouse to ensure the first click will be recognized in the palette
-    ReleaseMouse();
+    if( HasCapture() )
+        ReleaseMouse();
 
     m_palette->SetPosition( pos );
     m_palette->Popup();

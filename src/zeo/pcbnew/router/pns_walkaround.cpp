@@ -20,9 +20,10 @@
  */
 
 #include <chrono>
-#include <advanced_config.h>
 #include <optional>
 
+#include <advanced_config.h>
+#include <core/typeinfo.h>
 #include <geometry/shape_line_chain.h>
 
 #include "pns_walkaround.h"
@@ -261,7 +262,7 @@ bool WALKAROUND::singleStep()
 
         if( shortest.has_value() )
         {
-            PNS_DBG( Dbg(), AddItem, shortest->Clone(), RED, 10000, wxString::Format( "shortest-l" ) );
+            PNS_DBG( Dbg(), AddItem, &shortest.value(), RED, 10000, wxString::Format( "shortest-l" ) );
 
             for( auto& item : m_processedItems )
             {
@@ -402,4 +403,3 @@ void WALKAROUND::SetAllowedPolicies( std::vector<WALK_POLICY> aPolicies)
 }
 
 }
-

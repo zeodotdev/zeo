@@ -270,14 +270,12 @@ bool GetTabularDataFromClipboard( std::vector<std::vector<wxString>>& aData )
 
     if( isOpen )
     {
-        if( wxTheClipboard->IsSupported( wxDF_TEXT ) )
+        if( wxTheClipboard->IsSupported( wxDF_TEXT ) || wxTheClipboard->IsSupported( wxDF_UNICODETEXT ) )
         {
             wxTextDataObject data;
 
             if( wxTheClipboard->GetData( data ) )
-            {
                 ok = AutoDecodeCSV( data.GetText(), aData );
-            }
         }
 
         // We could also handle .csv wxDF_FILENAMEs here

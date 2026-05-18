@@ -29,6 +29,7 @@
 #include <base_screen.h>
 #include <confirm.h>
 #include <core/kicad_algo.h>
+#include <core/throttle.h>
 #include <eeschema_id.h>
 #include <eeschema_settings.h>
 #include <env_paths.h>
@@ -132,6 +133,7 @@ SYMBOL_EDIT_FRAME::SYMBOL_EDIT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     m_libMgr = nullptr;
     m_unit = 1;
     m_bodyStyle = 1;
+    m_syncLibrariesInProgress = false;
     m_aboutTitle = _HKI( "Zeo Symbol Editor" );
 
     wxIcon icon;
@@ -1375,6 +1377,14 @@ wxString SYMBOL_EDIT_FRAME::getTargetLib() const
 void SYMBOL_EDIT_FRAME::SyncLibraries( bool aShowProgress, bool aPreloadCancelled,
                                        const wxString& aForceRefresh )
 {
+    // Prevent re-entrant calls.  The progress dialog yields the event loop during Sync(),
+    // which can dispatch queued UI events (e.g. menu clicks queued while the app was busy
+    // loading libraries).  A re-entrant call would corrupt the library tree mid-rebuild.
+    if( m_syncLibrariesInProgress )
+        return;
+
+    m_syncLibrariesInProgress = true;
+
     LIB_ID selected;
 
     if( m_treePane )
@@ -1391,18 +1401,28 @@ void SYMBOL_EDIT_FRAME::SyncLibraries( bool aShowProgress, bool aPreloadCancelle
         APP_PROGRESS_DIALOG progressDlg( _( "Loading Symbol Libraries" ), wxEmptyString,
                                          m_libMgr->GetAdapter()->GetLibrariesCount(), this );
 
+        THROTTLE  progressThrottle( std::chrono::milliseconds( 350 ) );
+        int       pendingProgress = 0;
+        bool      callbackFired = false;
+        wxString  pendingLibName;
+
         m_libMgr->Sync( aForceRefresh,
                 [&]( int progress, int max, const wxString& libName )
                 {
-                    progressDlg.Update( progress, wxString::Format( _( "Loading library '%s'..." ), libName ) );
+                    pendingProgress = progress;
+                    pendingLibName = libName;
+                    callbackFired = true;
+
+                    if( progressThrottle.Ready() )
+                        progressDlg.Update( progress, wxString::Format( _( "Loading library '%s'..." ), libName ) );
                 } );
+
+        if( callbackFired )
+            progressDlg.Update( pendingProgress, wxString::Format( _( "Loading library '%s'..." ), pendingLibName ) );
     }
     else if( !aPreloadCancelled )
     {
-        m_libMgr->Sync( aForceRefresh,
-                [&]( int progress, int max, const wxString& libName )
-                {
-                } );
+        m_libMgr->Sync( aForceRefresh, [&]( int progress, int max, const wxString& libName ) {} );
     }
 
     if( m_treePane )
@@ -1438,6 +1458,8 @@ void SYMBOL_EDIT_FRAME::SyncLibraries( bool aShowProgress, bool aPreloadCancelle
             GetLibTree()->CenterLibId( current );
         }
     }
+
+    m_syncLibrariesInProgress = false;
 }
 
 
@@ -1789,6 +1811,17 @@ void SYMBOL_EDIT_FRAME::KiwayMailIn( KIWAY_MAIL_EVENT& mail )
 
         if( !symbol )
             break;
+
+        // If the frame is disabled then a modal/quasi-modal dialog (such as the symbol
+        // properties dialog) is editing the current LIB_SYMBOL.  Refreshing it here would
+        // delete the symbol out from under the dialog and crash on dismissal.  The file
+        // watcher timer will retry the reload once the dialog has closed.
+        if( !IsEnabled() )
+        {
+            wxLogTrace( traceLibWatch,
+                        "Deferring symbol refresh; dialog is open on the symbol editor." );
+            break;
+        }
 
         wxString libName = symbol->GetLibId().GetLibNickname();
         std::optional<const LIBRARY_TABLE_ROW*> row = adapter->GetRow( libName );

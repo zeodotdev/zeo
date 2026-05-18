@@ -117,6 +117,7 @@ SCH_SYMBOL::SCH_SYMBOL( const LIB_SYMBOL& aSymbol, const LIB_ID& aLibId, const S
     m_excludedFromSim = m_part->GetExcludedFromSim();
     m_excludedFromBOM = m_part->GetExcludedFromBOM();
     m_excludedFromBoard = m_part->GetExcludedFromBoard();
+    m_excludedFromPosFiles = m_part->GetExcludedFromPosFiles();
 }
 
 
@@ -975,70 +976,35 @@ void SCH_SYMBOL::SetFieldText( const wxString& aFieldName, const wxString& aFiel
         SetRef( aPath, aFieldText );
         break;
 
-    case FIELD_T::FOOTPRINT:
-    {
-        wxString defaultText = GetFootprintFieldText( false, nullptr, false );
-
-        if( aFieldText != defaultText )
-        {
-            if( aVariantName.IsEmpty() )
-            {
-                SetFootprintFieldText( aFieldText );
-            }
-            else
-            {
-                wxCHECK( aPath, /* void */ );
-
-                SCH_SYMBOL_INSTANCE* instance = getInstance( *aPath );
-
-                wxCHECK( instance, /* void */ );
-
-                if( instance->m_Variants.contains( aVariantName ) )
-                {
-                    instance->m_Variants[aVariantName].m_Fields[aFieldName] = aFieldText;
-                }
-                else
-                {
-                    SCH_SYMBOL_VARIANT newVariant( aVariantName );
-
-                    newVariant.InitializeAttributes( *this );
-                    newVariant.m_Fields[aFieldName] = aFieldText;
-                    instance->m_Variants.insert( std::make_pair( aVariantName, newVariant ) );
-                }
-            }
-        }
-
-        break;
-    }
-
     default:
     {
         wxString defaultText = field->GetText( aPath );
 
-        if( aFieldText != defaultText )
+        if( aVariantName.IsEmpty() )
         {
-            if( aVariantName.IsEmpty() )
-            {
+            if( aFieldText != defaultText )
                 field->SetText( aFieldText );
-            }
-            else
+        }
+        else
+        {
+            SCH_SYMBOL_INSTANCE* instance = getInstance( *aPath );
+
+            wxCHECK( instance, /* void */ );
+
+            if( instance->m_Variants.contains( aVariantName ) )
             {
-                SCH_SYMBOL_INSTANCE* instance = getInstance( *aPath );
-
-                wxCHECK( instance, /* void */ );
-
-                if( instance->m_Variants.contains( aVariantName ) )
-                {
+                if( aFieldText != defaultText )
                     instance->m_Variants[aVariantName].m_Fields[aFieldName] = aFieldText;
-                }
                 else
-                {
-                    SCH_SYMBOL_VARIANT newVariant( aVariantName );
+                    instance->m_Variants[aVariantName].m_Fields.erase( aFieldName );
+            }
+            else if( aFieldText != defaultText )
+            {
+                SCH_SYMBOL_VARIANT newVariant( aVariantName );
 
-                    newVariant.InitializeAttributes( *this );
-                    newVariant.m_Fields[aFieldName] = aFieldText;
-                    instance->m_Variants.insert( std::make_pair( aVariantName, newVariant ) );
-                }
+                newVariant.InitializeAttributes( *this );
+                newVariant.m_Fields[aFieldName] = aFieldText;
+                instance->m_Variants.insert( std::make_pair( aVariantName, newVariant ) );
             }
         }
 
@@ -1638,6 +1604,18 @@ SCH_FIELD* SCH_SYMBOL::FindFieldCaseInsensitive( const wxString& aFieldName )
 }
 
 
+const SCH_FIELD* SCH_SYMBOL::FindFieldCaseInsensitive( const wxString& aFieldName ) const
+{
+    for( const SCH_FIELD& field : m_fields )
+    {
+        if( field.GetName().IsSameAs( aFieldName, false ) )
+            return &field;
+    }
+
+    return nullptr;
+}
+
+
 void SCH_SYMBOL::UpdateFields( const SCH_SHEET_PATH* aPath, bool aUpdateStyle, bool aUpdateRef, bool aUpdateOtherFields,
                                bool aResetRef, bool aResetOtherFields )
 {
@@ -1710,6 +1688,7 @@ void SCH_SYMBOL::SyncOtherUnits( const SCH_SHEET_PATH& aSourceSheet, SCH_COMMIT&
     bool updateValue = true;
     bool updateExclFromBOM = true;
     bool updateExclFromBoard = true;
+    bool updateExclFromPosFiles = true;
     bool updateDNP = true;
     bool updateOtherFields = true;
     bool updatePins = true;
@@ -1719,12 +1698,13 @@ void SCH_SYMBOL::SyncOtherUnits( const SCH_SHEET_PATH& aSourceSheet, SCH_COMMIT&
         updateValue = aProperty->Name() == _HKI( "Value" );
         updateExclFromBoard = aProperty->Name() == _HKI( "Exclude From Board" );
         updateExclFromBOM = aProperty->Name() == _HKI( "Exclude From Bill of Materials" );
+        updateExclFromPosFiles = aProperty->Name() == _HKI( "Exclude From Position Files" );
         updateDNP = aProperty->Name() == _HKI( "Do not Populate" );
         updateOtherFields = false;
         updatePins = false;
     }
 
-    if( !updateValue && !updateExclFromBOM && !updateExclFromBoard && !updateDNP && !updateOtherFields && !updatePins )
+    if( !updateValue && !updateExclFromBOM && !updateExclFromBoard && !updateExclFromPosFiles && !updateDNP && !updateOtherFields && !updatePins )
     {
         return;
     }
@@ -1797,6 +1777,9 @@ void SCH_SYMBOL::SyncOtherUnits( const SCH_SHEET_PATH& aSourceSheet, SCH_COMMIT&
 
                 if( updateExclFromBoard )
                     otherUnit->SetExcludedFromBoard( m_excludedFromBoard );
+
+                if( updateExclFromPosFiles )
+                    otherUnit->SetExcludedFromPosFiles( m_excludedFromPosFiles );
 
                 if( updateDNP )
                     otherUnit->SetDNP( GetDNP( &aSourceSheet, aVariantName ), &sheet, aVariantName );
@@ -1984,8 +1967,6 @@ void SCH_SYMBOL::swapData( SCH_ITEM* aItem )
     UpdatePins();
 
     std::swap( m_pos, symbol->m_pos );
-    std::swap( m_unit, symbol->m_unit );
-    std::swap( m_bodyStyle, symbol->m_bodyStyle );
 
     m_fields.swap( symbol->m_fields ); // std::vector's swap()
 
@@ -2004,6 +1985,7 @@ void SCH_SYMBOL::swapData( SCH_ITEM* aItem )
     std::swap( m_excludedFromBOM, symbol->m_excludedFromBOM );
     std::swap( m_DNP, symbol->m_DNP );
     std::swap( m_excludedFromBoard, symbol->m_excludedFromBoard );
+    std::swap( m_excludedFromPosFiles, symbol->m_excludedFromPosFiles );
 
     std::swap( m_instances, symbol->m_instances );
     std::swap( m_schLibSymbolName, symbol->m_schLibSymbolName );
@@ -2062,12 +2044,15 @@ bool SCH_SYMBOL::ResolveTextVar( const SCH_SHEET_PATH* aPath, wxString* token,
                                         "([a-zA-Z]*))?" // rangeStr
                                         "$" ) );
 
-    wxCHECK( aPath, false );
+    if( !aPath )
+        return false;
 
     SCHEMATIC* schematic = Schematic();
 
     if( !schematic )
         return false;
+
+    wxString variant = aVariantName.IsEmpty() ? schematic->GetCurrentVariant() : aVariantName;
 
     if( operatingPoint.Matches( *token ) )
     {
@@ -2166,10 +2151,10 @@ bool SCH_SYMBOL::ResolveTextVar( const SCH_SHEET_PATH* aPath, wxString* token,
             else if( !aVariantName.IsEmpty() )
             {
                 // Check for variant-specific field value
-                std::optional<SCH_SYMBOL_VARIANT> variant = GetVariant( *aPath, aVariantName );
+                std::optional<SCH_SYMBOL_VARIANT> symVariant = GetVariant( *aPath, aVariantName );
 
-                if( variant && variant->m_Fields.contains( fieldName ) )
-                    *token = variant->m_Fields.at( fieldName );
+                if( symVariant && symVariant->m_Fields.contains( fieldName ) )
+                    *token = symVariant->m_Fields.at( fieldName );
                 else
                     *token = field.GetShownText( aPath, false, aDepth + 1 );
             }
@@ -2263,7 +2248,7 @@ bool SCH_SYMBOL::ResolveTextVar( const SCH_SHEET_PATH* aPath, wxString* token,
     {
         *token = wxEmptyString;
 
-        if( aPath->GetExcludedFromBOM() || this->ResolveExcludedFromBOM() )
+        if( aPath->GetExcludedFromBOM( variant ) || this->ResolveExcludedFromBOM( aPath, variant ) )
             *token = _( "Excluded from BOM" );
 
         return true;
@@ -2272,7 +2257,7 @@ bool SCH_SYMBOL::ResolveTextVar( const SCH_SHEET_PATH* aPath, wxString* token,
     {
         *token = wxEmptyString;
 
-        if( aPath->GetExcludedFromBoard() || this->ResolveExcludedFromBoard() )
+        if( aPath->GetExcludedFromBoard( variant ) || this->ResolveExcludedFromBoard( aPath, variant ) )
             *token = _( "Excluded from board" );
 
         return true;
@@ -2281,7 +2266,7 @@ bool SCH_SYMBOL::ResolveTextVar( const SCH_SHEET_PATH* aPath, wxString* token,
     {
         *token = wxEmptyString;
 
-        if( aPath->GetExcludedFromSim() || this->ResolveExcludedFromSim() )
+        if( aPath->GetExcludedFromSim( variant ) || this->ResolveExcludedFromSim( aPath, variant ) )
             *token = _( "Excluded from simulation" );
 
         return true;
@@ -2290,9 +2275,7 @@ bool SCH_SYMBOL::ResolveTextVar( const SCH_SHEET_PATH* aPath, wxString* token,
     {
         *token = wxEmptyString;
 
-        wxString variant = aVariantName.IsEmpty() ? schematic->GetCurrentVariant() : aVariantName;
-
-        if( aPath->GetDNP() || this->ResolveDNP( aPath, variant ) )
+        if( aPath->GetDNP( variant ) || this->ResolveDNP( aPath, variant ) )
             *token = _( "DNP" );
 
         return true;
@@ -3094,8 +3077,25 @@ bool SCH_SYMBOL::Matches( const EDA_SEARCH_DATA& aSearchData, void* aAuxData ) c
             return true;
     }
 
-    for( SCH_ITEM& drawItem : GetLibSymbolRef()->GetDrawItems() )
+    // Search instance fields rather than lib template fields so that modified values
+    // (e.g. a "+5VA" symbol derived from "+5V") are matched correctly.  Skip the
+    // Reference field to avoid infinite recursion: SCH_FIELD::Matches() for REFERENCE
+    // calls back into SCH_SYMBOL::Matches().
+    for( const SCH_FIELD& field : m_fields )
     {
+        if( field.GetId() == FIELD_T::REFERENCE )
+            continue;
+
+        if( field.Matches( aSearchData, aAuxData ) )
+            return true;
+    }
+
+    // Search non-field lib draw items (pins, graphical text) for completeness.
+    for( const SCH_ITEM& drawItem : GetLibSymbolRef()->GetDrawItems() )
+    {
+        if( drawItem.Type() == SCH_FIELD_T )
+            continue;
+
         if( drawItem.Matches( aSearchData, aAuxData ) )
             return true;
     }
@@ -4000,6 +4000,9 @@ bool SCH_SYMBOL::operator==( const SCH_ITEM& aOther ) const
         return false;
 
     if( m_excludedFromBoard != symbol.m_excludedFromBoard )
+        return false;
+
+    if( m_excludedFromPosFiles != symbol.m_excludedFromPosFiles )
         return false;
 
     if( m_schLibSymbolName != symbol.m_schLibSymbolName )

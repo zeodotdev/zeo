@@ -265,11 +265,11 @@ private:
         if( !pin && !sheetPin )
             return;
 
-        Add( _( "Wire" ), ID_POPUP_SCH_PIN_TRICKS_WIRE, BITMAPS::add_line );
-        Add( _( "No Connect" ), ID_POPUP_SCH_PIN_TRICKS_NO_CONNECT, BITMAPS::noconn );
-        Add( _( "Net Label" ), ID_POPUP_SCH_PIN_TRICKS_NET_LABEL, BITMAPS::add_label );
-        Add( _( "Hierarchical Label" ), ID_POPUP_SCH_PIN_TRICKS_HIER_LABEL, BITMAPS::add_hierarchical_label );
-        Add( _( "Global Label" ), ID_POPUP_SCH_PIN_TRICKS_GLOBAL_LABEL, BITMAPS::add_glabel );
+        Add( _( "Wire" ),               ID_POPUP_SCH_PIN_TRICKS_WIRE,         BITMAPS::add_line );
+        Add( _( "No Connect" ),         ID_POPUP_SCH_PIN_TRICKS_NO_CONNECT,   BITMAPS::noconn );
+        Add( _( "Net Label" ),          ID_POPUP_SCH_PIN_TRICKS_NET_LABEL,    BITMAPS::add_label );
+        Add( _( "Hierarchical Label" ), ID_POPUP_SCH_PIN_TRICKS_HIER_LABEL,   BITMAPS::add_hierarchical_label );
+        Add( _( "Global Label" ),       ID_POPUP_SCH_PIN_TRICKS_GLOBAL_LABEL, BITMAPS::add_glabel );
     }
 };
 
@@ -292,237 +292,396 @@ bool SCH_EDIT_TOOL::Init()
 
     wxASSERT_MSG( drawingTools, "eeshema.InteractiveDrawing tool is not available" );
 
-    auto hasElements = [this]( const SELECTION& aSel )
-    {
-        return !m_frame->GetScreen()->Items().empty();
-    };
-
-    auto sheetHasUndefinedPins = []( const SELECTION& aSel )
-    {
-        if( aSel.Size() == 1 && aSel.Front()->Type() == SCH_SHEET_T )
-            return static_cast<SCH_SHEET*>( aSel.Front() )->HasUndefinedPins();
-
-        return false;
-    };
-
-    auto attribDNPCond = [this]( const SELECTION& aSel )
-    {
-        SCH_SHEET_PATH* sheet = &m_frame->GetCurrentSheet();
-        wxString        variant = m_frame->Schematic().GetCurrentVariant();
-
-        return std::all_of( aSel.Items().begin(), aSel.Items().end(),
-                            [sheet, variant]( const EDA_ITEM* item )
-                            {
-                                return !item->IsType( { SCH_SYMBOL_T } )
-                                       || static_cast<const SCH_SYMBOL*>( item )->GetDNP( sheet, variant );
-                            } );
-    };
-
-    auto attribExcludeFromSimCond = []( const SELECTION& aSel )
-    {
-        return std::all_of( aSel.Items().begin(), aSel.Items().end(),
-                            []( const EDA_ITEM* item )
-                            {
-                                return !item->IsType( { SCH_SYMBOL_T } )
-                                       || static_cast<const SCH_SYMBOL*>( item )->GetExcludedFromSim();
-                            } );
-    };
-
-    auto attribExcludeFromBOMCond = []( const SELECTION& aSel )
-    {
-        return std::all_of( aSel.Items().begin(), aSel.Items().end(),
-                            []( const EDA_ITEM* item )
-                            {
-                                return !item->IsType( { SCH_SYMBOL_T } )
-                                       || static_cast<const SCH_SYMBOL*>( item )->GetExcludedFromBOM();
-                            } );
-    };
-
-
-    auto attribExcludeFromBoardCond = []( const SELECTION& aSel )
-    {
-        return std::all_of( aSel.Items().begin(), aSel.Items().end(),
-                            []( const EDA_ITEM* item )
-                            {
-                                return !item->IsType( { SCH_SYMBOL_T } )
-                                       || static_cast<const SCH_SYMBOL*>( item )->GetExcludedFromBoard();
-                            } );
-    };
-
+    static const std::vector<KICAD_T> attribTypes = { SCH_SYMBOL_T, SCH_SHEET_T, SCH_RULE_AREA_T };
     static const std::vector<KICAD_T> sheetTypes = { SCH_SHEET_T };
 
     auto sheetSelection = S_C::Count( 1 ) && S_C::OnlyTypes( sheetTypes );
 
-    auto haveHighlight = [this]( const SELECTION& sel )
-    {
-        SCH_EDIT_FRAME* editFrame = dynamic_cast<SCH_EDIT_FRAME*>( m_frame );
+    auto sheetHasUndefinedPins =
+            []( const SELECTION& aSel )
+            {
+                if( aSel.Size() == 1 && aSel.Front()->Type() == SCH_SHEET_T )
+                    return static_cast<SCH_SHEET*>( aSel.Front() )->HasUndefinedPins();
 
-        return editFrame && !editFrame->GetHighlightedConnection().IsEmpty();
-    };
+                return false;
+            };
 
-    auto anyTextTool = [this]( const SELECTION& aSel )
-    {
-        return ( m_frame->IsCurrentTool( SCH_ACTIONS::placeLabel )
-                 || m_frame->IsCurrentTool( SCH_ACTIONS::placeClassLabel )
-                 || m_frame->IsCurrentTool( SCH_ACTIONS::placeGlobalLabel )
-                 || m_frame->IsCurrentTool( SCH_ACTIONS::placeHierLabel )
-                 || m_frame->IsCurrentTool( SCH_ACTIONS::placeSchematicText ) );
-    };
+    auto attribDNPCond =
+            [this]( const SELECTION& aSel )
+            {
+                SCH_SHEET_PATH* sheet = &m_frame->GetCurrentSheet();
+                wxString        variant = m_frame->Schematic().GetCurrentVariant();
+                int             checked = 0;
+                int             unchecked = 0;
 
-    auto duplicateCondition = []( const SELECTION& aSel )
-    {
-        if( SCH_LINE_WIRE_BUS_TOOL::IsDrawingLineWireOrBus( aSel ) )
-            return false;
+                for( EDA_ITEM* item : aSel )
+                {
+                    switch( item->Type() )
+                    {
+                    case SCH_SYMBOL_T:
+                        if( static_cast<const SCH_SYMBOL*>( item )->GetDNP( sheet, variant ) )
+                            checked++;
+                        else
+                            unchecked++;
 
-        return true;
-    };
+                        break;
 
-    auto orientCondition = []( const SELECTION& aSel )
-    {
-        if( SCH_LINE_WIRE_BUS_TOOL::IsDrawingLineWireOrBus( aSel ) )
-            return false;
+                    case SCH_SHEET_T:
+                        if( static_cast<const SCH_SHEET*>( item )->GetDNP( sheet, variant ) )
+                            checked++;
+                        else
+                            unchecked++;
 
-        return SELECTION_CONDITIONS::HasTypes( SCH_EDIT_TOOL::RotatableItems )( aSel );
-    };
+                        break;
+
+                    case SCH_RULE_AREA_T:
+                        if( static_cast<const SCH_RULE_AREA*>( item )->GetDNP() )
+                            checked++;
+                        else
+                            unchecked++;
+
+                        break;
+
+                    default:
+                        break;
+                    }
+                }
+
+                return checked > 0 && unchecked == 0;
+            };
+
+    auto attribExcludeFromSimCond =
+            [this]( const SELECTION& aSel )
+            {
+                SCH_SHEET_PATH* sheet = &m_frame->GetCurrentSheet();
+                wxString        variant = m_frame->Schematic().GetCurrentVariant();
+                int             checked = 0;
+                int             unchecked = 0;
+
+                for( EDA_ITEM* item : aSel )
+                {
+                    switch( item->Type() )
+                    {
+                    case SCH_SYMBOL_T:
+                        if( static_cast<const SCH_SYMBOL*>( item )->GetExcludedFromSim( sheet, variant ) )
+                            checked++;
+                        else
+                            unchecked++;
+
+                        break;
+
+                    case SCH_SHEET_T:
+                        if( static_cast<const SCH_SHEET*>( item )->GetExcludedFromSim( sheet, variant ) )
+                            checked++;
+                        else
+                            unchecked++;
+
+                        break;
+
+                    case SCH_RULE_AREA_T:
+                        if( static_cast<const SCH_RULE_AREA*>( item )->GetExcludedFromSim() )
+                            checked++;
+                        else
+                            unchecked++;
+
+                        break;
+
+                    default:
+                        break;
+                    }
+                }
+
+                return checked > 0 && unchecked == 0;
+            };
+
+    auto attribExcludeFromBOMCond =
+            [this]( const SELECTION& aSel )
+            {
+                SCH_SHEET_PATH* sheet = &m_frame->GetCurrentSheet();
+                wxString        variant = m_frame->Schematic().GetCurrentVariant();
+                int             checked = 0;
+                int             unchecked = 0;
+
+                for( EDA_ITEM* item : aSel )
+                {
+                    switch( item->Type() )
+                    {
+                    case SCH_SYMBOL_T:
+                        if( static_cast<const SCH_SYMBOL*>( item )->GetExcludedFromBOM( sheet, variant ) )
+                            checked++;
+                        else
+                            unchecked++;
+
+                        break;
+
+                    case SCH_SHEET_T:
+                        if( static_cast<const SCH_SHEET*>( item )->GetExcludedFromBOM( sheet, variant ) )
+                            checked++;
+                        else
+                            unchecked++;
+
+                        break;
+
+                    case SCH_RULE_AREA_T:
+                        if( static_cast<const SCH_RULE_AREA*>( item )->GetExcludedFromBOM() )
+                            checked++;
+                        else
+                            unchecked++;
+
+                        break;
+
+                    default:
+                        break;
+                    }
+                }
+
+                return checked > 0 && unchecked == 0;
+            };
+
+
+    auto attribExcludeFromBoardCond =
+            [this]( const SELECTION& aSel )
+            {
+                SCH_SHEET_PATH* sheet = &m_frame->GetCurrentSheet();
+                wxString        variant = m_frame->Schematic().GetCurrentVariant();
+                int             checked = 0;
+                int             unchecked = 0;
+
+                for( EDA_ITEM* item : aSel )
+                {
+                    switch( item->Type() )
+                    {
+                    case SCH_SYMBOL_T:
+                        if( static_cast<const SCH_SYMBOL*>( item )->GetExcludedFromBoard( sheet, variant ) )
+                            checked++;
+                        else
+                            unchecked++;
+
+                        break;
+
+                    case SCH_SHEET_T:
+                        if( static_cast<const SCH_SHEET*>( item )->GetExcludedFromBoard( sheet, variant ) )
+                            checked++;
+                        else
+                            unchecked++;
+
+                        break;
+
+                    case SCH_RULE_AREA_T:
+                        if( static_cast<const SCH_RULE_AREA*>( item )->GetExcludedFromBoard() )
+                            checked++;
+                        else
+                            unchecked++;
+
+                        break;
+
+                    default:
+                        break;
+                    }
+                }
+
+                return checked > 0 && unchecked == 0;
+            };
+
+    auto haveHighlight =
+            [this]( const SELECTION& sel )
+            {
+                SCH_EDIT_FRAME* editFrame = dynamic_cast<SCH_EDIT_FRAME*>( m_frame );
+
+                return editFrame && !editFrame->GetHighlightedConnection().IsEmpty();
+            };
+
+    auto anyTextTool =
+            [this]( const SELECTION& aSel )
+            {
+                return ( m_frame->IsCurrentTool( SCH_ACTIONS::placeLabel )
+                      || m_frame->IsCurrentTool( SCH_ACTIONS::placeClassLabel )
+                      || m_frame->IsCurrentTool( SCH_ACTIONS::placeGlobalLabel )
+                      || m_frame->IsCurrentTool( SCH_ACTIONS::placeHierLabel )
+                      || m_frame->IsCurrentTool( SCH_ACTIONS::placeSchematicText ) );
+            };
+
+    auto duplicateCondition =
+            []( const SELECTION& aSel )
+            {
+                if( SCH_LINE_WIRE_BUS_TOOL::IsDrawingLineWireOrBus( aSel ) )
+                    return false;
+
+                return true;
+            };
+
+    auto orientCondition =
+            []( const SELECTION& aSel )
+            {
+                if( SCH_LINE_WIRE_BUS_TOOL::IsDrawingLineWireOrBus( aSel ) )
+                    return false;
+
+                return SELECTION_CONDITIONS::HasTypes( SCH_EDIT_TOOL::RotatableItems )( aSel );
+            };
 
     const auto swapSelectionCondition = S_C::OnlyTypes( SwappableItems ) && SELECTION_CONDITIONS::MoreThan( 1 );
 
-    auto propertiesCondition = [this]( const SELECTION& aSel )
-    {
-        if( aSel.GetSize() == 0 )
-        {
-            if( getView()->IsLayerVisible( LAYER_SCHEMATIC_DRAWINGSHEET ) )
+    auto propertiesCondition =
+            [this]( const SELECTION& aSel )
             {
-                DS_PROXY_VIEW_ITEM* ds = m_frame->GetCanvas()->GetView()->GetDrawingSheet();
-                VECTOR2D            cursor = getViewControls()->GetCursorPosition( false );
+                if( aSel.GetSize() == 0 )
+                {
+                    if( getView()->IsLayerVisible( LAYER_SCHEMATIC_DRAWINGSHEET ) )
+                    {
+                        DS_PROXY_VIEW_ITEM* ds = m_frame->GetCanvas()->GetView()->GetDrawingSheet();
+                        VECTOR2D            cursor = getViewControls()->GetCursorPosition( false );
 
-                if( ds && ds->HitTestDrawingSheetItems( getView(), cursor ) )
-                    return true;
-            }
+                        if( ds && ds->HitTestDrawingSheetItems( getView(), cursor ) )
+                            return true;
+                    }
 
-            return false;
-        }
+                    return false;
+                }
 
-        SCH_ITEM*            firstItem = dynamic_cast<SCH_ITEM*>( aSel.Front() );
-        const SCH_SELECTION* eeSelection = dynamic_cast<const SCH_SELECTION*>( &aSel );
+                SCH_ITEM*            firstItem   = dynamic_cast<SCH_ITEM*>( aSel.Front() );
+                const SCH_SELECTION* eeSelection = dynamic_cast<const SCH_SELECTION*>( &aSel );
 
-        if( !firstItem || !eeSelection )
-            return false;
+                if( !firstItem || !eeSelection )
+                    return false;
 
-        switch( firstItem->Type() )
-        {
-        case SCH_SYMBOL_T:
-        case SCH_SHEET_T:
-        case SCH_SHEET_PIN_T:
-        case SCH_MODULE_BLOCK_T:
-        case SCH_TEXT_T:
-        case SCH_TEXTBOX_T:
-        case SCH_TABLE_T:
-        case SCH_TABLECELL_T:
-        case SCH_LABEL_T:
-        case SCH_GLOBAL_LABEL_T:
-        case SCH_HIER_LABEL_T:
-        case SCH_DIRECTIVE_LABEL_T:
-        case SCH_RULE_AREA_T:
-        case SCH_FIELD_T:
-        case SCH_SHAPE_T:
-        case SCH_BITMAP_T:
-        case SCH_GROUP_T: return aSel.GetSize() == 1;
+                switch( firstItem->Type() )
+                {
+                case SCH_SYMBOL_T:
+                case SCH_SHEET_T:
+                case SCH_SHEET_PIN_T:
+                case SCH_MODULE_BLOCK_T:
+                case SCH_TEXT_T:
+                case SCH_TEXTBOX_T:
+                case SCH_TABLE_T:
+                case SCH_TABLECELL_T:
+                case SCH_LABEL_T:
+                case SCH_GLOBAL_LABEL_T:
+                case SCH_HIER_LABEL_T:
+                case SCH_DIRECTIVE_LABEL_T:
+                case SCH_RULE_AREA_T:
+                case SCH_FIELD_T:
+                case SCH_SHAPE_T:
+                case SCH_BITMAP_T:
+                case SCH_GROUP_T:
+                    return aSel.GetSize() == 1;
 
-        case SCH_LINE_T:
-        case SCH_BUS_WIRE_ENTRY_T:
-        case SCH_JUNCTION_T:
-            if( std::all_of( aSel.Items().begin(), aSel.Items().end(),
-                             [&]( const EDA_ITEM* item )
-                             {
-                                 return item->Type() == SCH_LINE_T
+                case SCH_LINE_T:
+                case SCH_BUS_WIRE_ENTRY_T:
+                case SCH_JUNCTION_T:
+                    if( std::all_of( aSel.Items().begin(), aSel.Items().end(),
+                            [&]( const EDA_ITEM* item )
+                            {
+                                return item->Type() == SCH_LINE_T
                                         && static_cast<const SCH_LINE*>( item )->IsGraphicLine();
-                             } ) )
+                            } ) )
+                    {
+                        return true;
+                    }
+                    else if( std::all_of( aSel.Items().begin(), aSel.Items().end(),
+                            [&]( const EDA_ITEM* item )
+                            {
+                                return item->Type() == SCH_JUNCTION_T;
+                            } ) )
+                    {
+                        return true;
+                    }
+                    else if( std::all_of( aSel.Items().begin(), aSel.Items().end(),
+                            [&]( const EDA_ITEM* item )
+                            {
+                                const SCH_ITEM* schItem = dynamic_cast<const SCH_ITEM*>( item );
+
+                                wxCHECK( schItem, false );
+
+                                return ( schItem->HasLineStroke() && schItem->IsConnectable() )
+                                        || item->Type() == SCH_JUNCTION_T;
+                            } ) )
+                    {
+                        return true;
+                    }
+
+                    return false;
+
+                default:
+                    return false;
+                }
+            };
+
+    auto autoplaceCondition =
+            []( const SELECTION& aSel )
             {
-                return true;
-            }
-            else if( std::all_of( aSel.Items().begin(), aSel.Items().end(),
-                                  [&]( const EDA_ITEM* item )
-                                  {
-                                      return item->Type() == SCH_JUNCTION_T;
-                                  } ) )
-            {
-                return true;
-            }
-            else if( std::all_of( aSel.Items().begin(), aSel.Items().end(),
-                                  [&]( const EDA_ITEM* item )
-                                  {
-                                      const SCH_ITEM* schItem = dynamic_cast<const SCH_ITEM*>( item );
+                for( const EDA_ITEM* item : aSel )
+                {
+                    if( item->IsType( SCH_COLLECTOR::FieldOwners ) )
+                        return true;
+                }
 
-                                      wxCHECK( schItem, false );
-
-                                      return ( schItem->HasLineStroke() && schItem->IsConnectable() )
-                                             || item->Type() == SCH_JUNCTION_T;
-                                  } ) )
-            {
-                return true;
-            }
-
-            return false;
-
-        default: return false;
-        }
-    };
-
-    auto autoplaceCondition = []( const SELECTION& aSel )
-    {
-        for( const EDA_ITEM* item : aSel )
-        {
-            if( item->IsType( SCH_COLLECTOR::FieldOwners ) )
-                return true;
-        }
-
-        return false;
-    };
+                return false;
+            };
 
     // allTextTypes does not include SCH_SHEET_PIN_T because one cannot convert other
     // types to/from this type, living only in a SHEET
-    static const std::vector<KICAD_T> allTextTypes = { SCH_LABEL_T,        SCH_DIRECTIVE_LABEL_T,
-                                                       SCH_GLOBAL_LABEL_T, SCH_HIER_LABEL_T,
-                                                       SCH_TEXT_T,         SCH_TEXTBOX_T };
+    static const std::vector<KICAD_T> allTextTypes = { SCH_LABEL_T,
+                                                       SCH_DIRECTIVE_LABEL_T,
+                                                       SCH_GLOBAL_LABEL_T,
+                                                       SCH_HIER_LABEL_T,
+                                                       SCH_TEXT_T,
+                                                       SCH_TEXTBOX_T };
 
     auto toChangeCondition = ( S_C::OnlyTypes( allTextTypes ) );
 
-    static const std::vector<KICAD_T> toLabelTypes = { SCH_DIRECTIVE_LABEL_T, SCH_GLOBAL_LABEL_T, SCH_HIER_LABEL_T,
-                                                       SCH_TEXT_T, SCH_TEXTBOX_T };
+    static const std::vector<KICAD_T> toLabelTypes = { SCH_DIRECTIVE_LABEL_T,
+                                                       SCH_GLOBAL_LABEL_T,
+                                                       SCH_HIER_LABEL_T,
+                                                       SCH_TEXT_T,
+                                                       SCH_TEXTBOX_T };
 
     auto toLabelCondition = ( S_C::Count( 1 ) && S_C::OnlyTypes( toLabelTypes ) )
-                            || ( S_C::MoreThan( 1 ) && S_C::OnlyTypes( allTextTypes ) );
+                                || ( S_C::MoreThan( 1 ) && S_C::OnlyTypes( allTextTypes ) );
 
-    static const std::vector<KICAD_T> toCLabelTypes = { SCH_LABEL_T, SCH_HIER_LABEL_T, SCH_GLOBAL_LABEL_T, SCH_TEXT_T,
+    static const std::vector<KICAD_T> toCLabelTypes = { SCH_LABEL_T,
+                                                        SCH_HIER_LABEL_T,
+                                                        SCH_GLOBAL_LABEL_T,
+                                                        SCH_TEXT_T,
                                                         SCH_TEXTBOX_T };
 
     auto toCLabelCondition = ( S_C::Count( 1 ) && S_C::OnlyTypes( toCLabelTypes ) )
-                             || ( S_C::MoreThan( 1 ) && S_C::OnlyTypes( allTextTypes ) );
+                                || ( S_C::MoreThan( 1 ) && S_C::OnlyTypes( allTextTypes ) );
 
-    static const std::vector<KICAD_T> toHLabelTypes = { SCH_LABEL_T, SCH_DIRECTIVE_LABEL_T, SCH_GLOBAL_LABEL_T,
-                                                        SCH_TEXT_T, SCH_TEXTBOX_T };
+    static const std::vector<KICAD_T> toHLabelTypes = { SCH_LABEL_T,
+                                                        SCH_DIRECTIVE_LABEL_T,
+                                                        SCH_GLOBAL_LABEL_T,
+                                                        SCH_TEXT_T,
+                                                        SCH_TEXTBOX_T };
 
     auto toHLabelCondition = ( S_C::Count( 1 ) && S_C::OnlyTypes( toHLabelTypes ) )
-                             || ( S_C::MoreThan( 1 ) && S_C::OnlyTypes( allTextTypes ) );
+                                || ( S_C::MoreThan( 1 ) && S_C::OnlyTypes( allTextTypes ) );
 
-    static const std::vector<KICAD_T> toGLabelTypes = { SCH_LABEL_T, SCH_DIRECTIVE_LABEL_T, SCH_HIER_LABEL_T,
-                                                        SCH_TEXT_T, SCH_TEXTBOX_T };
+    static const std::vector<KICAD_T> toGLabelTypes = { SCH_LABEL_T,
+                                                        SCH_DIRECTIVE_LABEL_T,
+                                                        SCH_HIER_LABEL_T,
+                                                        SCH_TEXT_T,
+                                                        SCH_TEXTBOX_T };
 
     auto toGLabelCondition = ( S_C::Count( 1 ) && S_C::OnlyTypes( toGLabelTypes ) )
-                             || ( S_C::MoreThan( 1 ) && S_C::OnlyTypes( allTextTypes ) );
+                                || ( S_C::MoreThan( 1 ) && S_C::OnlyTypes( allTextTypes ) );
 
-    static const std::vector<KICAD_T> toTextTypes = { SCH_LABEL_T, SCH_DIRECTIVE_LABEL_T, SCH_GLOBAL_LABEL_T,
-                                                      SCH_HIER_LABEL_T, SCH_TEXTBOX_T };
+    static const std::vector<KICAD_T> toTextTypes = { SCH_LABEL_T,
+                                                      SCH_DIRECTIVE_LABEL_T,
+                                                      SCH_GLOBAL_LABEL_T,
+                                                      SCH_HIER_LABEL_T,
+                                                      SCH_TEXTBOX_T };
 
     auto toTextCondition = ( S_C::Count( 1 ) && S_C::OnlyTypes( toTextTypes ) )
-                           || ( S_C::MoreThan( 1 ) && S_C::OnlyTypes( allTextTypes ) );
+                                || ( S_C::MoreThan( 1 ) && S_C::OnlyTypes( allTextTypes ) );
 
-    static const std::vector<KICAD_T> toTextBoxTypes = { SCH_LABEL_T, SCH_DIRECTIVE_LABEL_T, SCH_GLOBAL_LABEL_T,
-                                                         SCH_HIER_LABEL_T, SCH_TEXT_T };
+    static const std::vector<KICAD_T> toTextBoxTypes = { SCH_LABEL_T,
+                                                         SCH_DIRECTIVE_LABEL_T,
+                                                         SCH_GLOBAL_LABEL_T,
+                                                         SCH_HIER_LABEL_T,
+                                                         SCH_TEXT_T };
 
     auto toTextBoxCondition = ( S_C::Count( 1 ) && S_C::OnlyTypes( toTextBoxTypes ) )
-                              || ( S_C::MoreThan( 1 ) && S_C::OnlyTypes( allTextTypes ) );
+                                   || ( S_C::MoreThan( 1 ) && S_C::OnlyTypes( allTextTypes ) );
 
     static const std::vector<KICAD_T> busEntryTypes = { SCH_BUS_WIRE_ENTRY_T, SCH_BUS_BUS_ENTRY_T };
 
@@ -530,91 +689,99 @@ bool SCH_EDIT_TOOL::Init()
 
     auto singleSheetCondition = S_C::Count( 1 ) && S_C::OnlyTypes( sheetTypes );
 
-    auto makeSymbolUnitMenu = [&]( TOOL_INTERACTIVE* tool )
-    {
-        std::shared_ptr<SYMBOL_UNIT_MENU> menu = std::make_shared<SYMBOL_UNIT_MENU>();
-        menu->SetTool( tool );
-        tool->GetToolMenu().RegisterSubMenu( menu );
-        return menu.get();
-    };
+    auto makeSymbolUnitMenu =
+            [&]( TOOL_INTERACTIVE* tool )
+            {
+                std::shared_ptr<SYMBOL_UNIT_MENU> menu = std::make_shared<SYMBOL_UNIT_MENU>();
+                menu->SetTool( tool );
+                tool->GetToolMenu().RegisterSubMenu( menu );
+                return menu.get();
+            };
 
-    auto makeBodyStyleMenu = [&]( TOOL_INTERACTIVE* tool )
-    {
-        std::shared_ptr<BODY_STYLE_MENU> menu = std::make_shared<BODY_STYLE_MENU>();
-        menu->SetTool( tool );
-        tool->GetToolMenu().RegisterSubMenu( menu );
-        return menu.get();
-    };
+    auto makeBodyStyleMenu =
+            [&]( TOOL_INTERACTIVE* tool )
+            {
+                std::shared_ptr<BODY_STYLE_MENU> menu = std::make_shared<BODY_STYLE_MENU>();
+                menu->SetTool( tool );
+                tool->GetToolMenu().RegisterSubMenu( menu );
+                return menu.get();
+            };
 
-    auto makePinFunctionMenu = [&]( TOOL_INTERACTIVE* tool )
-    {
-        std::shared_ptr<ALT_PIN_FUNCTION_MENU> menu = std::make_shared<ALT_PIN_FUNCTION_MENU>();
-        menu->SetTool( tool );
-        tool->GetToolMenu().RegisterSubMenu( menu );
-        return menu.get();
-    };
+    auto makePinFunctionMenu =
+            [&]( TOOL_INTERACTIVE* tool )
+            {
+                std::shared_ptr<ALT_PIN_FUNCTION_MENU> menu = std::make_shared<ALT_PIN_FUNCTION_MENU>();
+                menu->SetTool( tool );
+                tool->GetToolMenu().RegisterSubMenu( menu );
+                return menu.get();
+            };
 
-    auto makePinTricksMenu = [&]( TOOL_INTERACTIVE* tool )
-    {
-        std::shared_ptr<PIN_TRICKS_MENU> menu = std::make_shared<PIN_TRICKS_MENU>();
-        menu->SetTool( tool );
-        tool->GetToolMenu().RegisterSubMenu( menu );
-        return menu.get();
-    };
+    auto makePinTricksMenu =
+            [&]( TOOL_INTERACTIVE* tool )
+            {
+                std::shared_ptr<PIN_TRICKS_MENU> menu = std::make_shared<PIN_TRICKS_MENU>();
+                menu->SetTool( tool );
+                tool->GetToolMenu().RegisterSubMenu( menu );
+                return menu.get();
+            };
 
-    auto makeTransformMenu = [&]()
-    {
-        CONDITIONAL_MENU* menu = new CONDITIONAL_MENU( moveTool );
-        menu->SetUntranslatedTitle( _HKI( "Transform Selection" ) );
+    auto makeTransformMenu =
+            [&]()
+            {
+                CONDITIONAL_MENU* menu = new CONDITIONAL_MENU( moveTool );
+                menu->SetUntranslatedTitle( _HKI( "Transform Selection" ) );
 
-        menu->AddItem( SCH_ACTIONS::rotateCCW, orientCondition );
-        menu->AddItem( SCH_ACTIONS::rotateCW, orientCondition );
-        menu->AddItem( SCH_ACTIONS::mirrorV, orientCondition );
-        menu->AddItem( SCH_ACTIONS::mirrorH, orientCondition );
+                menu->AddItem( SCH_ACTIONS::rotateCCW,   orientCondition );
+                menu->AddItem( SCH_ACTIONS::rotateCW,    orientCondition );
+                menu->AddItem( SCH_ACTIONS::mirrorV,     orientCondition );
+                menu->AddItem( SCH_ACTIONS::mirrorH,     orientCondition );
 
-        return menu;
-    };
+                return menu;
+            };
 
-    auto makeAttributesMenu = [&]()
-    {
-        CONDITIONAL_MENU* menu = new CONDITIONAL_MENU( moveTool );
-        menu->SetUntranslatedTitle( _HKI( "Attributes" ) );
+    auto makeAttributesMenu =
+            [&]()
+            {
+                CONDITIONAL_MENU* menu = new CONDITIONAL_MENU( moveTool );
+                menu->SetUntranslatedTitle( _HKI( "Attributes" ) );
 
-        menu->AddCheckItem( SCH_ACTIONS::setExcludeFromSimulation, S_C::ShowAlways );
-        menu->AddCheckItem( SCH_ACTIONS::setExcludeFromBOM, S_C::ShowAlways );
-        menu->AddCheckItem( SCH_ACTIONS::setExcludeFromBoard, S_C::ShowAlways );
-        menu->AddCheckItem( SCH_ACTIONS::setDNP, S_C::ShowAlways );
+                menu->AddCheckItem( SCH_ACTIONS::setExcludeFromSim,   S_C::ShowAlways );
+                menu->AddCheckItem( SCH_ACTIONS::setExcludeFromBOM,   S_C::ShowAlways );
+                menu->AddCheckItem( SCH_ACTIONS::setExcludeFromBoard, S_C::ShowAlways );
+                menu->AddCheckItem( SCH_ACTIONS::setDNP,              S_C::ShowAlways );
 
-        return menu;
-    };
+                return menu;
+            };
 
-    auto makeEditFieldsMenu = [&]()
-    {
-        CONDITIONAL_MENU* menu = new CONDITIONAL_MENU( m_selectionTool );
-        menu->SetUntranslatedTitle( _HKI( "Edit Main Fields" ) );
+    auto makeEditFieldsMenu =
+            [&]()
+            {
+                CONDITIONAL_MENU* menu = new CONDITIONAL_MENU( m_selectionTool );
+                menu->SetUntranslatedTitle( _HKI( "Edit Main Fields" ) );
 
-        menu->AddItem( SCH_ACTIONS::editReference, S_C::SingleSymbol, 200 );
-        menu->AddItem( SCH_ACTIONS::editValue, S_C::SingleSymbol, 200 );
-        menu->AddItem( SCH_ACTIONS::editFootprint, S_C::SingleSymbol, 200 );
+                menu->AddItem( SCH_ACTIONS::editReference,    S_C::SingleSymbol, 200 );
+                menu->AddItem( SCH_ACTIONS::editValue,        S_C::SingleSymbol, 200 );
+                menu->AddItem( SCH_ACTIONS::editFootprint,    S_C::SingleSymbol, 200 );
 
-        return menu;
-    };
+                return menu;
+            };
 
-    auto makeConvertToMenu = [&]()
-    {
-        CONDITIONAL_MENU* menu = new CONDITIONAL_MENU( m_selectionTool );
-        menu->SetUntranslatedTitle( _HKI( "Change To" ) );
-        menu->SetIcon( BITMAPS::right );
+    auto makeConvertToMenu =
+            [&]()
+            {
+                CONDITIONAL_MENU* menu = new CONDITIONAL_MENU( m_selectionTool );
+                menu->SetUntranslatedTitle( _HKI( "Change To" ) );
+                menu->SetIcon( BITMAPS::right );
 
-        menu->AddItem( SCH_ACTIONS::toLabel, toLabelCondition );
-        menu->AddItem( SCH_ACTIONS::toDLabel, toCLabelCondition );
-        menu->AddItem( SCH_ACTIONS::toHLabel, toHLabelCondition );
-        menu->AddItem( SCH_ACTIONS::toGLabel, toGLabelCondition );
-        menu->AddItem( SCH_ACTIONS::toText, toTextCondition );
-        menu->AddItem( SCH_ACTIONS::toTextBox, toTextBoxCondition );
+                menu->AddItem( SCH_ACTIONS::toLabel,    toLabelCondition );
+                menu->AddItem(SCH_ACTIONS::toDLabel,    toCLabelCondition );
+                menu->AddItem( SCH_ACTIONS::toHLabel,   toHLabelCondition );
+                menu->AddItem( SCH_ACTIONS::toGLabel,   toGLabelCondition );
+                menu->AddItem( SCH_ACTIONS::toText,     toTextCondition );
+                menu->AddItem( SCH_ACTIONS::toTextBox,  toTextBoxCondition );
 
-        return menu;
-    };
+                return menu;
+            };
 
     const auto canCopyText = SCH_CONDITIONS::OnlyTypes( {
             SCH_TEXT_T,
@@ -637,114 +804,141 @@ bool SCH_EDIT_TOOL::Init()
 
     moveMenu.AddSeparator();
     moveMenu.AddMenu( makeSymbolUnitMenu( moveTool ), S_C::SingleMultiUnitSymbol, 1 );
-    moveMenu.AddMenu( makeBodyStyleMenu( moveTool ), S_C::SingleMultiBodyStyleSymbol, 1 );
+    moveMenu.AddMenu( makeBodyStyleMenu( moveTool ),  S_C::SingleMultiBodyStyleSymbol, 1 );
 
-    moveMenu.AddMenu( makeTransformMenu(), orientCondition, 200 );
-    moveMenu.AddMenu( makeAttributesMenu(), S_C::HasType( SCH_SYMBOL_T ), 200 );
-    moveMenu.AddItem( SCH_ACTIONS::swap, swapSelectionCondition, 200 );
-    moveMenu.AddItem( SCH_ACTIONS::properties, propertiesCondition, 200 );
-    moveMenu.AddMenu( makeEditFieldsMenu(), S_C::SingleSymbol, 200 );
+    moveMenu.AddMenu( makeTransformMenu(),            orientCondition, 200 );
+    moveMenu.AddMenu( makeAttributesMenu(),           S_C::HasTypes( attribTypes ), 200 );
+    moveMenu.AddItem( SCH_ACTIONS::swap,              swapSelectionCondition, 200 );
+    moveMenu.AddItem( SCH_ACTIONS::properties,        propertiesCondition, 200 );
+    moveMenu.AddMenu( makeEditFieldsMenu(),           S_C::SingleSymbol, 200 );
 
     moveMenu.AddSeparator();
-    moveMenu.AddItem( ACTIONS::cut, S_C::IdleSelection );
-    moveMenu.AddItem( ACTIONS::copy, S_C::IdleSelection );
-    moveMenu.AddItem( ACTIONS::copyAsText, canCopyText && S_C::IdleSelection );
-    moveMenu.AddItem( ACTIONS::doDelete, S_C::NotEmpty );
-    moveMenu.AddItem( ACTIONS::duplicate, duplicateCondition );
+    moveMenu.AddItem( ACTIONS::cut,                   S_C::IdleSelection );
+    moveMenu.AddItem( ACTIONS::copy,                  S_C::IdleSelection );
+    moveMenu.AddItem( ACTIONS::copyAsText,            canCopyText && S_C::IdleSelection );
+    moveMenu.AddItem( ACTIONS::doDelete,              S_C::NotEmpty );
+    moveMenu.AddItem( ACTIONS::duplicate,             duplicateCondition );
 
     //
     // Add editing actions to the drawing tool menu
     //
     CONDITIONAL_MENU& drawMenu = drawingTools->GetToolMenu().GetMenu();
 
-    drawMenu.AddItem( SCH_ACTIONS::clearHighlight, haveHighlight && SCH_CONDITIONS::Idle, 1 );
-    drawMenu.AddSeparator( haveHighlight && SCH_CONDITIONS::Idle, 1 );
+    drawMenu.AddItem( SCH_ACTIONS::clearHighlight,    haveHighlight && S_C::Idle, 1 );
+    drawMenu.AddSeparator(                            haveHighlight && S_C::Idle, 1 );
 
-    drawMenu.AddItem( SCH_ACTIONS::enterSheet, sheetSelection && SCH_CONDITIONS::Idle, 1 );
-    drawMenu.AddSeparator( sheetSelection && SCH_CONDITIONS::Idle, 1 );
+    drawMenu.AddItem( SCH_ACTIONS::enterSheet,        sheetSelection && S_C::Idle, 1 );
+    drawMenu.AddSeparator(                            sheetSelection && S_C::Idle, 1 );
 
     drawMenu.AddMenu( makeSymbolUnitMenu( drawingTools ), S_C::SingleMultiUnitSymbol, 1 );
-    drawMenu.AddMenu( makeBodyStyleMenu( drawingTools ), S_C::SingleMultiBodyStyleSymbol, 1 );
+    drawMenu.AddMenu( makeBodyStyleMenu( drawingTools ),  S_C::SingleMultiBodyStyleSymbol, 1 );
 
-    drawMenu.AddMenu( makeTransformMenu(), orientCondition, 200 );
-    drawMenu.AddMenu( makeAttributesMenu(), S_C::HasType( SCH_SYMBOL_T ), 200 );
-    drawMenu.AddItem( SCH_ACTIONS::properties, propertiesCondition, 200 );
-    drawMenu.AddMenu( makeEditFieldsMenu(), S_C::SingleSymbol, 200 );
-    drawMenu.AddItem( SCH_ACTIONS::autoplaceFields, autoplaceCondition, 200 );
+    drawMenu.AddMenu( makeTransformMenu(),            orientCondition, 200 );
+    drawMenu.AddMenu( makeAttributesMenu(),           S_C::HasTypes( attribTypes ), 200 );
+    drawMenu.AddItem( SCH_ACTIONS::properties,        propertiesCondition, 200 );
+    drawMenu.AddMenu( makeEditFieldsMenu(),           S_C::SingleSymbol, 200 );
+    drawMenu.AddItem( SCH_ACTIONS::autoplaceFields,   autoplaceCondition, 200 );
 
-    drawMenu.AddItem( SCH_ACTIONS::editWithLibEdit, S_C::SingleSymbolOrPower && S_C::Idle, 200 );
+    drawMenu.AddItem( SCH_ACTIONS::editWithLibEdit,   S_C::SingleSymbolOrPower && S_C::Idle, 200 );
 
-    drawMenu.AddItem( SCH_ACTIONS::toLabel, anyTextTool && S_C::Idle, 200 );
-    drawMenu.AddItem( SCH_ACTIONS::toHLabel, anyTextTool && S_C::Idle, 200 );
-    drawMenu.AddItem( SCH_ACTIONS::toGLabel, anyTextTool && S_C::Idle, 200 );
-    drawMenu.AddItem( SCH_ACTIONS::toText, anyTextTool && S_C::Idle, 200 );
-    drawMenu.AddItem( SCH_ACTIONS::toTextBox, anyTextTool && S_C::Idle, 200 );
+    drawMenu.AddItem( SCH_ACTIONS::toLabel,           anyTextTool && S_C::Idle, 200 );
+    drawMenu.AddItem( SCH_ACTIONS::toHLabel,          anyTextTool && S_C::Idle, 200 );
+    drawMenu.AddItem( SCH_ACTIONS::toGLabel,          anyTextTool && S_C::Idle, 200 );
+    drawMenu.AddItem( SCH_ACTIONS::toText,            anyTextTool && S_C::Idle, 200 );
+    drawMenu.AddItem( SCH_ACTIONS::toTextBox,         anyTextTool && S_C::Idle, 200 );
 
     //
     // Add editing actions to the selection tool menu
     //
     CONDITIONAL_MENU& selToolMenu = m_selectionTool->GetToolMenu().GetMenu();
 
-    selToolMenu.AddMenu( makeSymbolUnitMenu( m_selectionTool ), S_C::SingleMultiUnitSymbol, 1 );
-    selToolMenu.AddMenu( makeBodyStyleMenu( m_selectionTool ), S_C::SingleMultiBodyStyleSymbol, 1 );
+    selToolMenu.AddMenu( makeSymbolUnitMenu( m_selectionTool ),  S_C::SingleMultiUnitSymbol, 1 );
+    selToolMenu.AddMenu( makeBodyStyleMenu( m_selectionTool ),   S_C::SingleMultiBodyStyleSymbol, 1 );
     selToolMenu.AddMenu( makePinFunctionMenu( m_selectionTool ), S_C::SingleMultiFunctionPin, 1 );
-    selToolMenu.AddMenu( makePinTricksMenu( m_selectionTool ), S_C::AllPinsOrSheetPins, 1 );
+    selToolMenu.AddMenu( makePinTricksMenu( m_selectionTool ),   S_C::AllPinsOrSheetPins, 1 );
 
-    selToolMenu.AddMenu( makeTransformMenu(), orientCondition, 200 );
-    selToolMenu.AddMenu( makeAttributesMenu(), S_C::HasType( SCH_SYMBOL_T ), 200 );
-    selToolMenu.AddItem( SCH_ACTIONS::swap, swapSelectionCondition, 200 );
-    selToolMenu.AddItem( SCH_ACTIONS::properties, propertiesCondition, 200 );
-    selToolMenu.AddMenu( makeEditFieldsMenu(), S_C::SingleSymbol, 200 );
+    selToolMenu.AddMenu( makeTransformMenu(),          orientCondition, 200 );
+    selToolMenu.AddMenu( makeAttributesMenu(),         S_C::HasTypes( attribTypes ), 200 );
+    selToolMenu.AddItem( SCH_ACTIONS::swap,            swapSelectionCondition, 200 );
+    selToolMenu.AddItem( SCH_ACTIONS::properties,      propertiesCondition, 200 );
+    selToolMenu.AddMenu( makeEditFieldsMenu(),         S_C::SingleSymbol, 200 );
     selToolMenu.AddItem( SCH_ACTIONS::autoplaceFields, autoplaceCondition, 200 );
 
     selToolMenu.AddItem( SCH_ACTIONS::editWithLibEdit, S_C::SingleSymbolOrPower && S_C::Idle, 200 );
-    selToolMenu.AddItem( SCH_ACTIONS::changeSymbol, S_C::SingleSymbolOrPower, 200 );
-    selToolMenu.AddItem( SCH_ACTIONS::updateSymbol, S_C::SingleSymbolOrPower, 200 );
-    selToolMenu.AddItem( SCH_ACTIONS::changeSymbols, S_C::MultipleSymbolsOrPower, 200 );
-    selToolMenu.AddItem( SCH_ACTIONS::updateSymbols, S_C::MultipleSymbolsOrPower, 200 );
-    selToolMenu.AddMenu( makeConvertToMenu(), toChangeCondition, 200 );
+    selToolMenu.AddItem( SCH_ACTIONS::changeSymbol,    S_C::SingleSymbolOrPower, 200 );
+    selToolMenu.AddItem( SCH_ACTIONS::updateSymbol,    S_C::SingleSymbolOrPower, 200 );
+    selToolMenu.AddItem( SCH_ACTIONS::changeSymbols,   S_C::MultipleSymbolsOrPower, 200 );
+    selToolMenu.AddItem( SCH_ACTIONS::updateSymbols,   S_C::MultipleSymbolsOrPower, 200 );
+    selToolMenu.AddMenu( makeConvertToMenu(),          toChangeCondition, 200 );
 
     selToolMenu.AddItem( SCH_ACTIONS::cleanupSheetPins, sheetHasUndefinedPins, 250 );
 
     selToolMenu.AddSeparator( 300 );
-    selToolMenu.AddItem( ACTIONS::cut, S_C::IdleSelection, 300 );
-    selToolMenu.AddItem( ACTIONS::copy, S_C::IdleSelection, 300 );
-    selToolMenu.AddItem( ACTIONS::copyAsText, canCopyText && S_C::IdleSelection, 300 );
-    selToolMenu.AddItem( ACTIONS::paste, S_C::Idle, 300 );
-    selToolMenu.AddItem( ACTIONS::pasteSpecial, S_C::Idle, 300 );
-    selToolMenu.AddItem( ACTIONS::doDelete, S_C::NotEmpty, 300 );
-    selToolMenu.AddItem( ACTIONS::duplicate, duplicateCondition, 300 );
+    selToolMenu.AddItem( ACTIONS::cut,                 S_C::IdleSelection, 300 );
+    selToolMenu.AddItem( ACTIONS::copy,                S_C::IdleSelection, 300 );
+    selToolMenu.AddItem( ACTIONS::copyAsText,          canCopyText && S_C::IdleSelection, 300 );
+    selToolMenu.AddItem( ACTIONS::paste,               S_C::Idle, 300 );
+    selToolMenu.AddItem( ACTIONS::pasteSpecial,        S_C::Idle, 300 );
+    selToolMenu.AddItem( ACTIONS::doDelete,            S_C::NotEmpty, 300 );
+    selToolMenu.AddItem( ACTIONS::duplicate,           duplicateCondition, 300 );
 
     selToolMenu.AddSeparator( 400 );
-    selToolMenu.AddItem( ACTIONS::selectAll, hasElements, 400 );
-    selToolMenu.AddItem( ACTIONS::unselectAll, hasElements, 400 );
+    selToolMenu.AddItem( ACTIONS::selectAll,           S_C::ShowAlways, 400 );
+    selToolMenu.AddItem( ACTIONS::unselectAll,         S_C::ShowAlways, 400 );
 
     ACTION_MANAGER* mgr = m_toolMgr->GetActionManager();
-    // clang-format off
-    mgr->SetConditions( SCH_ACTIONS::setDNP,                   ACTION_CONDITIONS().Check( attribDNPCond ) );
-    mgr->SetConditions( SCH_ACTIONS::setExcludeFromSimulation, ACTION_CONDITIONS().Check( attribExcludeFromSimCond ) );
-    mgr->SetConditions( SCH_ACTIONS::setExcludeFromBOM,        ACTION_CONDITIONS().Check( attribExcludeFromBOMCond ) );
-    mgr->SetConditions( SCH_ACTIONS::setExcludeFromBoard,      ACTION_CONDITIONS().Check( attribExcludeFromBoardCond ) );
-    // clang-format on
+
+    mgr->SetConditions( SCH_ACTIONS::setDNP,              ACTION_CONDITIONS().Check( attribDNPCond ) );
+    mgr->SetConditions( SCH_ACTIONS::setExcludeFromSim,   ACTION_CONDITIONS().Check( attribExcludeFromSimCond ) );
+    mgr->SetConditions( SCH_ACTIONS::setExcludeFromBOM,   ACTION_CONDITIONS().Check( attribExcludeFromBOMCond ) );
+    mgr->SetConditions( SCH_ACTIONS::setExcludeFromBoard, ACTION_CONDITIONS().Check( attribExcludeFromBoardCond ) );
 
     return true;
 }
 
 
 const std::vector<KICAD_T> SCH_EDIT_TOOL::RotatableItems = {
-    SCH_SHAPE_T,         SCH_RULE_AREA_T,      SCH_TEXT_T,      SCH_TEXTBOX_T,    SCH_TABLE_T,
-    SCH_TABLECELL_T, // will be promoted to parent table(s)
-    SCH_LABEL_T,         SCH_GLOBAL_LABEL_T,   SCH_GROUP_T,     SCH_HIER_LABEL_T, SCH_DIRECTIVE_LABEL_T,
-    SCH_FIELD_T,         SCH_SYMBOL_T,         SCH_SHEET_PIN_T, SCH_SHEET_T,      SCH_MODULE_BLOCK_T,
+    SCH_SHAPE_T,
+    SCH_RULE_AREA_T,
+    SCH_TEXT_T,
+    SCH_TEXTBOX_T,
+    SCH_TABLE_T,
+    SCH_TABLECELL_T,    // will be promoted to parent table(s)
+    SCH_LABEL_T,
+    SCH_GLOBAL_LABEL_T,
+    SCH_GROUP_T,
+    SCH_HIER_LABEL_T,
+    SCH_DIRECTIVE_LABEL_T,
+    SCH_FIELD_T,
+    SCH_SYMBOL_T,
+    SCH_SHEET_PIN_T,
+    SCH_SHEET_T,
+    SCH_MODULE_BLOCK_T,
     SCH_BITMAP_T,
-    SCH_BUS_BUS_ENTRY_T, SCH_BUS_WIRE_ENTRY_T, SCH_LINE_T,      SCH_JUNCTION_T,   SCH_NO_CONNECT_T
+    SCH_BUS_BUS_ENTRY_T,
+    SCH_BUS_WIRE_ENTRY_T,
+    SCH_LINE_T,
+    SCH_JUNCTION_T,
+    SCH_NO_CONNECT_T
 };
 
 
 const std::vector<KICAD_T> SCH_EDIT_TOOL::SwappableItems = {
-    SCH_SHAPE_T,     SCH_RULE_AREA_T,    SCH_TEXT_T,       SCH_TEXTBOX_T,         SCH_LABEL_T,
-    SCH_SHEET_PIN_T, SCH_GLOBAL_LABEL_T, SCH_HIER_LABEL_T, SCH_DIRECTIVE_LABEL_T, SCH_FIELD_T,
-    SCH_SYMBOL_T,    SCH_SHEET_T,        SCH_BITMAP_T,     SCH_JUNCTION_T,        SCH_NO_CONNECT_T
+    SCH_SHAPE_T,
+    SCH_RULE_AREA_T,
+    SCH_TEXT_T,
+    SCH_TEXTBOX_T,
+    SCH_LABEL_T,
+    SCH_SHEET_PIN_T,
+    SCH_GLOBAL_LABEL_T,
+    SCH_HIER_LABEL_T,
+    SCH_DIRECTIVE_LABEL_T,
+    SCH_FIELD_T,
+    SCH_SYMBOL_T,
+    SCH_SHEET_T,
+    SCH_BITMAP_T,
+    SCH_JUNCTION_T,
+    SCH_NO_CONNECT_T
 };
 
 
@@ -871,7 +1065,10 @@ int SCH_EDIT_TOOL::Rotate( const TOOL_EVENT& aEvent )
         case SCH_JUNCTION_T:
         case SCH_NO_CONNECT_T:
         case SCH_BUS_BUS_ENTRY_T:
-        case SCH_BUS_WIRE_ENTRY_T: head->Rotate( rotPoint, !clockwise ); break;
+        case SCH_BUS_WIRE_ENTRY_T:
+            head->Rotate( rotPoint, !clockwise );
+
+            break;
 
         case SCH_FIELD_T:
         {
@@ -890,7 +1087,10 @@ int SCH_EDIT_TOOL::Rotate( const TOOL_EVENT& aEvent )
 
         case SCH_RULE_AREA_T:
         case SCH_SHAPE_T:
-        case SCH_TEXTBOX_T: head->Rotate( rotPoint, !clockwise ); break;
+        case SCH_TEXTBOX_T:
+            head->Rotate( rotPoint, !clockwise );
+
+            break;
 
         case SCH_GROUP_T:
         {
@@ -950,7 +1150,8 @@ int SCH_EDIT_TOOL::Rotate( const TOOL_EVENT& aEvent )
             break;
         }
 
-        default: UNIMPLEMENTED_FOR( head->GetClass() );
+        default:
+            UNIMPLEMENTED_FOR( head->GetClass() );
         }
 
         m_frame->UpdateItem( head, false, true );
@@ -1986,7 +2187,7 @@ int SCH_EDIT_TOOL::RepeatDrawItem( const TOOL_EVENT& aEvent )
                 NULL_REPORTER reporter;
                 m_frame->AnnotateSymbols( &commit, ANNOTATE_SELECTION, annotateOrder, annotateAlgo,
                                           true /* recursive */, annotateStartNum, false, false, false,
-                                          reporter );
+                                          reporter, SYMBOL_FILTER_NON_POWER );
             }
 
             // Annotation clears the selection so re-add the item
@@ -2189,8 +2390,8 @@ int SCH_EDIT_TOOL::EditField( const TOOL_EVENT& aEvent )
         SCH_FIELD* field = static_cast<SCH_FIELD*>( item );
 
         if( ( aEvent.IsAction( &SCH_ACTIONS::editReference ) && field->GetId() != FIELD_T::REFERENCE )
-            || ( aEvent.IsAction( &SCH_ACTIONS::editValue ) && field->GetId() != FIELD_T::VALUE )
-            || ( aEvent.IsAction( &SCH_ACTIONS::editFootprint ) && field->GetId() != FIELD_T::FOOTPRINT ) )
+         || ( aEvent.IsAction( &SCH_ACTIONS::editValue )     && field->GetId() != FIELD_T::VALUE     )
+         || ( aEvent.IsAction( &SCH_ACTIONS::editFootprint ) && field->GetId() != FIELD_T::FOOTPRINT ) )
         {
             item = field->GetParentSymbol();
 
@@ -2437,7 +2638,9 @@ int SCH_EDIT_TOOL::Properties( const TOOL_EVENT& aEvent )
 
             dlg.ShowModal();
         }
-        else if( SELECTION_CONDITIONS::OnlyTypes( { SCH_ITEM_LOCATE_WIRE_T, SCH_ITEM_LOCATE_BUS_T, SCH_BUS_WIRE_ENTRY_T,
+        else if( SELECTION_CONDITIONS::OnlyTypes( { SCH_ITEM_LOCATE_WIRE_T,
+                                                    SCH_ITEM_LOCATE_BUS_T,
+                                                    SCH_BUS_WIRE_ENTRY_T,
                                                     SCH_JUNCTION_T } )( selection ) )
         {
             std::deque<SCH_ITEM*> items;
@@ -2738,7 +2941,8 @@ void SCH_EDIT_TOOL::EditProperties( EDA_ITEM* aItem )
 
     case SCH_NO_CONNECT_T:
     case SCH_PIN_T:
-    case SCH_MODULE_PIN_T: break;
+    case SCH_MODULE_PIN_T:
+        break;
 
     case SCH_MODULE_BLOCK_T:
     {
@@ -2773,10 +2977,11 @@ void SCH_EDIT_TOOL::EditProperties( EDA_ITEM* aItem )
 int SCH_EDIT_TOOL::ChangeTextType( const TOOL_EVENT& aEvent )
 {
     KICAD_T       convertTo = aEvent.Parameter<KICAD_T>();
-    SCH_SELECTION selection =
-            m_selectionTool->RequestSelection( { SCH_LABEL_LOCATE_ANY_T, SCH_TEXT_T, SCH_TEXTBOX_T } );
-    SCH_COMMIT  localCommit( m_toolMgr );
-    SCH_COMMIT* commit = dynamic_cast<SCH_COMMIT*>( aEvent.Commit() );
+    SCH_SELECTION selection = m_selectionTool->RequestSelection( { SCH_LABEL_LOCATE_ANY_T,
+                                                                   SCH_TEXT_T,
+                                                                   SCH_TEXTBOX_T } );
+    SCH_COMMIT    localCommit( m_toolMgr );
+    SCH_COMMIT*   commit = dynamic_cast<SCH_COMMIT*>( aEvent.Commit() );
 
     if( !commit )
         commit = &localCommit;
@@ -2885,28 +3090,31 @@ int SCH_EDIT_TOOL::ChangeTextType( const TOOL_EVENT& aEvent )
                 break;
             }
 
-            default: UNIMPLEMENTED_FOR( item->GetClass() ); break;
+            default:
+                UNIMPLEMENTED_FOR( item->GetClass() );
+                break;
             }
 
-            auto getValidNetname = []( const wxString& aText )
-            {
-                wxString local_txt = aText;
-                local_txt.Replace( "\n", "_" );
-                local_txt.Replace( "\r", "_" );
-                local_txt.Replace( "\t", "_" );
+            auto getValidNetname =
+                    []( const wxString& aText )
+                    {
+                        wxString local_txt = aText;
+                        local_txt.Replace( "\n", "_" );
+                        local_txt.Replace( "\r", "_" );
+                        local_txt.Replace( "\t", "_" );
 
-                // Bus groups can have spaces; bus vectors and signal names cannot
-                if( !NET_SETTINGS::ParseBusGroup( aText, nullptr, nullptr ) )
-                    local_txt.Replace( " ", "_" );
+                        // Bus groups can have spaces; bus vectors and signal names cannot
+                        if( !NET_SETTINGS::ParseBusGroup( aText, nullptr, nullptr ) )
+                            local_txt.Replace( " ", "_" );
 
-                // label strings are "escaped" i.e. a '/' is replaced by "{slash}"
-                local_txt = EscapeString( local_txt, CTX_NETNAME );
+                        // label strings are "escaped" i.e. a '/' is replaced by "{slash}"
+                        local_txt = EscapeString( local_txt, CTX_NETNAME );
 
-                if( local_txt.IsEmpty() )
-                    return _( "<empty>" );
-                else
-                    return local_txt;
-            };
+                        if( local_txt.IsEmpty() )
+                            return _( "<empty>" );
+                        else
+                            return local_txt;
+                    };
 
             switch( convertTo )
             {
@@ -3063,7 +3271,9 @@ int SCH_EDIT_TOOL::ChangeTextType( const TOOL_EVENT& aEvent )
                 break;
             }
 
-            default: UNIMPLEMENTED_FOR( wxString::Format( "%d.", convertTo ) ); break;
+            default:
+                UNIMPLEMENTED_FOR( wxString::Format( "%d.", convertTo ) );
+                break;
             }
 
             wxCHECK2( newtext, continue );
@@ -3151,15 +3361,16 @@ int SCH_EDIT_TOOL::JustifyText( const TOOL_EVENT& aEvent )
     if( !commit )
         commit = &localCommit;
 
-    auto setJustify = [&]( EDA_TEXT* aTextItem )
-    {
-        if( aEvent.Matches( ACTIONS::leftJustify.MakeEvent() ) )
-            aTextItem->SetHorizJustify( GR_TEXT_H_ALIGN_LEFT );
-        else if( aEvent.Matches( ACTIONS::centerJustify.MakeEvent() ) )
-            aTextItem->SetHorizJustify( GR_TEXT_H_ALIGN_CENTER );
-        else
-            aTextItem->SetHorizJustify( GR_TEXT_H_ALIGN_RIGHT );
-    };
+    auto setJustify =
+            [&]( EDA_TEXT* aTextItem )
+            {
+                if( aEvent.Matches( ACTIONS::leftJustify.MakeEvent() ) )
+                    aTextItem->SetHorizJustify( GR_TEXT_H_ALIGN_LEFT );
+                else if( aEvent.Matches( ACTIONS::centerJustify.MakeEvent() ) )
+                    aTextItem->SetHorizJustify( GR_TEXT_H_ALIGN_CENTER );
+                else
+                    aTextItem->SetHorizJustify( GR_TEXT_H_ALIGN_RIGHT );
+            };
 
     for( EDA_ITEM* edaItem : selection )
     {
@@ -3351,16 +3562,16 @@ int SCH_EDIT_TOOL::DdAddImage( const TOOL_EVENT& aEvent )
 }
 
 
-void SCH_EDIT_TOOL::collectUnits( const SCH_SELECTION&                           aSelection,
-                                  std::set<std::pair<SCH_SYMBOL*, SCH_SCREEN*>>& aCollectedUnits )
+int SCH_EDIT_TOOL::SetAttribute( const TOOL_EVENT& aEvent )
 {
-    for( EDA_ITEM* item : aSelection )
-    {
-        if( item->Type() == SCH_SYMBOL_T )
-        {
-            SCH_SYMBOL* symbol = static_cast<SCH_SYMBOL*>( item );
+    SCH_SELECTION& selection = m_selectionTool->RequestSelection( { SCH_SYMBOL_T, SCH_SHEET_T, SCH_RULE_AREA_T } );
+    std::set<std::pair<SCH_ITEM*, SCH_SCREEN*>> collectedItems;
 
-            aCollectedUnits.insert( { symbol, m_frame->GetScreen() } );
+    for( EDA_ITEM* item : selection )
+    {
+        if( SCH_SYMBOL* symbol = dynamic_cast<SCH_SYMBOL*>( item) )
+        {
+            collectedItems.insert( { symbol, m_frame->GetScreen() } );
 
             // The attributes should be kept in sync in multi-unit parts.
             // Of course the symbol must be annotated to collect other units.
@@ -3378,53 +3589,52 @@ void SCH_EDIT_TOOL::collectUnits( const SCH_SELECTION&                          
                     CollectOtherUnits( ref, unit, libId, sheet, &otherUnits );
 
                     for( SCH_SYMBOL* otherUnit : otherUnits )
-                        aCollectedUnits.insert( { otherUnit, screen } );
+                        collectedItems.insert( { otherUnit, screen } );
                 }
             }
         }
+        else if( SCH_SHEET* sheet = dynamic_cast<SCH_SHEET*>( item ) )
+        {
+            collectedItems.insert( { sheet, m_frame->GetScreen() } );
+        }
+        else if( SCH_RULE_AREA* ruleArea = dynamic_cast<SCH_RULE_AREA*>( item ) )
+        {
+            collectedItems.insert( { ruleArea, m_frame->GetScreen() } );
+        }
     }
-}
 
-
-int SCH_EDIT_TOOL::SetAttribute( const TOOL_EVENT& aEvent )
-{
-    SCH_SELECTION&  selection = m_selectionTool->RequestSelection( { SCH_SYMBOL_T } );
     SCH_COMMIT      commit( m_toolMgr );
     SCH_SHEET_PATH* sheet = &m_frame->GetCurrentSheet();
     wxString        variant = m_frame->Schematic().GetCurrentVariant();
+    bool            new_state = false;
 
-    std::set<std::pair<SCH_SYMBOL*, SCH_SCREEN*>> collectedUnits;
-
-    collectUnits( selection, collectedUnits );
-    bool new_state = false;
-
-    for( const auto& [symbol, _] : collectedUnits )
+    for( const auto& [item, _] : collectedItems )
     {
-        if( ( aEvent.IsAction( &SCH_ACTIONS::setDNP ) && !symbol->GetDNP( sheet, variant ) )
-         || ( aEvent.IsAction( &SCH_ACTIONS::setExcludeFromSimulation ) && !symbol->GetExcludedFromSim( sheet, variant ) )
-         || ( aEvent.IsAction( &SCH_ACTIONS::setExcludeFromBOM ) && !symbol->GetExcludedFromBOM( sheet, variant ) )
-         || ( aEvent.IsAction( &SCH_ACTIONS::setExcludeFromBoard ) && !symbol->GetExcludedFromBoard( sheet, variant ) ) )
+        if( ( aEvent.IsAction( &SCH_ACTIONS::setDNP )              && !item->GetDNP( sheet, variant ) )
+         || ( aEvent.IsAction( &SCH_ACTIONS::setExcludeFromSim )   && !item->GetExcludedFromSim( sheet, variant ) )
+         || ( aEvent.IsAction( &SCH_ACTIONS::setExcludeFromBOM )   && !item->GetExcludedFromBOM( sheet, variant ) )
+         || ( aEvent.IsAction( &SCH_ACTIONS::setExcludeFromBoard ) && !item->GetExcludedFromBoard( sheet, variant ) ) )
         {
             new_state = true;
             break;
         }
     }
 
-    for( const auto& [symbol, screen] : collectedUnits )
+    for( const auto& [item, screen] : collectedItems )
     {
-        commit.Modify( symbol, screen );
+        commit.Modify( item, screen );
 
         if( aEvent.IsAction( &SCH_ACTIONS::setDNP ) )
-            symbol->SetDNP( new_state );
+            item->SetDNP( new_state, sheet, variant );
 
-        if( aEvent.IsAction( &SCH_ACTIONS::setExcludeFromSimulation ) )
-            symbol->SetExcludedFromSim( new_state );
+        if( aEvent.IsAction( &SCH_ACTIONS::setExcludeFromSim ) )
+            item->SetExcludedFromSim( new_state, sheet, variant );
 
         if( aEvent.IsAction( &SCH_ACTIONS::setExcludeFromBOM ) )
-            symbol->SetExcludedFromBOM( new_state );
+            item->SetExcludedFromBOM( new_state, sheet, variant );
 
         if( aEvent.IsAction( &SCH_ACTIONS::setExcludeFromBoard ) )
-            symbol->SetExcludedFromBoard( new_state );
+            item->SetExcludedFromBoard( new_state, sheet, variant );
     }
 
     if( !commit.Empty() )
@@ -3439,7 +3649,8 @@ int SCH_EDIT_TOOL::SetAttribute( const TOOL_EVENT& aEvent )
 
 wxString SCH_EDIT_TOOL::FixERCErrorMenuText( const std::shared_ptr<RC_ITEM>& aERCItem )
 {
-    if( aERCItem->GetErrorCode() == ERCE_SIMULATION_MODEL || aERCItem->GetErrorCode() == ERCE_FOOTPRINT_FILTERS
+    if( aERCItem->GetErrorCode() == ERCE_SIMULATION_MODEL
+        || aERCItem->GetErrorCode() == ERCE_FOOTPRINT_FILTERS
         || aERCItem->GetErrorCode() == ERCE_FOOTPRINT_LINK_ISSUES )
     {
         return _( "Edit Symbol Properties..." );
@@ -3452,7 +3663,8 @@ wxString SCH_EDIT_TOOL::FixERCErrorMenuText( const std::shared_ptr<RC_ITEM>& aER
     {
         return m_frame->GetRunMenuCommandDescription( SCH_ACTIONS::updateSymbol );
     }
-    else if( aERCItem->GetErrorCode() == ERCE_UNANNOTATED || aERCItem->GetErrorCode() == ERCE_DUPLICATE_REFERENCE )
+    else if( aERCItem->GetErrorCode() == ERCE_UNANNOTATED
+            || aERCItem->GetErrorCode() == ERCE_DUPLICATE_REFERENCE )
     {
         return m_frame->GetRunMenuCommandDescription( SCH_ACTIONS::annotate );
     }
@@ -3471,7 +3683,8 @@ void SCH_EDIT_TOOL::FixERCError( const std::shared_ptr<RC_ITEM>& aERCItem )
 
     wxCHECK( frame, /* void */ );
 
-    if( aERCItem->GetErrorCode() == ERCE_SIMULATION_MODEL || aERCItem->GetErrorCode() == ERCE_FOOTPRINT_FILTERS
+    if( aERCItem->GetErrorCode() == ERCE_SIMULATION_MODEL
+        || aERCItem->GetErrorCode() == ERCE_FOOTPRINT_FILTERS
         || aERCItem->GetErrorCode() == ERCE_FOOTPRINT_LINK_ISSUES )
     {
         if( EDA_ITEM* item = frame->ResolveItem( aERCItem->GetMainItemID() ) )
@@ -3491,7 +3704,8 @@ void SCH_EDIT_TOOL::FixERCError( const std::shared_ptr<RC_ITEM>& aERCItem )
             dlg.ShowQuasiModal();
         }
     }
-    else if( aERCItem->GetErrorCode() == ERCE_UNANNOTATED || aERCItem->GetErrorCode() == ERCE_DUPLICATE_REFERENCE )
+    else if( aERCItem->GetErrorCode() == ERCE_UNANNOTATED
+            || aERCItem->GetErrorCode() == ERCE_DUPLICATE_REFERENCE )
     {
         m_toolMgr->RunAction( SCH_ACTIONS::annotate );
     }
@@ -3547,7 +3761,7 @@ void SCH_EDIT_TOOL::setTransitions()
     Go( &SCH_EDIT_TOOL::SetAttribute,       SCH_ACTIONS::setDNP.MakeEvent() );
     Go( &SCH_EDIT_TOOL::SetAttribute,       SCH_ACTIONS::setExcludeFromBOM.MakeEvent() );
     Go( &SCH_EDIT_TOOL::SetAttribute,       SCH_ACTIONS::setExcludeFromBoard.MakeEvent() );
-    Go( &SCH_EDIT_TOOL::SetAttribute,       SCH_ACTIONS::setExcludeFromSimulation.MakeEvent() );
+    Go( &SCH_EDIT_TOOL::SetAttribute,       SCH_ACTIONS::setExcludeFromSim.MakeEvent() );
 
     Go( &SCH_EDIT_TOOL::CleanupSheetPins,   SCH_ACTIONS::cleanupSheetPins.MakeEvent() );
     Go( &SCH_EDIT_TOOL::GlobalEdit,         SCH_ACTIONS::editTextAndGraphics.MakeEvent() );

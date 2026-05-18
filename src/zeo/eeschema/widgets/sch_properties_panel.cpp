@@ -133,7 +133,89 @@ private:
     wxString m_name;
 };
 
-std::set<wxString> SCH_PROPERTIES_PANEL::m_currentFieldNames;
+class SCH_SHEET_FIELD_PROPERTY : public PROPERTY_BASE
+{
+public:
+    SCH_SHEET_FIELD_PROPERTY( const wxString& aName ) :
+            PROPERTY_BASE( aName ),
+            m_name( aName )
+    {
+    }
+
+    size_t OwnerHash() const override { return TYPE_HASH( SCH_SHEET ); }
+    size_t BaseHash() const override { return TYPE_HASH( SCH_SHEET ); }
+    size_t TypeHash() const override { return TYPE_HASH( wxString ); }
+
+    bool Writeable( INSPECTABLE* aObject ) const override { return PROPERTY_BASE::Writeable( aObject ); }
+
+    void setter( void* obj, wxAny& v ) override
+    {
+        wxString value;
+
+        if( !v.GetAs( &value ) )
+            return;
+
+        SCH_SHEET* sheet = reinterpret_cast<SCH_SHEET*>( obj );
+        SCH_FIELD* field = sheet->GetField( m_name );
+
+        wxString              variantName;
+        const SCH_SHEET_PATH* sheetPath = nullptr;
+
+        if( sheet->Schematic() )
+        {
+            variantName = sheet->Schematic()->GetCurrentVariant();
+            sheetPath = &sheet->Schematic()->CurrentSheet();
+        }
+
+        if( !field )
+        {
+            SCH_FIELD newField( sheet, FIELD_T::USER, m_name );
+            newField.SetText( value, sheetPath, variantName );
+            sheet->AddField( newField );
+        }
+        else
+        {
+            field->SetText( value, sheetPath, variantName );
+        }
+    }
+
+    wxAny getter( const void* obj ) const override
+    {
+        const SCH_SHEET* sheet = reinterpret_cast<const SCH_SHEET*>( obj );
+        const SCH_FIELD* field = sheet->GetField( m_name );
+
+        if( field )
+        {
+            wxString              variantName;
+            const SCH_SHEET_PATH* sheetPath = nullptr;
+
+            if( sheet->Schematic() )
+            {
+                variantName = sheet->Schematic()->GetCurrentVariant();
+                sheetPath = &sheet->Schematic()->CurrentSheet();
+            }
+
+            wxString text;
+
+            if( !variantName.IsEmpty() && sheetPath )
+                text = field->GetText( sheetPath, variantName );
+            else
+                text = field->GetText();
+
+            return wxAny( text );
+        }
+        else
+        {
+            return wxAny( MISSING_FIELD_SENTINEL );
+        }
+    }
+
+private:
+    wxString m_name;
+};
+
+std::set<wxString> SCH_PROPERTIES_PANEL::m_currentSymbolFieldNames;
+std::set<wxString> SCH_PROPERTIES_PANEL::m_currentSheetFieldNames;
 
 SCH_PROPERTIES_PANEL::SCH_PROPERTIES_PANEL( wxWindow* aParent, SCH_BASE_FRAME* aFrame ) :
         PROPERTIES_PANEL( aParent, aFrame ),
@@ -191,62 +273,59 @@ SCH_PROPERTIES_PANEL::SCH_PROPERTIES_PANEL( wxWindow* aParent, SCH_BASE_FRAME* a
         m_colorEditorInstance = static_cast<PG_COLOR_EDITOR*>( it->second );
     }
 
+    auto netlistCallback = [this]()
+    {
+        SCH_SELECTION& sel = m_frame->GetToolManager()->GetTool<SCH_SELECTION_TOOL>()->GetSelection();
+        LIB_SYMBOL*    libSymbol = nullptr;
+
+        for( EDA_ITEM* item : sel )
+        {
+            if( item->Type() == SCH_SYMBOL_T )
+            {
+                SCH_SYMBOL* symbol = static_cast<SCH_SYMBOL*>( item );
+
+                if( !libSymbol )
+                    libSymbol = symbol->GetLibSymbolRef().get();
+                else if( libSymbol != symbol->GetLibSymbolRef().get() )
+                    return std::string( "" );
+            }
+        }
+
+        if( !libSymbol )
+            return std::string( "" );
+
+        wxString      symbolNetlist;
+        wxArrayString pins;
+
+        for( SCH_PIN* pin : libSymbol->GetGraphicalPins( 0 /* all units */, 1 /* single bodyStyle */ ) )
+            pins.push_back( pin->GetNumber() + ' ' + pin->GetShownName() );
+
+        if( !pins.IsEmpty() )
+            symbolNetlist << EscapeString( wxJoin( pins, '\t' ), CTX_LINE );
+
+        symbolNetlist << wxS( "\r" );
+
+        wxArrayString fpFilters = libSymbol->GetFPFilters();
+
+        if( !fpFilters.IsEmpty() )
+            symbolNetlist << EscapeString( wxJoin( fpFilters, ' ' ), CTX_LINE );
+
+        symbolNetlist << wxS( "\r" );
+
+        return symbolNetlist.ToStdString();
+    };
+
     it = wxPGGlobalVars->m_mapEditorClasses.find( PG_FPID_EDITOR::BuildEditorName( m_frame ) );
 
     if( it != wxPGGlobalVars->m_mapEditorClasses.end() )
     {
         m_fpEditorInstance = static_cast<PG_FPID_EDITOR*>( it->second );
         m_fpEditorInstance->UpdateFrame( m_frame );
+        m_fpEditorInstance->UpdateCallback( netlistCallback );
     }
     else
     {
-        PG_FPID_EDITOR* fpEditor = new PG_FPID_EDITOR( m_frame,
-                []( EDA_DRAW_FRAME* aFrame )
-                {
-                    SCH_BASE_FRAME* schFrame = dynamic_cast<SCH_BASE_FRAME*>( aFrame );
-
-                    if( !schFrame || !schFrame->GetToolManager() )
-                        return std::string( "" );
-
-                    SCH_SELECTION& sel = schFrame->GetToolManager()->GetTool<SCH_SELECTION_TOOL>()->GetSelection();
-                    LIB_SYMBOL*    libSymbol = nullptr;
-
-                    for( EDA_ITEM* item : sel )
-                    {
-                        if( item->Type() == SCH_SYMBOL_T )
-                        {
-                            SCH_SYMBOL* symbol = static_cast<SCH_SYMBOL*>( item );
-
-                            if( !libSymbol )
-                                libSymbol = symbol->GetLibSymbolRef().get();
-                            else if( libSymbol != symbol->GetLibSymbolRef().get() )
-                                return std::string( "" );
-                        }
-                    }
-
-                    if( !libSymbol )
-                        return std::string( "" );
-
-                    wxString      symbolNetlist;
-                    wxArrayString pins;
-
-                    for( SCH_PIN* pin : libSymbol->GetGraphicalPins( 0 /* all units */, 1 /* single bodyStyle */ ) )
-                        pins.push_back( pin->GetNumber() + ' ' + pin->GetShownName() );
-
-                    if( !pins.IsEmpty() )
-                        symbolNetlist << EscapeString( wxJoin( pins, '\t' ), CTX_LINE );
-
-                    symbolNetlist << wxS( "\r" );
-
-                    wxArrayString fpFilters = libSymbol->GetFPFilters();
-
-                    if( !fpFilters.IsEmpty() )
-                        symbolNetlist << EscapeString( wxJoin( fpFilters, ' ' ), CTX_LINE );
-
-                    symbolNetlist << wxS( "\r" );
-
-                    return symbolNetlist.ToStdString();
-                } );
+        PG_FPID_EDITOR* fpEditor = new PG_FPID_EDITOR( m_frame, netlistCallback );
         m_fpEditorInstance = static_cast<PG_FPID_EDITOR*>( wxPropertyGrid::RegisterEditorClass( fpEditor ) );
     }
 
@@ -324,35 +403,62 @@ void SCH_PROPERTIES_PANEL::AfterCommit()
 
 void SCH_PROPERTIES_PANEL::rebuildProperties( const SELECTION& aSelection )
 {
-    m_currentFieldNames.clear();
+    m_currentSymbolFieldNames.clear();
+    m_currentSheetFieldNames.clear();
 
     for( EDA_ITEM* item : aSelection )
     {
-        if( item->Type() != SCH_SYMBOL_T )
-            continue;
-
-        SCH_SYMBOL* symbol = static_cast<SCH_SYMBOL*>( item );
-
-        for( const SCH_FIELD& field : symbol->GetFields() )
+        if( item->Type() == SCH_SYMBOL_T )
         {
-            if( field.IsPrivate() )
-                continue;
+            SCH_SYMBOL* symbol = static_cast<SCH_SYMBOL*>( item );
 
-            m_currentFieldNames.insert( field.GetCanonicalName() );
+            for( const SCH_FIELD& field : symbol->GetFields() )
+            {
+                if( field.IsPrivate() )
+                    continue;
+
+                m_currentSymbolFieldNames.insert( field.GetCanonicalName() );
+            }
+        }
+        else if( item->Type() == SCH_SHEET_T )
+        {
+            SCH_SHEET* sheet = static_cast<SCH_SHEET*>( item );
+
+            for( const SCH_FIELD& field : sheet->GetFields() )
+            {
+                if( field.IsPrivate() )
+                    continue;
+
+                m_currentSheetFieldNames.insert( field.GetCanonicalName() );
+            }
         }
     }
 
     const wxString groupFields = _HKI( "Fields" );
 
-    for( const wxString& name : m_currentFieldNames )
+    for( const wxString& name : m_currentSymbolFieldNames )
     {
         if( !m_propMgr.GetProperty( TYPE_HASH( SCH_SYMBOL ), name ) )
         {
             m_propMgr.AddProperty( new SCH_SYMBOL_FIELD_PROPERTY( name ), groupFields )
-                    .SetAvailableFunc( [name]( INSPECTABLE* )
-                                       {
-                                           return SCH_PROPERTIES_PANEL::m_currentFieldNames.count( name );
-                                       } );
+                    .SetAvailableFunc(
+                            [name]( INSPECTABLE* )
+                            {
+                                return SCH_PROPERTIES_PANEL::m_currentSymbolFieldNames.count( name );
+                            } );
+        }
+    }
+
+    for( const wxString& name : m_currentSheetFieldNames )
+    {
+        if( !m_propMgr.GetProperty( TYPE_HASH( SCH_SHEET ), name ) )
+        {
+            m_propMgr.AddProperty( new SCH_SHEET_FIELD_PROPERTY( name ), groupFields )
+                    .SetAvailableFunc(
+                            [name]( INSPECTABLE* )
+                            {
+                                return SCH_PROPERTIES_PANEL::m_currentSheetFieldNames.count( name );
+                            } );
         }
     }
 
@@ -604,5 +710,3 @@ bool SCH_PROPERTIES_PANEL::getItemValue( EDA_ITEM* aItem, PROPERTY_BASE* aProper
 
     return PROPERTIES_PANEL::getItemValue( aItem, aProperty, aValue );
 }
-
-

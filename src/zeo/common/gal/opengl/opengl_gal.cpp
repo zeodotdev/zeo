@@ -44,9 +44,11 @@
 #include <pgm_base.h>
 #include <trace_helpers.h>
 
+#include <wx/app.h>
 #include <wx/frame.h>
 
 #include <macros.h>
+#include <optional>
 #include <geometry/geometry_utils.h>
 #include <thread_pool.h>
 
@@ -433,7 +435,8 @@ OPENGL_GAL::~OPENGL_GAL()
         gl_mgr->LockCtx( m_glPrivContext, this );
 
         --m_instanceCounter;
-        glFlush();
+        if( m_isInitialized )
+            glFlush();
         gluDeleteTess( m_tesselator );
         ClearCache();
 
@@ -477,6 +480,11 @@ OPENGL_GAL::~OPENGL_GAL()
 
 wxString OPENGL_GAL::CheckFeatures( GAL_DISPLAY_OPTIONS& aOptions )
 {
+    static std::optional<wxString> cached;
+
+    if( cached.has_value() )
+        return *cached;
+
     wxString retVal = wxEmptyString;
 
     wxFrame* testFrame = new wxFrame( nullptr, wxID_ANY, wxT( "" ), wxDefaultPosition,
@@ -492,6 +500,13 @@ wxString OPENGL_GAL::CheckFeatures( GAL_DISPLAY_OPTIONS& aOptions )
         testFrame->Raise();
         testFrame->Show();
 
+#ifdef __WXGTK__
+        // On GTK, Show() only queues realization. The GDK drawing window
+        // needed by SetCurrent() may not exist yet. Yield to let the event
+        // loop process the realize signal before we try to lock the context.
+        wxYield();
+#endif
+
         GAL_CONTEXT_LOCKER lock( opengl_gal );
         opengl_gal->init();
     }
@@ -504,6 +519,7 @@ wxString OPENGL_GAL::CheckFeatures( GAL_DISPLAY_OPTIONS& aOptions )
     delete opengl_gal;
     delete testFrame;
 
+    cached = retVal;
     return retVal;
 }
 
@@ -2835,8 +2851,14 @@ void OPENGL_GAL::init()
     if( glVersion == 0 )
         throw std::runtime_error( "Failed to load OpenGL via loader" );
 
-    SetOpenGLInfo( (const char*) glGetString( GL_VENDOR ), (const char*) glGetString( GL_RENDERER ),
-                   (const char*) glGetString( GL_VERSION ) );
+    const char* vendor = (const char*) glGetString( GL_VENDOR );
+    const char* renderer = (const char*) glGetString( GL_RENDERER );
+    const char* version = (const char*) glGetString( GL_VERSION );
+
+    if( !version )
+        throw std::runtime_error( "No GL context is current (glGetString returned NULL)" );
+
+    SetOpenGLInfo( vendor, renderer, version );
 
     // Check the OpenGL version (minimum 2.1 is required)
     if( !GLAD_GL_VERSION_2_1 )

@@ -499,12 +499,13 @@ static struct SCH_TABLECELL_DESC
 
         const wxString cellProps = _( "Cell Properties" );
 
-        propMgr.AddProperty( new PROPERTY<EDA_SHAPE, bool>( _HKI( "Background Fill" ), &EDA_SHAPE::SetFilled,
-                                                            &EDA_SHAPE::IsSolidFill ),
+        propMgr.AddProperty( new PROPERTY<SCH_TABLECELL, bool, EDA_SHAPE>(
+                                     _HKI( "Background Fill" ), &EDA_SHAPE::SetFilled, &EDA_SHAPE::IsSolidFill ),
                              cellProps );
 
-        propMgr.AddProperty( new PROPERTY<EDA_SHAPE, COLOR4D>( _HKI( "Background Fill Color" ),
-                                                               &EDA_SHAPE::SetFillColor, &EDA_SHAPE::GetFillColor ),
+        propMgr.AddProperty( new PROPERTY<SCH_TABLECELL, COLOR4D, EDA_SHAPE>( _HKI( "Background Fill Color" ),
+                                                                              &EDA_SHAPE::SetFillColor,
+                                                                              &EDA_SHAPE::GetFillColor ),
                              cellProps )
                 .SetIsHiddenFromRulesEditor();
     }

@@ -51,6 +51,7 @@
 #include <jobs/job_export_pcb_odb.h>
 #include <pcb_io/pcb_io_mgr.h>
 #include <kiplatform/io.h>
+#include <locale_io.h>
 
 
 
@@ -260,6 +261,8 @@ void DIALOG_EXPORT_ODBPP::GenerateODBPPFiles( const JOB_EXPORT_PCB_ODB& aJob, BO
                                               PCB_EDIT_FRAME* aParentFrame, PROGRESS_REPORTER* aProgressReporter,
                                               REPORTER* aReporter )
 {
+    LOCALE_IO toggle;
+
     wxCHECK( aBoard, /* void */ );
     wxString outputPath = aJob.GetFullOutputPath( aBoard->GetProject() );
 

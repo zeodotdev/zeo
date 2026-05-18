@@ -173,27 +173,6 @@ const wxAuiPaneInfo& defaultRemoteSymbolPaneInfo( wxWindow* aWindow )
 }
 
 
-wxString EESCHEMA_SETTINGS::REMOTE_SYMBOL_CONFIG::DefaultDestinationDir()
-{
-        return wxS( "${KIPRJMOD}/RemoteLibrary" );
-}
-
-
-wxString EESCHEMA_SETTINGS::REMOTE_SYMBOL_CONFIG::DefaultLibraryPrefix()
-{
-        return wxS( "remote" );
-}
-
-
-void EESCHEMA_SETTINGS::REMOTE_SYMBOL_CONFIG::ResetToDefaults()
-{
-        destination_dir = DefaultDestinationDir();
-        library_prefix = DefaultLibraryPrefix();
-        add_to_global_table = false;
-        user_ids.clear();
-}
-
-
 EESCHEMA_SETTINGS::EESCHEMA_SETTINGS() :
         APP_SETTINGS_BASE( "eeschema", eeschemaSchemaVersion ),
         m_Appearance(),
@@ -356,17 +335,20 @@ EESCHEMA_SETTINGS::EESCHEMA_SETTINGS() :
 
     m_params.emplace_back( new PARAM<wxString>( "remote_symbols.destination_dir",
             &m_RemoteSymbol.destination_dir,
-            REMOTE_SYMBOL_CONFIG::DefaultDestinationDir() ) );
+            REMOTE_PROVIDER_SETTINGS::DefaultDestinationDir() ) );
 
     m_params.emplace_back( new PARAM<wxString>( "remote_symbols.library_prefix",
             &m_RemoteSymbol.library_prefix,
-            REMOTE_SYMBOL_CONFIG::DefaultLibraryPrefix() ) );
+            REMOTE_PROVIDER_SETTINGS::DefaultLibraryPrefix() ) );
 
     m_params.emplace_back( new PARAM<bool>( "remote_symbols.add_to_global_table",
             &m_RemoteSymbol.add_to_global_table, false ) );
 
-    m_params.emplace_back( new PARAM_WXSTRING_MAP( "remote_symbols.user_ids",
-            &m_RemoteSymbol.user_ids, {} ) );
+    m_params.emplace_back( new PARAM<wxString>( "remote_symbols.last_used_provider_id",
+            &m_RemoteSymbol.last_used_provider_id, wxEmptyString ) );
+
+    m_params.emplace_back( new PARAM_LIST<REMOTE_PROVIDER_ENTRY>( "remote_symbols.providers",
+            &m_RemoteSymbol.providers, {} ) );
 
     m_params.emplace_back( new PARAM<int>( "drawing.default_bus_thickness",
             &m_Drawing.default_bus_thickness, DEFAULT_BUS_WIDTH_MILS ) );
@@ -419,9 +401,6 @@ EESCHEMA_SETTINGS::EESCHEMA_SETTINGS() :
 
     m_params.emplace_back( new PARAM_ENUM<POWER_SYMBOLS>( "drawing.new_power_symbols",
             &m_Drawing.new_power_symbols, POWER_SYMBOLS::DEFAULT, POWER_SYMBOLS::DEFAULT, POWER_SYMBOLS::LOCAL ) );
-
-    m_params.emplace_back( new PARAM_LIST<double>( "drawing.junction_size_mult_list",
-            &m_Drawing.junction_size_mult_list, { 0.0, 1.7, 4.0, 6.0, 9.0, 12.0 } ) );
 
     m_params.emplace_back( new PARAM<int>( "drawing.junction_size_choice",
             &m_Drawing.junction_size_choice, 3 ) );

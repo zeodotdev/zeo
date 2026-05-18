@@ -956,6 +956,7 @@ public:
         if( aFromFile )
         {
             path = promptForFile();
+
             if( path.IsEmpty() )
                 return {};
         }
@@ -988,7 +989,7 @@ public:
             {
                 std::vector<wxString>& cols = csvData[i];
 
-                auto pin = std::make_unique<SCH_PIN>( &aSym );
+                std::unique_ptr<SCH_PIN> pin = std::make_unique<SCH_PIN>( &aSym );
 
                 // Ignore cells that stick out to the right of the headers
                 size_t maxCol = std::min( headerCols.size(), cols.size() );
@@ -1005,6 +1006,7 @@ public:
                 pins.emplace_back( std::move( pin ) );
             }
         }
+
         return pins;
     }
 
@@ -1069,7 +1071,7 @@ DIALOG_LIB_EDIT_PIN_TABLE::DIALOG_LIB_EDIT_PIN_TABLE( SYMBOL_EDIT_FRAME* parent,
                                                        {
                                                            OnAddRow( aEvent );
                                                        } ) );
-    m_grid->SetSelectionMode( wxGrid::wxGridSelectRows );
+    m_grid->SetSelectionMode( wxGrid::wxGridSelectCells );
     m_grid->ShowHideColumns( "0 1 2 3 4 5 9 10" );
     m_columnsShown = m_grid->GetShownColumns();
 
@@ -1151,6 +1153,16 @@ DIALOG_LIB_EDIT_PIN_TABLE::DIALOG_LIB_EDIT_PIN_TABLE( SYMBOL_EDIT_FRAME* parent,
     m_deleteButton->SetBitmap( KiBitmapBundle( BITMAPS::small_trash ) );
     m_refreshButton->SetBitmap( KiBitmapBundle( BITMAPS::small_refresh ) );
     m_bMenu->SetBitmap( KiBitmapBundle( BITMAPS::config ) );
+
+    const int summaryW = m_pin_numbers_summary->GetCharWidth() * 30;
+
+    m_pin_numbers_summary->SetWindowStyleFlag( m_pin_numbers_summary->GetWindowStyleFlag() | wxST_ELLIPSIZE_END );
+    m_pin_numbers_summary->SetMinSize( wxSize( summaryW, -1 ) );
+    m_pin_numbers_summary->SetMaxSize( wxSize( summaryW, -1 ) );
+
+    m_duplicate_pins->SetWindowStyleFlag( m_duplicate_pins->GetWindowStyleFlag() | wxST_ELLIPSIZE_END );
+    m_duplicate_pins->SetMinSize( wxSize( summaryW, -1 ) );
+    m_duplicate_pins->SetMaxSize( wxSize( summaryW, -1 ) );
 
     GetSizer()->SetSizeHints(this);
     Centre();
@@ -1548,7 +1560,7 @@ void DIALOG_LIB_EDIT_PIN_TABLE::OnImportButtonClick( wxCommandEvent& event )
         m_pins.clear();
     }
 
-    for( auto& newPin : newPins )
+    for( std::unique_ptr<SCH_PIN>& newPin : newPins )
         m_pins.push_back( newPin.release() );
 
     m_cbGroup->SetValue( false );
@@ -1610,6 +1622,11 @@ void DIALOG_LIB_EDIT_PIN_TABLE::adjustGridColumns()
     // The Number and Name columns must be at least wide enough to hold their contents, but
     // no less wide than their original widths.
     m_grid->AutoSizeColumn( COL_NUMBER );
+
+    const int colNumberMax = std::max( m_originalColWidths[COL_NUMBER] * 4, 400 );
+
+    if( m_grid->GetColSize( COL_NUMBER ) > colNumberMax )
+        m_grid->SetColSize( COL_NUMBER, colNumberMax );
 
     if( m_grid->GetColSize( COL_NUMBER ) < m_originalColWidths[ COL_NUMBER ] )
         m_grid->SetColSize( COL_NUMBER, m_originalColWidths[ COL_NUMBER ] );
@@ -1729,9 +1746,14 @@ void DIALOG_LIB_EDIT_PIN_TABLE::updateSummary()
             pinNumbers.insert( pin->GetNumber() );
     }
 
-    m_pin_numbers_summary->SetLabel( pinNumbers.GetSummary() );
+    const wxString summary = pinNumbers.GetSummary();
+    const wxString duplicates = pinNumbers.GetDuplicates();
+
+    m_pin_numbers_summary->SetLabel( summary );
+    m_pin_numbers_summary->SetToolTip( summary );
     m_pin_count->SetLabel( wxString::Format( wxT( "%u" ), (unsigned) m_pins.size() ) );
-    m_duplicate_pins->SetLabel( pinNumbers.GetDuplicates() );
+    m_duplicate_pins->SetLabel( duplicates );
+    m_duplicate_pins->SetToolTip( duplicates );
 
     Layout();
 }

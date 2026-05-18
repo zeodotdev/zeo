@@ -38,15 +38,16 @@ public:
     {
     }
 
-    explicit DRC_RE_ALLOWED_ORIENTATION_CONSTRAINT_DATA(
-            int aId, int aParentId, bool aAllowZeroDegreess, bool aAllowNinetyDegreess,
-            bool aAllowOneEightyDegreess, bool aAllowTwoSeventyDegreess, bool aAllowAllDegreess,
-            wxString aRuleName ) :
+    explicit DRC_RE_ALLOWED_ORIENTATION_CONSTRAINT_DATA( int aId, int aParentId, bool aAllowZeroDegrees,
+                                                         bool aAllowNinetyDegrees, bool aAllowOneEightyDegrees,
+                                                         bool aAllowTwoSeventyDegrees, bool aAllowAllDegrees,
+                                                         const wxString& aRuleName ) :
             DRC_RE_BASE_CONSTRAINT_DATA( aId, aParentId, aRuleName ),
-            m_allowZeroDegreess( aAllowZeroDegreess ), m_allowNinetyDegrees( aAllowNinetyDegreess ),
-            m_allowOneEightyDegrees( aAllowOneEightyDegreess ),
-            m_allowTwoSeventyDegrees( aAllowTwoSeventyDegreess ),
-            m_allowAllDegrees( aAllowAllDegreess )
+            m_allowZeroDegrees( aAllowZeroDegrees || aAllowAllDegrees ),
+            m_allowNinetyDegrees( aAllowNinetyDegrees || aAllowAllDegrees ),
+            m_allowOneEightyDegrees( aAllowOneEightyDegrees || aAllowAllDegrees ),
+            m_allowTwoSeventyDegrees( aAllowTwoSeventyDegrees || aAllowAllDegrees ),
+            m_allowAllDegrees( aAllowAllDegrees )
     {
     }
 
@@ -60,22 +61,19 @@ public:
         // Format: { xStart, xEnd, yTop, tabOrder }
         // Checkboxes stacked vertically on the right side
         return {
-            { 400, 414, 40, 1, _( "Allow 0°" ), LABEL_POSITION::RIGHT },      // 0 degrees checkbox
-            { 400, 414, 80, 2, _( "Allow 90°" ), LABEL_POSITION::RIGHT },     // 90 degrees checkbox
-            { 400, 414, 120, 3, _( "Allow 180°" ), LABEL_POSITION::RIGHT },   // 180 degrees checkbox
-            { 400, 414, 160, 4, _( "Allow 270°" ), LABEL_POSITION::RIGHT },   // 270 degrees checkbox
-            { 400, 414, 200, 5, _( "Allow All" ), LABEL_POSITION::RIGHT },    // all degrees checkbox
+            { 400 + DRC_RE_OVERLAY_XO, 414 + DRC_RE_OVERLAY_XO, 40 + DRC_RE_OVERLAY_YO, 1, _( "Allow 0°" ), LABEL_POSITION::RIGHT },      // 0 degrees checkbox
+            { 400 + DRC_RE_OVERLAY_XO, 414 + DRC_RE_OVERLAY_XO, 80 + DRC_RE_OVERLAY_YO, 2, _( "Allow 90°" ), LABEL_POSITION::RIGHT },     // 90 degrees checkbox
+            { 400 + DRC_RE_OVERLAY_XO, 414 + DRC_RE_OVERLAY_XO, 120 + DRC_RE_OVERLAY_YO, 3, _( "Allow 180°" ), LABEL_POSITION::RIGHT },   // 180 degrees checkbox
+            { 400 + DRC_RE_OVERLAY_XO, 414 + DRC_RE_OVERLAY_XO, 160 + DRC_RE_OVERLAY_YO, 4, _( "Allow 270°" ), LABEL_POSITION::RIGHT },   // 270 degrees checkbox
+            { 400 + DRC_RE_OVERLAY_XO, 414 + DRC_RE_OVERLAY_XO, 200 + DRC_RE_OVERLAY_YO, 5, _( "Allow All" ), LABEL_POSITION::RIGHT },    // all degrees checkbox
         };
     }
 
     std::vector<wxString> GetConstraintClauses( const RULE_GENERATION_CONTEXT& aContext ) const override
     {
-        if( m_allowAllDegrees )
-            return { wxS( "(constraint assertion \"A.Orientation == A.Orientation\")" ) };
-
         wxArrayString terms;
 
-        if( m_allowZeroDegreess )
+        if( m_allowZeroDegrees )
             terms.Add( wxS( "A.Orientation == 0 deg" ) );
 
         if( m_allowNinetyDegrees )
@@ -108,8 +106,7 @@ public:
         VALIDATION_RESULT result;
 
         // At least one orientation must be selected
-        if( !m_allowZeroDegreess && !m_allowNinetyDegrees && !m_allowOneEightyDegrees
-            && !m_allowTwoSeventyDegrees && !m_allowAllDegrees )
+        if( !m_allowZeroDegrees && !m_allowNinetyDegrees && !m_allowOneEightyDegrees && !m_allowTwoSeventyDegrees )
         {
             result.AddError( _( "At least one orientation must be selected" ) );
         }
@@ -117,12 +114,9 @@ public:
         return result;
     }
 
-    bool GetIsZeroDegreesAllowed() { return m_allowZeroDegreess; }
+    bool GetIsZeroDegreesAllowed() { return m_allowZeroDegrees; }
 
-    void SetIsZeroDegreesAllowed( bool aAllowZeroDegreess )
-    {
-        m_allowZeroDegreess = aAllowZeroDegreess;
-    }
+    void SetIsZeroDegreesAllowed( bool aAllowZeroDegrees ) { m_allowZeroDegrees = aAllowZeroDegrees; }
 
     bool GetIsNinetyDegreesAllowed() { return m_allowNinetyDegrees; }
 
@@ -150,6 +144,14 @@ public:
     void SetIsAllDegreesAllowed( bool aAllowAllDegrees )
     {
         m_allowAllDegrees = aAllowAllDegrees;
+
+        if( aAllowAllDegrees )
+        {
+            m_allowZeroDegrees = true;
+            m_allowNinetyDegrees = true;
+            m_allowOneEightyDegrees = true;
+            m_allowTwoSeventyDegrees = true;
+        }
     }
 
     void CopyFrom( const ICopyable& aSource ) override
@@ -159,7 +161,7 @@ public:
 
         DRC_RE_BASE_CONSTRAINT_DATA::CopyFrom( source );
 
-        m_allowZeroDegreess = source.m_allowZeroDegreess;
+        m_allowZeroDegrees = source.m_allowZeroDegrees;
         m_allowNinetyDegrees = source.m_allowNinetyDegrees;
         m_allowOneEightyDegrees = source.m_allowOneEightyDegrees;
         m_allowTwoSeventyDegrees = source.m_allowTwoSeventyDegrees;
@@ -167,7 +169,7 @@ public:
     }
 
 private:
-    bool m_allowZeroDegreess{ false };
+    bool m_allowZeroDegrees{ false };
     bool m_allowNinetyDegrees{ false };
     bool m_allowOneEightyDegrees{ false };
     bool m_allowTwoSeventyDegrees{ false };

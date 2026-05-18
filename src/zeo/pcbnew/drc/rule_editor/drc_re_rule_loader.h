@@ -115,6 +115,30 @@ private:
      */
     wxString extractRuleText( const wxString& aContent, const wxString& aRuleName );
 
+    /**
+     * Extract the body of a rule from its original text, stripping the
+     * (rule "name" ...) wrapper. Handles both quoted and unquoted rule names.
+     *
+     * @param aOriginalText The full original text of a single rule.
+     * @return The inner body (constraints, conditions) without the rule wrapper.
+     */
+    wxString extractRuleBody( const wxString& aOriginalText );
+
+    /**
+     * Extract comment lines from a rule.
+     * Comments are lines starting with # inside the rule block.
+     *
+     * @param aOriginalText Rule text.
+     * @return Extracted comment text (empty if none).
+     */
+    wxString extractRuleComment( const wxString& aOriginalText );
+
+    /**
+     * Clean up a condition string after auto-generated tokens have been removed.
+     * Strips empty parentheses, collapsed operators, and dangling leading/trailing operators.
+     */
+    wxString cleanStrippedCondition( const wxString& aCondition );
+
     DRC_PANEL_MATCHER m_matcher;
 };
 

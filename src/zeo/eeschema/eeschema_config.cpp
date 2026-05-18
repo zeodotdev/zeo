@@ -60,8 +60,6 @@ COLOR4D GetLayerColor( SCH_LAYER_ID aLayer )
 bool SCH_EDIT_FRAME::LoadProjectSettings()
 {
     SCHEMATIC_SETTINGS& settings = Schematic().Settings();
-    settings.m_JunctionSize = GetSchematicJunctionSize();
-    settings.m_HopOverScale = GetSchematicHopOverScale();
 
     GetRenderSettings()->SetDefaultPenWidth( settings.m_DefaultLineWidth );
     GetRenderSettings()->m_LabelSizeRatio  = settings.m_LabelSizeRatio;
@@ -163,26 +161,6 @@ void SCH_EDIT_FRAME::ShowSchematicSetupDialog( const wxString& aInitialPage )
 }
 
 
-int SCH_EDIT_FRAME::GetSchematicJunctionSize()
-{
-    std::vector<double>& sizeMultipliers = eeconfig()->m_Drawing.junction_size_mult_list;
-
-    PROJECT_FILE& projectFile = Prj().GetProjectFile();
-    double        multiplier = sizeMultipliers[projectFile.m_SchematicSettings->m_JunctionSizeChoice];
-    int           dotSize = KiROUND( projectFile.NetSettings()->GetDefaultNetclass()->GetWireWidth() * multiplier );
-
-    return std::max( dotSize, 1 );
-}
-
-
-double SCH_EDIT_FRAME::GetSchematicHopOverScale()
-{
-    std::vector<double>& sizeMultipliers = eeconfig()->m_Drawing.junction_size_mult_list;
-
-    return sizeMultipliers[Prj().GetProjectFile().m_SchematicSettings->m_HopOverSizeChoice];
-}
-
-
 void SCH_EDIT_FRAME::saveProjectSettings()
 {
     wxFileName fn = Schematic().RootScreen()->GetFileName();  //ConfigFileName
@@ -222,6 +200,13 @@ void SCH_EDIT_FRAME::saveProjectSettings()
             if( layoutfn.DirExists() && layoutfn.IsDirWritable() )
                 DS_DATA_MODEL::GetTheInstance().Save( layoutfn.GetFullPath() );
         }
+    }
+
+    // Propagate the root schematic revision to the project file for IPC-2581 BOM export
+    if( Schematic().RootScreen() )
+    {
+        Prj().GetProjectFile().m_IP2581Bom.schRevision =
+                Schematic().RootScreen()->GetTitleBlock().GetRevision();
     }
 
     // Update top-level sheets information in the project file

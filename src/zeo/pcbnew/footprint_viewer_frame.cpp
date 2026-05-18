@@ -44,6 +44,7 @@
 #include <widgets/wx_listbox.h>
 #include <widgets/wx_aui_utils.h>
 #include <gal/graphics_abstraction_layer.h>
+#include <pad.h>
 #include <pcb_draw_panel_gal.h>
 #include <pcb_painter.h>
 #include <pcbnew_id.h>
@@ -512,8 +513,7 @@ void FOOTPRINT_VIEWER_FRAME::ReCreateFootprintList()
 
             for( FOOTPRINT* footprint : footprints )
             {
-                std::vector<SEARCH_TERM> searchTerms = footprint->GetSearchTerms();
-                int                      matched = matcher.ScoreTerms( searchTerms );
+                int matched = matcher.ScoreTerms( footprint->GetSearchTerms() );
 
                 if( filterTerm.IsNumber() && wxAtoi( filterTerm ) == (int)footprint->GetPadCount( DO_NOT_INCLUDE_NPTH ) )
                     matched++;
@@ -1088,4 +1088,3 @@ BOARD_ITEM_CONTAINER* FOOTPRINT_VIEWER_FRAME::GetModel() const
 {
     return GetBoard()->GetFirstFootprint();
 }
-

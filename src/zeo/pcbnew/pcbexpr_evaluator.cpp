@@ -384,6 +384,13 @@ protected:
 };
 
 
+KICAD_T PCBEXPR_CONTEXT::GetEffectiveType( const BOARD_ITEM* aItem ) const
+{
+    auto it = m_typeOverrides.find( aItem );
+    return it != m_typeOverrides.end() ? it->second : aItem->Type();
+}
+
+
 LIBEVAL::VALUE* PCBEXPR_VAR_REF::GetValue( LIBEVAL::CONTEXT* aCtx )
 {
     PCBEXPR_CONTEXT* context = static_cast<PCBEXPR_CONTEXT*>( aCtx );
@@ -400,6 +407,23 @@ LIBEVAL::VALUE* PCBEXPR_VAR_REF::GetValue( LIBEVAL::CONTEXT* aCtx )
         return new LIBEVAL::VALUE();
 
     auto it = m_matchingTypes.find( TYPE_HASH( *item ) );
+
+    if( it == m_matchingTypes.end() )
+    {
+        // If the property isn't defined on the item itself but is defined on its parent
+        // footprint (e.g. Reference, Value), resolve against the parent so that conditions
+        // like "A.Reference == 'J1'" match pads and graphics belonging to J1.
+        if( FOOTPRINT* parentFp = item->GetParentFootprint() )
+        {
+            auto parentIt = m_matchingTypes.find( TYPE_HASH( *parentFp ) );
+
+            if( parentIt != m_matchingTypes.end() )
+            {
+                item = parentFp;
+                it = parentIt;
+            }
+        }
+    }
 
     if( it == m_matchingTypes.end() )
     {
@@ -499,7 +523,15 @@ LIBEVAL::VALUE* PCBEXPR_COMPONENT_CLASS_REF::GetValue( LIBEVAL::CONTEXT* aCtx )
 {
     BOARD_ITEM* item = dynamic_cast<BOARD_ITEM*>( GetObject( aCtx ) );
 
-    if( !item || item->Type() != PCB_FOOTPRINT_T )
+    if( !item )
+        return new LIBEVAL::VALUE();
+
+    // Resolve component class via the parent footprint so that conditions like
+    // "A.ComponentClass == 'X'" match pads and graphics inside the footprint.
+    if( item->Type() != PCB_FOOTPRINT_T )
+        item = item->GetParentFootprint();
+
+    if( !item )
         return new LIBEVAL::VALUE();
 
     return new PCBEXPR_COMPONENT_CLASS_VALUE( item );
@@ -524,15 +556,23 @@ LIBEVAL::VALUE* PCBEXPR_TYPE_REF::GetValue( LIBEVAL::CONTEXT* aCtx )
     if( !item )
         return new LIBEVAL::VALUE();
 
-    return new LIBEVAL::VALUE( ENUM_MAP<KICAD_T>::Instance().ToString( item->Type() ) );
+    PCBEXPR_CONTEXT* ctx = static_cast<PCBEXPR_CONTEXT*>( aCtx );
+    KICAD_T          type = ctx->GetEffectiveType( item );
+
+    return new LIBEVAL::VALUE( ENUM_MAP<KICAD_T>::Instance().ToString( type ) );
 }
 
 
 LIBEVAL::FUNC_CALL_REF PCBEXPR_UCODE::CreateFuncCall( const wxString& aName )
 {
+    wxString nameLower = aName.Lower();
+
     PCBEXPR_BUILTIN_FUNCTIONS& registry = PCBEXPR_BUILTIN_FUNCTIONS::Instance();
 
-    return registry.Get( aName.Lower() );
+    if( registry.IsGeometryDependent( nameLower ) )
+        m_hasGeometryDependentFunctions = true;
+
+    return registry.Get( nameLower );
 }
 
 

@@ -285,14 +285,15 @@ int EESCHEMA_JOBS_HANDLER::JobExportPlot( JOB* aJob )
     aJob->SetTitleBlock( sch->RootScreen()->GetTitleBlock() );
     sch->Project().ApplyTextVars( aJob->GetVarOverrides() );
 
-    // Determine the variant to use. The CLI path populates m_variantNames directly, while
-    // the jobset path serializes into m_variant. Use whichever is available.
+    // Determine the variant to use.  The dialog edit path writes m_variant (the scalar),
+    // while the CLI path populates m_variantNames directly.  Prefer the scalar so a
+    // dialog-edited selection always wins over a stale list left over from CLI input.
     wxString variantName;
 
-    if( !aPlotJob->m_variantNames.empty() )
-        variantName = aPlotJob->m_variantNames.front();
-    else if( !aPlotJob->m_variant.IsEmpty() )
+    if( !aPlotJob->m_variant.IsEmpty() )
         variantName = aPlotJob->m_variant;
+    else if( !aPlotJob->m_variantNames.empty() )
+        variantName = aPlotJob->m_variantNames.front();
 
     if( !variantName.IsEmpty() && variantName != wxS( "all" ) )
         sch->SetCurrentVariant( variantName );
@@ -430,7 +431,7 @@ int EESCHEMA_JOBS_HANDLER::JobExportNetlist( JOB* aJob )
 
     // Annotation warning check
     SCH_REFERENCE_LIST referenceList;
-    sch->Hierarchy().GetSymbols( referenceList );
+    sch->Hierarchy().GetSymbols( referenceList, SYMBOL_FILTER_ALL );
 
     if( referenceList.GetCount() > 0 )
     {
@@ -558,7 +559,7 @@ int EESCHEMA_JOBS_HANDLER::JobExportBom( JOB* aJob )
 
     // Annotation warning check
     SCH_REFERENCE_LIST referenceList;
-    sch->Hierarchy().GetSymbols( referenceList, false, false );
+    sch->Hierarchy().GetSymbols( referenceList, SYMBOL_FILTER_NON_POWER, false );
 
     if( referenceList.GetCount() > 0 )
     {
@@ -680,10 +681,38 @@ int EESCHEMA_JOBS_HANDLER::JobExportBom( JOB* aJob )
     }
     else
     {
+        // Normalize field names so that bare generated-field tokens (e.g. "QUANTITY") are
+        // accepted alongside the canonical "${QUANTITY}" form. Shell expansion of ${VAR}
+        // inside double quotes silently produces an empty string, so this also guards against
+        // that common CLI pitfall.
+        auto normalizeFieldName = [&dataModel]( const wxString& aName ) -> wxString
+        {
+            if( aName.IsEmpty() )
+                return wxEmptyString;
+
+            if( IsGeneratedField( aName ) )
+                return aName;
+
+            wxString wrapped = wxS( "${" ) + aName + wxS( "}" );
+
+            if( IsGeneratedField( wrapped ) && dataModel.GetFieldNameCol( wrapped ) != -1 )
+                return wrapped;
+
+            return aName;
+        };
+
         size_t i = 0;
 
-        for( const wxString& fieldName : aBomJob->m_fieldsOrdered )
+        for( const wxString& rawFieldName : aBomJob->m_fieldsOrdered )
         {
+            wxString fieldName = normalizeFieldName( rawFieldName );
+
+            if( fieldName.IsEmpty() )
+            {
+                i++;
+                continue;
+            }
+
             // Handle wildcard. We allow the wildcard anywhere in the list, but it needs to respect
             // fields that come before and after the wildcard.
             if( fieldName == wxS( "*" ) )
@@ -712,7 +741,7 @@ int EESCHEMA_JOBS_HANDLER::JobExportBom( JOB* aJob )
 
                     for( const wxString& fieldInList : aBomJob->m_fieldsOrdered )
                     {
-                        if( fieldInList == field.name )
+                        if( normalizeFieldName( fieldInList ) == field.name )
                         {
                             fieldLaterInList = true;
                             break;
@@ -730,7 +759,9 @@ int EESCHEMA_JOBS_HANDLER::JobExportBom( JOB* aJob )
 
             field.name = fieldName;
             field.show = !fieldName.StartsWith( wxT( "__" ), &field.name );
-            field.groupBy = alg::contains( aBomJob->m_fieldsGroupBy, field.name );
+
+            field.groupBy = alg::contains( aBomJob->m_fieldsGroupBy, field.name )
+                            || alg::contains( aBomJob->m_fieldsGroupBy, rawFieldName );
 
             if( ( aBomJob->m_fieldsLabels.size() > i ) && !aBomJob->m_fieldsLabels[i].IsEmpty() )
                 field.label = aBomJob->m_fieldsLabels[i];
@@ -744,7 +775,7 @@ int EESCHEMA_JOBS_HANDLER::JobExportBom( JOB* aJob )
         }
 
         preset.sortAsc = aBomJob->m_sortAsc;
-        preset.sortField = aBomJob->m_sortField;
+        preset.sortField = normalizeFieldName( aBomJob->m_sortField );
         preset.filterString = aBomJob->m_filterString;
         preset.groupSymbols = aBomJob->m_groupSymbols;
         preset.excludeDNP = aBomJob->m_excludeDNP;
@@ -887,7 +918,7 @@ int EESCHEMA_JOBS_HANDLER::JobExportPythonBom( JOB* aJob )
 
     // Annotation warning check
     SCH_REFERENCE_LIST referenceList;
-    sch->Hierarchy().GetSymbols( referenceList );
+    sch->Hierarchy().GetSymbols( referenceList, SYMBOL_FILTER_ALL );
 
     if( referenceList.GetCount() > 0 )
     {
@@ -1253,7 +1284,9 @@ int EESCHEMA_JOBS_HANDLER::JobSchErc( JOB* aJob )
         else
             fn.SetExt( FILEEXT::ReportFileExtension );
 
-        ercJob->SetConfiguredOutputPath( fn.GetFullName() );
+        // Use a transient working path so an empty configured output filename isn't persisted
+        // back into the jobset file. Mirrors the PCB DRC handler.
+        ercJob->SetWorkingOutputPath( fn.GetFullName() );
     }
 
     wxString outPath = ercJob->GetFullOutputPath( &sch->Project() );
@@ -1383,6 +1416,11 @@ DS_PROXY_VIEW_ITEM* EESCHEMA_JOBS_HANDLER::getDrawingSheetProxyView( SCHEMATIC* 
     drawingSheet->SetColorLayer( LAYER_SCHEMATIC_DRAWINGSHEET );
     drawingSheet->SetPageBorderColorLayer( LAYER_SCHEMATIC_PAGE_LIMITS );
     drawingSheet->SetIsFirstPage( aSch->RootScreen()->GetVirtualPageNumber() == 1 );
+
+    wxString currentVariant = aSch->GetCurrentVariant();
+    wxString variantDesc = aSch->GetVariantDescription( currentVariant );
+    drawingSheet->SetVariantName( TO_UTF8( currentVariant ) );
+    drawingSheet->SetVariantDesc( TO_UTF8( variantDesc ) );
 
     drawingSheet->SetSheetName( "" );
     drawingSheet->SetSheetPath( "" );

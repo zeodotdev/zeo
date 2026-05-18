@@ -46,6 +46,7 @@
 #include <wx/filedlg.h>
 #include <wx/log.h>
 #include <project_sch.h>
+#include <kiplatform/io.h>
 #include <kiplatform/ui.h>
 #include <string_utils.h>
 #include "symbol_saveas_type.h"
@@ -1231,6 +1232,11 @@ void SYMBOL_EDIT_FRAME::UpdateAfterSymbolProperties( wxString* aOldName )
         m_treePane->GetLibTree()->SelectLibId( LIB_ID( lib, m_symbol->GetName() ) );
     }
 
+    wxDataViewItem treeItem = m_libMgr->GetAdapter()->FindItem( LIB_ID( lib, m_symbol->GetName() ) );
+
+    if( treeItem.IsOk() )
+        UpdateLibraryTree( treeItem, m_symbol );
+
     RebuildSymbolUnitAndBodyStyleLists();
     UpdateTitle();
 
@@ -1599,7 +1605,19 @@ bool SYMBOL_EDIT_FRAME::saveLibrary( const wxString& aLibrary, bool aNewFile )
 
         // Update the library modification time so that we don't reload based on the watcher
         if( aLibrary == getTargetLib() )
-            SetSymModificationTime( fn.GetModificationTime() );
+        {
+            if( fn.DirExists() )
+            {
+                SetSymModificationTime( KIPLATFORM::IO::TimestampDir(
+                        fn.GetFullPath(),
+                        wxS( "*." ) + wxString( FILEEXT::KiCadSymbolLibFileExtension ) ) );
+            }
+            else if( fn.FileExists() )
+            {
+                wxLogNull silence;
+                SetSymModificationTime( fn.GetModificationTime().GetValue().GetValue() );
+            }
+        }
     }
     else
     {

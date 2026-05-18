@@ -182,6 +182,19 @@ bool DIALOG_SHEET_PROPERTIES::TransferDataToWindow()
     instance.push_back( m_sheet );
     m_pageNumberTextCtrl->ChangeValue( instance.GetPageNumber() );
 
+    // Recalculate the dialog size now that the grid is populated and controls
+    // have their real values. On first run, the dialog was sized before data
+    // was available, so the minimum size may not account for the actual content.
+    m_grid->Layout();
+    Layout();
+    GetSizer()->SetSizeHints( this );
+
+    wxSize minSize = GetMinSize();
+    wxSize curSize = GetSize();
+
+    if( curSize.x < minSize.x || curSize.y < minSize.y )
+        SetSize( wxSize( std::max( curSize.x, minSize.x ), std::max( curSize.y, minSize.y ) ) );
+
     return true;
 }
 
@@ -374,17 +387,14 @@ bool DIALOG_SHEET_PROPERTIES::TransferDataFromWindow()
     SCH_SHEET_PATH instance = m_frame->GetCurrentSheet();
     wxString variantName = m_frame->Schematic().GetCurrentVariant();
 
-    for( int ii = m_fields->GetNumberRows() - 1; ii >= 0; ii-- )
+    int ordinal = 42;   // Arbitrarily larger than any mandatory FIELD_T ids.
+
+    for( SCH_FIELD& field : *m_fields )
     {
-        SCH_FIELD& field = m_fields->at( ii );
-
-        if( field.IsMandatory() )
-            continue;
-
         const wxString& fieldName = field.GetCanonicalName();
 
         if( field.IsEmpty() )
-            m_fields->erase( m_fields->begin() + ii );
+            continue;
         else if( fieldName.IsEmpty() )
             field.SetName( _( "untitled" ) );
 
@@ -393,7 +403,8 @@ bool DIALOG_SHEET_PROPERTIES::TransferDataFromWindow()
 
         if( !existingField )
         {
-            m_sheet->AddOptionalField( field );
+            tmp = m_sheet->AddField( field );
+            tmp->SetParent( m_sheet );
         }
         else
         {
@@ -407,10 +418,35 @@ bool DIALOG_SHEET_PROPERTIES::TransferDataFromWindow()
                 // Restore the default field text for existing fields.
                 tmp->SetText( defaultText, &instance );
 
-                tmp->SetText( m_sheet->Schematic()->ConvertRefsToKIIDs( field.GetText() ),
-                              &instance, variantName );
+                wxString variantText = m_sheet->Schematic()->ConvertRefsToKIIDs( field.GetText() );
+                tmp->SetText( variantText, &instance, variantName );
             }
         }
+
+        if( !field.IsMandatory() )
+            field.SetOrdinal( ordinal++ );
+    }
+
+    for( int ii = (int) m_sheet->GetFields().size() - 1; ii >= 0; ii-- )
+    {
+        SCH_FIELD& sheetField = m_sheet->GetFields()[ii];
+
+        if( sheetField.IsMandatory() )
+            continue;
+
+        bool found = false;
+
+        for( const SCH_FIELD& editedField : *m_fields )
+        {
+            if( editedField.GetName() == sheetField.GetName() )
+            {
+                found = true;
+                break;
+            }
+        }
+
+        if( !found )
+            m_sheet->GetFields().erase( m_sheet->GetFields().begin() + ii );
     }
 
     m_sheet->SetBorderWidth( m_borderWidth.GetIntValue() );
@@ -459,8 +495,8 @@ bool DIALOG_SHEET_PROPERTIES::TransferDataFromWindow()
 
 bool DIALOG_SHEET_PROPERTIES::onSheetFilenameChanged( const wxString& aNewFilename )
 {
-    return m_frame->ChangeSheetFile( m_sheet, aNewFilename, m_clearAnnotationNewItems,
-                                     m_isUndoable, m_sourceSheetFilename );
+    return m_frame->ChangeSheetFile( m_sheet, aNewFilename, m_clearAnnotationNewItems, m_isUndoable,
+                                     m_sourceSheetFilename );
 }
 
 
@@ -490,8 +526,7 @@ void DIALOG_SHEET_PROPERTIES::OnGridCellChanging( wxGridEvent& event )
 
             if( newName.CmpNoCase( m_grid->GetCellValue( i, FDC_NAME ) ) == 0 )
             {
-                DisplayError( this, wxString::Format( _( "Field name '%s' already in use." ),
-                                                      newName ) );
+                DisplayError( this, wxString::Format( _( "Field name '%s' already in use." ), newName ) );
                 event.Veto();
                 m_delayedFocusRow = event.GetRow();
                 m_delayedFocusColumn = event.GetCol();

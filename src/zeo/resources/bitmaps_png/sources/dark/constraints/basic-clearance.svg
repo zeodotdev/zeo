@@ -32,7 +32,7 @@
      inkscape:window-x="0"
      inkscape:window-y="34"
      inkscape:window-maximized="0"
-     inkscape:current-layer="layer2"
+     inkscape:current-layer="layer1"
      showguides="true"><inkscape:grid
        type="xygrid"
        id="grid1049"
@@ -141,7 +141,7 @@
      inkscape:groupmode="layer"
      id="layer1"
      transform="translate(40.216687,4.2333341)"><path
-       style="color:#ded3dd;fill:#1a81c4;fill-opacity:1"
+       style="color:#ded3dd;fill:#42b8eb;fill-opacity:1"
        d="m 45.412356,16.64948 c 0,0 0.813417,1.870963 1.871094,1.871094 1.057676,1.31e-4 1.871093,1.871094 1.871093,1.871094 l -23,23 h -43.429688 c 0,0 0.792833,-1.852995 0,-2.646485 -0.792833,-0.793489 0,-2.646484 0,-2.646484 h 41.238282 z"
        id="path11499"
        sodipodi:nodetypes="czccczccc"
@@ -150,7 +150,7 @@
      id="layer4"
      inkscape:label="Pad"
      transform="translate(1.544e-5,4.2333341)"><path
-       style="color:#ded3dd;fill:#1a81c4;fill-opacity:1;stroke-width:0.999998;stroke-linejoin:round;-inkscape-stroke:none;paint-order:stroke fill markers"
+       style="color:#ded3dd;fill:#f29100;fill-opacity:1;stroke-width:0.999998;stroke-linejoin:round;-inkscape-stroke:none;paint-order:stroke fill markers"
        d="m 40.595501,5.0270827 c -3.682183,0 -6.728844,3.0462982 -6.728844,6.7280423 v 8.766963 c 0,3.681745 3.046661,6.729995 6.728844,6.729995 h 13.000638 c 3.682183,0 6.728846,-3.04825 6.728846,-6.729995 v -8.766963 c 0,-3.6817441 -3.046663,-6.7280423 -6.728846,-6.7280423 z"
        id="rect9980"
        inkscape:label="Pad"

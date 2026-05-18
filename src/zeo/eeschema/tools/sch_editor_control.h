@@ -151,6 +151,7 @@ public:
     int UpdatePCB( const TOOL_EVENT& aEvent );
     int UpdateFromPCB( const TOOL_EVENT& aEvent );
     int ImportFPAssignments( const TOOL_EVENT& aEvent );
+    int ImportNonKicadSchematic( const TOOL_EVENT& aEvent );
     int ExportNetlist( const TOOL_EVENT& aEvent );
     int GenerateBOM( const TOOL_EVENT& aEvent );
     int GenerateBOMLegacy( const TOOL_EVENT& aEvent );
@@ -178,7 +179,6 @@ public:
     int OnAngleSnapModeChanged( const TOOL_EVENT& aEvent );
     int ToggleAnnotateAuto( const TOOL_EVENT& aEvent );
     int TogglePythonConsole( const TOOL_EVENT& aEvent );
-    int ReloadPlugins( const TOOL_EVENT& aEvent );
 
     int GridFeedback( const TOOL_EVENT& aEvent );
 
@@ -207,6 +207,7 @@ public:
 
     int AddVariant( const TOOL_EVENT& aEvent );
     int RemoveVariant( const TOOL_EVENT& aEvent );
+    int EditVariantDescription( const TOOL_EVENT& aEvent );
 
 private:
     ///< copy selection to clipboard or to m_duplicateClipboard

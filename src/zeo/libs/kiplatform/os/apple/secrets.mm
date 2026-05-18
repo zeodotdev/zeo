@@ -83,3 +83,19 @@ bool KIPLATFORM::SECRETS::GetSecret(const wxString& aService, const wxString& aK
     CFRelease(query);
     return status == errSecSuccess;
 }
+
+
+bool KIPLATFORM::SECRETS::DeleteSecret(const wxString& aService, const wxString& aKey)
+{
+    wxScopedCharBuffer utf8Service = aService.utf8_str();
+    wxScopedCharBuffer utf8Key = aKey.utf8_str();
+
+    CFMutableDictionaryRef query = CFDictionaryCreateMutable(NULL, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+    CFDictionarySetValue(query, kSecClass, kSecClassGenericPassword);
+    CFDictionarySetValue(query, kSecAttrService, CFStringCreateWithCString(NULL, utf8Service.data(), kCFStringEncodingUTF8));
+    CFDictionarySetValue(query, kSecAttrAccount, CFStringCreateWithCString(NULL, utf8Key.data(), kCFStringEncodingUTF8));
+
+    OSStatus status = SecItemDelete(query);
+    CFRelease(query);
+    return status == errSecSuccess || status == errSecItemNotFound;
+}

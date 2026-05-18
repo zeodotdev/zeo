@@ -197,9 +197,16 @@ protected:
     void openTable( const LIBRARY_TABLE_ROW& aRow ) override
     {
         wxFileName fn( LIBRARY_MANAGER::ExpandURI( aRow.URI(), Pgm().GetSettingsManager().Prj() ) );
-        std::shared_ptr<LIBRARY_TABLE> child = std::make_shared<LIBRARY_TABLE>( fn, LIBRARY_TABLE_SCOPE::GLOBAL );
+        std::shared_ptr<LIBRARY_TABLE> child = std::make_shared<LIBRARY_TABLE>( fn, LIBRARY_TABLE_SCOPE::GLOBAL, LIBRARY_TABLE_TYPE::SYMBOL );
 
-        m_panel->OpenTable( child, aRow.Nickname() );
+        if( !child->IsOk() )
+        {
+            wxMessageBox( _( "Unable to load library table." ) );
+        }
+        else
+        {
+            m_panel->OpenTable( child, aRow.Nickname() );
+        }
     }
 
     wxString getTablePreamble() override
@@ -273,6 +280,18 @@ void PANEL_SYM_LIB_TABLE::AddTable( LIBRARY_TABLE* table, const wxString& aTitle
                                                               lastGlobalLibDir, wxEmptyString ),
                         true /* take ownership */ );
     }
+
+    static_cast<LIB_TABLE_GRID_DATA_MODEL*>( grid->GetTable() )->RecheckRows();
+
+    LIB_TABLE_NOTEBOOK_PANEL* notebookPanel =
+            static_cast<LIB_TABLE_NOTEBOOK_PANEL*>( m_notebook->GetPage( m_notebook->GetPageCount() - 1 ) );
+
+    static_cast<LIB_TABLE_GRID_DATA_MODEL*>( grid->GetTable() )
+            ->SetChangeCallback(
+                    [notebookPanel]()
+                    {
+                        notebookPanel->MarkDirty();
+                    } );
 
     // add Cut, Copy, and Paste to wxGrids
     SYMBOL_GRID_TRICKS* gridTricks = new SYMBOL_GRID_TRICKS( this, grid,
@@ -791,6 +810,12 @@ void PANEL_SYM_LIB_TABLE::onReset( wxCommandEvent& event )
                                                           lastGlobalLibDir, wxEmptyString ),
                     true /* take ownership */ );
 
+    LIB_TABLE_NOTEBOOK_PANEL* panel0 =
+            static_cast<LIB_TABLE_NOTEBOOK_PANEL*>( m_notebook->GetPage( 0 ) );
+    panel0->ClearDirty();
+    static_cast<LIB_TABLE_GRID_DATA_MODEL*>( grid->GetTable() )->SetChangeCallback(
+            [panel0]() { panel0->MarkDirty(); } );
+
     m_parent->m_GlobalTableChanged = true;
 
     grid->Thaw();
@@ -1103,6 +1128,19 @@ void InvokeSchEditSymbolLibTable( KIWAY* aKiway, wxWindow *aParent )
 {
     auto symbolEditor = static_cast<SYMBOL_EDIT_FRAME*>( aKiway->Player( FRAME_SCH_SYMBOL_EDITOR, false ) );
     wxString msg;
+
+    // Refuse to open the dialog re-entrantly while a library sync is running.  A
+    // sync can yield the event loop (via the progress dialog), which dispatches any
+    // pending UI events — including clicks that accumulated while the app was busy.
+    // Opening the dialog mid-sync corrupts the library tree.  Reschedule instead.
+    if( symbolEditor && symbolEditor->IsSyncLibrariesInProgress() )
+    {
+        symbolEditor->CallAfter( [aKiway, aParent]()
+        {
+            InvokeSchEditSymbolLibTable( aKiway, aParent );
+        } );
+        return;
+    }
 
     if( symbolEditor )
     {

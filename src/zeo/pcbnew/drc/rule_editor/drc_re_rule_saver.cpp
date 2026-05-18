@@ -28,8 +28,28 @@
 #include <string_utils.h>
 #include <wx/ffile.h>
 
+#include <drc_rules_lexer.h>
+
 #include "drc_re_base_constraint_data.h"
 #include "drc_rule_editor_enums.h"
+
+
+namespace
+{
+
+wxString formatLayerClause( const wxString& aLayerSource )
+{
+    if( aLayerSource.IsEmpty() )
+        return wxEmptyString;
+
+    if( aLayerSource == DRC_RULES_LEXER::TokenName( DRCRULE_T::T_outer )
+        || aLayerSource == DRC_RULES_LEXER::TokenName( DRCRULE_T::T_inner ) )
+        return wxString::Format( wxS( "(layer %s)" ), aLayerSource );
+
+    return wxString::Format( wxS( "(layer \"%s\")" ), EscapeString( aLayerSource, CTX_QUOTED_STR ) );
+}
+
+}
 
 
 DRC_RULE_SAVER::DRC_RULE_SAVER()
@@ -59,15 +79,18 @@ wxString DRC_RULE_SAVER::GenerateRulesText( const std::vector<DRC_RE_LOADED_PANE
 {
     wxString result = "(version 1)\n";
 
-    // Group entries by (ruleName, condition) for merging same-name same-condition rules
-    // Use a vector to preserve insertion order
-    std::vector<std::pair<std::pair<wxString, wxString>, std::vector<const DRC_RE_LOADED_PANEL_ENTRY*>>>
+    // Group entries by (ruleName, condition, layerSource) for merging same-rule constraints.
+    // Including the layer source prevents rules with different layer scopes from being
+    // incorrectly merged (e.g. separate "outer" and "inner" rules must remain distinct).
+    using GroupKey = std::tuple<wxString, wxString, wxString>;
+
+    std::vector<std::pair<GroupKey, std::vector<const DRC_RE_LOADED_PANEL_ENTRY*>>>
             groupedEntries;
-    std::map<std::pair<wxString, wxString>, size_t> groupIndex;
+    std::map<GroupKey, size_t> groupIndex;
 
     for( const DRC_RE_LOADED_PANEL_ENTRY& entry : aEntries )
     {
-        auto key = std::make_pair( entry.ruleName, entry.condition );
+        auto key = std::make_tuple( entry.ruleName, entry.condition, entry.layerSource );
         auto it = groupIndex.find( key );
 
         if( it == groupIndex.end() )
@@ -118,7 +141,8 @@ wxString DRC_RULE_SAVER::generateRuleText( const DRC_RE_LOADED_PANEL_ENTRY& aEnt
 
     wxString ruleText = aEntry.constraintData->GetGeneratedRule();
 
-    if( ruleText.IsEmpty() )
+    if( ruleText.IsEmpty() || aEntry.panelType == SILK_TO_SOLDERMASK_CLEARANCE
+        || aEntry.panelType == SILK_TO_SILK_CLEARANCE )
     {
         RULE_GENERATION_CONTEXT ctx;
         ctx.ruleName = aEntry.ruleName;
@@ -126,9 +150,45 @@ wxString DRC_RULE_SAVER::generateRuleText( const DRC_RE_LOADED_PANEL_ENTRY& aEnt
         ctx.constraintCode = aEntry.constraintData->GetConstraintCode();
         ctx.comment = aEntry.constraintData->GetComment();
 
-        // Generate layer clause if layers are specified
-        if( aEntry.layerCondition.any() && aBoard )
-            ctx.layerClause = generateLayerClause( aEntry.layerCondition, aBoard );
+        if( aEntry.panelType == SILK_TO_SOLDERMASK_CLEARANCE )
+        {
+            wxString silkCond;
+
+            if( aEntry.layerCondition.test( F_SilkS ) && !aEntry.layerCondition.test( B_SilkS ) )
+                silkCond = wxS( "L == 'F.Mask'" );
+            else if( aEntry.layerCondition.test( B_SilkS ) && !aEntry.layerCondition.test( F_SilkS ) )
+                silkCond = wxS( "L == 'B.Mask'" );
+            else
+                silkCond = wxS( "L == 'F.Mask' || L == 'B.Mask'" );
+
+            if( !ctx.conditionExpression.IsEmpty() )
+                ctx.conditionExpression = wxS( "(" ) + silkCond + wxS( ") && " ) + ctx.conditionExpression;
+            else
+                ctx.conditionExpression = silkCond;
+        }
+        else if( aEntry.panelType == SILK_TO_SILK_CLEARANCE )
+        {
+            wxString silkCond;
+
+            if( aEntry.layerCondition.test( F_SilkS ) && !aEntry.layerCondition.test( B_SilkS ) )
+                silkCond = wxS( "L == 'F.SilkS'" );
+            else if( aEntry.layerCondition.test( B_SilkS ) && !aEntry.layerCondition.test( F_SilkS ) )
+                silkCond = wxS( "L == 'B.SilkS'" );
+            else
+                silkCond = wxS( "L == 'F.SilkS' || L == 'B.SilkS'" );
+
+            if( !ctx.conditionExpression.IsEmpty() )
+                ctx.conditionExpression = wxS( "(" ) + silkCond + wxS( ") && " ) + ctx.conditionExpression;
+            else
+                ctx.conditionExpression = silkCond;
+        }
+        else if( aBoard )
+        {
+            if( !aEntry.layerSource.IsEmpty() )
+                ctx.layerClause = formatLayerClause( aEntry.layerSource );
+            else
+                ctx.layerClause = generateLayerClause( aEntry.layerCondition, aBoard );
+        }
 
         ruleText = aEntry.constraintData->GenerateRule( ctx );
     }
@@ -160,14 +220,18 @@ wxString DRC_RULE_SAVER::generateLayerClause( const LSET& aLayers, const BOARD* 
     if( !aBoard || !aLayers.any() )
         return wxEmptyString;
 
-    wxString layerStr = "(layer";
+    if( ( aLayers & LSET::AllCuMask() ) == LSET::ExternalCuMask() )
+        return wxString::Format( wxS( "(layer %s)" ), DRC_RULES_LEXER::TokenName( DRCRULE_T::T_outer ) );
 
+    if( ( aLayers & LSET::AllCuMask() ) == LSET::InternalCuMask() )
+        return wxString::Format( wxS( "(layer %s)" ), DRC_RULES_LEXER::TokenName( DRCRULE_T::T_inner ) );
+
+    // The parser only accepts a single layer name, so emit the first matching layer.
+    // Multi-layer conditions should use "outer" or "inner" keywords above.
     for( PCB_LAYER_ID layer : aLayers.Seq() )
-        layerStr += " \"" + aBoard->GetLayerName( layer ) + "\"";
+        return wxString::Format( wxS( "(layer \"%s\")" ), aBoard->GetLayerName( layer ) );
 
-    layerStr += ")";
-
-    return layerStr;
+    return wxEmptyString;
 }
 
 
@@ -214,12 +278,17 @@ wxString DRC_RULE_SAVER::generateMergedRuleText(
     ctx.ruleName = firstEntry->ruleName;
     ctx.conditionExpression = firstEntry->condition;
 
-    // Generate layer clause if layers are specified on any entry
+    // Generate layer clause from first entry with layer info (all entries in a
+    // merged group share the same layerSource because it's part of the grouping key)
     for( const auto* entry : aEntries )
     {
         if( entry->layerCondition.any() && aBoard )
         {
-            ctx.layerClause = generateLayerClause( entry->layerCondition, aBoard );
+            if( !entry->layerSource.IsEmpty() )
+                ctx.layerClause = formatLayerClause( entry->layerSource );
+            else
+                ctx.layerClause = generateLayerClause( entry->layerCondition, aBoard );
+
             break;
         }
     }
@@ -248,7 +317,7 @@ wxString DRC_RULE_SAVER::generateMergedRuleText(
 
     // Build the merged rule
     wxString rule;
-    rule << wxS( "(rule " ) << DRC_RE_BASE_CONSTRAINT_DATA::sanitizeRuleName( ctx.ruleName )
+    rule << wxS( "(rule " ) << DRC_RE_BASE_CONSTRAINT_DATA::formatRuleName( ctx.ruleName )
          << wxS( "\n" );
 
     if( !ctx.layerClause.IsEmpty() )

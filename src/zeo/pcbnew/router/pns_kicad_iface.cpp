@@ -63,6 +63,7 @@
 #include <wx/log.h>
 
 #include <memory>
+#include <unordered_set>
 
 #include <advanced_config.h>
 #include <pcbnew_settings.h>
@@ -495,8 +496,14 @@ bool PNS_PCBNEW_RULE_RESOLVER::QueryConstraint( PNS::CONSTRAINT_TYPE aType,
         return line->CLine().SegmentCount() > 1;
     };
 
-    bool lineANeedsSegmentEval = isMultiSegmentLine( aItemA, parentA );
-    bool lineBNeedsSegmentEval = isMultiSegmentLine( aItemB, parentB );
+    bool lineANeedsSegmentEval = false;
+    bool lineBNeedsSegmentEval = false;
+
+    if( drcEngine->HasGeometryDependentRules() )
+    {
+        lineANeedsSegmentEval = isMultiSegmentLine( aItemA, parentA );
+        lineBNeedsSegmentEval = isMultiSegmentLine( aItemB, parentB );
+    }
 
     // Evaluate segments of a multi-segment LINE against a single opposing item.
     auto evaluateLineSegments = [&]( const PNS::ITEM* aLineItem, BOARD_ITEM* aOpposingItem,
@@ -679,13 +686,14 @@ bool PNS_PCBNEW_RULE_RESOLVER::QueryConstraint( PNS::CONSTRAINT_TYPE aType,
 
 void PNS_PCBNEW_RULE_RESOLVER::ClearCacheForItems( std::vector<const PNS::ITEM*>& aItems )
 {
-    std::set<const PNS::ITEM*> remainingItems( aItems.begin(), aItems.end() );
+    if( aItems.empty() )
+        return;
+
+    std::unordered_set<const PNS::ITEM*> dirtyItems( aItems.begin(), aItems.end() );
 
     for( auto it = m_clearanceCache.begin(); it != m_clearanceCache.end(); )
     {
-        bool dirty = remainingItems.count( it->first.A ) || remainingItems.count( it->first.B );
-
-        if( dirty )
+        if( dirtyItems.contains( it->first.A ) || dirtyItems.contains( it->first.B ) )
             it = m_clearanceCache.erase( it );
         else
             ++it;
@@ -693,7 +701,7 @@ void PNS_PCBNEW_RULE_RESOLVER::ClearCacheForItems( std::vector<const PNS::ITEM*>
 
     for( auto it = m_hullCache.begin(); it != m_hullCache.end(); )
     {
-        if( remainingItems.count( it->first.item ) )
+        if( dirtyItems.contains( it->first.item ) )
             it = m_hullCache.erase( it );
         else
             ++it;
@@ -1373,6 +1381,11 @@ public:
             if( m_view->GetGAL() )
                 m_depth = m_view->GetGAL()->GetMinDepth();
         }
+
+        for( PNS::ITEM* item : m_clonedItems )
+            delete item;
+
+        m_clonedItems.clear();
     }
 
     virtual void Message( const wxString& msg, const SRC_LOCATION_INFO& aSrcLoc = SRC_LOCATION_INFO() ) override
@@ -1561,6 +1574,9 @@ std::vector<std::unique_ptr<PNS::SOLID>> PNS_KICAD_IFACE_BASE::syncPad( PAD* aPa
                         solid->SetShape( new SHAPE_SIMPLE( poly->Outline( 0 ) ) );
                 }
 
+                if( !solid->Shape( 0 ) )
+                    return;
+
                 solids.emplace_back( std::move( solid ) );
             };
 
@@ -1747,7 +1763,7 @@ bool PNS_KICAD_IFACE_BASE::syncZone( PNS::NODE* aWorld, ZONE* aZone, SHAPE_POLY_
         if( !layers[ layer ] )
             continue;
 
-        for( int polyId = 0; polyId < poly->TriangulatedPolyCount(); polyId++ )
+        for( unsigned int polyId = 0; polyId < poly->TriangulatedPolyCount(); polyId++ )
         {
             const SHAPE_POLY_SET::TRIANGULATED_POLYGON* tri = poly->TriangulatedPolygon( polyId );
 
@@ -2867,7 +2883,7 @@ void PNS_KICAD_IFACE::SetHostTool( PCB_TOOL_BASE* aTool )
 
 PCB_LAYER_ID PNS_KICAD_IFACE_BASE::GetBoardLayerFromPNSLayer( int aLayer ) const
 {
-    if( aLayer < 0 )
+    if( aLayer < 0 || aLayer >= m_board->GetCopperLayerCount() )
         return PCB_LAYER_ID::UNDEFINED_LAYER;
 
     if( aLayer == 0 )

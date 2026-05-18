@@ -472,7 +472,11 @@ public:
      */
     void RemoveField( const wxString& aFieldName );
 
-    void RemoveField( SCH_FIELD* aField ) { RemoveField( aField->GetName() ); }
+    void RemoveField( SCH_FIELD* aField )
+    {
+        if( aField )
+            RemoveField( aField->GetName() );
+    }
 
     /**
      * Search for a #SCH_FIELD with \a aFieldName
@@ -481,7 +485,8 @@ public:
      *
      * @return the field if found or NULL if the field was not found.
      */
-    SCH_FIELD* FindFieldCaseInsensitive( const wxString& aFieldName );
+    SCH_FIELD*       FindFieldCaseInsensitive( const wxString& aFieldName );
+    const SCH_FIELD* FindFieldCaseInsensitive( const wxString& aFieldName ) const;
 
     /**
      * @return the reference for the instance on the given sheet.

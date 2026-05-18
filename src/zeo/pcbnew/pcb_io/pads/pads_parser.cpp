@@ -4454,11 +4454,16 @@ void PARSER::parseSectionMISC( std::ifstream& aStream )
     bool inDifPair = false;
     bool inNetClassData = false;
     bool inNetClass = false;
-    bool inDefaultRuleSet = false;
+    bool inRuleSet = false;
+    bool inRuleSetFor = false;
     bool inClearanceRule = false;
-    int defaultRuleSetDepth = -1;
+    int netClassDataDepth = -1;
+    int netClassDepth = -1;
+    int ruleSetDepth = -1;
     int clearanceRuleDepth = -1;
     bool foundDefaultRules = false;
+    bool isDefaultRuleSet = false;
+    std::string ruleSetNetClass;
     DIFF_PAIR_DEF currentDiffPair;
     NET_CLASS_DEF currentNetClass;
 
@@ -4493,9 +4498,8 @@ void PARSER::parseSectionMISC( std::ifstream& aStream )
                     currentDiffPair = DIFF_PAIR_DEF();
                 }
 
-                if( braceDepth == 1 && inNetClass )
+                if( inNetClass && braceDepth <= netClassDepth )
                 {
-                    // End of NET_CLASS block (inside NET_CLASS DATA)
                     if( !currentNetClass.name.empty() )
                         m_net_classes.push_back( currentNetClass );
 
@@ -4503,9 +4507,8 @@ void PARSER::parseSectionMISC( std::ifstream& aStream )
                     currentNetClass = NET_CLASS_DEF();
                 }
 
-                if( braceDepth == 0 && inNetClassData )
+                if( inNetClassData && braceDepth <= netClassDataDepth )
                 {
-                    // End of NET_CLASS DATA block
                     inNetClassData = false;
                 }
 
@@ -4513,27 +4516,37 @@ void PARSER::parseSectionMISC( std::ifstream& aStream )
                 {
                     inClearanceRule = false;
 
-                    // Fall back to struct defaults if no values were parsed
-                    if( m_design_rules.default_clearance
-                        == std::numeric_limits<double>::max() )
+                    if( isDefaultRuleSet )
                     {
-                        m_design_rules.default_clearance = DESIGN_RULES().default_clearance;
+                        if( m_design_rules.default_clearance
+                            == std::numeric_limits<double>::max() )
+                        {
+                            m_design_rules.default_clearance =
+                                    DESIGN_RULES().default_clearance;
+                        }
+
+                        m_design_rules.min_clearance = m_design_rules.default_clearance;
+
+                        if( m_design_rules.copper_edge_clearance
+                            == std::numeric_limits<double>::max() )
+                        {
+                            m_design_rules.copper_edge_clearance =
+                                    m_design_rules.default_clearance;
+                        }
+
+                        foundDefaultRules = true;
                     }
-
-                    m_design_rules.min_clearance = m_design_rules.default_clearance;
-
-                    if( m_design_rules.copper_edge_clearance
-                        == std::numeric_limits<double>::max() )
-                    {
-                        m_design_rules.copper_edge_clearance =
-                                m_design_rules.default_clearance;
-                    }
-
-                    foundDefaultRules = true;
                 }
 
-                if( inDefaultRuleSet && braceDepth < defaultRuleSetDepth )
-                    inDefaultRuleSet = false;
+                if( inRuleSetFor && braceDepth < ruleSetDepth + 1 )
+                    inRuleSetFor = false;
+
+                if( inRuleSet && braceDepth < ruleSetDepth )
+                {
+                    inRuleSet = false;
+                    isDefaultRuleSet = false;
+                    ruleSetNetClass.clear();
+                }
             }
         }
 
@@ -4555,7 +4568,6 @@ void PARSER::parseSectionMISC( std::ifstream& aStream )
             }
         }
 
-        // Check for NET_CLASS DATA section header
         if( token == "NET_CLASS" )
         {
             std::string secondToken;
@@ -4563,49 +4575,56 @@ void PARSER::parseSectionMISC( std::ifstream& aStream )
 
             if( secondToken == "DATA" )
             {
-                // Entering NET_CLASS DATA section
                 inNetClassData = true;
+                netClassDataDepth = braceDepth;
             }
             else if( inNetClassData && !secondToken.empty() )
             {
-                // Starting a new NET_CLASS definition inside NET_CLASS DATA
-                // Format: NET_CLASS class_name
                 if( inNetClass && !currentNetClass.name.empty() )
                     m_net_classes.push_back( currentNetClass );
 
                 currentNetClass = NET_CLASS_DEF();
                 currentNetClass.name = secondToken;
                 inNetClass = true;
+                netClassDepth = braceDepth;
+            }
+            else if( inRuleSetFor && !secondToken.empty() )
+            {
+                ruleSetNetClass = secondToken;
             }
         }
         else if( inNetClass && token == "NET" )
         {
-            // Add net to current net class
             std::string netName;
             iss >> netName;
 
             if( !netName.empty() )
                 currentNetClass.net_names.push_back( netName );
         }
-        else if( token == "RULE_SET" && !foundDefaultRules )
+        else if( token == "RULE_SET" )
         {
-            // RULE_SET (1) is the default clearance rule set.
-            // Parse it to extract board-level design rule defaults.
             std::string ruleNum;
             iss >> ruleNum;
 
-            if( ruleNum == "(1)" )
-            {
-                inDefaultRuleSet = true;
-                defaultRuleSetDepth = braceDepth;
-            }
+            inRuleSet = true;
+            ruleSetDepth = braceDepth;
+            ruleSetNetClass.clear();
+            isDefaultRuleSet = ( ruleNum == "(1)" && !foundDefaultRules );
         }
-        else if( inDefaultRuleSet && token == "CLEARANCE_RULE" )
+        else if( inRuleSet && !inClearanceRule && token == "FOR" )
+        {
+            inRuleSetFor = true;
+        }
+        else if( inRuleSet && token == "CLEARANCE_RULE" )
         {
             inClearanceRule = true;
             clearanceRuleDepth = braceDepth;
-            m_design_rules.default_clearance = std::numeric_limits<double>::max();
-            m_design_rules.copper_edge_clearance = std::numeric_limits<double>::max();
+
+            if( isDefaultRuleSet )
+            {
+                m_design_rules.default_clearance = std::numeric_limits<double>::max();
+                m_design_rules.copper_edge_clearance = std::numeric_limits<double>::max();
+            }
         }
         else if( inClearanceRule )
         {
@@ -4614,31 +4633,59 @@ void PARSER::parseSectionMISC( std::ifstream& aStream )
 
             if( !iss.fail() && val > 0.0 )
             {
-                if( token == "MIN_TRACK_WIDTH" )
+                if( isDefaultRuleSet )
                 {
-                    m_design_rules.min_track_width = val;
+                    if( token == "MIN_TRACK_WIDTH" )
+                    {
+                        m_design_rules.min_track_width = val;
+                    }
+                    else if( token == "REC_TRACK_WIDTH" )
+                    {
+                        m_design_rules.default_track_width = val;
+                    }
+                    else if( token == "DRILL_TO_DRILL" )
+                    {
+                        m_design_rules.hole_to_hole = val;
+                    }
+                    else if( token == "OUTLINE_TO_TRACK" || token == "OUTLINE_TO_VIA"
+                             || token == "OUTLINE_TO_PAD" || token == "OUTLINE_TO_COPPER"
+                             || token == "OUTLINE_TO_SMD" )
+                    {
+                        m_design_rules.copper_edge_clearance =
+                                std::min( m_design_rules.copper_edge_clearance, val );
+                    }
+                    else if( token.rfind( "SAME_NET_", 0 ) == 0 || token == "BODY_TO_BODY"
+                             || token == "MAX_TRACK_WIDTH"
+                             || token.rfind( "TEXT_TO_", 0 ) == 0
+                             || token.rfind( "COPPER_TO_", 0 ) == 0 )
+                    {
+                        // Exclude same-net spacings, physical body clearances, text
+                        // clearances, and copper-pour clearances from the inter-net
+                        // copper clearance.
+                    }
+                    else if( token == "TRACK_TO_TRACK" || token.rfind( "VIA_TO_", 0 ) == 0
+                             || token.rfind( "PAD_TO_", 0 ) == 0
+                             || token.rfind( "SMD_TO_", 0 ) == 0
+                             || token.rfind( "DRILL_TO_", 0 ) == 0 )
+                    {
+                        m_design_rules.default_clearance =
+                                std::min( m_design_rules.default_clearance, val );
+                    }
                 }
-                else if( token == "REC_TRACK_WIDTH" )
+                else if( !ruleSetNetClass.empty() )
                 {
-                    m_design_rules.default_track_width = val;
-                }
-                else if( token == "DRILL_TO_DRILL" )
-                {
-                    m_design_rules.hole_to_hole = val;
-                }
-                else if( token == "OUTLINE_TO_TRACK" || token == "OUTLINE_TO_VIA"
-                         || token == "OUTLINE_TO_PAD" || token == "OUTLINE_TO_COPPER" )
-                {
-                    m_design_rules.copper_edge_clearance =
-                            std::min( m_design_rules.copper_edge_clearance, val );
-                }
-                else
-                {
-                    // All clearance values (TRACK_TO_TRACK, VIA_TO_*, PAD_TO_*,
-                    // SMD_TO_*, COPPER_TO_*, TEXT_TO_*, DRILL_TO_*) contribute to
-                    // the global minimum copper clearance
-                    m_design_rules.default_clearance =
-                            std::min( m_design_rules.default_clearance, val );
+                    for( auto& nc : m_net_classes )
+                    {
+                        if( nc.name == ruleSetNetClass )
+                        {
+                            if( token == "REC_TRACK_WIDTH" )
+                                nc.track_width = val;
+                            else if( token == "TRACK_TO_TRACK" )
+                                nc.clearance = val;
+
+                            break;
+                        }
+                    }
                 }
             }
         }

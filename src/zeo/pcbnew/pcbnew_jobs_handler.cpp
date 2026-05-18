@@ -19,8 +19,15 @@
  * with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <wx/crt.h>
 #include <wx/dir.h>
+#include <wx/zipstrm.h>
+#include <wx/filename.h>
 #include <wx/tokenzr.h>
+#include <wx/wfstream.h>
+
+#include <nlohmann/json.hpp>
+
 #include "pcbnew_jobs_handler.h"
 #include <board_commit.h>
 #include <board_design_settings.h>
@@ -30,6 +37,7 @@
 #include <drc/drc_report.h>
 #include <drawing_sheet/ds_data_model.h>
 #include <drawing_sheet/ds_proxy_view_item.h>
+#include <footprint.h>
 #include <jobs/job_fp_export_svg.h>
 #include <jobs/job_fp_upgrade.h>
 #include <jobs/job_export_pcb_ipc2581.h>
@@ -51,8 +59,8 @@
 #include <jobs/job_pcb_drc.h>
 #include <jobs/job_pcb_import.h>
 #include <jobs/job_pcb_upgrade.h>
-#include <nlohmann/json.hpp>
 #include <eda_units.h>
+#include <footprint_library_adapter.h>
 #include <lset.h>
 #include <cli/exit_codes.h>
 #include <exporters/place_file_exporter.h>
@@ -62,7 +70,6 @@
 #include <plotters/plotters_pslike.h>
 #include <tool/tool_manager.h>
 #include <tools/drc_tool.h>
-#include <wx/crt.h>
 #include <filename_resolver.h>
 #include <gerber_jobfile_writer.h>
 #include "gerber_placefile_writer.h"
@@ -82,6 +89,7 @@
 #include <pcbplot.h>
 #include <pcb_plotter.h>
 #include <pcb_edit_frame.h>
+#include <pcb_track.h>
 #include <pgm_base.h>
 #include <usage_sync.h>
 #include <3d_rendering/raytracing/render_3d_raytrace_ram.h>
@@ -92,9 +100,6 @@
 #include <progress_reporter.h>
 #include <wildcards_and_files_ext.h>
 #include <export_vrml.h>
-#include <wx/wfstream.h>
-#include <wx/zipstrm.h>
-#include <wx/filename.h>
 #include <kiplatform/io.h>
 #include <settings/settings_manager.h>
 #include <dialogs/dialog_gendrill.h>
@@ -588,7 +593,7 @@ int PCBNEW_JOBS_HANDLER::JobExportStep( JOB* aJob )
 
         if( !aStepJob->m_hasUserOrigin )
         {
-            BOX2I bbox = brd->ComputeBoundingBox( true );
+            BOX2I bbox = brd->ComputeBoundingBox( true, true );
             originX = pcbIUScale.IUTomm( bbox.GetCenter().x );
             originY = pcbIUScale.IUTomm( bbox.GetCenter().y );
         }
@@ -668,6 +673,9 @@ int PCBNEW_JOBS_HANDLER::JobExportRender( JOB* aJob )
 
     if( !brd )
         return CLI::EXIT_CODES::ERR_INVALID_INPUT_FILE;
+
+    if( !aRenderJob->m_variant.IsEmpty() )
+        brd->SetCurrentVariant( aRenderJob->m_variant );
 
     if( aRenderJob->GetConfiguredOutputPath().IsEmpty() )
     {
@@ -1462,10 +1470,10 @@ int PCBNEW_JOBS_HANDLER::JobExportGencad( JOB* aJob )
     if( aGencadJob == nullptr )
         return CLI::EXIT_CODES::ERR_UNKNOWN;
 
-    BOARD* brd = LoadBoard( aGencadJob->m_filename, true ); // Ensure m_board is of type BOARD*
+    BOARD* brd = getBoard( aGencadJob->m_filename );
 
-    if( brd == nullptr )
-        return CLI::EXIT_CODES::ERR_UNKNOWN;
+    if( !brd )
+        return CLI::EXIT_CODES::ERR_INVALID_INPUT_FILE;
 
     GENCAD_EXPORTER exporter( brd );
 
@@ -1740,7 +1748,7 @@ int PCBNEW_JOBS_HANDLER::JobExportDrill( JOB* aJob )
     case JOB_EXPORT_PCB_DRILL::MAP_FORMAT::PDF:        mapFormat = PLOT_FORMAT::PDF;    break;
     }
 
-    
+
     if( aDrillJob->m_generateReport && aDrillJob->m_reportPath.IsEmpty() )
     {
         wxFileName fn = outPath;
@@ -2291,6 +2299,11 @@ int PCBNEW_JOBS_HANDLER::JobExportDrc( JOB* aJob )
     if( !brd )
         return CLI::EXIT_CODES::ERR_INVALID_INPUT_FILE;
 
+    // Running DRC requires libraries be loaded, so make sure they have been
+    FOOTPRINT_LIBRARY_ADAPTER* adapter = PROJECT_PCB::FootprintLibAdapter( brd->GetProject() );
+    adapter->AsyncLoad();
+    adapter->BlockUntilLoaded();
+
     if( drcJob->GetConfiguredOutputPath().IsEmpty() )
     {
         wxFileName fn = brd->GetFileName();
@@ -2517,10 +2530,9 @@ int PCBNEW_JOBS_HANDLER::JobExportIpc2581( JOB* aJob )
     if( job->GetConfiguredOutputPath().IsEmpty() )
     {
         wxFileName fn = brd->GetFileName();
-        fn.SetName( fn.GetName() );
-        fn.SetExt( FILEEXT::Ipc2581FileExtension );
+        fn.SetExt( job->m_compress ? std::string( "zip" ) : FILEEXT::Ipc2581FileExtension );
 
-        job->SetWorkingOutputPath( fn.GetName() );
+        job->SetWorkingOutputPath( fn.GetFullName() );
     }
 
     wxString outPath = resolveJobOutputPath( aJob, brd );
@@ -2531,70 +2543,8 @@ int PCBNEW_JOBS_HANDLER::JobExportIpc2581( JOB* aJob )
         return CLI::EXIT_CODES::ERR_INVALID_OUTPUT_CONFLICT;
     }
 
-    std::map<std::string, UTF8> props;
-    props["units"] = job->m_units == JOB_EXPORT_PCB_IPC2581::IPC2581_UNITS::MM ? "mm" : "inch";
-    props["sigfig"] = wxString::Format( "%d", job->m_precision );
-    props["version"] = job->m_version == JOB_EXPORT_PCB_IPC2581::IPC2581_VERSION::C ? "C" : "B";
-    props["OEMRef"] = job->m_colInternalId;
-    props["mpn"] = job->m_colMfgPn;
-    props["mfg"] = job->m_colMfg;
-    props["dist"] = job->m_colDist;
-    props["distpn"] = job->m_colDistPn;
-
-    wxString tempFile = wxFileName::CreateTempFileName( wxS( "pcbnew_ipc" ) );
-    try
-    {
-        IO_RELEASER<PCB_IO> pi( PCB_IO_MGR::FindPlugin( PCB_IO_MGR::IPC2581 ) );
-        pi->SetProgressReporter( m_progressReporter );
-        pi->SaveBoard( tempFile, brd, &props );
-    }
-    catch( const IO_ERROR& ioe )
-    {
-        m_reporter->Report( wxString::Format( _( "Error generating IPC-2581 file '%s'.\n%s" ),
-                                              job->m_filename,
-                                              ioe.What() ),
-                            RPT_SEVERITY_ERROR );
-
-        wxRemoveFile( tempFile );
-
+    if( !DIALOG_EXPORT_2581::GenerateFile( *job, brd, m_progressReporter, m_reporter ) )
         return CLI::EXIT_CODES::ERR_UNKNOWN;
-    }
-
-    if( job->m_compress )
-    {
-        wxFileName tempfn = outPath;
-        tempfn.SetExt( FILEEXT::Ipc2581FileExtension );
-        wxFileName zipfn = tempFile;
-        zipfn.SetExt( "zip" );
-
-        {
-            wxFFileOutputStream fnout( zipfn.GetFullPath() );
-
-            // Use a large I/O buffer to improve compatibility with cloud-synced folders.
-            // See KIPLATFORM::IO::CLOUD_SYNC_BUFFER_SIZE comment for details.
-            if( FILE* fp = fnout.GetFile()->fp() )
-                setvbuf( fp, nullptr, _IOFBF, KIPLATFORM::IO::CLOUD_SYNC_BUFFER_SIZE );
-
-            wxZipOutputStream   zip( fnout );
-            wxFFileInputStream  fnin( tempFile );
-
-            zip.PutNextEntry( tempfn.GetFullName() );
-            fnin.Read( zip );
-        }
-
-        wxRemoveFile( tempFile );
-        tempFile = zipfn.GetFullPath();
-    }
-
-    // If save succeeded, replace the original with what we just wrote
-    if( !wxRenameFile( tempFile, outPath ) )
-    {
-        m_reporter->Report( wxString::Format( _( "Error generating IPC-2581 file '%s'.\n"
-                                                 "Failed to rename temporary file '%s." ),
-                                              outPath,
-                                              tempFile ),
-                            RPT_SEVERITY_ERROR );
-    }
 
     return CLI::EXIT_CODES::SUCCESS;
 }
@@ -2779,6 +2729,11 @@ DS_PROXY_VIEW_ITEM* PCBNEW_JOBS_HANDLER::getDrawingSheetProxyView( BOARD* aBrd )
 
     drawingSheet->SetFileName( TO_UTF8( aBrd->GetFileName() ) );
 
+    wxString currentVariant = aBrd->GetCurrentVariant();
+    wxString variantDesc = aBrd->GetVariantDescription( currentVariant );
+    drawingSheet->SetVariantName( TO_UTF8( currentVariant ) );
+    drawingSheet->SetVariantDesc( TO_UTF8( variantDesc ) );
+
     return drawingSheet;
 }
 
@@ -2838,7 +2793,7 @@ int PCBNEW_JOBS_HANDLER::JobImport( JOB* aJob )
         fileType = PCB_IO_MGR::FindPluginTypeFromBoardPath( job->m_inputFile );
         break;
 
-    case JOB_PCB_IMPORT::FORMAT::PADS:
+    case JOB_PCB_IMPORT::FORMAT::PADS_ASCII:
         fileType = PCB_IO_MGR::PADS;
         break;
 
@@ -2960,7 +2915,7 @@ int PCBNEW_JOBS_HANDLER::JobImport( JOB* aJob )
 
                 layerMappings[layerName.ToStdString()] = {
                     { "kicad_layer", LSET::Name( layer ).ToStdString() },
-                    { "method", job->m_autoMap ? "auto" : "manual" }
+                    { "method", "auto" }
                 };
             }
 

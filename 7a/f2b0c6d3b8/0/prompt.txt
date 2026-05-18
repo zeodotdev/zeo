@@ -1,0 +1,72 @@
+Walk thorugh the update system. When I upload a new version of Zeo to the server, doe sit create the update message in the notifications tab in the launcher?
+
+---
+
+It looks like when I test the functionality (by downloading v0.1.1) and opening it when these are the files in storage: [Image #1] I get no popup, no notification. Let's make sure that when a new version is availalb, the user gets a pop up and there is an option in the Zeo menu to check for updates
+
+---
+
+Ca nwe update the build script to ensure that the ZEO_BASE_URL uses the prod link when built with a release value (/dev build scripts)
+
+---
+
+How would I test the current build to see if it works with the updater system
+
+---
+
+This is the response: gmp@mac zeodotdev %   curl -i -X POST https://zeo-staging.vercel.app/api/v1/update \
+    -H "Content-Type: application/json" \
+    -d '{"platform":"macos","arch":"unified","current_version":"0.1.1","lang":"en","last_check":""}'
+HTTP/2 204
+cache-control: public, max-age=0, must-revalidate
+date: Mon, 18 May 2026 22:13:37 GMT
+server: Vercel
+strict-transport-security: max-age=63072000; includeSubDomains; preload
+vary: rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch
+x-matched-path: /api/v1/update
+x-vercel-cache: MISS
+x-vercel-id: sfo1::iad1::6pskv-1779142415684-c1d3169a8d52
+
+gmp@mac zeodotdev %
+
+---
+
+gmp@mac zeodotdev %  curl -i -X POST https://www.zeo.dev/api/v1/update \
+    -H "Content-Type: application/json" \
+    -d '{"platform":"macos","arch":"unified","current_version":"0.1.1","lang":"en","last_check":""}'
+HTTP/2 204
+cache-control: public, max-age=0, must-revalidate
+date: Mon, 18 May 2026 22:15:41 GMT
+server: Vercel
+strict-transport-security: max-age=63072000
+vary: rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch
+x-matched-path: /api/v1/update
+x-vercel-cache: MISS
+x-vercel-id: sfo1::iad1::pcjr2-1779142541233-9677471927b6
+
+gmp@mac zeodotdev %
+
+ How would I check if the files are production or not, it seems like all the files I upload to the server are all production. You can read the server code in ../web
+
+---
+
+Let's proceed with option 2
+
+---
+
+Looks like it works: gmp@mac zeodotdev %   curl -i -X POST https://www.zeo.dev/api/v1/update \
+    -H "Content-Type: application/json" \
+    -d '{"platform":"macos","arch":"unified","current_version":"0.1.1","lang":"en","last_check":""}'
+HTTP/2 200
+cache-control: public, max-age=0, must-revalidate
+content-type: application/json
+date: Mon, 18 May 2026 23:18:53 GMT
+server: Vercel
+strict-transport-security: max-age=63072000
+vary: rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch
+x-matched-path: /api/v1/update
+x-vercel-cache: MISS
+x-vercel-id: sfo1::iad1::d52ff-1779146331958-b0f6b84d42e9
+
+{"version":"0.2.0","release_date":"","details_url":"https://www.zeo.dev/docs/changelog","downloads_url":"https://www.zeo.dev/download"}%
+gmp@mac zeodotdev %

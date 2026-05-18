@@ -1,0 +1,5 @@
+This change did not work. On changing the value and pressing enter nothing happened. However when I manually pressed the refresh button the position changed so there is likely a bug with the refresh command
+
+---
+
+I see the problem, it does work but when I click out of the text box, not when I press enter. We can remove the log messages

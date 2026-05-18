@@ -1,0 +1,26 @@
+{
+  "cli_version": "0.6.1",
+  "checkpoint_id": "a6ea4027a00b",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 0,
+  "files_touched": [
+    "src/zeo/3d-viewer/3d_viewer/eda_3d_viewer_frame.cpp",
+    "src/zeo/3d-viewer/dialogs/panel_3d_assembly.cpp"
+  ],
+  "sessions": [
+    {
+      "metadata": "/a6/ea4027a00b/0/metadata.json",
+      "transcript": "/a6/ea4027a00b/0/full.jsonl",
+      "content_hash": "/a6/ea4027a00b/0/content_hash.txt",
+      "prompt": "/a6/ea4027a00b/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 40,
+    "cache_creation_tokens": 568113,
+    "cache_read_tokens": 16373267,
+    "output_tokens": 23863,
+    "api_call_count": 30
+  }
+}

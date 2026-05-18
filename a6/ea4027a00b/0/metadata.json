@@ -1,0 +1,57 @@
+{
+  "cli_version": "0.6.1",
+  "checkpoint_id": "a6ea4027a00b",
+  "session_id": "ab16da60-d461-4e0f-8859-898be0d369b1",
+  "strategy": "manual-commit",
+  "created_at": "2026-05-18T08:01:30.219361Z",
+  "branch": "main",
+  "checkpoints_count": 0,
+  "files_touched": [
+    "src/zeo/3d-viewer/dialogs/panel_3d_assembly.cpp",
+    "src/zeo/3d-viewer/3d_viewer/eda_3d_viewer_frame.cpp"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-opus-4-7[1m]",
+  "turn_id": "d0c0ec8460c1",
+  "checkpoint_transcript_start": 1385,
+  "transcript_lines_at_start": 1385,
+  "token_usage": {
+    "input_tokens": 40,
+    "cache_creation_tokens": 568113,
+    "cache_read_tokens": 16373267,
+    "output_tokens": 23863,
+    "api_call_count": 30
+  },
+  "session_metrics": {
+    "turn_count": 9
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-05-18T08:01:30.183764Z",
+    "agent_lines": 0,
+    "agent_removed": 0,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 7,
+    "total_committed": 2,
+    "total_lines_changed": 7,
+    "agent_percentage": 0,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 22,
+      "user_lines_removed": 7,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        "src/zeo/3d-viewer/3d_canvas/eda_3d_canvas.cpp": 6,
+        "src/zeo/3d-viewer/3d_viewer/eda_3d_viewer_frame.cpp": 6,
+        "src/zeo/3d-viewer/dialogs/panel_3d_assembly.cpp": 10
+      },
+      "user_removed_per_file": {
+        "src/zeo/3d-viewer/3d_viewer/eda_3d_viewer_frame.cpp": 7
+      }
+    }
+  ]
+}

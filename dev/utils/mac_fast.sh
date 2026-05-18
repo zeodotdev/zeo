@@ -518,10 +518,41 @@ if $DO_LAUNCH; then
     fi
 fi
 
-# --- Timing ---
+# --- Timing + post-build summary ---
 
 END_TIME=$(date +%s)
 ELAPSED=$((END_TIME - START_TIME))
-log "Done in ${ELAPSED}s."
+
+INSTALLED_APP="$BUILDER_DIR/build/kicad-dest/Zeo.app"
+
 echo ""
-echo "AGENT_PYTHON_DIR=\"$KICAD_SOURCE_DIR/agent/tools/python\" \"$INTREE_APP/Contents/MacOS/Zeo\""
+echo "=============================================="
+echo "FAST BUILD COMPLETE — ${ELAPSED}s"
+echo "=============================================="
+echo ""
+echo "Bundles:"
+echo "  in-tree:     $INTREE_APP"
+if $DO_INSTALL && [ -d "$INSTALLED_APP" ]; then
+echo "  installed:   $INSTALLED_APP"
+echo ""
+echo "The installed bundle (kicad-dest) is the canonical, runnable copy."
+echo "The in-tree bundle is incremental and good for fast iteration AFTER"
+echo "the install bundle has been populated at least once."
+else
+echo ""
+echo "NOTE: --install was not passed. The in-tree bundle has fresh binaries"
+echo "but may be missing runtime deps (Python framework, libraries, ngspice)."
+echo "Re-run with --install to populate kicad-dest as a fully-runnable copy,"
+echo "or with --launch to set the in-tree bundle up and launch it directly."
+fi
+echo ""
+echo "Common commands:"
+echo "  open \"$INTREE_APP\""
+echo "  WXTRACE=KICAD_AGENT \"$INTREE_APP/Contents/MacOS/Zeo\"        # agent debug tracing"
+echo "  lldb -o run \"$INTREE_APP/Contents/MacOS/Zeo\"                # under lldb"
+if $DO_INSTALL && [ -d "$INSTALLED_APP" ]; then
+echo "  open \"$INSTALLED_APP\"                                       # launch installed bundle"
+fi
+echo ""
+echo "  AGENT_PYTHON_DIR=\"$KICAD_SOURCE_DIR/agent/tools/python\" \"$INTREE_APP/Contents/MacOS/Zeo\""
+echo "=============================================="

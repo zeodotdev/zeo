@@ -770,8 +770,22 @@ void PANEL_3D_ASSEMBLY::onHideAllBoards( wxCommandEvent& aEvent )
 
 void PANEL_3D_ASSEMBLY::refresh3DView()
 {
-    if( m_frame )
-        m_frame->NewDisplay( true );
+    if( !m_frame )
+        return;
+
+    // Defer to the next event-loop tick so the refresh chain runs OUTSIDE
+    // any keystroke dispatch we may currently be in. When the user commits
+    // a position/rotation value with Enter, the CHAR_HOOK lambda invokes
+    // onPositionChanged synchronously — a plain NewDisplay() call from
+    // inside that hook queues a paint, but on macOS the queued paint
+    // doesn't fire while the text control still has focus and the
+    // keystroke event is still on the stack. KILL_FOCUS-triggered commits
+    // happen after focus has already transferred, so the queued paint
+    // dispatches normally — which is why "click out of the field" used to
+    // be the only way to see the position update. CallAfter defers the
+    // refresh until wx is back in its idle loop, making Enter behave the
+    // same as click-out.
+    m_frame->CallAfter( [frame = m_frame]() { frame->NewDisplay( true ); } );
 }
 
 

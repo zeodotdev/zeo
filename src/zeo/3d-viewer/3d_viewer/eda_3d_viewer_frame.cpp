@@ -759,10 +759,8 @@ void EDA_3D_VIEWER_FRAME::NewDisplay( bool aForceImmediateRedraw )
     // Use Request_refresh instead of plain Refresh(): EDA_3D_CANVAS notes
     // that "just calling Refresh() does not work always" — particularly when
     // the trigger is a non-mouse event (panel text commit, dropdown change,
-    // appearance toggle). Without this, the MBS assembly panel's
-    // position/rotation edits stored a new pose but the canvas didn't
-    // repaint until the user nudged the camera. Request_refresh posts a
-    // custom event that survives the idle-coalescing window.
+    // appearance toggle). Request_refresh posts a custom event that
+    // survives the idle-coalescing window.
     if( m_canvas && aForceImmediateRedraw )
         m_canvas->Request_refresh();
 }

@@ -2918,16 +2918,9 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
     m_lastCollisions.clear();
     m_lastOverlapBoxes.clear();
 
-    // Per-call diagnostic — shows how the mesh-level narrow phase is
-    // performing. Logged once at the end so it doesn't spam during
-    // the inner loops.
-    int diagPairsBroad   = 0;   // pairs that survived OBB broad phase
-    int diagPairsFallback = 0;  // pairs handled by OBB-only fallback (no mesh)
-    int diagPairsCollide = 0;
-    int diagPairsContact = 0;
-    int diagPairsCleared = 0;   // mesh test cleared as not-touching
-    int diagFpsWithMesh  = 0;
-    int diagFpsTotal     = 0;
+    // Broad-phase pair counter — used by the BROAD-DUMP diagnostic that
+    // fires when rotated boards inexplicably produce zero candidate pairs.
+    int diagPairsBroad = 0;
 
     // Mated pairs are expected contact (mate gizmo renders them green/cyan);
     // skip them in the collision pass so users see only the unintended
@@ -3512,11 +3505,6 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
             if( !buildShape( inst, adapter, fp, s ) )
                 continue;
 
-            diagFpsTotal++;
-
-            if( !s.meshTris.empty() )
-                diagFpsWithMesh++;
-
             // Skip silk-only / reference-marker / fab-only footprints
             // entirely. They have no declared 3D model, so no physical
             // volume to collide with — their AABB collapses to a zero-
@@ -3774,7 +3762,6 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
                         }
 
                         std::vector<SFVEC3F>* tris = nullptr;
-                        const wxChar*         desc = nullptr;
                         OVERLAP_KIND          kindM;
                         float                 overlapThicknessM = 0.0f;
 
@@ -3815,32 +3802,18 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
                                       tMax.y - tMin.y,
                                       tMax.z - tMin.z } );
 
-                            if( overlapThicknessM > kCollisionPenThresholdMm )
-                            {
-                                kindM = OVERLAP_KIND::COLLISION;
-                                desc  = wxT( "over-penetrating" );
-                            }
-                            else
-                            {
-                                kindM = OVERLAP_KIND::CONTACT;
-                                desc  = wxT( "interlocking" );
-                            }
+                            kindM = overlapThicknessM > kCollisionPenThresholdMm
+                                            ? OVERLAP_KIND::COLLISION
+                                            : OVERLAP_KIND::CONTACT;
                         }
                         else if( !nearTriVertsM.empty() )
                         {
                             tris  = &nearTriVertsM;
                             kindM = OVERLAP_KIND::CONTACT;
-                            desc  = wxT( "near-touching" );
                         }
 
                         if( !tris )
-                        {
-                            if( diagPairsBroad <= 16 )
-                                wxLogMessage( wxT( "[COLLIDE] mated    %s↔%s "
-                                                   "→ skip (gap > %.2f mm)" ),
-                                              a.ref, b.ref, kContactMarginMm );
                             continue;
-                        }
 
                         // Compute AABB of the participating triangles
                         // for the box backstop.
@@ -3870,8 +3843,6 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
 
                         if( kindM == OVERLAP_KIND::COLLISION )
                         {
-                            diagPairsCollide++;
-
                             COLLISION_RESULT result;
                             result.board1Uuid = inst1.uuid;
                             result.board2Uuid = inst2.uuid;
@@ -3886,22 +3857,6 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
                             result.collisionPoint = SFVEC3F( mid.x, mid.y, mid.z );
                             result.penetrationMm  = overlapThicknessM;
                             m_lastCollisions.push_back( result );
-                        }
-                        else
-                        {
-                            diagPairsContact++;
-                        }
-
-                        if( diagPairsBroad <= 16 )
-                        {
-                            wxLogMessage( wxT( "[COLLIDE] mated    %s↔%s "
-                                               "→ %s (%s, thickness=%.3f mm)" ),
-                                          a.ref, b.ref,
-                                          kindM == OVERLAP_KIND::COLLISION
-                                              ? wxT( "COLLISION" )
-                                              : wxT( "CONTACT" ),
-                                          desc,
-                                          overlapThicknessM );
                         }
 
                         continue;
@@ -3920,12 +3875,7 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
                     };
 
                     if( isMechanicalOnly( a.fp ) && isMechanicalOnly( b.fp ) )
-                    {
-                        if( diagPairsBroad <= 16 )
-                            wxLogMessage( wxT( "[COLLIDE] skip(mechOnly) %s↔%s" ),
-                                          a.ref, b.ref );
                         continue;
-                    }
 
                     // Debug visualization: blue wireframe AABB for
                     // every pair that survives the broad-phase pre-
@@ -3951,21 +3901,6 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
                         dbg.refA      = a.ref;
                         dbg.refB      = b.ref;
                         m_lastOverlapBoxes.push_back( dbg );
-                    }
-
-                    // Per-pair diag — only logged for the first few
-                    // candidate pairs so the log stays digestible.
-                    if( diagPairsBroad <= 8 )
-                    {
-                        wxLogMessage( wxT( "[COLLIDE] candidate %s↔%s "
-                                           "minPen=%.3f mm  "
-                                           "a.mesh=%zu b.mesh=%zu  "
-                                           "a.declared=%d b.declared=%d" ),
-                                       a.ref, b.ref,
-                                       minPen,
-                                       a.meshTris.size(), b.meshTris.size(),
-                                       a.hasDeclaredModels ? 1 : 0,
-                                       b.hasDeclaredModels ? 1 : 0 );
                     }
 
                     // M6.E phase-3 mesh-level narrow phase. The OBB
@@ -4001,7 +3936,6 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
                         // approximate. Skip until the mesh cache is
                         // ready — auto-run will retry on the next
                         // refresh once the model has finished loading.
-                        diagPairsFallback++;
                         continue;
                     }
 
@@ -4026,13 +3960,6 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
                     constexpr size_t     kMaxTriVerts = 6 * 256;
                     std::vector<SFVEC3F> hitTriVerts;
                     std::vector<SFVEC3F> nearTriVerts;
-
-                    // Per-pair counters so we can tell how the mesh
-                    // narrow phase is performing for each candidate —
-                    // tri-AABB-overlap reaches the Möller test, hits
-                    // are confirmed intersections.
-                    int diagTriAabbOverlap = 0;
-                    int diagTriHits        = 0;
 
                     auto growBox = [&]( glm::vec3& aMin, glm::vec3& aMax,
                                         const glm::vec3& aP, bool& aHave )
@@ -4067,13 +3994,10 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
                                 || tb.aabbMax.z + margin < ta.aabbMin.z )
                                 continue;
 
-                            diagTriAabbOverlap++;
-
                             if( trianglesIntersect( ta.v0, ta.v1, ta.v2,
                                                      tb.v0, tb.v1, tb.v2 ) )
                             {
                                 anyHit = true;
-                                diagTriHits++;
                                 growBox( hitMin, hitMax, ta.v0, haveHit );
                                 growBox( hitMin, hitMax, ta.v1, haveHit );
                                 growBox( hitMin, hitMax, ta.v2, haveHit );
@@ -4161,19 +4085,6 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
                         }
                     }
 
-                    // Per-pair mesh-test summary — first few candidates.
-                    if( diagPairsBroad <= 8 )
-                    {
-                        wxLogMessage( wxT( "[COLLIDE]   mesh %s↔%s  "
-                                           "tris=%zu×%zu  triAABB=%d  hits=%d  "
-                                           "minDist=%.3f mm" ),
-                                       a.ref, b.ref,
-                                       a.meshTris.size(), b.meshTris.size(),
-                                       diagTriAabbOverlap, diagTriHits,
-                                       std::isfinite( minDistSq )
-                                           ? std::sqrt( minDistSq ) : -1.0f );
-                    }
-
                     OVERLAP_KIND kind;
                     glm::vec3    boxMin, boxMax;
 
@@ -4182,14 +4093,12 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
                         kind   = OVERLAP_KIND::COLLISION;
                         boxMin = hitMin;
                         boxMax = hitMax;
-                        diagPairsCollide++;
                     }
                     else if( haveNear )
                     {
                         kind   = OVERLAP_KIND::CONTACT;
                         boxMin = nearMin;
                         boxMax = nearMax;
-                        diagPairsContact++;
                     }
                     else
                     {
@@ -4197,7 +4106,6 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
                         // intersection, no proximity. AABB false
                         // positive (e.g. mated header inside its
                         // socket's air space). Move on.
-                        diagPairsCleared++;
                         continue;
                     }
 
@@ -4415,9 +4323,6 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
         boardShapes.push_back( sh );
     }
 
-    int diagBoardPairsBroad   = 0;
-    int diagBoardPairsCollide = 0;
-
     for( size_t i = 0; i < boardShapes.size(); i++ )
     {
         for( size_t j = i + 1; j < boardShapes.size(); j++ )
@@ -4455,8 +4360,6 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
             if( minPen <= 0.0f )
                 continue;   // separated — boards aren't actually overlapping
 
-            diagBoardPairsBroad++;
-
             // Debug AABB box (blue wireframe) — every overlapping
             // substrate pair, regardless of how thin the overlap.
             {
@@ -4480,8 +4383,6 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
             // Confirmed COLLISION when penetration is substantial.
             if( minPen < kMinPenetrationMm )
                 continue;
-
-            diagBoardPairsCollide++;
 
             // Build the 12 surface tris of a substrate slab in world
             // space. 8 corners → 6 faces × 2 tris. Returned vector is
@@ -4709,9 +4610,6 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
     //   intersects its own substrate by definition; that's normal).
     // - The fp is mated to anything on the other instance (mating
     //   connectors poke through pads, that's intentional).
-    int diagFpSubBroad   = 0;
-    int diagFpSubCollide = 0;
-
     for( size_t i = 0; i < m_boardInstances.size(); i++ )
     {
         if( perInstance[i].empty() )
@@ -4735,8 +4633,6 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
                 if( fp.worldMax.z <= sub.worldMin.z
                     || sub.worldMax.z <= fp.worldMin.z )
                     continue;
-
-                diagFpSubBroad++;
 
                 // Skip if this fp is mated to ANY footprint on the
                 // other instance — connector pins legitimately pass
@@ -4786,18 +4682,6 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
                 // is usually a mounting hole on a board sandwiched
                 // between two layers — flag it; the user can decide
                 // whether the alignment is intentional.
-
-                diagFpSubCollide++;
-
-                if( diagFpSubCollide <= 16 )
-                {
-                    wxLogMessage(
-                            wxT( "[COLLIDE] fpSub %s on %s ↔ %s body  "
-                                 "fp.z=[%.2f, %.2f] sub.z=[%.2f, %.2f]" ),
-                            fp.ref, m_boardInstances[i].displayName, sub.display,
-                            fp.worldMin.z, fp.worldMax.z,
-                            sub.worldMin.z, sub.worldMax.z );
-                }
 
                 SFVEC3F bMin( std::max( fp.worldMin.x, sub.worldMin.x ),
                               std::max( fp.worldMin.y, sub.worldMin.y ),
@@ -4957,16 +4841,6 @@ std::vector<COLLISION_RESULT> ASSEMBLY_3D_MANAGER::RunCollisionCheck()
             }
         }
     }
-
-    wxLogMessage( wxT( "[COLLIDE] fps=%d (mesh=%d) broad=%d fallback=%d "
-                       "→ collide=%d contact=%d cleared=%d boxes=%zu  "
-                       "boards: broad=%d collide=%d  fpSub: broad=%d collide=%d" ),
-                  diagFpsTotal, diagFpsWithMesh,
-                  diagPairsBroad, diagPairsFallback,
-                  diagPairsCollide, diagPairsContact, diagPairsCleared,
-                  m_lastOverlapBoxes.size(),
-                  diagBoardPairsBroad, diagBoardPairsCollide,
-                  diagFpSubBroad, diagFpSubCollide );
 
     // Rotation-debug dump: when any instance is rotated AND fp-vs-fp
     // broad found nothing, emit per-fp world AABBs so we can see where
@@ -5360,48 +5234,6 @@ void ASSEMBLY_3D_MANAGER::InitRenderers( EDA_3D_CANVAS* aCanvas, CAMERA& aCamera
             // the expensive step (~100-500ms per board). We do it once
             // per load, not per frame.
             m_instanceAdapters[i]->InitSettings( nullptr, nullptr );
-
-            // M6.C DIAGNOSTIC: per-instance color + unit sanity log.
-            // Writes to ~/Library/Logs/Zeo/agent-*.log (macOS) via
-            // wxLogMessage. Compare the "copper" RGBA across indices:
-            // if idx=1+ is blue while idx=0 is gold, the per-adapter
-            // color init is picking something different for later
-            // boards despite shared m_Cfg/preset — points to stackup
-            // finish-match divergence or m_ColorOverrides contamination.
-            const SFVEC4F& c = m_instanceAdapters[i]->m_CopperColor;
-            const SFVEC4F& bb = m_instanceAdapters[i]->m_BoardBodyColor;
-            const SFVEC4F& mt = m_instanceAdapters[i]->m_SolderMaskColorTop;
-            const SFVEC4F& mb = m_instanceAdapters[i]->m_SolderMaskColorBot;
-            const bool useStackup = sharedCfg ? sharedCfg->m_UseStackupColors : false;
-            wxString maskNameF, maskNameB;
-            if( inst.board )
-            {
-                for( const BOARD_STACKUP_ITEM* it :
-                     inst.board->GetDesignSettings().GetStackupDescriptor().GetList() )
-                {
-                    if( it->GetType() == BS_ITEM_TYPE_SOLDERMASK )
-                    {
-                        if( it->GetBrdLayerId() == F_Mask )
-                            maskNameF = it->GetColor();
-                        else if( it->GetBrdLayerId() == B_Mask )
-                            maskNameB = it->GetColor();
-                    }
-                }
-            }
-            wxLogMessage( wxT( "[ASSEMBLY] inst[%zu] display='%s' ref=%s "
-                               "copper=(%.3f,%.3f,%.3f,%.3f) body=(%.3f,%.3f,%.3f,%.3f) "
-                               "maskTop=(%.3f,%.3f,%.3f,%.3f) maskBot=(%.3f,%.3f,%.3f,%.3f) "
-                               "stackupColors=%d maskNameF='%s' maskNameB='%s' biuTo3D=%g" ),
-                          i,
-                          inst.displayName,
-                          inst.subProjectUuid.AsString(),
-                          c.r, c.g, c.b, c.a,
-                          bb.r, bb.g, bb.b, bb.a,
-                          mt.r, mt.g, mt.b, mt.a,
-                          mb.r, mb.g, mb.b, mb.a,
-                          useStackup ? 1 : 0,
-                          maskNameF, maskNameB,
-                          m_instanceAdapters[i]->BiuTo3dUnits() );
         }
 
         if( !m_instanceRenderers[i] )
@@ -5487,10 +5319,6 @@ bool ASSEMBLY_3D_MANAGER::RedrawAll( bool aIsMoving, REPORTER* aStatusReporter,
     const glm::vec3 centerShared(  centerMm.x * biuPerMm * sharedF,
                                   -centerMm.y * biuPerMm * sharedF,
                                    centerMm.z * biuPerMm * sharedF );
-
-    // M6.C DIAGNOSTIC: log first ~3 frames only so logs don't flood.
-    static int s_frameLog = 0;
-    const bool doLog = s_frameLog < 3;
 
     // Locate the LAST visible-and-rendered instance index. The gizmo
     // render glClears the depth buffer (carves its own viewport) and
@@ -5582,42 +5410,13 @@ bool ASSEMBLY_3D_MANAGER::RedrawAll( bool aIsMoving, REPORTER* aStatusReporter,
         m_instanceRenderers[i]->SetSkipBufferClear( !firstPass );
         m_instanceRenderers[i]->SetSkipGizmo( i != lastRenderedIdx );
 
-        if( doLog )
-        {
-            GLboolean dTest = GL_FALSE, dMask = GL_FALSE;
-            GLint     dFunc = 0;
-            glGetBooleanv( GL_DEPTH_TEST, &dTest );
-            glGetBooleanv( GL_DEPTH_WRITEMASK, &dMask );
-            glGetIntegerv( GL_DEPTH_FUNC, &dFunc );
-            wxLogMessage( wxT( "[ASSEMBLY] frame=%d PRE[%zu] test=%d mask=%d func=0x%x "
-                               "pose.translate=(%.3f,%.3f,%.3f) skip=%d scale=%.3f" ),
-                          s_frameLog, i, (int) dTest, (int) dMask, dFunc,
-                          pose[3][0], pose[3][1], pose[3][2],
-                          (int) ( !firstPass ),
-                          static_cast<float>( scaleFactor ) );
-        }
-
         bool wants = m_instanceRenderers[i]->Redraw( aIsMoving, aStatusReporter,
                                                       aWarningReporter );
 
         requestAnother = requestAnother || wants;
 
-        if( doLog )
-        {
-            GLboolean dTest = GL_FALSE, dMask = GL_FALSE;
-            GLint     dFunc = 0;
-            glGetBooleanv( GL_DEPTH_TEST, &dTest );
-            glGetBooleanv( GL_DEPTH_WRITEMASK, &dMask );
-            glGetIntegerv( GL_DEPTH_FUNC, &dFunc );
-            wxLogMessage( wxT( "[ASSEMBLY] frame=%d POST[%zu] test=%d mask=%d func=0x%x" ),
-                          s_frameLog, i, (int) dTest, (int) dMask, dFunc );
-        }
-
         firstPass = false;
     }
-
-    if( doLog )
-        ++s_frameLog;
 
     // Nothing drew: the caller's framebuffer is untouched. That's
     // visually empty but avoids a stale frame. The canvas still

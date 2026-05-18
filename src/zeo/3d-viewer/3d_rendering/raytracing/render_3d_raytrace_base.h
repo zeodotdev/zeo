@@ -99,16 +99,25 @@ public:
                                REPORTER* aWarningReporter );
 
     /**
-     * Stage a multi-instance descriptor list to be consumed on the NEXT
-     * Reload call. Used by the assembly canvas to publish the current MBS
-     * instance set without bypassing the existing reload-on-Redraw flow.
+     * Publish the canonical multi-instance descriptor list for the MBS
+     * multi-board scene. Every subsequent Reload reads (does not consume)
+     * this list and dispatches to ReloadMultiInstance, so the raytracer
+     * keeps rebuilding the same N-board scene regardless of how reloads
+     * are triggered.
      *
-     * Pass an empty vector to revert to single-board Reload behavior on
-     * the next reload.
+     * Pass an empty vector to revert to single-board Reload behavior.
+     *
+     * Previously this was a one-shot "pending" handoff that Reload moved
+     * out and cleared. That made any Reload fired after the first
+     * consumption fall through to the single-board path against
+     * m_boardAdapter — see MOON-1406, where a duplicate NewDisplay (the
+     * panel's KILL_FOCUS + TEXT_ENTER both invoking onPositionChanged)
+     * tripped the sig gate in eda_3d_canvas.cpp and surfaced as "only
+     * one board visible after moving a position in raytrace mode."
      */
     void SetPendingInstances( std::vector<INSTANCE_DESC> aInstances )
     {
-        m_pendingInstances = std::move( aInstances );
+        m_currentInstances = std::move( aInstances );
     }
 
     BOARD_ITEM *IntersectBoardItem( const RAY& aRay );
@@ -269,12 +278,13 @@ protected:
     std::vector<std::unique_ptr<BVH_CONTAINER_2D>> m_perInstanceAntiOutlines2d;
 
     /**
-     * Staged multi-instance list. Consumed by the next Reload (which
-     * dispatches to ReloadMultiInstance when this is non-empty). Cleared
-     * by Reload after use so a stale list can't drive an unintended
-     * multi-instance build.
+     * Canonical multi-instance list. Persistent across Reloads: every
+     * Reload that finds it non-empty (and isn't already inside a per-
+     * instance build) dispatches to ReloadMultiInstance against this
+     * list. Cleared only when SetPendingInstances is called with an
+     * empty vector (true single-board mode).
      */
-    std::vector<INSTANCE_DESC> m_pendingInstances;
+    std::vector<INSTANCE_DESC> m_currentInstances;
 
     /**
      * Adapter used by the trace-time path (shadeHit, render setup) for

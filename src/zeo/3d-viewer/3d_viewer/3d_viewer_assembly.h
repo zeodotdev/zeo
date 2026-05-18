@@ -718,6 +718,14 @@ public:
      */
     void RequestReload();
 
+    /**
+     * Force the next OpenGL composite paint to re-frame the camera on
+     * the assembly center. Set by engine-toggle paths (MOON-1406) so
+     * toggling raytrace off doesn't inherit a single-board look-at left
+     * behind by a raytrace fallback path.
+     */
+    void RequestCameraFit() { m_cameraFitPending = true; }
+
     /// True iff at least one instance has a live renderer built.
     bool HasRenderers() const { return !m_instanceRenderers.empty(); }
 

@@ -404,15 +404,17 @@ extern void buildBoardBoundingBoxPoly( const BOARD* aBoard, SHAPE_POLY_SET& aOut
 void RENDER_3D_RAYTRACE_BASE::Reload( REPORTER* aStatusReporter, REPORTER* aWarningReporter,
                                  bool aOnlyLoadCopperAndShapes )
 {
-    // Top-level dispatch: if the caller staged a multi-instance list via
-    // SetPendingInstances (the MBS multi-board path), redirect to the
-    // multi-instance build and clear the staged list so a subsequent
-    // single-board reload won't pick it back up.
-    if( !m_pendingInstances.empty() && !m_overrideContainer )
+    // Top-level dispatch: if the canvas published a multi-instance list
+    // via SetPendingInstances (the MBS multi-board path), every Reload
+    // rebuilds the same N-board scene against that list. The list is
+    // read but not consumed, so any reload trigger (engine toggle,
+    // duplicate NewDisplay, layer change, etc.) keeps the multi-instance
+    // build intact. Pre-MOON-1406 we moved this list out on first use,
+    // which let later Reloads fall through to the single-board path —
+    // surfacing as "only one board visible" after a panel commit.
+    if( !m_currentInstances.empty() && !m_overrideContainer )
     {
-        std::vector<INSTANCE_DESC> instances = std::move( m_pendingInstances );
-        m_pendingInstances.clear();
-        ReloadMultiInstance( instances, aStatusReporter, aWarningReporter );
+        ReloadMultiInstance( m_currentInstances, aStatusReporter, aWarningReporter );
         return;
     }
 
@@ -614,25 +616,6 @@ void RENDER_3D_RAYTRACE_BASE::Reload( REPORTER* aStatusReporter, REPORTER* aWarn
 
                     const float zTop = currentAdapter().GetLayerBottomZPos( F_Cu );
                     const float zBot = currentAdapter().GetLayerBottomZPos( B_Cu );
-
-                    // Diagnostic: emit per-build body Z values + color so
-                    // we can tell whether the substrate slab actually got
-                    // built and where it sits in adapter-frame Z. In MBS
-                    // mode each instance reports its own values; if any
-                    // pair shows zTop ≈ zBot the body has degenerate Z
-                    // extent (the symptom would be "no body visible").
-                    wxLogMessage( wxT( "[RT-BODY] inst='%s' zTop=%.6f zBot=%.6f thk=%.6f "
-                                       "color=(%.3f,%.3f,%.3f,%.3f) BiuTo3d=%.3e" ),
-                                  currentAdapter().GetBoard()
-                                          ? wxString::Format( wxT( "%p" ),
-                                                               currentAdapter().GetBoard() )
-                                          : wxString( wxT( "<none>" ) ),
-                                  zTop, zBot, zTop - zBot,
-                                  currentAdapter().m_BoardBodyColor.r,
-                                  currentAdapter().m_BoardBodyColor.g,
-                                  currentAdapter().m_BoardBodyColor.b,
-                                  currentAdapter().m_BoardBodyColor.a,
-                                  currentAdapter().BiuTo3dUnits() );
 
                     if( object2d_B == CSGITEM_EMPTY )
                     {

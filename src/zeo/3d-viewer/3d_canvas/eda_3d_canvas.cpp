@@ -705,8 +705,19 @@ void EDA_3D_CANVAS::DoRePaint()
             if( reloadRaytracingForCalculations )
                 m_3d_render_raytracing->Reload( nullptr, nullptr, true );
         }
-        catch( std::runtime_error& )
+        catch( std::runtime_error& aErr )
         {
+            // This catch silently disables the canvas (sets
+            // m_is_opengl_version_supported = false), after which every
+            // paint clears to black and returns at the
+            // !m_is_opengl_version_supported guard above. Log the
+            // exception text so the source of the failure is visible
+            // instead of just "canvas suddenly went black."
+            wxLogMessage(
+                    wxT( "EDA_3D_CANVAS::DoRePaint runtime_error caught — "
+                         "disabling canvas. what(): %s" ),
+                    wxString::FromUTF8( aErr.what() ) );
+
             m_is_opengl_version_supported = false;
             m_opengl_supports_raytracing  = false;
             m_is_opengl_initialized       = false;
@@ -1802,15 +1813,23 @@ void EDA_3D_CANVAS::RenderEngineChanged()
         }
     }
 
-    // In MBS mode the multi-instance descriptor list is consumed by every
-    // raytracer Reload (m_pendingInstances is std::move'd into
-    // ReloadMultiInstance, then cleared). The sig gate in DoRePaint
-    // suppresses re-staging when poses haven't changed — but on engine
-    // toggle we DO need a re-stage, otherwise the raytracer's next
-    // Reload sees an empty pending list and falls through to the
-    // single-board path (m_boardAdapter), rendering only one board.
+    // Force a re-stage on the next paint in MBS mode. With persistent
+    // m_currentInstances (post-MOON-1406), this is no longer load-bearing
+    // for correctness — Reload always rebuilds the multi-instance scene
+    // from the cached list — but invalidating the sig still triggers a
+    // fresh pose recompute so the raytracer's BVH reflects any pose
+    // changes that happened while raytracing was off.
     if( m_assemblyManager )
         m_lastRaytraceInstanceSig = 0;
+
+    // Force the assembly camera to re-fit on the next OpenGL composite
+    // paint. m_cameraFitPending is normally only set on fresh per-
+    // instance renderer creation; without this, toggling engines
+    // inherits whatever camera state the prior session left behind
+    // (potentially the single-board look-at from a raytrace fallback
+    // path or accumulated user pan/zoom that lost the assembly).
+    if( m_assemblyManager )
+        m_assemblyManager->RequestCameraFit();
 
     if( m_3d_render )
         m_3d_render->ReloadRequest();

@@ -1,0 +1,33 @@
+{
+  "cli_version": "0.6.1",
+  "checkpoint_id": "6eaee4bc96c5",
+  "strategy": "manual-commit",
+  "branch": "upgrade-ki-version",
+  "checkpoints_count": 0,
+  "files_touched": [
+    "src/zeo/common/libraries/library_manager.cpp",
+    "src/zeo/common/properties/pg_editors.cpp",
+    "src/zeo/common/widgets/kistatusbar.cpp",
+    "src/zeo/eeschema/api/api_handler_sch.cpp",
+    "src/zeo/eeschema/dialogs/dialog_schematic_setup.cpp",
+    "src/zeo/eeschema/widgets/panel_remote_symbol.h",
+    "src/zeo/include/properties/pg_editors.h",
+    "src/zeo/pcbnew/api/api_handler_pcb.cpp",
+    "src/zeo/pcbnew/widgets/pcb_properties_panel.cpp"
+  ],
+  "sessions": [
+    {
+      "metadata": "/6e/aee4bc96c5/0/metadata.json",
+      "transcript": "/6e/aee4bc96c5/0/full.jsonl",
+      "content_hash": "/6e/aee4bc96c5/0/content_hash.txt",
+      "prompt": "/6e/aee4bc96c5/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 334,
+    "cache_creation_tokens": 692647,
+    "cache_read_tokens": 99201346,
+    "output_tokens": 149136,
+    "api_call_count": 281
+  }
+}

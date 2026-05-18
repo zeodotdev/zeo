@@ -1,0 +1,1 @@
+Worked, Now we are going to update the internal Kicad version. This means that in /zeo/src/zeo, we have to do and upstream pull and the merge the changes. We need to do this correctly by reaching the kicad 10.0.3 version and merging it in with our changes

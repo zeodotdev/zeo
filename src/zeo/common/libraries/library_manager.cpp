@@ -1031,7 +1031,7 @@ void LIBRARY_MANAGER::reconcileSharedRowsWithContainer( LIBRARY_TABLE_TYPE aType
         // Container has no lib-table of this type. Drop any orphaned
         // shared rows we may have inherited from a previous container
         // state.
-        std::vector<LIBRARY_TABLE_ROW>& rows = projectTable.Rows();
+        std::deque<LIBRARY_TABLE_ROW>& rows = projectTable.Rows();
         size_t                          before = rows.size();
 
         rows.erase( std::remove_if( rows.begin(), rows.end(),
@@ -1055,7 +1055,7 @@ void LIBRARY_MANAGER::reconcileSharedRowsWithContainer( LIBRARY_TABLE_TYPE aType
     if( !containerTable.IsOk() )
         return;
 
-    std::vector<LIBRARY_TABLE_ROW>& projectRows = projectTable.Rows();
+    std::deque<LIBRARY_TABLE_ROW>& projectRows = projectTable.Rows();
     bool                            changed = false;
 
     // Pass 1: drop shared/conflict rows whose nickname is no longer in
@@ -2260,7 +2260,7 @@ LIBRARY_RESULT<void> LIBRARY_MANAGER::RemoveSharedLibrary( LIBRARY_TABLE_TYPE aT
 
         table.SetType( aType );
 
-        std::vector<LIBRARY_TABLE_ROW>& rows = table.Rows();
+        std::deque<LIBRARY_TABLE_ROW>& rows = table.Rows();
         bool changed = false;
 
         rows.erase( std::remove_if( rows.begin(), rows.end(),
@@ -2347,7 +2347,7 @@ void LIBRARY_MANAGER::PropagateContainerLibTable( LIBRARY_TABLE_TYPE aType )
         LIBRARY_TABLE peerTable( peerTablePath, LIBRARY_TABLE_SCOPE::PROJECT );
         peerTable.SetType( aType );
 
-        std::vector<LIBRARY_TABLE_ROW>& peerRows = peerTable.Rows();
+        std::deque<LIBRARY_TABLE_ROW>& peerRows = peerTable.Rows();
         bool                            changed = false;
 
         // Drop orphaned shared/conflict rows whose nickname is no

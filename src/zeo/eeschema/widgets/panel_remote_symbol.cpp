@@ -1004,7 +1004,7 @@ bool PANEL_REMOTE_SYMBOL::ensureDestinationRoot( wxFileName& aOutDir, wxString& 
     wxString destination = settings->m_RemoteSymbol.destination_dir;
 
     if( destination.IsEmpty() )
-        destination = EESCHEMA_SETTINGS::REMOTE_SYMBOL_CONFIG::DefaultDestinationDir();
+        destination = REMOTE_PROVIDER_SETTINGS::DefaultDestinationDir();
 
     // m_frame->Prj() respects KIWAY_HOLDER::SetPrjOverride; the global
     // SETTINGS_MANAGER::Prj() returns the FIRST project in the manager's
@@ -1157,7 +1157,7 @@ wxString PANEL_REMOTE_SYMBOL::sanitizedPrefix() const
         prefix = settings->m_RemoteSymbol.library_prefix;
 
     if( prefix.IsEmpty() )
-        prefix = EESCHEMA_SETTINGS::REMOTE_SYMBOL_CONFIG::DefaultLibraryPrefix();
+        prefix = REMOTE_PROVIDER_SETTINGS::DefaultLibraryPrefix();
 
     prefix.Trim( true ).Trim( false );
 

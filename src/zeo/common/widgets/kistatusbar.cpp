@@ -120,7 +120,7 @@ KISTATUSBAR::KISTATUSBAR( int aNumberFields, wxWindow* parent, wxWindowID id, ST
     m_fieldWidths.assign( aNumberFields + extraFields, -1 );
 
     if( std::optional<int> idx = fieldIndex( FIELD::LABEL ) )
-        widths[aNumberFields + *idx] = 35;  // Zeo session label button (18px logical + 17px padding)
+        m_fieldWidths[aNumberFields + *idx] = 35;  // Zeo session label button (18px logical + 17px padding)
 
 #ifdef __WXOSX__
     // offset from the right edge

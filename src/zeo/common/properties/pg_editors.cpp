@@ -509,7 +509,7 @@ void PG_RATIO_EDITOR::UpdateControl( wxPGProperty* aProperty, wxWindow* aCtrl ) 
 }
 
 
-PG_FPID_EDITOR::PG_FPID_EDITOR( EDA_DRAW_FRAME* aFrame, const std::function<std::string(EDA_DRAW_FRAME*)>& aNetlistCallback ) :
+PG_FPID_EDITOR::PG_FPID_EDITOR( EDA_DRAW_FRAME* aFrame, const std::function<std::string()>& aNetlistCallback ) :
         m_frame( aFrame ),
         m_netlistCallback( aNetlistCallback )
 {
@@ -567,7 +567,7 @@ bool PG_FPID_EDITOR::OnEvent( wxPropertyGrid* aGrid, wxPGProperty* aProperty, wx
         if( KIWAY_PLAYER* frame = m_frame->Kiway().Player( FRAME_FOOTPRINT_CHOOSER, true, m_frame ) )
         {
             // Create symbol netlist for footprint picker
-            std::string symbolNetlist = m_netlistCallback( m_frame );
+            std::string symbolNetlist = m_netlistCallback();
 
             if( !symbolNetlist.empty() )
             {

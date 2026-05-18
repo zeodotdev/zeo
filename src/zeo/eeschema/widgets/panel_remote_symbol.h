@@ -97,6 +97,17 @@ private:
     wxFileName cookieFilePath( const wxString& aProviderId ) const;
     void clearCookies( bool aDeleteSavedCookieFile = true );
 
+    bool ensureDestinationRoot( wxFileName& aOutDir, wxString& aError ) const;
+    bool ensureSymbolLibraryEntry( const wxFileName& aLibraryFile, const wxString& aNickname,
+                                   bool aGlobalTable, wxString& aError ) const;
+    bool ensureFootprintLibraryEntry( const wxFileName& aLibraryDir, const wxString& aNickname,
+                                      bool aGlobalTable, wxString& aError ) const;
+    wxString sanitizedPrefix() const;
+    wxString sanitizeFileComponent( const wxString& aComponent, const wxString& aDefault ) const;
+    wxString jsonString( const nlohmann::json& aObject, const char* aKey ) const;
+    bool placeDownloadedSymbol( const wxString& aNickname, const wxString& aLibItemName,
+                                wxString& aError );
+
     bool receiveComponent( const nlohmann::json& aParams, const std::vector<uint8_t>& aPayload,
                            bool aPlaceSymbol, wxString& aError );
     bool receiveFootprint( const nlohmann::json& aParams, const std::vector<uint8_t>& aPayload,

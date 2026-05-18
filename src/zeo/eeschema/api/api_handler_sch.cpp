@@ -3127,7 +3127,8 @@ API_HANDLER_SCH::handleAnnotateSymbols(
     SCH_COMMIT commit( m_frame );
     m_frame->AnnotateSymbols( &commit, scope, order, algo, aCtx.Request.recursive(),
                               startNumber, aCtx.Request.reset_existing(),
-                              false, aCtx.Request.repair_timestamps(), reporter );
+                              false, aCtx.Request.repair_timestamps(), reporter,
+                              SYMBOL_FILTER_NON_POWER );
     commit.Push( _( "API: Annotate Symbols" ) );
 
     response.set_symbols_annotated( reporter.m_messages.size() );
@@ -3162,7 +3163,7 @@ API_HANDLER_SCH::handleClearAnnotation(
 
     // Count symbols before clearing
     SCH_REFERENCE_LIST refs;
-    m_frame->Schematic().Hierarchy().GetSymbols( refs );
+    m_frame->Schematic().Hierarchy().GetSymbols( refs, SYMBOL_FILTER_NON_POWER );
     int annotatedBefore = 0;
     for( size_t i = 0; i < refs.GetCount(); i++ )
     {
@@ -3182,7 +3183,7 @@ API_HANDLER_SCH::handleClearAnnotation(
 
     // Count symbols after clearing
     refs.Clear();
-    m_frame->Schematic().Hierarchy().GetSymbols( refs );
+    m_frame->Schematic().Hierarchy().GetSymbols( refs, SYMBOL_FILTER_NON_POWER );
     int annotatedAfter = 0;
     for( size_t i = 0; i < refs.GetCount(); i++ )
     {
@@ -3231,7 +3232,8 @@ API_HANDLER_SCH::handleCheckAnnotation(
         errors.push_back( { aType, aMsg, id1, id2 } );
     };
 
-    int errorCount = m_frame->CheckAnnotate( errorHandler, scope, aCtx.Request.recursive() );
+    int errorCount = m_frame->CheckAnnotate( errorHandler, scope, aCtx.Request.recursive(),
+                                              SYMBOL_FILTER_NON_POWER );
 
     response.set_error_count( errorCount );
 
@@ -3276,7 +3278,7 @@ API_HANDLER_SCH::handleGetUsedReferences(
     kiapi::schematic::commands::GetUsedReferencesResponse response;
 
     SCH_REFERENCE_LIST refs;
-    m_frame->Schematic().Hierarchy().GetSymbols( refs );
+    m_frame->Schematic().Hierarchy().GetSymbols( refs, SYMBOL_FILTER_NON_POWER );
 
     for( size_t i = 0; i < refs.GetCount(); i++ )
     {
@@ -3393,7 +3395,8 @@ API_HANDLER_SCH::handleRunERC( const HANDLER_CONTEXT<kiapi::schematic::commands:
                 SCH_MARKER* marker = new SCH_MARKER( std::move( ercItem ),
                                                      aItemA->GetSymbol()->GetPosition() );
                 aItemA->GetSheetPath().LastScreen()->Append( marker );
-            } );
+            },
+            ANNOTATE_ALL, true, SYMBOL_FILTER_NON_POWER );
 
     wxLogTrace( "SCHEMATIC", "handleRunERC: CheckAnnotate found %d annotation errors",
                 annotationErrors );
@@ -6191,7 +6194,8 @@ API_HANDLER_SCH::handleRunSimulation(
     m_frame->Schematic().Hierarchy().AnnotatePowerSymbols();
 
     if( m_frame->CheckAnnotate(
-            []( ERCE_T, const wxString&, SCH_REFERENCE*, SCH_REFERENCE* ) {} ) )
+            []( ERCE_T, const wxString&, SCH_REFERENCE*, SCH_REFERENCE* ) {},
+            ANNOTATE_ALL, true, SYMBOL_FILTER_NON_POWER ) )
     {
         wxLogInfo( "SIM API: Schematic not annotated, auto-annotating" );
 
@@ -6199,12 +6203,14 @@ API_HANDLER_SCH::handleRunSimulation(
         SCH_COMMIT    commit( m_frame );
 
         m_frame->AnnotateSymbols( &commit, ANNOTATE_ALL, SORT_BY_X_POSITION,
-                                  INCREMENTAL_BY_REF, true, 1, false, false, false, reporter );
+                                  INCREMENTAL_BY_REF, true, 1, false, false, false, reporter,
+                                  SYMBOL_FILTER_NON_POWER );
         commit.Push( _( "API: Auto-annotate for simulation" ) );
 
         // Verify annotation succeeded
         if( m_frame->CheckAnnotate(
-                []( ERCE_T, const wxString&, SCH_REFERENCE*, SCH_REFERENCE* ) {} ) )
+                []( ERCE_T, const wxString&, SCH_REFERENCE*, SCH_REFERENCE* ) {},
+                ANNOTATE_ALL, true, SYMBOL_FILTER_NON_POWER ) )
         {
             wxLogWarning( "SIM API: Auto-annotation failed" );
             response.set_success( false );
@@ -7234,8 +7240,8 @@ HANDLER_RESULT<RemoveLibraryResponse> API_HANDLER_SCH::handleRemoveLibrary(
         return response;
     }
 
-    // Remove the library by finding and erasing from the rows vector
-    std::vector<LIBRARY_TABLE_ROW>& rows = libTable->Rows();
+    // Remove the library by finding and erasing from the rows container
+    std::deque<LIBRARY_TABLE_ROW>& rows = libTable->Rows();
     auto it = std::find_if( rows.begin(), rows.end(),
                            [&nickname]( const LIBRARY_TABLE_ROW& row )
                            {

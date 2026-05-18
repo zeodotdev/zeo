@@ -196,7 +196,7 @@ DIALOG_SCHEMATIC_SETUP::DIALOG_SCHEMATIC_SETUP( SCH_EDIT_FRAME* aFrame ) :
                             };
 
                             SCH_REFERENCE_LIST refList;
-                            sch.Hierarchy().GetSymbols( refList, false );
+                            sch.Hierarchy().GetSymbols( refList, SYMBOL_FILTER_NON_POWER );
 
                             std::map<std::string, CompGroup> groups;
 

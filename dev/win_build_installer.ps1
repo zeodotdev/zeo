@@ -98,7 +98,7 @@ Write-Host "Builder Dir:  $BuilderDir"
 Write-Host "Libraries:    $LibrariesDir"
 Write-Host "Output Dir:   $InstallDir"
 Write-Host "Clean Build:  yes"
-Write-Host "Release:      $(if ($Release) { $Release } else { '<auto>' })"
+Write-Host "Release:      $(if ($Release) { "$Release (production URLs)" } else { '<auto> (staging URLs)' })"
 Write-Host "Light Build:  $Light"
 Write-Host "CPUs:         $NumCPU"
 Write-Host "=============================================="
@@ -169,6 +169,22 @@ Write-Host ""
 Write-Host "=========================================="
 Write-Host "PHASE 1: Building KiCad/Zeo (clean)"
 Write-Host "=========================================="
+
+# Named releases get -DZEO_RELEASE=ON so ZEO_BASE_URL points at https://www.zeo.dev
+# (see src/zeo/include/zeo/zeo_constants.h). Since this installer script reuses
+# the existing build tree, we reconfigure to inject (or clear) the flag explicitly,
+# preventing a stale cache value from silently producing a non-release binary.
+if ($Release) {
+    Log "Reconfiguring cmake with -DZEO_RELEASE=ON (production URLs)..."
+    & $CmakeExe $BuildDir -DZEO_RELEASE=ON
+} else {
+    Log "Reconfiguring cmake with -DZEO_RELEASE=OFF (staging URLs)..."
+    & $CmakeExe $BuildDir -DZEO_RELEASE=OFF
+}
+if ($LASTEXITCODE -ne 0) {
+    Log-Error "cmake reconfigure failed"
+    exit 1
+}
 
 # Clean build to avoid stale cached artifacts (icons, templates, etc.)
 Log "Cleaning previous build..."

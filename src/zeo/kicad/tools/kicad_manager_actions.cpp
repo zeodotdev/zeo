@@ -350,3 +350,10 @@ TOOL_ACTION KICAD_MANAGER_ACTIONS::showTerminal( TOOL_ACTION_ARGS()
                                                          .Tooltip( _( "Open Terminal" ) )
                                                          .Icon( BITMAPS::icon_terminal )
                                                          .Parameter( FRAME_TERMINAL ) );
+
+TOOL_ACTION KICAD_MANAGER_ACTIONS::checkForUpdate( TOOL_ACTION_ARGS()
+                                                           .Name( "kicad.Control.checkForUpdate" )
+                                                           .Scope( AS_GLOBAL )
+                                                           .FriendlyName( _( "Check for Updates..." ) )
+                                                           .Tooltip( _( "Check for a newer version of Zeo" ) )
+                                                           .Icon( BITMAPS::refresh ) );

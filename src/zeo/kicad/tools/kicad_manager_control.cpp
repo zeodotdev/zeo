@@ -1757,6 +1757,13 @@ int KICAD_MANAGER_CONTROL::Execute( const TOOL_EVENT& aEvent )
 }
 
 
+int KICAD_MANAGER_CONTROL::CheckForUpdate( const TOOL_EVENT& aEvent )
+{
+    m_frame->RunUpdateCheck( true );
+    return 0;
+}
+
+
 int KICAD_MANAGER_CONTROL::ShowPluginManager( const TOOL_EVENT& aEvent )
 {
     if( KIPLATFORM::POLICY::GetPolicyBool( POLICY_KEY_PCM ) == KIPLATFORM::POLICY::PBOOL::DISABLED )
@@ -1869,4 +1876,5 @@ void KICAD_MANAGER_CONTROL::setTransitions()
     Go( &KICAD_MANAGER_CONTROL::ShowTerminal, KICAD_MANAGER_ACTIONS::showTerminal.MakeEvent() );
 
     Go( &KICAD_MANAGER_CONTROL::ShowPluginManager, KICAD_MANAGER_ACTIONS::showPluginManager.MakeEvent() );
+    Go( &KICAD_MANAGER_CONTROL::CheckForUpdate, KICAD_MANAGER_ACTIONS::checkForUpdate.MakeEvent() );
 }

@@ -45,6 +45,7 @@
 #include <wx/log.h>
 #include <wx/event.h>
 #include <wx/filefn.h>
+#include <wx/msgdlg.h>
 #include <wx/translation.h>
 #include <wx/notifmsg.h>
 
@@ -170,16 +171,30 @@ int UPDATE_MANAGER::PostRequest( const wxString& aUrl, std::string aRequestBody,
 }
 
 
-void UPDATE_MANAGER::CheckForUpdate( wxWindow* aNoticeParent )
+void UPDATE_MANAGER::CheckForUpdate( wxWindow* aNoticeParent, bool aManual )
 {
     if( m_working )
-        return;
+    {
+        wxLogTrace( wxS( "UPDATE" ), wxS( "CheckForUpdate skipped: previous check still running" ) );
 
-    m_working = false;
+        if( aManual )
+        {
+            aNoticeParent->CallAfter(
+                    [aNoticeParent]()
+                    {
+                        wxMessageBox( _( "An update check is already in progress." ),
+                                      _( "Check for Updates" ),
+                                      wxOK | wxICON_INFORMATION, aNoticeParent );
+                    } );
+        }
+        return;
+    }
+
+    m_working = true;
 
     m_updateBackgroundJob = Pgm().GetBackgroundJobMonitor().Create( _( "Update Check" ) );
 
-    auto update_check = [aNoticeParent, this]() -> void
+    auto update_check = [aNoticeParent, aManual, this]() -> void
     {
         std::shared_ptr<BACKGROUND_JOB_REPORTER> reporter = m_updateBackgroundJob->m_reporter;
 
@@ -226,8 +241,15 @@ void UPDATE_MANAGER::CheckForUpdate( wxWindow* aNoticeParent )
         nlohmann::json requestJson = nlohmann::json( requestContent );
         request_json_stream << requestJson;
 
+        wxLogTrace( wxS( "UPDATE" ),
+                    wxS( "POST %s  current=%s  last_received=%s  manual=%d" ), aUrl,
+                    requestContent.current_version, settings->m_lastReceivedUpdate,
+                    aManual ? 1 : 0 );
+
         int responseCode = PostRequest( aUrl, request_json_stream.str(), &update_json_stream,
                                         reporter.get(), 20480 );
+
+        wxLogTrace( wxS( "UPDATE" ), wxS( "Update check responseCode=%d" ), responseCode );
 
         // Check that the response is 200 (content provided)
         // We can also return 204 for no update
@@ -235,14 +257,46 @@ void UPDATE_MANAGER::CheckForUpdate( wxWindow* aNoticeParent )
         {
             nlohmann::json  update_json;
             UPDATE_RESPONSE response;
+            bool            parsed = false;
 
             try
             {
                 update_json_stream >> update_json;
                 response = update_json.get<UPDATE_RESPONSE>();
+                parsed = true;
+            }
+            catch( const std::exception& e )
+            {
+                wxLogError( wxString::Format( _( "Unable to parse update response: %s" ), e.what() ) );
 
-                if( response.version != settings->m_lastReceivedUpdate && !Pgm().m_Quitting )
+                if( aManual && !Pgm().m_Quitting )
                 {
+                    wxString errMsg = wxString::Format(
+                            _( "Unable to parse update response from server: %s" ), e.what() );
+                    aNoticeParent->CallAfter(
+                            [aNoticeParent, errMsg]()
+                            {
+                                if( Pgm().m_Quitting )
+                                    return;
+
+                                wxMessageBox( errMsg, _( "Check for Updates" ),
+                                              wxOK | wxICON_ERROR, aNoticeParent );
+                            } );
+                }
+            }
+
+            if( parsed && !Pgm().m_Quitting )
+            {
+                // For manual checks, bypass the "skipped this version" suppression so
+                // the user always sees a result when they explicitly asked.
+                bool shouldShow = aManual
+                                  || response.version != settings->m_lastReceivedUpdate;
+
+                if( shouldShow )
+                {
+                    wxLogTrace( wxS( "UPDATE" ),
+                                wxS( "Update available: server version=%s" ), response.version );
+
                     aNoticeParent->CallAfter(
                             [aNoticeParent, response]()
                             {
@@ -264,11 +318,50 @@ void UPDATE_MANAGER::CheckForUpdate( wxWindow* aNoticeParent )
                                 }
                             } );
                 }
+                else
+                {
+                    wxLogTrace( wxS( "UPDATE" ),
+                                wxS( "Server offered version %s, but it matches "
+                                     "last_received_update; suppressing." ),
+                                response.version );
+                }
             }
-            catch( const std::exception& e )
-            {
-                wxLogError( wxString::Format( _( "Unable to parse update response: %s" ), e.what() ) );
-            }
+        }
+        else if( aManual && !Pgm().m_Quitting )
+        {
+            // Manual check: surface every non-update outcome.
+            int    code = responseCode;
+            aNoticeParent->CallAfter(
+                    [aNoticeParent, code]()
+                    {
+                        if( Pgm().m_Quitting )
+                            return;
+
+                        if( code == 204 )
+                        {
+                            wxMessageBox(
+                                    wxString::Format(
+                                            _( "You're up to date.\n\nZeo %s is the latest version." ),
+                                            GetZeoMajorMinorPatchVersion() ),
+                                    _( "Check for Updates" ),
+                                    wxOK | wxICON_INFORMATION, aNoticeParent );
+                        }
+                        else if( code == 0 )
+                        {
+                            wxMessageBox(
+                                    _( "Could not check for updates.\n\nPlease check your "
+                                       "internet connection and try again." ),
+                                    _( "Check for Updates" ),
+                                    wxOK | wxICON_WARNING, aNoticeParent );
+                        }
+                        else
+                        {
+                            wxMessageBox(
+                                    wxString::Format( _( "Update server returned HTTP %d." ), code ),
+                                    _( "Check for Updates" ),
+                                    wxOK | wxICON_WARNING, aNoticeParent );
+                        }
+                    } );
         }
 
         settings->m_lastUpdateCheckTime = wxDateTime::Now().FormatISOCombined();

@@ -38,7 +38,17 @@ public:
     UPDATE_MANAGER();
     ~UPDATE_MANAGER();
 
-    void CheckForUpdate( wxWindow* aNoticeParent );
+    /**
+     * Run an update check against the Zeo backend.
+     *
+     * @param aNoticeParent parent window for any UI shown (modal dialogs / message boxes).
+     * @param aManual when true, the check was user-initiated: the "skip this version"
+     *                suppression is bypassed and every outcome (up-to-date / network
+     *                failure / parse failure) is surfaced as a message box. When false
+     *                (the default — used by the on-launcher-start auto check), behavior
+     *                is the original silent-unless-an-update-is-found path.
+     */
+    void CheckForUpdate( wxWindow* aNoticeParent, bool aManual = false );
     int PostRequest( const wxString& aUrl, std::string aRequestBody, std::ostream* aOutput,
                                            PROGRESS_REPORTER* aReporter, const size_t aSizeLimit );
 

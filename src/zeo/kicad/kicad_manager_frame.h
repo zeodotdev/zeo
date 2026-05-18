@@ -293,6 +293,16 @@ public:
 
     void CreatePCM();   // creates the PLUGIN_CONTENT_MANAGER
 
+    /**
+     * Run a Zeo update check. Called automatically on launcher startup and manually
+     * via the Help > Check for Updates menu item.
+     *
+     * @param aManual true if user-initiated. Manual checks bypass the "skip this
+     *                version" suppression and surface every outcome (up-to-date,
+     *                network error) as a message box instead of silently no-op-ing.
+     */
+    void RunUpdateCheck( bool aManual );
+
     // Used only on Windows: stores the info message about file watcher
     wxString m_FileWatcherInfo;
 

@@ -1945,11 +1945,8 @@ void KICAD_MANAGER_FRAME::OnIdle( wxIdleEvent& aEvent )
     }
 
 #ifdef KICAD_UPDATE_CHECK
-    if( !m_updateManager && settings->m_KiCadUpdateCheck )
-    {
-        m_updateManager = std::make_unique<UPDATE_MANAGER>();
-        m_updateManager->CheckForUpdate( this );
-    }
+    if( settings->m_KiCadUpdateCheck )
+        RunUpdateCheck( false );
 #endif
 
     // Pre-create the agent frame so its webview loads in the background.
@@ -1983,6 +1980,23 @@ void KICAD_MANAGER_FRAME::SetPcmButton( BITMAP_BUTTON* aButton )
     m_pcmButton = aButton;
 
     updatePcmButtonBadge();
+}
+
+
+void KICAD_MANAGER_FRAME::RunUpdateCheck( bool aManual )
+{
+#ifdef KICAD_UPDATE_CHECK
+    if( !m_updateManager )
+        m_updateManager = std::make_unique<UPDATE_MANAGER>();
+
+    m_updateManager->CheckForUpdate( this, aManual );
+#else
+    if( aManual )
+    {
+        wxMessageBox( _( "Update checking is not enabled in this build of Zeo." ),
+                      _( "Check for Updates" ), wxOK | wxICON_INFORMATION, this );
+    }
+#endif
 }
 
 

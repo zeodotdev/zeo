@@ -152,6 +152,12 @@ echo "=========================================="
 # Load config variables
 eval "$(cd "$APPIMAGE_DIR" && ./scripts/load_config.sh "$CONFIG_FILE")"
 
+# Named releases get -DZEO_RELEASE=ON so ZEO_BASE_URL points at https://www.zeo.dev
+# (see src/zeo/include/zeo/zeo_constants.h). Dev/unnamed builds stay on staging.
+if [ -n "$RELEASE_NAME" ]; then
+    CMAKE_EXTRA_ARGS="${CMAKE_EXTRA_ARGS:+$CMAKE_EXTRA_ARGS }-DZEO_RELEASE=ON"
+fi
+
 # Display loaded config
 echo "Build Type:    ${KICAD_BUILD_TYPE:-Nightly}"
 echo "Bundle Name:   ${KICAD_BUNDLE_NAME:-Zeo}"
@@ -160,6 +166,11 @@ echo "WX Version:    ${WX_VERSION:-default}"
 echo "Python:        ${PYTHON_VERSION:-default}"
 echo "Kipy Bundle:   ${ENABLE_KIPY_BUNDLE:-0}"
 echo "Freerouting:   ${ENABLE_FREEROUTING_BUNDLE:-0}"
+if [ -n "$RELEASE_NAME" ]; then
+    echo "Release:       yes (production URLs)"
+else
+    echo "Release:       no  (staging URLs)"
+fi
 
 # --- Build Dependency Images Locally (optional) ---
 

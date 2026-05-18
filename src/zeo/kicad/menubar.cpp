@@ -36,6 +36,7 @@
 #include <policy_keys.h>
 #include <tool/action_manager.h>
 #include <tool/action_toolbar.h>
+#include <tool/common_control.h>
 #include <tool/tool_manager.h>
 #include <tool/selection.h>
 #include <tools/kicad_manager_control.h>
@@ -249,6 +250,24 @@ void KICAD_MANAGER_FRAME::doReCreateMenuBar()
     AddMenuLanguageList( prefsMenu, controlTool );
 
 
+    //-- Help menu (launcher-specific so we can append "Check for Updates...") ---
+    //
+    COMMON_CONTROL* commonControl = m_toolManager->GetTool<COMMON_CONTROL>();
+    ACTION_MENU*    helpMenu      = new ACTION_MENU( false, commonControl );
+
+    helpMenu->Add( ACTIONS::help );
+    helpMenu->Add( ACTIONS::listHotKeys );
+    helpMenu->Add( ACTIONS::getInvolved );
+    helpMenu->Add( ACTIONS::reportBug );
+
+#ifdef KICAD_UPDATE_CHECK
+    helpMenu->AppendSeparator();
+    helpMenu->Add( KICAD_MANAGER_ACTIONS::checkForUpdate );
+#endif
+
+    helpMenu->AppendSeparator();
+    helpMenu->Add( ACTIONS::about );
+
     //-- Menubar -------------------------------------------------------------
     //
     menuBar->Append( fileMenu, _( "&File" ) );
@@ -256,7 +275,7 @@ void KICAD_MANAGER_FRAME::doReCreateMenuBar()
     menuBar->Append( viewMenu, _( "&View" ) );
     menuBar->Append( toolsMenu, _( "&Tools" ) );
     menuBar->Append( prefsMenu, _( "&Preferences" ) );
-    AddStandardHelpMenu( menuBar );
+    menuBar->Append( helpMenu, _( "&Help" ) );
 
     SetMenuBar( menuBar );
     delete oldMenuBar;

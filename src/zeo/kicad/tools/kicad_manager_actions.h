@@ -79,6 +79,8 @@ public:
     static TOOL_ACTION restoreLocalHistory;
     static TOOL_ACTION showLocalHistory;
     static TOOL_ACTION showTerminal;
+
+    static TOOL_ACTION checkForUpdate;
 };
 
 

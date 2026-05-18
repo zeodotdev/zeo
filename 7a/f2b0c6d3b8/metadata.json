@@ -3,7 +3,7 @@
   "checkpoint_id": "7af2b0c6d3b8",
   "strategy": "manual-commit",
   "branch": "zeo-updater",
-  "checkpoints_count": 7,
+  "checkpoints_count": 8,
   "files_touched": [
     "dev/utils/linux_appimage.sh",
     "dev/win_build_installer.ps1",
@@ -23,13 +23,19 @@
       "transcript": "/7a/f2b0c6d3b8/0/full.jsonl",
       "content_hash": "/7a/f2b0c6d3b8/0/content_hash.txt",
       "prompt": "/7a/f2b0c6d3b8/0/prompt.txt"
+    },
+    {
+      "metadata": "/7a/f2b0c6d3b8/1/metadata.json",
+      "transcript": "/7a/f2b0c6d3b8/1/full.jsonl",
+      "content_hash": "/7a/f2b0c6d3b8/1/content_hash.txt",
+      "prompt": "/7a/f2b0c6d3b8/1/prompt.txt"
     }
   ],
   "token_usage": {
-    "input_tokens": 188,
-    "cache_creation_tokens": 300961,
-    "cache_read_tokens": 18564214,
-    "output_tokens": 77578,
-    "api_call_count": 144
+    "input_tokens": 589,
+    "cache_creation_tokens": 1234542,
+    "cache_read_tokens": 125102277,
+    "output_tokens": 306898,
+    "api_call_count": 482
   }
 }

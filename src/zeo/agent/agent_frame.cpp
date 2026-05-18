@@ -32,6 +32,7 @@
 #include <project/project_file.h>
 #include <project/multi_board_scan.h>
 #include <wx/log.h>
+#include <wx/evtloop.h>
 #include <kiway.h>
 #include <paths.h>
 #include <kiplatform/environment.h>
@@ -575,6 +576,23 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     // Returns a JSON snapshot of all symbols and labels for diffing.
     m_chatController->SetSchematicSummaryFn(
         [this]() -> std::string {
+            // Bail if the SCH editor is gone (e.g. mid project switch) or the
+            // controller is tearing down. Running SendRequest in either state
+            // can crash because the wxYield wait in SendRequest dispatches
+            // events that further mutate frame state during the tool call —
+            // see MOON-1413.
+            if( !Kiway().Player( FRAME_SCH, false ) )
+            {
+                wxLogInfo( "AGENT: schematic summary skipped — SCH editor not open" );
+                return "";
+            }
+
+            if( m_chatController && m_chatController->IsDestroying() )
+            {
+                wxLogInfo( "AGENT: schematic summary skipped — controller destroying" );
+                return "";
+            }
+
             // Build a lightweight Python script that dumps schematic state as JSON
             std::string pyCode =
                 "import json\n"
@@ -882,6 +900,13 @@ AGENT_FRAME::~AGENT_FRAME()
 #ifdef __APPLE__
     RemoveKeyboardMonitor();
 #endif
+
+    // Mark the controller as destroying so any late-firing schematic-summary
+    // path (e.g. an OnChatTurnComplete event already in the queue) bails out
+    // before driving SendRequest into the editor frames we're about to tear
+    // down. See MOON-1413.
+    if( m_chatController )
+        m_chatController->SetDestroying( true );
 
     // Save CC chat history before destruction — the CC controller accumulates
     // messages in memory and they are only synced at turn boundaries. If the frame
@@ -3103,9 +3128,28 @@ std::string AGENT_FRAME::SendRequest( int aDestFrame, const std::string& aPayloa
     wxLongLong start = wxGetLocalTimeMillis();
     constexpr long TIMEOUT_MS = 120000;  // 2 minutes for bulk operations (e.g., labeling 100+ pins)
     m_stopRequested = false;  // Reset stop flag
+
+    // Restricted event categories pumped while waiting for the tool response.
+    // We deliberately exclude wxEVT_CATEGORY_USER_INPUT (mouse/keyboard) so that
+    // a fresh click — most notably a project-switch menu pick — cannot fire
+    // and tear down the editor frames whose pointers/state this call depends
+    // on. The categories we keep are the ones the response chain actually
+    // needs: TIMER (HEADLESS_PYTHON_EXECUTOR poll timer), THREAD (Python
+    // worker completion event), SOCKET (IPC API server), UI (CallAfter for
+    // the bash path, bridge / streaming UI updates), UNKNOWN (custom events).
+    // KIWAY mail is dispatched via synchronous ProcessEvent within ExpressMail
+    // so it is unaffected by the category filter. See MOON-1413.
+    constexpr long YIELD_EVENT_MASK = wxEVT_CATEGORY_TIMER
+                                      | wxEVT_CATEGORY_THREAD
+                                      | wxEVT_CATEGORY_SOCKET
+                                      | wxEVT_CATEGORY_UI
+                                      | wxEVT_CATEGORY_UNKNOWN;
+
     while( m_toolResponse == NO_RESPONSE_SENTINEL && ( wxGetLocalTimeMillis() - start < TIMEOUT_MS ) )
     {
-        wxYield(); // Process events (including the MailIn event and Stop button)
+        if( wxEventLoopBase* loop = wxEventLoopBase::GetActive() )
+            loop->YieldFor( YIELD_EVENT_MASK );
+
         if( m_stopRequested )
         {
             wxLogInfo( "AGENT: SendRequest cancelled by user after %lld ms",

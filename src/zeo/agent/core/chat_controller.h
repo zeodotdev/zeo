@@ -8,6 +8,7 @@
 #include <wx/event.h>
 #include <wx/string.h>
 #include <nlohmann/json.hpp>
+#include <atomic>
 #include <chrono>
 #include <functional>
 #include <string>
@@ -263,6 +264,15 @@ public:
      */
     void TakeSchematicSnapshot();
 
+    /**
+     * Mark the controller as destroying so background paths bail out before
+     * touching the schematic-summary callback. Set by the frame during
+     * tear-down or project-switch tear-down so a late-firing OnChatTurnComplete
+     * can't drive a tool call into half-destroyed editor frames.
+     */
+    void SetDestroying( bool aDestroying ) { m_destroying.store( aDestroying ); }
+    bool IsDestroying() const { return m_destroying.load(); }
+
     // =========================================================================
     // Event handlers - Called by frame's event table, forwarded to controller
     // =========================================================================
@@ -321,6 +331,7 @@ private:
     std::string              m_activeServerToolName;   ///< Name of currently executing server tool
     bool                     m_stopRequested;     ///< Cancel flag
     bool                     m_continueAfterComplete; ///< Continue generation after stream completes (for max_tokens)
+    std::atomic<bool>        m_destroying{ false }; ///< Set by frame during tear-down / project switch so async paths bail before touching torn-down editor frames
 
     // -------------------------------------------------------------------------
     // Services (injected, not owned)

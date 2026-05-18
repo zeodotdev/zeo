@@ -2654,6 +2654,12 @@ void CHAT_CONTROLLER::RequestTitle( const std::string& aMessage )
 
 void CHAT_CONTROLLER::TakeSchematicSnapshot()
 {
+    if( m_destroying.load() )
+    {
+        wxLogInfo( "CHAT_CONTROLLER::TakeSchematicSnapshot - skipped (destroying)" );
+        return;
+    }
+
     if( m_getSchematicSummaryFn )
     {
         m_schematicSnapshot = m_getSchematicSummaryFn();
@@ -2675,6 +2681,12 @@ std::string CHAT_CONTROLLER::GetUserEditsSummary()
 {
     if( !m_getSchematicSummaryFn || m_schematicSnapshot.empty() )
         return "";
+
+    if( m_destroying.load() )
+    {
+        wxLogInfo( "CHAT_CONTROLLER::GetUserEditsSummary - skipped (destroying)" );
+        return "";
+    }
 
     std::string currentSummary = m_getSchematicSummaryFn();
     if( currentSummary.empty() || currentSummary[0] != '{' )

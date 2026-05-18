@@ -1,0 +1,88 @@
+{
+  "cli_version": "0.6.1",
+  "checkpoint_id": "a14c2f286591",
+  "session_id": "ab16da60-d461-4e0f-8859-898be0d369b1",
+  "strategy": "manual-commit",
+  "created_at": "2026-05-18T01:46:52.474472Z",
+  "branch": "main",
+  "checkpoints_count": 4,
+  "files_touched": [
+    "src/zeo/3d-viewer/3d_canvas/eda_3d_canvas.cpp",
+    "src/zeo/3d-viewer/3d_rendering/raytracing/create_scene.cpp",
+    "src/zeo/3d-viewer/3d_rendering/raytracing/render_3d_raytrace_base.h",
+    "src/zeo/3d-viewer/3d_viewer/3d_viewer_assembly.cpp",
+    "src/zeo/3d-viewer/3d_viewer/3d_viewer_assembly.h"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-opus-4-7[1m]",
+  "turn_id": "e2d035375fb4",
+  "token_usage": {
+    "input_tokens": 462,
+    "cache_creation_tokens": 901562,
+    "cache_read_tokens": 119873637,
+    "output_tokens": 260579,
+    "api_call_count": 393
+  },
+  "session_metrics": {
+    "turn_count": 9
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-05-18T01:46:52.437263Z",
+    "agent_lines": 0,
+    "agent_removed": 0,
+    "human_added": 0,
+    "human_modified": 32,
+    "human_removed": 614,
+    "total_committed": 145,
+    "total_lines_changed": 649,
+    "agent_percentage": 0,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 2,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0
+    },
+    {
+      "checkpoint_number": 3,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 157,
+      "agent_lines_removed": 27
+    },
+    {
+      "checkpoint_number": 4,
+      "user_lines_added": 40,
+      "user_lines_removed": 9,
+      "agent_lines_added": 157,
+      "agent_lines_removed": 27,
+      "user_added_per_file": {
+        "dev/utils/mac_fast.sh": 34,
+        "dev/utils/mac_hard.sh": 6
+      },
+      "user_removed_per_file": {
+        "dev/utils/mac_fast.sh": 3,
+        "dev/utils/mac_hard.sh": 6
+      }
+    },
+    {
+      "checkpoint_number": 5,
+      "user_lines_added": 12,
+      "user_lines_removed": 323,
+      "agent_lines_added": 157,
+      "agent_lines_removed": 27,
+      "user_added_per_file": {
+        "src/zeo/3d-viewer/3d_canvas/eda_3d_canvas.cpp": 6,
+        "src/zeo/3d-viewer/3d_viewer/3d_viewer_assembly.cpp": 6
+      },
+      "user_removed_per_file": {
+        "src/zeo/3d-viewer/3d_canvas/eda_3d_canvas.cpp": 26,
+        "src/zeo/3d-viewer/3d_rendering/raytracing/create_scene.cpp": 35,
+        "src/zeo/3d-viewer/3d_viewer/3d_viewer_assembly.cpp": 262
+      }
+    }
+  ]
+}

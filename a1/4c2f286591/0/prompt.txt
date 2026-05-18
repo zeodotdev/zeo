@@ -1,0 +1,127 @@
+Keep those as a note, those are good to note. they may be root causes of the bugs I'm expeerieicning. Look at MOON-1406 from the linear
+
+---
+
+1) not a garble, and not a hard freeze, when I move the position, I only end up seeing one board. When I turn off ray tracing, all the boards are gone, but I can still move around the 3D viewer. Some items to consier. we can just block the user from moving board positions in ray tracing. However, I'd like to solve the actual root problem instead of just patching this problem
+
+---
+
+Verify symtom 2 before proceeding with implementation
+
+---
+
+From the retest: When I change the value and hit enter in ray trace mode, nothin happens. then, when I try to move the camera, I just see one of the boards (probably the first board I added, still raytraced). When I turn off raytracing, I see no boards, but I can still move the 3D axis. When I turn ray tracing abck on I see the same one board I saw before. Closing the 3D viewer and reopening solved the problem
+
+---
+
+The gizmos do not still work, the view is empty when I turn off raytracing
+
+---
+
+LEt's dig a little more on 2, closing and reopening likely resets some state. When I have raytracing on and I close and open, the 3D view reopens without it on. Which is correc, but it indicates that some state gets reset
+
+---
+
+Let's implement the fixes and then also add logging that will help us pin down the bug
+
+---
+
+Let's implement the fixes and then also add logging that will help us pin down the bug. Ill look at Library/Logs/Zeo/... and pull the results for you
+
+---
+
+The fix did not land and there are no MOON-1406 logs. 1) why did the fix not work. We changed the structure of this proejct, so a bug might be a problem with /dev build scripts that need to be fixed, althoguh, this is unlikely. 2) an issue with the process itself. The bug is the eact same with no changes
+
+---
+
+The fix did not land and there are no MOON-1406 logs. 1) why did the fix not work. We changed the structure of this proejct, so a bug might be a problem with /dev build scripts that need to be fixed, althoguh, this is unlikely. 2) an issue with the process itself. The bug is the eact same with no changes. Finally, I could have also made a mistke in which build I ran
+
+---
+
+This seems to have fixed the bug, here are the logs: 17:53:56.299 [MOON-1406] DoRePaint MBS stage: composite=1 raytraced=0 instances=0 sig=0xcbf29ce484222325 prevSig=0x0000000000000000
+
+17:53:56.299 [MOON-1406] Reload → single-board fallback (m_currentInstances empty, m_boardAdapter board=0xaf63f4000)
+
+17:53:56.538 [MOON-1406] RedrawAll entry: instances=3 adapters=3 renderers=3 renderable=3 fitPending=1 moving=0
+
+17:53:56.710 [MOON-1406] DoRePaint MBS stage: composite=1 raytraced=0 instances=3 sig=0x2555130b88d69e23 prevSig=0xcbf29ce484222325
+
+17:53:56.710 [MOON-1406] Reload → ReloadMultiInstance instances=3
+
+17:53:57.120 [MOON-1406] RedrawAll entry: instances=3 adapters=3 renderers=3 renderable=3 fitPending=0 moving=0
+
+17:53:57.629 [MOON-1406] RedrawAll entry: instances=3 adapters=3 renderers=3 renderable=3 fitPending=0 moving=1
+
+17:53:58.147 [MOON-1406] RedrawAll entry: instances=3 adapters=3 renderers=3 renderable=3 fitPending=0 moving=1
+
+17:53:58.703 [MOON-1406] RedrawAll entry: instances=3 adapters=3 renderers=3 renderable=3 fitPending=0 moving=0
+
+17:53:59.724 [MOON-1406] RenderEngineChanged → engine=RAYTRACING inAssembly=1 openglInit=1 openglSupported=1 opengl_initialized=1
+
+17:53:59.741 [MOON-1406] DoRePaint MBS stage: composite=0 raytraced=1 instances=3 sig=0x2555130b88d69e23 prevSig=0x0000000000000000
+
+17:53:59.741 [MOON-1406] Reload → ReloadMultiInstance instances=3
+
+17:54:04.350 [MOON-1406] DoRePaint MBS stage: composite=0 raytraced=1 instances=3 sig=0xf1993bd8b0e8aa83 prevSig=0x2555130b88d69e23
+
+17:54:04.350 [MOON-1406] Reload → ReloadMultiInstance instances=3
+
+17:54:05.505 [MOON-1406] Reload → ReloadMultiInstance instances=3
+
+17:54:11.971 [MOON-1406] DoRePaint MBS stage: composite=0 raytraced=1 instances=3 sig=0x2555130b88d69e23 prevSig=0xf1993bd8b0e8aa83
+
+17:54:11.971 [MOON-1406] Reload → ReloadMultiInstance instances=3
+
+17:54:13.606 [MOON-1406] Reload → ReloadMultiInstance instances=3
+
+17:54:18.883 [MOON-1406] RenderEngineChanged → engine=OPENGL inAssembly=1 openglInit=1 openglSupported=1 opengl_initialized=1
+
+17:54:18.891 [MOON-1406] DoRePaint MBS stage: composite=1 raytraced=0 instances=3 sig=0x2555130b88d69e23 prevSig=0x0000000000000000
+
+17:54:18.891 [MOON-1406] Reload → ReloadMultiInstance instances=3
+
+17:54:19.005 [MOON-1406] RedrawAll entry: instances=3 adapters=3 renderers=3 renderable=3 fitPending=1 moving=0
+
+17:54:19.591 [MOON-1406] RedrawAll entry: instances=3 adapters=3 renderers=3 renderable=3 fitPending=0 moving=0
+
+17:54:20.206 [MOON-1406] RedrawAll entry: instances=3 adapters=3 renderers=3 renderable=3 fitPending=0 moving=1
+
+17:54:20.712 [MOON-1406] RedrawAll entry: instances=3 adapters=3 renderers=3 renderable=3 fitPending=0 moving=1
+
+17:54:21.224 [MOON-1406] RedrawAll entry: instances=3 adapters=3 renderers=3 renderable=3 fitPending=0 moving=1
+
+17:54:21.741 [MOON-1406] RedrawAll entry: instances=3 adapters=3 renderers=3 renderable=3 fitPending=0 moving=1
+
+17:54:24.755 [MOON-1406] DoRePaint MBS stage: composite=1 raytraced=0 instances=3 sig=0x68b013497df205ee prevSig=0x2555130b88d69e23
+
+17:54:24.755 [MOON-1406] Reload → ReloadMultiInstance instances=3
+
+17:54:24.864 [MOON-1406] RedrawAll entry: instances=3 adapters=3 renderers=3 renderable=3 fitPending=0 moving=0
+
+17:54:26.124 [MOON-1406] RedrawAll entry: instances=3 adapters=3 renderers=3 renderable=3 fitPending=0 moving=0
+
+17:54:27.005 [MOON-1406] RedrawAll entry: instances=3 adapters=3 renderers=3 renderable=3 fitPending=0 moving=0
+
+17:54:27.074 [MOON-1406] RenderEngineChanged → engine=RAYTRACING inAssembly=1 openglInit=1 openglSupported=1 opengl_initialized=1
+
+17:54:27.091 [MOON-1406] DoRePaint MBS stage: composite=0 raytraced=1 instances=3 sig=0x68b013497df205ee prevSig=0x0000000000000000
+
+17:54:27.091 [MOON-1406] Reload → ReloadMultiInstance instances=3
+
+17:54:33.841 [MOON-1406] DoRePaint MBS stage: composite=0 raytraced=1 instances=3 sig=0x2555130b88d69e23 prevSig=0x68b013497df205ee
+
+17:54:33.841 [MOON-1406] Reload → ReloadMultiInstance instances=3
+
+17:54:36.286 [MOON-1406] Reload → ReloadMultiInstance instances=3
+
+17:54:44.242 [MOON-1406] DoRePaint MBS stage: composite=1 raytraced=0 instances=0 sig=0xcbf29ce484222325 prevSig=0x0000000000000000
+
+17:54:44.242 [MOON-1406] Reload → single-board fallback (m_currentInstances empty, m_boardAdapter board=0xaf63f4000)
+
+17:54:44.293 [MOON-1406] RedrawAll entry: instances=3 adapters=3 renderers=3 renderable=3 fitPending=1 moving=0
+
+17:54:44.445 [MOON-1406] DoRePaint MBS stage: composite=1 raytraced=0 instances=3 sig=0xf77b56918ddcae23 prevSig=0xcbf29ce484222325
+
+17:54:44.445 [MOON-1406] Reload → ReloadMultiInstance instances=3
+
+17:54:44.805 [MOON-1406] RedrawAll entry: instances=3 adapters=3 renderers=3 renderable=3 fitPending=0 moving=0

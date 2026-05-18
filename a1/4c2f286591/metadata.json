@@ -1,0 +1,29 @@
+{
+  "cli_version": "0.6.1",
+  "checkpoint_id": "a14c2f286591",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 4,
+  "files_touched": [
+    "src/zeo/3d-viewer/3d_canvas/eda_3d_canvas.cpp",
+    "src/zeo/3d-viewer/3d_rendering/raytracing/create_scene.cpp",
+    "src/zeo/3d-viewer/3d_rendering/raytracing/render_3d_raytrace_base.h",
+    "src/zeo/3d-viewer/3d_viewer/3d_viewer_assembly.cpp",
+    "src/zeo/3d-viewer/3d_viewer/3d_viewer_assembly.h"
+  ],
+  "sessions": [
+    {
+      "metadata": "/a1/4c2f286591/0/metadata.json",
+      "transcript": "/a1/4c2f286591/0/full.jsonl",
+      "content_hash": "/a1/4c2f286591/0/content_hash.txt",
+      "prompt": "/a1/4c2f286591/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 462,
+    "cache_creation_tokens": 901562,
+    "cache_read_tokens": 119873637,
+    "output_tokens": 260579,
+    "api_call_count": 393
+  }
+}

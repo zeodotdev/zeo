@@ -1,0 +1,48 @@
+{
+  "cli_version": "0.6.1",
+  "checkpoint_id": "586497bc4c3f",
+  "session_id": "a1026d0c-79b5-4f2b-aa31-3a04be917c54",
+  "strategy": "manual-commit",
+  "created_at": "2026-05-18T17:42:29.346172Z",
+  "branch": "ganesh/moon-1413-crash-agent_framesendrequest-reads-corrupted-m_toolresponse",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "src/zeo/agent/agent_frame.cpp",
+    "src/zeo/agent/core/chat_controller.cpp",
+    "src/zeo/agent/core/chat_controller.h"
+  ],
+  "agent": "Claude Code",
+  "model": "",
+  "turn_id": "1fe5b79cf831",
+  "token_usage": {
+    "input_tokens": 63,
+    "cache_creation_tokens": 238077,
+    "cache_read_tokens": 5319124,
+    "output_tokens": 78744,
+    "api_call_count": 53
+  },
+  "session_metrics": {
+    "turn_count": 1
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-05-18T17:42:29.332311Z",
+    "agent_lines": 68,
+    "agent_removed": 1,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 68,
+    "total_lines_changed": 69,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0
+    }
+  ]
+}

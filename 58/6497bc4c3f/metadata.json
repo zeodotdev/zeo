@@ -1,0 +1,27 @@
+{
+  "cli_version": "0.6.1",
+  "checkpoint_id": "586497bc4c3f",
+  "strategy": "manual-commit",
+  "branch": "ganesh/moon-1413-crash-agent_framesendrequest-reads-corrupted-m_toolresponse",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "src/zeo/agent/agent_frame.cpp",
+    "src/zeo/agent/core/chat_controller.cpp",
+    "src/zeo/agent/core/chat_controller.h"
+  ],
+  "sessions": [
+    {
+      "metadata": "/58/6497bc4c3f/0/metadata.json",
+      "transcript": "/58/6497bc4c3f/0/full.jsonl",
+      "content_hash": "/58/6497bc4c3f/0/content_hash.txt",
+      "prompt": "/58/6497bc4c3f/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 63,
+    "cache_creation_tokens": 238077,
+    "cache_read_tokens": 5319124,
+    "output_tokens": 78744,
+    "api_call_count": 53
+  }
+}

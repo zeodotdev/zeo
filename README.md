@@ -2,7 +2,7 @@
 
 Zeo's monorepo
 
-Zeo is a powerful, modern fork of [KiCad](https://kicad.org) with proprietary additions.
+Zeo is a powerful, modern fork of [KiCad](https://kicad.org).
 
 ## Quickstart
 

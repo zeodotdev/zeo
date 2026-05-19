@@ -292,7 +292,17 @@ if [ -e "$LD_LINUX" ] ; then
   export GCONV_PATH="$HERE/usr/lib/gconv"
   export FONTCONFIG_FILE="$HERE/etc/fonts/fonts.conf"
   export GTK_PATH=$(find "$HERE/lib" -name gtk-* -type d)
-  export GTK_THEME=Default
+  # Detect host GNOME color-scheme BEFORE swapping GSETTINGS_SCHEMA_DIR to
+  # bundled schemas (which lack the gnome desktop interface schema). Caller's
+  # GTK_THEME wins; prefer-dark → Adwaita:dark, otherwise fall back to "Default"
+  # so the bundled GTK uses its built-in light theme.
+  if [ -z "${GTK_THEME:-}" ]; then
+    if command -v gsettings >/dev/null 2>&1 && [ "$(gsettings get org.gnome.desktop.interface color-scheme 2>/dev/null)" = "'prefer-dark'" ]; then
+      export GTK_THEME=Adwaita:dark
+    else
+      export GTK_THEME=Default
+    fi
+  fi
   export GDK_PIXBUF_MODULEDIR=$(find "$HERE" -name loaders -type d -path '*gdk-pixbuf*')
   export GDK_PIXBUF_MODULE_FILE=$(find "$HERE" -name loaders.cache -type f -path '*gdk-pixbuf*')
   export XDG_DATA_DIRS="${HERE}"/usr/share/:"${XDG_DATA_DIRS}"

@@ -2,6 +2,7 @@
 *.pyc
 __pycache__/
 /build/
+/packaging/kicad-appimage/build/
 .env
 src/zeo-python/kicad/
 build.log

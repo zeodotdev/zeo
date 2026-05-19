@@ -3,6 +3,17 @@ set -e
 APPS="bitmap2component eeschema gerbview kicad kicad-cli pcb_calculator pcbnew pl_editor"
 LAUNCHER="launcher"
 
+# Detect host GNOME color-scheme preference and translate to GTK_THEME so the
+# bundled GTK picks the matching dark/light variant. Done BEFORE swapping
+# LD_LIBRARY_PATH so the host gsettings binary uses host libs. Caller's
+# GTK_THEME wins; if gsettings is missing or color-scheme isn't prefer-dark,
+# leave GTK_THEME unset and let GTK use its default (light Adwaita).
+if [ -z "${GTK_THEME:-}" ] && command -v gsettings >/dev/null 2>&1; then
+    if [ "$(gsettings get org.gnome.desktop.interface color-scheme 2>/dev/null)" = "'prefer-dark'" ]; then
+        export GTK_THEME="Adwaita:dark"
+    fi
+fi
+
 # Set LD_LIBRARY_PATH to use bundled libraries
 export LD_LIBRARY_PATH="$APPDIR/usr/lib:$APPDIR/usr/lib/x86_64-linux-gnu:$APPDIR/usr/local/lib:$APPDIR/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH"
 

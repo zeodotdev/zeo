@@ -18,12 +18,12 @@ param(
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $WorkspaceDir = Split-Path -Parent $ScriptDir
 
-$KicadSourceDir = "$WorkspaceDir\code\zeo"
-$KicadPythonDir = "$WorkspaceDir\code\zeo-python"
+$KicadSourceDir = "$WorkspaceDir\src\zeo"
+$KicadPythonDir = "$WorkspaceDir\src\zeo-python"
 $BuilderDir = "$WorkspaceDir\packaging\kicad-win-builder"
 $LibrariesDir = "$WorkspaceDir\libraries"
 
-$VsPath = "C:\Program Files\Microsoft Visual Studio\18\Community"
+$VsPath = "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools"
 $CmakeExe = "$VsPath\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe"
 $BuildDir = "$BuilderDir\.build\kicad\build\x64-windows-Release"
 $InstallDir = "$BuilderDir\.out\x64-windows-Release"

@@ -296,12 +296,21 @@ if [ -e "$LD_LINUX" ] ; then
   # bundled schemas (which lack the gnome desktop interface schema). Caller's
   # GTK_THEME wins; prefer-dark → Adwaita:dark, otherwise fall back to "Default"
   # so the bundled GTK uses its built-in light theme.
+  #
+  # Run gsettings in a subshell with GIO_MODULE_DIR/GIO_EXTRA_MODULES unset —
+  # AppRun pointed them at a bundled gio/modules dir that ships no
+  # dconf-gsettings-backend, which otherwise causes gsettings to silently fall
+  # back to the in-memory backend and report the schema default ('default').
   if [ -z "${GTK_THEME:-}" ]; then
-    if command -v gsettings >/dev/null 2>&1 && [ "$(gsettings get org.gnome.desktop.interface color-scheme 2>/dev/null)" = "'prefer-dark'" ]; then
+    _zeo_scheme=$( unset GIO_MODULE_DIR GIO_EXTRA_MODULES; \
+      command -v gsettings >/dev/null 2>&1 && \
+      gsettings get org.gnome.desktop.interface color-scheme 2>/dev/null )
+    if [ "$_zeo_scheme" = "'prefer-dark'" ]; then
       export GTK_THEME=Adwaita:dark
     else
       export GTK_THEME=Default
     fi
+    unset _zeo_scheme
   fi
   export GDK_PIXBUF_MODULEDIR=$(find "$HERE" -name loaders -type d -path '*gdk-pixbuf*')
   export GDK_PIXBUF_MODULE_FILE=$(find "$HERE" -name loaders.cache -type f -path '*gdk-pixbuf*')

@@ -7,6 +7,7 @@ src/zeo-python/kicad/
 build.log
 /dev/log/*
 !/dev/log/.gitkeep
+*.dmp
 
 # Agentic-tool state / local-only files (catches any new noise).
 # Existing tracked configs in src/zeo/.claude, src/zeo/.entire, etc.

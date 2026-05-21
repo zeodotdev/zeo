@@ -1,0 +1,31 @@
+Read thorugh ../plan.md and linear Zeo 0.2.2
+
+---
+
+proceed with the implementation of these features
+
+---
+
+There seem to be some build errors: /Users/gmp/workspaces/zeodotdev/zeo/src/zeo/pcbnew/drc/drc_test_provider_impedance.cpp:171:65: error: too few arguments to function call, single argument 'aTranslate' was not specified
+  171 |                 drcItem->SetErrorMessage( drcItem->GetErrorText() + wxS( " " ) + msg );
+      |                                           ~~~~~~~~~~~~~~~~~~~~~ ^
+/Users/gmp/workspaces/zeodotdev/zeo/src/zeo/include/rc_item.h:171:14: note: 'GetErrorText' declared here
+  171 |     wxString GetErrorText( bool aTranslate ) const
+      |              ^             ~~~~~~~~~~~~~~~
+1 error generated.
+[ 89%] Building CXX object pcbnew/CMakeFiles/pcbnew_kiface_objects.dir/drc/drc_test_provider_track_angle.cpp.o
+[ 89%] Building CXX object pcbnew/CMakeFiles/pcbnew_kiface_objects.dir/drc/drc_test_provider_track_width.cpp.o
+make[2]: *** [pcbnew/CMakeFiles/pcbnew_kiface_objects.dir/drc/drc_test_provider_impedance.cpp.o] Error 1
+make[2]: *** Waiting for unfinished jobs....
+make[1]: *** [pcbnew/CMakeFiles/pcbnew_kiface_objects.dir/all] Error 2
+make: *** [all] Error 2
+[FAST] ERROR: Build failed
+gmp@mac dev % from  ./mac_build.sh --fast --install --python
+
+---
+
+Run it and check if any more errors occur
+
+---
+
+When should I run to test that our changes correctly landed

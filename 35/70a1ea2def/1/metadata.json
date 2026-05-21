@@ -1,0 +1,87 @@
+{
+  "cli_version": "0.6.1",
+  "checkpoint_id": "3570a1ea2def",
+  "session_id": "c8807604-0459-403a-be78-a518044c92be",
+  "strategy": "manual-commit",
+  "created_at": "2026-05-21T23:41:39.953686Z",
+  "branch": "ganesh/zeo-impedence-constraint",
+  "checkpoints_count": 4,
+  "files_touched": [
+    "src/zeo/common/CMakeLists.txt",
+    "src/zeo/common/drc_rules.keywords",
+    "src/zeo/pcbnew/CMakeLists.txt",
+    "src/zeo/pcbnew/board_stackup_manager/impedance_calculator.cpp",
+    "src/zeo/pcbnew/board_stackup_manager/impedance_calculator.h",
+    "src/zeo/pcbnew/dialogs/dialog_track_via_properties.cpp",
+    "src/zeo/pcbnew/dialogs/dialog_track_via_properties.h",
+    "src/zeo/pcbnew/drc/drc_engine.cpp",
+    "src/zeo/pcbnew/drc/drc_item.cpp",
+    "src/zeo/pcbnew/drc/drc_item.h",
+    "src/zeo/pcbnew/drc/drc_rule.h",
+    "src/zeo/pcbnew/drc/drc_rule_parser.cpp",
+    "src/zeo/pcbnew/drc/drc_test_provider_impedance.cpp",
+    "src/zeo/pcbnew/drc/rule_editor/drc_rule_editor_utils.cpp",
+    "src/zeo/pcbnew/pcbexpr_functions.cpp",
+    "src/zeo/pcbnew/router/pns_node.h",
+    "src/zeo/pcbnew/router/router_tool.cpp",
+    "src/zeo/pcbnew/router/router_tool.h",
+    "src/zeo/pcbnew/widgets/pcb_net_inspector_panel.cpp",
+    "src/zeo/pcbnew/widgets/pcb_net_inspector_panel.h",
+    "src/zeo/pcbnew/widgets/pcb_net_inspector_panel_data_model.h"
+  ],
+  "agent": "Claude Code",
+  "model": "",
+  "turn_id": "728aaa28f5a0",
+  "token_usage": {
+    "input_tokens": 24605,
+    "cache_creation_tokens": 695702,
+    "cache_read_tokens": 35675874,
+    "output_tokens": 97077,
+    "api_call_count": 172
+  },
+  "session_metrics": {
+    "turn_count": 5
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-05-21T23:41:39.933181Z",
+    "agent_lines": 742,
+    "agent_removed": 6,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 742,
+    "total_lines_changed": 748,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0
+    },
+    {
+      "checkpoint_number": 2,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 742,
+      "agent_lines_removed": 6
+    },
+    {
+      "checkpoint_number": 3,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 742,
+      "agent_lines_removed": 6
+    },
+    {
+      "checkpoint_number": 4,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 742,
+      "agent_lines_removed": 6
+    }
+  ]
+}

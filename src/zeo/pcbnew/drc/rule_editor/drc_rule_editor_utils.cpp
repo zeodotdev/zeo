@@ -128,6 +128,7 @@ static wxString GetConstraintCodeFromType( DRC_CONSTRAINT_T aType )
     case VIA_COUNT_CONSTRAINT:               return DRC_RULES_LEXER::TokenName( DRCRULE_T::T_via_count );
     case DIFF_PAIR_GAP_CONSTRAINT:           return DRC_RULES_LEXER::TokenName( DRCRULE_T::T_diff_pair_gap );
     case MAX_UNCOUPLED_CONSTRAINT:           return DRC_RULES_LEXER::TokenName( DRCRULE_T::T_diff_pair_uncoupled );
+    case IMPEDANCE_TARGET_CONSTRAINT:        return DRC_RULES_LEXER::TokenName( DRCRULE_T::T_impedance_target );
     case PHYSICAL_CLEARANCE_CONSTRAINT:      return DRC_RULES_LEXER::TokenName( DRCRULE_T::T_physical_clearance );
     case PHYSICAL_HOLE_CLEARANCE_CONSTRAINT: return DRC_RULES_LEXER::TokenName( DRCRULE_T::T_physical_hole_clearance );
     case BRIDGED_MASK_CONSTRAINT:            return DRC_RULES_LEXER::TokenName( DRCRULE_T::T_bridged_mask );

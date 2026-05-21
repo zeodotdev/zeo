@@ -317,7 +317,8 @@ private:
         COLUMN_PAD_COUNT,
         COLUMN_CROSS_BOARD,            ///< "✓" when this net is part of an MBS cross-board net
         COLUMN_CROSS_BOARD_LENGTH,     ///< Sum of routed length across this board + every sibling sub-project
-        COLUMN_LAST_STATIC_COL = COLUMN_CROSS_BOARD_LENGTH
+        COLUMN_AVG_IMPEDANCE,          ///< Length-weighted average Z₀ across all tracks on the net
+        COLUMN_LAST_STATIC_COL = COLUMN_AVG_IMPEDANCE
     };
 
     /// Popup menu item IDs

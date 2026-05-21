@@ -25,6 +25,7 @@ hole_clearance
 hole_size
 hole_to_hole
 ignore
+impedance_target
 inner
 layer
 length

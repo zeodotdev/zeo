@@ -1498,6 +1498,48 @@ static void hasComponentClassFunc( LIBEVAL::CONTEXT* aCtx, void* self )
 }
 
 
+static void variantIsFunc( LIBEVAL::CONTEXT* aCtx, void* self )
+{
+    LIBEVAL::VALUE* arg    = aCtx->Pop();
+    LIBEVAL::VALUE* result = aCtx->AllocValue();
+
+    result->Set( 0.0 );
+    aCtx->Push( result );
+
+    if( !arg )
+    {
+        if( aCtx->HasErrorCallback() )
+        {
+            aCtx->ReportError( wxString::Format( _( "Missing variant name argument to %s." ),
+                                                 wxT( "variantIs()" ) ) );
+        }
+
+        return;
+    }
+
+    PCBEXPR_VAR_REF* vref = static_cast<PCBEXPR_VAR_REF*>( self );
+    BOARD_ITEM*      item = vref ? vref->GetObject( aCtx ) : nullptr;
+    BOARD*           board = item ? item->GetBoard() : nullptr;
+
+    if( !board )
+        return;
+
+    const wxString requested = arg->AsString();
+    const wxString active = board->GetCurrentVariant();
+
+    // Empty argument matches the default/base variant (no active variant).
+    if( requested.IsEmpty() )
+    {
+        if( active.IsEmpty() )
+            result->Set( 1.0 );
+        return;
+    }
+
+    if( active.CmpNoCase( requested ) == 0 )
+        result->Set( 1.0 );
+}
+
+
 PCBEXPR_BUILTIN_FUNCTIONS::PCBEXPR_BUILTIN_FUNCTIONS()
 {
     RegisterAllFunctions();
@@ -1545,4 +1587,5 @@ void PCBEXPR_BUILTIN_FUNCTIONS::RegisterAllFunctions()
     RegisterFunc( wxT( "hasNetclass('x')" ), hasNetclassFunc );
     RegisterFunc( wxT( "hasExactNetclass('x')" ), hasExactNetclassFunc );
     RegisterFunc( wxT( "hasComponentClass('x')" ), hasComponentClassFunc );
+    RegisterFunc( wxT( "variantIs('x')" ), variantIsFunc );
 }

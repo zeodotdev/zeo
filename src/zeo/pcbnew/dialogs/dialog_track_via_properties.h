@@ -25,6 +25,7 @@
 
 #include <dialogs/dialog_track_via_properties_base.h>
 #include <widgets/unit_binder.h>
+#include <board_stackup_manager/impedance_calculator.h>
 #include <optional>
 #include <layer_ids.h>
 #include <via_protection_ui_mixin.h>
@@ -66,6 +67,10 @@ private:
     int getLayerDepth();
     void afterPadstackModeChanged();
 
+    /// Recompute Z₀ from the current track width + layer and update the read-only display.
+    /// Shows "—" when the stackup is incomplete or the selection isn't a track.
+    void updateImpedanceDisplay();
+
     ///< Get data from the PCB board and display it to dialog
     bool TransferDataToWindow() override;
 
@@ -104,4 +109,10 @@ private:
     PCB_LAYER_ID m_editLayer;
     std::map<int, PCB_LAYER_ID> m_editLayerCtrlMap;
     bool                        m_padstackDirty;
+
+    /// Read-only Z₀ display widgets, added programmatically below the track-width row.
+    wxStaticText* m_impedanceLabel = nullptr;
+    wxStaticText* m_impedanceValue = nullptr;
+    wxStaticText* m_impedanceUnit  = nullptr;
+    IMPEDANCE_CALCULATOR m_impedanceCalc;
 };

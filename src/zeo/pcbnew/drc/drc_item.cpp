@@ -283,6 +283,10 @@ DRC_ITEM DRC_ITEM::diffPairUncoupledLengthTooLong( DRCE_DIFF_PAIR_UNCOUPLED_LENG
         _HKI( "Differential uncoupled length too long" ),
         wxT( "diff_pair_uncoupled_length_too_long" ) );
 
+DRC_ITEM DRC_ITEM::impedanceOutOfRange( DRCE_IMPEDANCE_OUT_OF_RANGE,
+        _HKI( "Track impedance out of range" ),
+        wxT( "impedance_out_of_range" ) );
+
 DRC_ITEM DRC_ITEM::footprint( DRCE_FOOTPRINT,
         _HKI( "Footprint is not valid" ),
         wxT( "footprint" ) );
@@ -407,6 +411,7 @@ std::vector<std::reference_wrapper<RC_ITEM>> DRC_ITEM::allItemTypes( {
         DRC_ITEM::viaCountOutOfRange,
         DRC_ITEM::diffPairGapOutOfRange,
         DRC_ITEM::diffPairUncoupledLengthTooLong,
+        DRC_ITEM::impedanceOutOfRange,
 
         DRC_ITEM::heading_readability,
         DRC_ITEM::silkClearance,
@@ -505,6 +510,7 @@ std::shared_ptr<DRC_ITEM> DRC_ITEM::Create( int aErrorCode )
     case DRCE_VIA_COUNT_OUT_OF_RANGE:   return std::make_shared<DRC_ITEM>( viaCountOutOfRange );
     case DRCE_DIFF_PAIR_GAP_OUT_OF_RANGE:          return std::make_shared<DRC_ITEM>( diffPairGapOutOfRange );
     case DRCE_DIFF_PAIR_UNCOUPLED_LENGTH_TOO_LONG: return std::make_shared<DRC_ITEM>( diffPairUncoupledLengthTooLong );
+    case DRCE_IMPEDANCE_OUT_OF_RANGE:              return std::make_shared<DRC_ITEM>( impedanceOutOfRange );
     case DRCE_FOOTPRINT:                return std::make_shared<DRC_ITEM>( footprint );
     case DRCE_FOOTPRINT_TYPE_MISMATCH:  return std::make_shared<DRC_ITEM>( footprintTypeMismatch );
     case DRCE_PAD_TH_WITH_NO_HOLE:      return std::make_shared<DRC_ITEM>( footprintTHPadhasNoHole );

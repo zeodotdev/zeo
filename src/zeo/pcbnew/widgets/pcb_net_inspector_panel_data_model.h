@@ -273,6 +273,16 @@ public:
 
     bool BoardWireLengthChanged() const { return m_column_changed[COLUMN_BOARD_LENGTH]; }
 
+    /// Length-weighted average Z₀ in ohms across all tracks belonging to this net.
+    /// 0 when no tracks are routed (or the stackup can't yield an impedance).
+    int GetAvgImpedance() const { return m_avg_impedance; }
+
+    void SetAvgImpedance( int aValue )
+    {
+        m_column_changed[COLUMN_AVG_IMPEDANCE] |= ( m_avg_impedance != aValue );
+        m_avg_impedance = aValue;
+    }
+
     void SetLayerWireLength( const int64_t aValue, PCB_LAYER_ID aLayer )
     {
         auto it = m_layer_wire_length.find( aLayer );
@@ -494,6 +504,7 @@ private:
     int64_t       m_via_delay = 0;
     int64_t       m_pad_die_length = 0;
     int64_t       m_pad_die_delay = 0;
+    int           m_avg_impedance = 0;       ///< Length-weighted Z₀ across this net's tracks (ohms).
 
     std::map<PCB_LAYER_ID, int64_t> m_layer_wire_length{};
     std::map<PCB_LAYER_ID, int64_t> m_layer_wire_delay{};
@@ -940,6 +951,11 @@ protected:
                 else
                     aOutValue = wxString();
             }
+            else if( aCol == COLUMN_AVG_IMPEDANCE )
+            {
+                const int z0 = i->GetAvgImpedance();
+                aOutValue = z0 > 0 ? wxString::Format( wxT( "%d Ω" ), z0 ) : wxString();
+            }
             else if( aCol > COLUMN_LAST_STATIC_COL && aCol <= m_parent.m_columns.size() )
             {
                 if( m_show_time_domain_details )
@@ -1041,6 +1057,10 @@ protected:
             // grouping cross-board nets by their actual sum.
             if( i1.GetCrossBoardLength() != i2.GetCrossBoardLength() )
                 return compareUInt( i1.GetCrossBoardLength(), i2.GetCrossBoardLength(), aAsc );
+        }
+        else if( aCol == COLUMN_AVG_IMPEDANCE && i1.GetAvgImpedance() != i2.GetAvgImpedance() )
+        {
+            return compareUInt( i1.GetAvgImpedance(), i2.GetAvgImpedance(), aAsc );
         }
         else if( aCol > COLUMN_LAST_STATIC_COL && aCol < m_parent.m_columns.size() )
         {

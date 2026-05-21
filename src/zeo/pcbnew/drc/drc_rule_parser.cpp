@@ -503,7 +503,7 @@ void DRC_RULES_PARSER::parseConstraint( DRC_RULE* aRule )
                          "disallow, zone_connection, thermal_relief_gap, thermal_spoke_width, "
                          "min_resolved_spokes, solder_mask_expansion, solder_paste_abs_margin, "
                          "solder_paste_rel_margin, length, skew, via_count, via_dangling, via_diameter, "
-                         "diff_pair_gap or diff_pair_uncoupled" ) );
+                         "impedance_target, diff_pair_gap or diff_pair_uncoupled" ) );
 
         reportError( msg );
         return;
@@ -543,6 +543,7 @@ void DRC_RULES_PARSER::parseConstraint( DRC_RULE* aRule )
     case T_via_count:                 c.m_Type = VIA_COUNT_CONSTRAINT;                 break;
     case T_diff_pair_gap:             c.m_Type = DIFF_PAIR_GAP_CONSTRAINT;             break;
     case T_diff_pair_uncoupled:       c.m_Type = MAX_UNCOUPLED_CONSTRAINT;             break;
+    case T_impedance_target:          c.m_Type = IMPEDANCE_TARGET_CONSTRAINT;          break;
     case T_physical_clearance:        c.m_Type = PHYSICAL_CLEARANCE_CONSTRAINT;        break;
     case T_physical_hole_clearance:   c.m_Type = PHYSICAL_HOLE_CLEARANCE_CONSTRAINT;   break;
     case T_bridged_mask:              c.m_Type = BRIDGED_MASK_CONSTRAINT;              break;
@@ -553,7 +554,8 @@ void DRC_RULES_PARSER::parseConstraint( DRC_RULE* aRule )
                        "disallow, zone_connection, thermal_relief_gap, thermal_spoke_width, "
                        "min_resolved_spokes, solder_mask_expansion, solder_mask_sliver, "
                        "solder_paste_abs_margin, solder_paste_rel_margin, length, skew, via_count, "
-                       "via_dangling, via_diameter, diff_pair_gap, diff_pair_uncoupled or bridged_mask" ) );
+                       "via_dangling, via_diameter, impedance_target, diff_pair_gap, "
+                       "diff_pair_uncoupled or bridged_mask" ) );
         return;
     }
 
@@ -567,7 +569,8 @@ void DRC_RULES_PARSER::parseConstraint( DRC_RULE* aRule )
                     || c.m_Type == MIN_RESOLVED_SPOKES_CONSTRAINT
                     || c.m_Type == TRACK_ANGLE_CONSTRAINT
                     || c.m_Type == VIA_DANGLING_CONSTRAINT
-                    || c.m_Type == BRIDGED_MASK_CONSTRAINT;
+                    || c.m_Type == BRIDGED_MASK_CONSTRAINT
+                    || c.m_Type == IMPEDANCE_TARGET_CONSTRAINT;
 
     allowsTimeDomain = c.m_Type == LENGTH_CONSTRAINT || c.m_Type == SKEW_CONSTRAINT;
 

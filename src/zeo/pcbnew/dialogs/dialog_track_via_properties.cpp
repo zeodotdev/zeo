@@ -110,6 +110,31 @@ DIALOG_TRACK_VIA_PROPERTIES::DIALOG_TRACK_VIA_PROPERTIES( PCB_BASE_EDIT_FRAME* a
     m_TrackLayerCtrl->SetBoardFrame( aParent );
     m_TrackLayerCtrl->Resync();
 
+    // Insert a read-only Z₀ display row immediately below the Track-Width row.  The track
+    // sizer is a wxGridBagSizer; we reuse its column layout (label / value / unit) at row 3.
+    if( wxGridBagSizer* trackGrid =
+                wxDynamicCast( m_TrackWidthCtrl->GetContainingSizer(), wxGridBagSizer ) )
+    {
+        wxWindow*    parent = m_sbTrackSizer->GetStaticBox();
+        m_impedanceLabel    = new wxStaticText( parent, wxID_ANY, _( "Impedance Z₀:" ) );
+        m_impedanceValue    = new wxStaticText( parent, wxID_ANY, wxT( "—" ) );
+        m_impedanceUnit     = new wxStaticText( parent, wxID_ANY, wxT( "Ω" ) );
+
+        trackGrid->Add( m_impedanceLabel, wxGBPosition( 3, 0 ), wxGBSpan( 1, 1 ),
+                        wxALIGN_CENTER_VERTICAL, 5 );
+        trackGrid->Add( m_impedanceValue, wxGBPosition( 3, 1 ), wxGBSpan( 1, 1 ),
+                        wxALIGN_CENTER_VERTICAL | wxEXPAND, 5 );
+        trackGrid->Add( m_impedanceUnit, wxGBPosition( 3, 2 ), wxGBSpan( 1, 1 ),
+                        wxALIGN_CENTER_VERTICAL, 5 );
+
+        m_TrackLayerCtrl->Bind( wxEVT_CHOICE,
+                                [this]( wxCommandEvent& aEvt )
+                                {
+                                    updateImpedanceDisplay();
+                                    aEvt.Skip();
+                                } );
+    }
+
     m_ViaStartLayer->SetLayersHotkeys( false );
     m_ViaStartLayer->SetNotAllowedLayerSet( LSET::AllNonCuMask() );
     m_ViaStartLayer->SetBoardFrame( aParent );
@@ -853,6 +878,16 @@ bool DIALOG_TRACK_VIA_PROPERTIES::TransferDataToWindow()
     onBackdrillChange( dummyEvent );
     onTopPostMachineChange( dummyEvent );
     onBottomPostMachineChange( dummyEvent );
+
+    // Show/hide the impedance row depending on whether the selection includes tracks.
+    if( m_impedanceLabel )
+    {
+        m_impedanceLabel->Show( m_tracks );
+        m_impedanceValue->Show( m_tracks );
+        m_impedanceUnit->Show( m_tracks );
+    }
+
+    updateImpedanceDisplay();
 
     // Now all widgets have the size fixed, call FinishDialogSettings
     finishDialogSettings();
@@ -1662,12 +1697,53 @@ void DIALOG_TRACK_VIA_PROPERTIES::onWidthSelect( wxCommandEvent& aEvent )
 {
     m_TrackWidthCtrl->ChangeValue( m_predefinedTrackWidthsCtrl->GetStringSelection() );
     m_TrackWidthCtrl->SelectAll();
+    updateImpedanceDisplay();
 }
 
 
 void DIALOG_TRACK_VIA_PROPERTIES::onWidthEdit( wxCommandEvent& aEvent )
 {
     m_predefinedTrackWidthsCtrl->SetStringSelection( m_TrackWidthCtrl->GetValue() );
+    updateImpedanceDisplay();
+}
+
+
+void DIALOG_TRACK_VIA_PROPERTIES::updateImpedanceDisplay()
+{
+    if( !m_impedanceValue )
+        return;
+
+    BOARD* brd = m_frame->GetBoard();
+
+    if( !brd || !m_tracks )
+    {
+        m_impedanceValue->SetLabel( wxT( "—" ) );
+        return;
+    }
+
+    const std::optional<int> widthOpt = m_trackWidth.GetIntValue();
+    const int                layerSel = m_TrackLayerCtrl->GetLayerSelection();
+
+    if( !widthOpt || *widthOpt <= 0 || layerSel < 0 )
+    {
+        m_impedanceValue->SetLabel( wxT( "—" ) );
+        return;
+    }
+
+    const PCB_LAYER_ID layer = static_cast<PCB_LAYER_ID>( layerSel );
+
+    if( !IsCopperLayer( layer ) )
+    {
+        m_impedanceValue->SetLabel( wxT( "—" ) );
+        return;
+    }
+
+    const int z0 = m_impedanceCalc.ComputeOhms( brd, layer, *widthOpt );
+
+    if( z0 <= 0 )
+        m_impedanceValue->SetLabel( wxT( "—" ) );
+    else
+        m_impedanceValue->SetLabel( wxString::Format( wxT( "%d" ), z0 ) );
 }
 
 

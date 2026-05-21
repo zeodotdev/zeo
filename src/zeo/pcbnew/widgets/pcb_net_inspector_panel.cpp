@@ -24,6 +24,9 @@
 
 #include <advanced_config.h>
 #include <board_design_settings.h>
+#include <board_stackup_manager/board_stackup.h>
+#include <board_stackup_manager/impedance_calculator.h>
+#include <pcb_track.h>
 #include <confirm.h>
 #include <connectivity/connectivity_algo.h>
 #include <dialogs/dialog_text_entry.h>
@@ -161,6 +164,8 @@ void PCB_NET_INSPECTOR_PANEL::buildColumns()
     // existing Total/Track/Via/Die length columns.
     m_columns.emplace_back( 9u, UNDEFINED_LAYER, _( "Cross-Board Length" ),
                             _( "Cross-Board Length" ), CSV_COLUMN_DESC::CSV_NONE, true );
+    m_columns.emplace_back( 10u, UNDEFINED_LAYER, _( "Avg Z₀" ),
+                            _( "Average Impedance" ), CSV_COLUMN_DESC::CSV_NONE, false );
 
     const std::vector<std::function<void( void )>> add_col{
         [&]()
@@ -225,6 +230,13 @@ void PCB_NET_INSPECTOR_PANEL::buildColumns()
             // PCB_TRACK's msg-panel + Properties Manager surfaces.
             m_netsList->AppendTextColumn( m_columns[COLUMN_CROSS_BOARD_LENGTH].display_name,
                                           m_columns[COLUMN_CROSS_BOARD_LENGTH],
+                                          wxDATAVIEW_CELL_INERT, -1, wxALIGN_CENTER,
+                                          wxDATAVIEW_COL_RESIZABLE|wxDATAVIEW_COL_REORDERABLE|wxDATAVIEW_COL_SORTABLE );
+        },
+        [&]()
+        {
+            m_netsList->AppendTextColumn( m_columns[COLUMN_AVG_IMPEDANCE].display_name,
+                                          m_columns[COLUMN_AVG_IMPEDANCE],
                                           wxDATAVIEW_CELL_INERT, -1, wxALIGN_CENTER,
                                           wxDATAVIEW_COL_RESIZABLE|wxDATAVIEW_COL_REORDERABLE|wxDATAVIEW_COL_SORTABLE );
         }
@@ -820,6 +832,20 @@ PCB_NET_INSPECTOR_PANEL::calculateNets( const std::vector<NETINFO_ITEM*>& aNetCo
     std::mutex   resultsMutex;
     thread_pool& tp = GetKiCadThreadPool();
 
+    // Precompute stackup once — used by per-thread IMPEDANCE_CALCULATOR instances below.
+    const BOARD_STACKUP stackup = m_board->GetStackupOrDefault();
+
+    // Group all PCB_TRACKs by net so each parallel task can compute length-weighted Z₀
+    // without serialising on the BOARD's track list.
+    std::unordered_map<int, std::vector<PCB_TRACK*>> netTracksMap;
+
+    for( PCB_TRACK* track : m_board->Tracks() )
+    {
+        if( !track || track->Type() == PCB_VIA_T )
+            continue;
+        netTracksMap[track->GetNetCode()].push_back( track );
+    }
+
     auto resultsFuture = tp.submit_loop(
             0, foundNets.size(),
             [&, this, calc]( const int i )
@@ -855,6 +881,32 @@ PCB_NET_INSPECTOR_PANEL::calculateNets( const std::vector<NETINFO_ITEM*>& aNetCo
 
                     if( m_showTimeDomainDetails )
                         new_item->SetLayerWireDelays( *lengthDetails.LayerDelays );
+
+                    // Compute length-weighted average Z₀ across this net's tracks.  Each
+                    // task gets its own calculator so the per-(layer, width) cache is
+                    // thread-local.  Tracks on the same layer/width hit the cache.
+                    if( auto trackIt = netTracksMap.find( netCode ); trackIt != netTracksMap.end() )
+                    {
+                        IMPEDANCE_CALCULATOR calc;
+                        int64_t              weightedSum = 0;
+                        int64_t              totalLen    = 0;
+
+                        for( PCB_TRACK* track : trackIt->second )
+                        {
+                            const int    z0  = calc.ComputeOhms( stackup, track->GetLayer(),
+                                                                 track->GetWidth() );
+                            const double len = track->GetLength();
+
+                            if( z0 > 0 && len > 0 )
+                            {
+                                weightedSum += static_cast<int64_t>( z0 * len );
+                                totalLen += static_cast<int64_t>( len );
+                            }
+                        }
+
+                        if( totalLen > 0 )
+                            new_item->SetAvgImpedance( static_cast<int>( weightedSum / totalLen ) );
+                    }
 
                     std::scoped_lock lock( resultsMutex );
                     results.emplace_back( std::move( new_item ) );
@@ -1070,6 +1122,7 @@ void PCB_NET_INSPECTOR_PANEL::updateNets( const std::vector<NETINFO_ITEM*>& aNet
             curListItem->SetViaLength( newListItem->GetViaLength() );
             curListItem->SetViaDelay( newListItem->GetViaDelay() );
             curListItem->SetLayerWireLengths( newListItem->GetLayerWireLengths() );
+            curListItem->SetAvgImpedance( newListItem->GetAvgImpedance() );
 
             if( m_showTimeDomainDetails )
                 curListItem->SetLayerWireDelays( newListItem->GetLayerWireDelays() );

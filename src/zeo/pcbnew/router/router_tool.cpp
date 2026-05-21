@@ -34,6 +34,7 @@ using namespace std::placeholders;
 #include <tool/action_manager.h>
 #include <board.h>
 #include <board_design_settings.h>
+#include <board_stackup_manager/impedance_calculator.h>
 #include <board_item.h>
 #include <collectors.h>
 #include <footprint.h>
@@ -2125,7 +2126,8 @@ void ROUTER_TOOL::performDragging( int aMode )
                                     KeyNameFromKeyCode( MD_CTRL + PSEUDO_WXK_CLICK ) );
 
                         ROUTER_STATUS_VIEW_ITEM* statusItem = new ROUTER_STATUS_VIEW_ITEM();
-                        statusItem->SetMessage( _( "Track violates DRC." ) );
+                        statusItem->SetMessage( _( "Track violates DRC." )
+                                                + buildImpedanceStatus() );
                         statusItem->SetHint( hint );
                         statusItem->SetPosition( frame()->GetToolManager()->GetMousePosition() );
                         view()->AddToPreview( statusItem );
@@ -2687,7 +2689,8 @@ int ROUTER_TOOL::InlineDrag( const TOOL_EVENT& aEvent )
                                     KeyNameFromKeyCode( MD_CTRL + PSEUDO_WXK_CLICK ) );
 
                         ROUTER_STATUS_VIEW_ITEM* statusItem = new ROUTER_STATUS_VIEW_ITEM();
-                        statusItem->SetMessage( _( "Track violates DRC." ) );
+                        statusItem->SetMessage( _( "Track violates DRC." )
+                                                + buildImpedanceStatus() );
                         statusItem->SetHint( hint );
                         statusItem->SetPosition( frame()->GetToolManager()->GetMousePosition() );
                         view()->AddToPreview( statusItem );
@@ -3043,6 +3046,29 @@ void ROUTER_TOOL::UpdateMessagePanel()
         frame()->SetMsgPanel( board() );
         return;
     }
+}
+
+
+wxString ROUTER_TOOL::buildImpedanceStatus() const
+{
+    BOARD* brd = board();
+
+    if( !brd || !m_router )
+        return wxEmptyString;
+
+    const PCB_LAYER_ID layer = m_iface->GetBoardLayerFromPNSLayer( m_router->GetCurrentLayer() );
+    const int          width = m_router->Sizes().TrackWidth();
+
+    if( layer == UNDEFINED_LAYER || width <= 0 || !IsCopperLayer( layer ) )
+        return wxEmptyString;
+
+    IMPEDANCE_CALCULATOR calc;
+    const int            z0 = calc.ComputeOhms( brd, layer, width );
+
+    if( z0 <= 0 )
+        return wxEmptyString;
+
+    return wxString::Format( wxT( "    Z₀ = %d Ω" ), z0 );
 }
 
 

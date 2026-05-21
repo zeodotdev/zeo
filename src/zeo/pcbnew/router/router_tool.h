@@ -93,6 +93,11 @@ private:
     bool finishInteractive();
     void saveRouterDebugLog();
 
+    /// Returns a "  Z₀ = X Ω (target Y…Z Ω)" suffix for the router status overlay, or empty
+    /// when the current routing layer/width has no impedance target rule or the stackup is
+    /// incomplete.  Leading-space-padded so callers can directly concatenate.
+    wxString buildImpedanceStatus() const;
+
 private:
     std::shared_ptr<ACTION_MENU> m_diffPairMenu;
     std::shared_ptr<ACTION_MENU> m_trackViaMenu;

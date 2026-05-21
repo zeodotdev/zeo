@@ -107,6 +107,7 @@ enum PCB_DRC_CODE
     DRCE_VIA_COUNT_OUT_OF_RANGE,
     DRCE_DIFF_PAIR_GAP_OUT_OF_RANGE,
     DRCE_DIFF_PAIR_UNCOUPLED_LENGTH_TOO_LONG,
+    DRCE_IMPEDANCE_OUT_OF_RANGE,                // Track impedance Z₀ outside rule's min/max range
 
     DRCE_MIRRORED_TEXT_ON_FRONT_LAYER,
     DRCE_NONMIRRORED_TEXT_ON_BACK_LAYER,
@@ -260,6 +261,7 @@ private:
     static DRC_ITEM viaCountOutOfRange;
     static DRC_ITEM diffPairGapOutOfRange;
     static DRC_ITEM diffPairUncoupledLengthTooLong;
+    static DRC_ITEM impedanceOutOfRange;
     static DRC_ITEM footprint;
     static DRC_ITEM footprintTypeMismatch;
     static DRC_ITEM footprintTHPadhasNoHole;

@@ -20,6 +20,7 @@
 */
 
 #include <kiplatform/app.h>
+#include <usage_sync.h>
 
 #include <wx/app.h>
 #include <wx/datetime.h>
@@ -94,93 +95,109 @@ public:
 
 static LONG WINAPI ZeoCrashHandler( EXCEPTION_POINTERS* pExInfo )
 {
-    // Write crash info to a file before dying
-    FILE* f = _wfopen( L"C:\\Users\\jared\\AppData\\Roaming\\kicad\\logs\\crash_info.log", L"w" );
-    if( f )
+    wchar_t appData[MAX_PATH];
+    DWORD len = GetEnvironmentVariableW( L"APPDATA", appData, MAX_PATH );
+    if( len > 0 && len < MAX_PATH )
     {
-        EXCEPTION_RECORD* rec = pExInfo->ExceptionRecord;
-        CONTEXT* ctx = pExInfo->ContextRecord;
-        fprintf( f, "Exception code: 0x%08lX\n", rec->ExceptionCode );
-        fprintf( f, "Exception address: 0x%p\n", rec->ExceptionAddress );
-        fprintf( f, "Access address: 0x%p\n",
-                 rec->NumberParameters >= 2 ? (void*)rec->ExceptionInformation[1] : nullptr );
-        fprintf( f, "Access type: %s\n",
-                 rec->NumberParameters >= 1 ?
-                     ( rec->ExceptionInformation[0] == 0 ? "READ" :
-                       rec->ExceptionInformation[0] == 1 ? "WRITE" : "EXECUTE" ) : "?" );
-#ifdef _M_X64
-        fprintf( f, "RIP: 0x%p\n", (void*)ctx->Rip );
-        fprintf( f, "RSP: 0x%p\n", (void*)ctx->Rsp );
-        fprintf( f, "RBP: 0x%p\n", (void*)ctx->Rbp );
-        fprintf( f, "RAX: 0x%p\n", (void*)ctx->Rax );
-        fprintf( f, "RBX: 0x%p\n", (void*)ctx->Rbx );
-        fprintf( f, "RCX: 0x%p\n", (void*)ctx->Rcx );
-        fprintf( f, "RDX: 0x%p\n", (void*)ctx->Rdx );
-        fprintf( f, "R8:  0x%p\n", (void*)ctx->R8 );
-        fprintf( f, "R9:  0x%p\n", (void*)ctx->R9 );
+        wchar_t logDir[MAX_PATH];
+        StringCchPrintfW( logDir, MAX_PATH, L"%s\\Zeo", appData );
+        CreateDirectoryW( logDir, NULL );
+        StringCchPrintfW( logDir, MAX_PATH, L"%s\\Zeo\\logs", appData );
+        CreateDirectoryW( logDir, NULL );
 
-        // Walk the stack
-        fprintf( f, "\nStack trace:\n" );
-        HANDLE process = GetCurrentProcess();
-        HANDLE thread = GetCurrentThread();
-        SymInitialize( process, NULL, TRUE );
+        wchar_t logPath[MAX_PATH];
+        StringCchPrintfW( logPath, MAX_PATH, L"%s\\Zeo\\logs\\crash_info.log", appData );
 
-        STACKFRAME64 frame = {};
-        frame.AddrPC.Offset = ctx->Rip;
-        frame.AddrPC.Mode = AddrModeFlat;
-        frame.AddrFrame.Offset = ctx->Rbp;
-        frame.AddrFrame.Mode = AddrModeFlat;
-        frame.AddrStack.Offset = ctx->Rsp;
-        frame.AddrStack.Mode = AddrModeFlat;
-
-        for( int i = 0; i < 30; i++ )
+        // Write crash info to a file before dying
+        FILE* f = _wfopen( logPath, L"w" );
+        if( f )
         {
-            if( !StackWalk64( IMAGE_FILE_MACHINE_AMD64, process, thread,
-                              &frame, ctx, NULL,
-                              SymFunctionTableAccess64, SymGetModuleBase64, NULL ) )
-                break;
+            EXCEPTION_RECORD* rec = pExInfo->ExceptionRecord;
+            CONTEXT* ctx = pExInfo->ContextRecord;
+            fprintf( f, "Exception code: 0x%08lX\n", rec->ExceptionCode );
+            fprintf( f, "Exception address: 0x%p\n", rec->ExceptionAddress );
+            fprintf( f, "Access address: 0x%p\n",
+                     rec->NumberParameters >= 2 ? (void*)rec->ExceptionInformation[1] : nullptr );
+            fprintf( f, "Access type: %s\n",
+                     rec->NumberParameters >= 1 ?
+                         ( rec->ExceptionInformation[0] == 0 ? "READ" :
+                           rec->ExceptionInformation[0] == 1 ? "WRITE" : "EXECUTE" ) : "?" );
+#ifdef _M_X64
+            fprintf( f, "RIP: 0x%p\n", (void*)ctx->Rip );
+            fprintf( f, "RSP: 0x%p\n", (void*)ctx->Rsp );
+            fprintf( f, "RBP: 0x%p\n", (void*)ctx->Rbp );
+            fprintf( f, "RAX: 0x%p\n", (void*)ctx->Rax );
+            fprintf( f, "RBX: 0x%p\n", (void*)ctx->Rbx );
+            fprintf( f, "RCX: 0x%p\n", (void*)ctx->Rcx );
+            fprintf( f, "RDX: 0x%p\n", (void*)ctx->Rdx );
+            fprintf( f, "R8:  0x%p\n", (void*)ctx->R8 );
+            fprintf( f, "R9:  0x%p\n", (void*)ctx->R9 );
 
-            DWORD64 addr = frame.AddrPC.Offset;
-            char symBuf[sizeof(SYMBOL_INFO) + 256];
-            SYMBOL_INFO* sym = (SYMBOL_INFO*)symBuf;
-            sym->SizeOfStruct = sizeof(SYMBOL_INFO);
-            sym->MaxNameLen = 255;
+            // Walk the stack
+            fprintf( f, "\nStack trace:\n" );
+            HANDLE process = GetCurrentProcess();
+            HANDLE thread = GetCurrentThread();
+            SymInitialize( process, NULL, TRUE );
 
-            DWORD64 displacement = 0;
-            HMODULE hMod = NULL;
-            char modName[MAX_PATH] = "???";
-            if( GetModuleHandleExA( GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
-                                    (LPCSTR)addr, &hMod ) )
-                GetModuleFileNameA( hMod, modName, MAX_PATH );
+            STACKFRAME64 frame = {};
+            frame.AddrPC.Offset = ctx->Rip;
+            frame.AddrPC.Mode = AddrModeFlat;
+            frame.AddrFrame.Offset = ctx->Rbp;
+            frame.AddrFrame.Mode = AddrModeFlat;
+            frame.AddrStack.Offset = ctx->Rsp;
+            frame.AddrStack.Mode = AddrModeFlat;
 
-            // Get just the filename
-            char* lastSlash = strrchr( modName, '\\' );
-            char* modShort = lastSlash ? lastSlash + 1 : modName;
+            for( int i = 0; i < 30; i++ )
+            {
+                if( !StackWalk64( IMAGE_FILE_MACHINE_AMD64, process, thread,
+                                  &frame, ctx, NULL,
+                                  SymFunctionTableAccess64, SymGetModuleBase64, NULL ) )
+                    break;
 
-            if( SymFromAddr( process, addr, &displacement, sym ) )
-                fprintf( f, "  [%d] %s!%s+0x%llx (0x%p)\n", i, modShort, sym->Name, displacement, (void*)addr );
-            else
-                fprintf( f, "  [%d] %s+0x%llx (0x%p)\n", i, modShort, addr - (DWORD64)hMod, (void*)addr );
+                DWORD64 addr = frame.AddrPC.Offset;
+                char symBuf[sizeof(SYMBOL_INFO) + 256];
+                SYMBOL_INFO* sym = (SYMBOL_INFO*)symBuf;
+                sym->SizeOfStruct = sizeof(SYMBOL_INFO);
+                sym->MaxNameLen = 255;
+
+                DWORD64 displacement = 0;
+                HMODULE hMod = NULL;
+                char modName[MAX_PATH] = "???";
+                if( GetModuleHandleExA( GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
+                                        (LPCSTR)addr, &hMod ) )
+                    GetModuleFileNameA( hMod, modName, MAX_PATH );
+
+                // Get just the filename
+                char* lastSlash = strrchr( modName, '\\' );
+                char* modShort = lastSlash ? lastSlash + 1 : modName;
+
+                if( SymFromAddr( process, addr, &displacement, sym ) )
+                    fprintf( f, "  [%d] %s!%s+0x%llx (0x%p)\n", i, modShort, sym->Name, displacement, (void*)addr );
+                else
+                    fprintf( f, "  [%d] %s+0x%llx (0x%p)\n", i, modShort, addr - (DWORD64)hMod, (void*)addr );
+            }
+
+            SymCleanup( process );
+#endif
+            fflush( f );
+            fclose( f );
         }
 
-        SymCleanup( process );
-#endif
-        fflush( f );
-        fclose( f );
-    }
-
-    // Also write a minidump
-    HANDLE dumpFile = CreateFileW( L"C:\\Users\\jared\\AppData\\Roaming\\kicad\\logs\\crash.dmp",
-                                   GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL );
-    if( dumpFile != INVALID_HANDLE_VALUE )
-    {
-        MINIDUMP_EXCEPTION_INFORMATION mdei;
-        mdei.ThreadId = GetCurrentThreadId();
-        mdei.ExceptionPointers = pExInfo;
-        mdei.ClientPointers = FALSE;
-        MiniDumpWriteDump( GetCurrentProcess(), GetCurrentProcessId(),
-                           dumpFile, MiniDumpNormal, &mdei, NULL, NULL );
-        CloseHandle( dumpFile );
+        // Also write a minidump
+        wchar_t dumpPath[MAX_PATH];
+        StringCchPrintfW( dumpPath, MAX_PATH, L"%s\\Zeo\\logs\\crash.dmp", appData );
+        HANDLE dumpFile = CreateFileW( dumpPath,
+                                       GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL );
+        if( dumpFile != INVALID_HANDLE_VALUE )
+        {
+            MINIDUMP_EXCEPTION_INFORMATION mdei;
+            mdei.ThreadId = GetCurrentThreadId();
+            mdei.ExceptionPointers = pExInfo;
+            mdei.ClientPointers = FALSE;
+            MiniDumpWriteDump( GetCurrentProcess(), GetCurrentProcessId(),
+                               dumpFile, MiniDumpNormal, &mdei, NULL, NULL );
+            CloseHandle( dumpFile );
+        }
     }
 
     return EXCEPTION_CONTINUE_SEARCH;
@@ -237,9 +254,26 @@ bool KIPLATFORM::APP::Init()
             public:
                 wxLogTimestampedFile( FILE* f ) : m_fp( f ) {}
             protected:
-                void DoLogRecord( wxLogLevel, const wxString& msg,
+                void DoLogRecord( wxLogLevel level, const wxString& msg,
                                   const wxLogRecordInfo& info ) override
                 {
+                    static thread_local bool insideLog = false;
+                    if( !insideLog )
+                    {
+                        insideLog = true;
+                        if( level == wxLOG_Error )
+                        {
+                            USAGE_SYNC::Instance()->TrackError(
+                                msg.ToStdString(),
+                                info.filename ? info.filename : "",
+                                info.line,
+                                info.func ? info.func : "",
+                                info.component ? info.component : ""
+                            );
+                        }
+                        insideLog = false;
+                    }
+
                     wxLongLong_t msEpoch = info.timestampMS;
                     wxDateTime dt( (time_t)( msEpoch / 1000 ) );
                     int ms = (int)( msEpoch % 1000 );

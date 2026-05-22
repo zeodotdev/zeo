@@ -20,6 +20,7 @@
 */
 
 #include <kiplatform/app.h>
+#include <usage_sync.h>
 
 #include <glib.h>
 
@@ -49,6 +50,23 @@ protected:
     void DoLogRecord( wxLogLevel level, const wxString& msg,
                       const wxLogRecordInfo& info ) override
     {
+        static thread_local bool insideLog = false;
+        if( !insideLog )
+        {
+            insideLog = true;
+            if( level == wxLOG_Error )
+            {
+                USAGE_SYNC::Instance()->TrackError(
+                    msg.ToStdString(),
+                    info.filename ? info.filename : "",
+                    info.line,
+                    info.func ? info.func : "",
+                    info.component ? info.component : ""
+                );
+            }
+            insideLog = false;
+        }
+
         wxDateTime dt( (time_t) info.timestamp );
         wxDateTime now = wxDateTime::UNow();
         int ms = now.GetMillisecond();

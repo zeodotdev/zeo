@@ -20,6 +20,8 @@
 #include <boost/uuid/uuid_io.hpp>
 
 #include <fstream>
+#include <algorithm>
+#include <cctype>
 
 using json = nlohmann::json;
 
@@ -316,6 +318,12 @@ std::string USAGE_SYNC::getBufferPath()
 }
 
 
+std::string USAGE_SYNC::getActiveSessionPath()
+{
+    return wxFileName( PATHS::GetUserCachePath(), "session_active" ).GetFullPath().ToStdString();
+}
+
+
 std::string USAGE_SYNC::readOrCreateAnonUid()
 {
     wxFileName uidFile( getAnonUidPath() );
@@ -440,6 +448,70 @@ void USAGE_SYNC::TrackEvent( const std::string& aName,
 }
 
 
+void USAGE_SYNC::TrackError( const std::string& aMessage,
+                             const std::string& aFile,
+                             int aLine,
+                             const std::string& aFunc,
+                             const std::string& aComponent )
+{
+    if( !m_enabled.load() || m_stopping.load() )
+        return;
+
+    std::string area = "common";
+    auto to_lower = []( std::string s ) {
+        std::transform( s.begin(), s.end(), s.begin(), []( unsigned char c ) { return std::tolower( c ); } );
+        return s;
+    };
+
+    std::string compLower = to_lower( aComponent );
+    std::string fileLower = to_lower( aFile );
+    std::string msgLower = to_lower( aMessage );
+
+    if( compLower.find( "agent" ) != std::string::npos ||
+        fileLower.find( "agent/" ) != std::string::npos || fileLower.find( "agent\\" ) != std::string::npos ||
+        msgLower.find( "agent:" ) != std::string::npos || msgLower.find( "agent_frame" ) != std::string::npos ||
+        msgLower.find( "webview_bridge" ) != std::string::npos || msgLower.find( "cc_controller" ) != std::string::npos ||
+        msgLower.find( "cc_subprocess" ) != std::string::npos )
+    {
+        area = "agent";
+    }
+    else if( compLower.find( "eeschema" ) != std::string::npos ||
+             fileLower.find( "eeschema/" ) != std::string::npos || fileLower.find( "eeschema\\" ) != std::string::npos )
+    {
+        area = "eeschema";
+    }
+    else if( compLower.find( "pcbnew" ) != std::string::npos ||
+             fileLower.find( "pcbnew/" ) != std::string::npos || fileLower.find( "pcbnew\\" ) != std::string::npos )
+    {
+        area = "pcbnew";
+    }
+    else if( compLower.find( "kicad" ) != std::string::npos ||
+             fileLower.find( "kicad/" ) != std::string::npos || fileLower.find( "kicad\\" ) != std::string::npos )
+    {
+        area = "kicad";
+    }
+
+    json props = json::object();
+    props["message"] = aMessage;
+    if( !aFile.empty() ) props["file"] = aFile;
+    if( aLine > 0 ) props["line"] = aLine;
+    if( !aFunc.empty() ) props["func"] = aFunc;
+    if( !aComponent.empty() ) props["component"] = aComponent;
+
+    json row = buildRow( "error", "app.error", area, &props );
+    recordEvent( row );
+
+    if( m_configured.load() && !m_flushInFlight.exchange( true ) )
+    {
+        spawnWorker( [this]()
+                     {
+                         flushBlocking();
+                         m_flushInFlight.store( false );
+                     } );
+    }
+}
+
+
 void USAGE_SYNC::SessionStart()
 {
     if( !m_enabled.load() || m_stopping.load() )
@@ -447,6 +519,89 @@ void USAGE_SYNC::SessionStart()
 
     if( m_sessionStarted.exchange( true ) )
         return;     // already started in this process
+
+    // Check for crash / unclean shutdown from previous run
+    std::string activePath = getActiveSessionPath();
+    if( wxFileExists( activePath ) )
+    {
+        std::ifstream in( activePath );
+        if( in.is_open() )
+        {
+            std::string content;
+            std::string line;
+            while( std::getline( in, line ) )
+            {
+                content += line + "\n";
+            }
+            in.close();
+
+            try
+            {
+                json prevSession = json::parse( content );
+                
+                json props = {
+                    { "prev_session_id", prevSession.value( "session_id", "" ) },
+                    { "prev_app_version", prevSession.value( "app_version", "" ) },
+                    { "prev_timestamp", prevSession.value( "timestamp", "" ) }
+                };
+
+#if defined( _WIN32 )
+                // Check if a crash log exists on Windows
+                wxString appData;
+                if( wxGetEnv( wxS( "APPDATA" ), &appData ) )
+                {
+                    wxString logPath = appData + wxS( "\\Zeo\\logs\\crash_info.log" );
+                    if( wxFileExists( logPath ) )
+                    {
+                        std::ifstream logIn( logPath.ToStdString() );
+                        if( logIn.is_open() )
+                        {
+                            std::string logContent;
+                            std::string logLine;
+                            while( std::getline( logIn, logLine ) )
+                            {
+                                logContent += logLine + "\n";
+                            }
+                            logIn.close();
+                            props["crash_log"] = logContent;
+                        }
+                        wxRemoveFile( logPath );
+                    }
+
+                    wxString dumpPath = appData + wxS( "\\Zeo\\logs\\crash.dmp" );
+                    if( wxFileExists( dumpPath ) )
+                    {
+                        wxRemoveFile( dumpPath );
+                    }
+                }
+#endif
+
+                // Send app.crash event
+                json crashRow = buildRow( "crash", "app.crash", "common", &props );
+                recordEvent( crashRow );
+            }
+            catch( ... )
+            {
+                json props = { { "info", "unclean shutdown detected" } };
+                json crashRow = buildRow( "crash", "app.crash", "common", &props );
+                recordEvent( crashRow );
+            }
+        }
+        wxRemoveFile( activePath );
+    }
+
+    // Write current active session details
+    json currentSession = {
+        { "session_id", m_sessionId },
+        { "app_version", m_appVersion },
+        { "timestamp", nowIso8601Utc() }
+    };
+    std::ofstream out( activePath, std::ios::trunc );
+    if( out.is_open() )
+    {
+        out << currentSession.dump() << "\n";
+        out.close();
+    }
 
     json row = buildRow( "session_start", "", "", nullptr );
     recordEvent( row );
@@ -466,6 +621,12 @@ void USAGE_SYNC::SessionEnd()
 {
     if( !m_enabled.load() || !m_sessionStarted.load() )
         return;
+
+    std::string activePath = getActiveSessionPath();
+    if( wxFileExists( activePath ) )
+    {
+        wxRemoveFile( activePath );
+    }
 
     json row = buildRow( "session_end", "", "", nullptr );
     recordEvent( row );

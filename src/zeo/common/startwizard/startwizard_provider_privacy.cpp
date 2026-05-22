@@ -117,7 +117,7 @@ void STARTWIZARD_PROVIDER_PRIVACY::ApplyDefaults()
 
     settings->m_KiCadUpdateCheck = true;
     settings->m_PcmUpdateCheck   = true;
-    APP_MONITOR::SENTRY::Instance()->SetSentryOptIn( false );
+    APP_MONITOR::SENTRY::Instance()->SetSentryOptIn( true );
 
     commonSettings->m_DoNotShowAgain.update_check_prompt = true;
     commonSettings->m_DoNotShowAgain.data_collection_prompt = true;

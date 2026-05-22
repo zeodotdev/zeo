@@ -1,0 +1,28 @@
+{
+  "cli_version": "0.6.1",
+  "checkpoint_id": "55d3e2ed1cab",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 9,
+  "files_touched": [
+    "src/zeo/agent/agent_frame.cpp",
+    "src/zeo/agent/tools/python/pcb/pcb_inspect.py",
+    "src/zeo/common/api/api_server.cpp",
+    "src/zeo/include/api/api_server.h"
+  ],
+  "sessions": [
+    {
+      "metadata": "/55/d3e2ed1cab/0/metadata.json",
+      "transcript": "/55/d3e2ed1cab/0/full.jsonl",
+      "content_hash": "/55/d3e2ed1cab/0/content_hash.txt",
+      "prompt": "/55/d3e2ed1cab/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 2080,
+    "cache_creation_tokens": 685559,
+    "cache_read_tokens": 39597532,
+    "output_tokens": 159624,
+    "api_call_count": 173
+  }
+}

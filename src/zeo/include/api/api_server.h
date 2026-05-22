@@ -104,6 +104,21 @@ public:
 
     const std::string& Token() const { return m_token; }
 
+    /**
+     * Drain all currently-queued API requests synchronously on the calling thread.
+     *
+     * The normal dispatch path (onIdle / m_pollTimer) does not run when the main
+     * thread is inside wxEventLoopBase::YieldFor() — YieldFor() does not deliver
+     * idle events, and on macOS the 50ms fallback timer can be starved by other
+     * active timers (e.g. the agent frame's streaming update timer). Long-running
+     * synchronous waits (AGENT_FRAME::SendRequest) must call this from inside
+     * their spin loop so that headless-Python tool scripts re-entering the IPC
+     * server are actually serviced rather than queued for the full timeout.
+     *
+     * Safe to call from the main thread only.
+     */
+    void ProcessPendingRequests();
+
 private:
 
     /**

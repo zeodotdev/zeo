@@ -116,10 +116,46 @@ elif section == "layers":
     print(json.dumps(result, indent=2))
 
 elif section == "stackup":
-    # Read stackup
+    # Read stackup. BoardStackup has no scalar copper_layer_count field —
+    # derive it from the layer list and include the per-layer detail the
+    # LLM actually needs (names, thickness, dielectric vs copper, finish).
     try:
+        from kipy.proto.board.board_pb2 import BoardStackupLayerType
+
         stackup = board.get_stackup()
-        result = {'copper_layers': stackup.copper_layer_count if hasattr(stackup, 'copper_layer_count') else 2}
+        layers_out = []
+        copper_count = 0
+
+        for layer in stackup.layers:
+            lname = BoardLayer.Name(layer.layer).replace('BL_', '').replace('_', '.') \
+                if layer.layer else ''
+            ltype_name = BoardStackupLayerType.Name(layer.type).replace('BSLT_', '').lower() \
+                if hasattr(layer, 'type') else ''
+            if ltype_name == 'copper':
+                copper_count += 1
+            layers_out.append({
+                'layer': lname,
+                'type': ltype_name,
+                'thickness_nm': getattr(layer, 'thickness', 0),
+                'material': getattr(layer, 'material_name', ''),
+                'user_name': getattr(layer, 'user_name', ''),
+            })
+
+        # stackup.calculate_board_thickness() under-reports for dielectrics
+        # whose `dielectric.layer` sub-list is empty (data lives directly on
+        # layer.thickness instead). Sum the per-layer thickness we already
+        # collected so the total matches the on-disk board thickness.
+        total_thickness = sum( l['thickness_nm'] for l in layers_out )
+
+        result = {
+            'copper_layers': copper_count,
+            'total_thickness_nm': total_thickness,
+            'impedance_controlled': stackup.impedance_controlled,
+            'finish_type': stackup.finish_type,
+            'has_edge_plating': stackup.has_edge_plating,
+            'edge_connector': stackup.edge_connector,
+            'layers': layers_out,
+        }
         print(json.dumps(result, indent=2))
     except Exception as e:
         print(json.dumps({'error': str(e)}))

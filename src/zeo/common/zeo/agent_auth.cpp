@@ -21,6 +21,7 @@
 #include <fstream>
 #include <sys/stat.h>
 #include <map>
+#include <paths.h>
 
 #include <cstdlib>
 
@@ -448,21 +449,10 @@ std::string AGENT_AUTH::GetSupabaseConfigPath()
         return devPath.GetFullPath().ToStdString();
 
     // 2. Installed/AppImage: config in the stock data directory
-    wxString stockData = wxGetenv( "KICAD_STOCK_DATA_HOME" );
+    wxFileName installedPath( PATHS::GetStockDataPath(), "supabase_config.json" );
 
-    if( !stockData.empty() )
-    {
-        wxFileName installedPath( stockData, "supabase_config.json" );
-
-        if( wxFileExists( installedPath.GetFullPath() ) )
-            return installedPath.GetFullPath().ToStdString();
-    }
-
-    // 3. Standard install path
-    wxFileName stdPath( "/usr/share/kicad", "supabase_config.json" );
-
-    if( wxFileExists( stdPath.GetFullPath() ) )
-        return stdPath.GetFullPath().ToStdString();
+    if( wxFileExists( installedPath.GetFullPath() ) )
+        return installedPath.GetFullPath().ToStdString();
 
     return "";
 }

@@ -869,6 +869,8 @@ void PGM_BASE::HandleAssert( const wxString& aFile, int aLine, const wxString& a
 
 #ifndef NDEBUG
     wxLogError( assertStr );
+#else
+    USAGE_SYNC::Instance()->TrackError( assertStr.ToStdString(), aFile.ToStdString(), aLine, aFunc.ToStdString(), "assert" );
 #endif
 
 #ifdef KICAD_USE_SENTRY

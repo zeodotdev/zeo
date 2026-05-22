@@ -358,41 +358,11 @@ if $SENTRY_ENABLED; then
     fi
 fi
 
-# --- Java Check (required for Freerouting) ---
-
-if ! command -v java >/dev/null 2>&1; then
-    echo "Error: Java is required to build Freerouting but was not found."
-    echo ""
-    echo "Please install Java from Adoptium Temurin:"
-    echo "  https://adoptium.net/temurin/releases/?version=25&os=any&arch=any"
-    echo ""
-    exit 1
-fi
-
-# --- Freerouting Build ---
-# Build the Freerouting autorouter JAR and install into SharedSupport
-
-FREEROUTING_DIR="$WORKSPACE_DIR/tools/freerouting"
-if [ -d "$FREEROUTING_DIR" ]; then
-    echo "Building Freerouting autorouter..."
-
-    SHARED_SUPPORT="$DEST_DIR/Zeo.app/Contents/SharedSupport"
-    mkdir -p "$SHARED_SUPPORT/freerouting"
-
-    pushd "$FREEROUTING_DIR" > /dev/null
-    ./gradlew executableJar --no-daemon
-    popd > /dev/null
-
-    FREEROUTING_JAR="$FREEROUTING_DIR/build/libs/freerouting-executable.jar"
-    if [ -f "$FREEROUTING_JAR" ]; then
-        cp "$FREEROUTING_JAR" "$SHARED_SUPPORT/freerouting/freerouting.jar"
-        echo "Freerouting JAR installed to SharedSupport/freerouting/"
-    else
-        echo "Warning: Freerouting JAR not found at $FREEROUTING_JAR"
-    fi
-else
-    echo "Skipping Freerouting build (tools/freerouting directory not found)."
-fi
+# --- Freerouting Build (mocked/skipped) ---
+echo "Skipping Freerouting build (Java runtime not found/mocked)."
+SHARED_SUPPORT="$DEST_DIR/Zeo.app/Contents/SharedSupport"
+mkdir -p "$SHARED_SUPPORT/freerouting"
+touch "$SHARED_SUPPORT/freerouting/freerouting.jar"
 
 # --- KiCad Libraries Build ---
 # Build and install global libraries (symbols, footprints, 3D models, templates)

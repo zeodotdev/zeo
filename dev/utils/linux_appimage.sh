@@ -90,6 +90,8 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+START_TIME=$(date +%s)
+
 echo "=============================================="
 echo "Zeo AppImage Builder"
 echo "=============================================="
@@ -133,14 +135,23 @@ if ! command -v docker >/dev/null 2>&1; then
     exit 1
 fi
 
-# Check if Docker daemon is running
-if ! docker info >/dev/null 2>&1; then
-    echo "Error: Docker daemon is not running."
-    echo ""
-    echo "Start Docker with:"
-    echo "  sudo systemctl start docker"
+# Check if Docker daemon is reachable
+DOCKER_ERR=$(docker info 2>&1 >/dev/null) || {
+    if echo "$DOCKER_ERR" | grep -qi "permission denied"; then
+        echo "Error: Cannot access Docker socket (permission denied)."
+        echo ""
+        echo "Add your user to the docker group, then log out and back in:"
+        echo "  sudo usermod -aG docker \$USER"
+        echo "Or run a single shell with the group active:"
+        echo "  newgrp docker"
+    else
+        echo "Error: Docker daemon is not running."
+        echo ""
+        echo "Start Docker with:"
+        echo "  sudo systemctl start docker"
+    fi
     exit 1
-fi
+}
 
 # --- Load Config ---
 
@@ -449,17 +460,23 @@ if [ -d "$KICAD_PYTHON_DIR" ]; then
     fi
 fi
 
+END_TIME=$(date +%s)
+ELAPSED=$((END_TIME - START_TIME))
+
 echo ""
-echo "To run Zeo:"
-echo "  $APPIMAGE_PATH"
+echo "=============================================="
+echo "APPIMAGE BUILD COMPLETE — ${ELAPSED}s"
+echo "=============================================="
 echo ""
-echo "To run with specific app:"
-echo "  $APPIMAGE_PATH pcbnew"
-echo "  $APPIMAGE_PATH eeschema"
-echo "  $APPIMAGE_PATH agent"
-echo "  $APPIMAGE_PATH terminal"
+echo "AppImage:    $APPIMAGE_PATH"
+echo "Size:        $(du -h "$APPIMAGE_PATH" | cut -f1)"
 echo ""
-echo "To extract AppImage contents:"
-echo "  $APPIMAGE_PATH --appimage-extract"
-echo ""
+echo "To run what you just built:"
+echo "  \"$APPIMAGE_PATH\"                                # launch Zeo"
+echo "  \"$APPIMAGE_PATH\" pcbnew                         # launch PCB editor"
+echo "  \"$APPIMAGE_PATH\" eeschema                       # launch schematic editor"
+echo "  \"$APPIMAGE_PATH\" agent                          # launch agent"
+echo "  \"$APPIMAGE_PATH\" terminal                       # launch terminal"
+echo "  WXTRACE=KICAD_AGENT \"$APPIMAGE_PATH\"            # run with agent debug tracing"
+echo "  gdb --args \"$APPIMAGE_PATH\"                     # run under gdb"
 echo "=============================================="

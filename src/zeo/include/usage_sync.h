@@ -59,6 +59,13 @@ public:
                      const std::string& aArea,
                      const nlohmann::json* aProperties = nullptr );
 
+    /// Track an application or agent error/bug.
+    void TrackError( const std::string& aMessage,
+                     const std::string& aFile = "",
+                     int aLine = 0,
+                     const std::string& aFunc = "",
+                     const std::string& aComponent = "" );
+
     /// Emit a session_start event. Idempotent within a single session.
     void SessionStart();
 
@@ -87,6 +94,7 @@ private:
     std::string            getBufferPath();
     std::string            getOptOutPath();
     std::string            getAnonUidPath();
+    std::string            getActiveSessionPath();
 
     /// Append one event row to the local JSONL buffer, then trigger an async flush.
     void                   recordEvent( const nlohmann::json& aRow );

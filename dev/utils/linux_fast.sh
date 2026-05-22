@@ -234,11 +234,20 @@ validate_prerequisites() {
     echo "  sudo apt install docker.io"
     exit 1
   fi
-  if ! docker info >/dev/null 2>&1; then
-    echo "Error: Docker daemon is not running."
-    echo "  sudo systemctl start docker"
+  local docker_err
+  docker_err=$(docker info 2>&1 >/dev/null) || {
+    if echo "$docker_err" | grep -qi "permission denied"; then
+      echo "Error: Cannot access Docker socket (permission denied)."
+      echo "  Add your user to the docker group, then log out and back in:"
+      echo "    sudo usermod -aG docker \$USER"
+      echo "  Or run a single shell with the group active:"
+      echo "    newgrp docker"
+    else
+      echo "Error: Docker daemon is not running."
+      echo "  sudo systemctl start docker"
+    fi
     exit 1
-  fi
+  }
   if [ ! -d "$KICAD_SOURCE_DIR" ]; then
     echo "Error: Zeo source directory not found at $KICAD_SOURCE_DIR"
     exit 1
@@ -497,14 +506,30 @@ if ! $DO_BUILD_ONLY; then
     # Suppress harmless GTK/a11y/canberra warnings in Docker
     -e "NO_AT_BRIDGE=1"
     -e "GTK_MODULES="
-    # Force dark GTK theme so KiCad's native UI (menus, dialogs, tree)
-    # matches the Zeo apps (agent, VCS, terminal) which default to dark.
-    -e "GTK_THEME=Adwaita:dark"
   )
+
+  # Detect host GNOME color-scheme preference and pass it through. Caller's
+  # GTK_THEME wins; otherwise prefer-dark → Adwaita:dark, else leave unset
+  # so the container falls back to its default (light Adwaita).
+  if [ -n "${GTK_THEME:-}" ]; then
+    DOCKER_RUN_ARGS+=(-e "GTK_THEME=${GTK_THEME}")
+  elif command -v gsettings >/dev/null 2>&1; then
+    if [ "$(gsettings get org.gnome.desktop.interface color-scheme 2>/dev/null)" = "'prefer-dark'" ]; then
+      DOCKER_RUN_ARGS+=(-e "GTK_THEME=Adwaita:dark")
+    fi
+  fi
 
   # GPU access for OpenGL (3D viewer, PCB renderer)
   if [ -d /dev/dri ]; then
     DOCKER_RUN_ARGS+=(--device /dev/dri)
+  fi
+
+  # 3D models: the registry libs:latest image ships symbols/footprints/templates
+  # but NOT 3D models, so /usr/share/kicad/3dmodels doesn't exist in the image.
+  # Mount the local kicad-packages3D checkout at that path so the 3D viewer can
+  # resolve ${KICAD10_3DMODEL_DIR}/*.3dshapes/*.{step,wrl}.
+  if [ -d "$LIBRARIES_DIR/kicad-packages3D" ]; then
+    DOCKER_RUN_ARGS+=(-v "$LIBRARIES_DIR/kicad-packages3D:/usr/share/kicad/3dmodels:ro")
   fi
 
   # Forward XDG_RUNTIME_DIR - contains D-Bus socket, Wayland socket,
@@ -569,8 +594,19 @@ if ! $DO_BUILD_ONLY; then
   docker run "${DOCKER_RUN_ARGS[@]}" -w /build "$DEV_IMAGE" bash -c "${INSTALL_CMD} && ${KIPY_PTH}cd \${HOME} && ${LAUNCH_CMD}"
 fi
 
-# --- Timing ---
+# --- Timing + post-build summary ---
 
 END_TIME=$(date +%s)
 ELAPSED=$((END_TIME - START_TIME))
-log "Done in ${ELAPSED}s."
+
+echo ""
+echo "=============================================="
+echo "FAST BUILD COMPLETE — ${ELAPSED}s"
+echo "=============================================="
+echo ""
+echo "To run what you just built:"
+echo "  ./dev/appimage_build.sh --launch                  # launch Zeo"
+echo "  ./dev/appimage_build.sh --launch --debug          # launch with WXTRACE=KICAD_AGENT"
+echo "  ./dev/appimage_build.sh --launch --gdb            # launch under gdb"
+echo "  ./dev/appimage_build.sh --launch --lldb           # launch under lldb"
+echo "=============================================="

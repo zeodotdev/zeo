@@ -290,6 +290,13 @@ std::string KICAD_API_SERVER::ExecSocketPath() const
 }
 
 
+void KICAD_API_SERVER::ProcessPendingRequests()
+{
+    while( m_hasQueuedRequests.load() )
+        processNextQueuedRequest();
+}
+
+
 void KICAD_API_SERVER::onApiRequest( std::string* aRequest, KINNG_REQUEST_SERVER* aServer )
 {
     wxLogTrace( traceApi, wxString::Format( "Server: onApiRequest from %s",

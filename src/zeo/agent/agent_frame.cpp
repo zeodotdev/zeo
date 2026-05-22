@@ -31,6 +31,7 @@
 #include <project.h>
 #include <project/project_file.h>
 #include <project/multi_board_scan.h>
+#include <wx/app.h>
 #include <wx/log.h>
 #include <wx/evtloop.h>
 #include <kiway.h>
@@ -3149,6 +3150,27 @@ std::string AGENT_FRAME::SendRequest( int aDestFrame, const std::string& aPayloa
     {
         if( wxEventLoopBase* loop = wxEventLoopBase::GetActive() )
             loop->YieldFor( YIELD_EVENT_MASK );
+
+        // YieldFor() does not deliver idle events and on macOS the API server's
+        // 50ms fallback timer is starved by the agent frame's streaming-update
+        // timer. Drain the queue directly so headless-Python tool scripts that
+        // re-enter the IPC server (e.g. kicad.get_board()) are serviced rather
+        // than blocked for the full TIMEOUT_MS window. See MOON-1413 + the
+        // analogous comment in api_server.cpp around the m_pollTimer fallback.
+        if( Pgm().HasApiServer() )
+            Pgm().GetApiServer().ProcessPendingRequests();
+
+        // YieldFor() also does NOT drain wxQueueEvent()-queued thread events —
+        // those land on the target wxEvtHandler's pending-events list, which is
+        // serviced by wxApp::ProcessPendingEvents() / wxApp::Yield(), not by
+        // YieldFor(). Without this drain, wxEVT_PYTHON_COMPLETE from the
+        // HEADLESS_PYTHON_EXECUTOR's worker thread sits in the queue for the
+        // full TIMEOUT_MS window: the Python script finishes in milliseconds
+        // but the tool reports a 120s timeout. Symmetric with the IPC drain
+        // above; both are spin-loop bandaids for YieldFor() not pumping enough
+        // event sources on macOS.
+        if( wxTheApp )
+            wxTheApp->ProcessPendingEvents();
 
         if( m_stopRequested )
         {

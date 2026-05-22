@@ -61,6 +61,23 @@ add_custom_target( install_agent_prompts ALL
     COMMENT "Installing agent prompts into app bundle"
 )
 
+# Copy supabase_config.json so it is available at runtime in the build directory
+if( APPLE )
+    set( SUPABASE_CONFIG_INSTALL_DIR "${OSX_BUNDLE_BUILD_DIR}/${OSX_BUNDLE_SUP_DIR}" )
+elseif( WIN32 )
+    set( SUPABASE_CONFIG_INSTALL_DIR "${CMAKE_BINARY_DIR}" )
+else()
+    set( SUPABASE_CONFIG_INSTALL_DIR "${CMAKE_BINARY_DIR}" )
+endif()
+
+add_custom_target( install_supabase_config ALL
+    COMMAND ${CMAKE_COMMAND} -E copy
+        "${CMAKE_CURRENT_SOURCE_DIR}/supabase_config.json"
+        "${SUPABASE_CONFIG_INSTALL_DIR}/supabase_config.json"
+    COMMENT "Installing Supabase config into app bundle/build dir"
+)
+
+
 include_directories( BEFORE ${INC_BEFORE} )
 include_directories(
     ${CMAKE_SOURCE_DIR}/common
@@ -257,6 +274,9 @@ endif()
 if( TARGET install_agent_prompts )
     add_dependencies( agent_kiface install_agent_prompts )
 endif()
+if( TARGET install_supabase_config )
+    add_dependencies( agent_kiface install_supabase_config )
+endif()
 add_dependencies( agent agent_kiface )
 
 # Installation rules
@@ -267,6 +287,11 @@ install( TARGETS agent
 
 install( TARGETS agent_kiface
     DESTINATION ${KICAD_BIN}
+    COMPONENT binary
+    )
+
+install( FILES "${CMAKE_CURRENT_SOURCE_DIR}/supabase_config.json"
+    DESTINATION ${KICAD_DATA}
     COMPONENT binary
     )
 

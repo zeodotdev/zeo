@@ -181,6 +181,10 @@ void SESSION_MANAGER::Initialize()
     {
         m_auth->Configure( supabaseUrl, supabaseKey );
     }
+    else
+    {
+        m_auth->LoadSession();
+    }
 
     // Keep launcher UI in sync whenever auth state changes (e.g. sign-in from agent window)
     m_auth->SetAuthStateCallback( [this]() {

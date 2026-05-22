@@ -191,22 +191,9 @@ std::string findSupabaseConfigPath()
             return devPath.GetFullPath().ToStdString();
     }
 
-    // Installed: KICAD_STOCK_DATA_HOME
+    // Installed: PATHS::GetStockDataPath()
     {
-        wxString stockData = wxGetenv( "KICAD_STOCK_DATA_HOME" );
-
-        if( !stockData.empty() )
-        {
-            wxFileName p( stockData, "supabase_config.json" );
-
-            if( wxFileExists( p.GetFullPath() ) )
-                return p.GetFullPath().ToStdString();
-        }
-    }
-
-    // Fallback install location
-    {
-        wxFileName p( "/usr/share/kicad", "supabase_config.json" );
+        wxFileName p( PATHS::GetStockDataPath(), "supabase_config.json" );
 
         if( wxFileExists( p.GetFullPath() ) )
             return p.GetFullPath().ToStdString();

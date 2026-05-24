@@ -1,0 +1,44 @@
+{
+  "cli_version": "0.6.1",
+  "checkpoint_id": "f458e0c9fea5",
+  "strategy": "manual-commit",
+  "branch": "ganesh/zeo-impedence-constraint",
+  "checkpoints_count": 3,
+  "files_touched": [
+    "src/zeo/eeschema/CMakeLists.txt",
+    "src/zeo/eeschema/dialogs/dialog_bom.cpp",
+    "src/zeo/eeschema/dialogs/dialog_bom.h",
+    "src/zeo/eeschema/dialogs/dialog_symbol_properties.cpp",
+    "src/zeo/eeschema/dialogs/dialog_variant_diff.cpp",
+    "src/zeo/eeschema/dialogs/dialog_variant_diff.h",
+    "src/zeo/eeschema/menubar.cpp",
+    "src/zeo/eeschema/sch_edit_frame.cpp",
+    "src/zeo/eeschema/toolbars_sch_editor.cpp",
+    "src/zeo/eeschema/tools/sch_actions.cpp",
+    "src/zeo/eeschema/tools/sch_actions.h",
+    "src/zeo/eeschema/tools/sch_edit_tool.cpp",
+    "src/zeo/eeschema/tools/sch_edit_tool.h",
+    "src/zeo/eeschema/tools/sch_editor_control.cpp",
+    "src/zeo/eeschema/tools/sch_editor_control.h",
+    "src/zeo/pcbnew/dialogs/dialog_footprint_properties.cpp",
+    "src/zeo/pcbnew/pcb_edit_frame.cpp",
+    "src/zeo/pcbnew/router/router_tool.cpp",
+    "src/zeo/pcbnew/router/router_tool.h",
+    "src/zeo/pcbnew/toolbars_pcb_editor.cpp"
+  ],
+  "sessions": [
+    {
+      "metadata": "/f4/58e0c9fea5/0/metadata.json",
+      "transcript": "/f4/58e0c9fea5/0/full.jsonl",
+      "content_hash": "/f4/58e0c9fea5/0/content_hash.txt",
+      "prompt": "/f4/58e0c9fea5/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 701,
+    "cache_creation_tokens": 905481,
+    "cache_read_tokens": 71654211,
+    "output_tokens": 80597,
+    "api_call_count": 175
+  }
+}

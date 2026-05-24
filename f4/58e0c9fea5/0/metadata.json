@@ -1,0 +1,81 @@
+{
+  "cli_version": "0.6.1",
+  "checkpoint_id": "f458e0c9fea5",
+  "session_id": "c8807604-0459-403a-be78-a518044c92be",
+  "strategy": "manual-commit",
+  "created_at": "2026-05-24T06:27:21.456868Z",
+  "branch": "ganesh/zeo-impedence-constraint",
+  "checkpoints_count": 3,
+  "files_touched": [
+    "src/zeo/eeschema/CMakeLists.txt",
+    "src/zeo/eeschema/dialogs/dialog_bom.cpp",
+    "src/zeo/eeschema/dialogs/dialog_bom.h",
+    "src/zeo/eeschema/dialogs/dialog_symbol_properties.cpp",
+    "src/zeo/eeschema/dialogs/dialog_variant_diff.cpp",
+    "src/zeo/eeschema/dialogs/dialog_variant_diff.h",
+    "src/zeo/eeschema/menubar.cpp",
+    "src/zeo/eeschema/sch_edit_frame.cpp",
+    "src/zeo/eeschema/toolbars_sch_editor.cpp",
+    "src/zeo/eeschema/tools/sch_actions.cpp",
+    "src/zeo/eeschema/tools/sch_actions.h",
+    "src/zeo/eeschema/tools/sch_edit_tool.cpp",
+    "src/zeo/eeschema/tools/sch_edit_tool.h",
+    "src/zeo/eeschema/tools/sch_editor_control.cpp",
+    "src/zeo/eeschema/tools/sch_editor_control.h",
+    "src/zeo/pcbnew/dialogs/dialog_footprint_properties.cpp",
+    "src/zeo/pcbnew/pcb_edit_frame.cpp",
+    "src/zeo/pcbnew/router/router_tool.cpp",
+    "src/zeo/pcbnew/router/router_tool.h",
+    "src/zeo/pcbnew/toolbars_pcb_editor.cpp"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-opus-4-7[1m]",
+  "turn_id": "c966d55ef185",
+  "checkpoint_transcript_start": 811,
+  "transcript_lines_at_start": 811,
+  "token_usage": {
+    "input_tokens": 701,
+    "cache_creation_tokens": 905481,
+    "cache_read_tokens": 71654211,
+    "output_tokens": 80597,
+    "api_call_count": 175
+  },
+  "session_metrics": {
+    "turn_count": 14
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-05-24T06:27:21.38431Z",
+    "agent_lines": 646,
+    "agent_removed": 3,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 646,
+    "total_lines_changed": 649,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0
+    },
+    {
+      "checkpoint_number": 2,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 611,
+      "agent_lines_removed": 3
+    },
+    {
+      "checkpoint_number": 3,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 611,
+      "agent_lines_removed": 3
+    }
+  ]
+}

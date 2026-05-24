@@ -1,0 +1,33 @@
+[Image #1] I see the new column in the net inspecticor. I don't see any other impedence calculation: [Image #2]
+
+---
+
+This looks correct: [Image #3]
+
+---
+
+I'm not sure if this USB line was marked as high speed, but no DRC error is showing even thorugh its impedence is at 137 ohms: [Image #4]
+
+---
+
+This worked: [Image #5] anything else left to verify
+
+---
+
+[Image #6]
+
+---
+
+[Image #7] This registered all tracks over the impedence limits and gave an error
+
+---
+
+Ran correctly, we seem to ge good to proceed wit the next items
+
+---
+
+What is the test process to make sure all of these changes landed correctly
+
+---
+
+1) works, 2) works, 3) Can't test, KiCad blocks you from drawing traces over other pads/vias as to not create a drc error. 4) I see the notif and the button, but the .pro file does not get an update. Also not sure about the UX here, 5) works, 6) works

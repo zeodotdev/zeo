@@ -406,8 +406,31 @@ DIALOG_SYMBOL_PROPERTIES::DIALOG_SYMBOL_PROPERTIES( SCH_EDIT_FRAME* aParent, SCH
     QueueEvent( evt );
 
     // Remind user that they are editing the current variant.
-    if( !aParent->Schematic().GetCurrentVariant().IsEmpty() )
-        SetTitle( GetTitle() + wxS( " - " ) + aParent->Schematic().GetCurrentVariant() + _( " Design Variant" ) );
+    const wxString activeVariant = aParent->Schematic().GetCurrentVariant();
+
+    if( !activeVariant.IsEmpty() )
+    {
+        SetTitle( GetTitle() + wxS( " - " ) + activeVariant + _( " Design Variant" ) );
+
+        // Prominent banner — title alone is easy to miss when properties dialogs are
+        // tall and the user is focused on a particular field grid row.  C2a polish.
+        if( wxSizer* topSizer = GetSizer() )
+        {
+            wxStaticText* banner = new wxStaticText(
+                    this, wxID_ANY,
+                    wxString::Format( _( "Editing variant '%s' — changes to fields below "
+                                          "create variant-specific overrides." ),
+                                      activeVariant ) );
+
+            // Mild visual emphasis without taking over the dialog colour scheme.
+            banner->SetForegroundColour( wxColour( 0xB0, 0x60, 0x00 ) );
+            wxFont font = banner->GetFont();
+            font.MakeBold();
+            banner->SetFont( font );
+
+            topSizer->Insert( 0, banner, 0, wxEXPAND | wxALL, 8 );
+        }
+    }
 
     Layout();
     m_fieldsGrid->Layout();

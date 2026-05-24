@@ -52,6 +52,10 @@
 #include <wx/log.h>
 #include <wx/msgdlg.h>
 #include <wx/textdlg.h>
+#include <wx/choice.h>
+#include <wx/stattext.h>
+#include <wx/sizer.h>
+#include <schematic.h>
 
 wxString s_bomHelpInfo =
 #include <dialog_bom_help_md.h>
@@ -82,6 +86,31 @@ DIALOG_BOM::DIALOG_BOM( SCH_EDIT_FRAME* parent ) :
 #ifndef __WINDOWS__
     m_checkBoxShowConsole->Show( false );
 #endif
+
+    // Insert a variant selector above the standard button row so users can pick which
+    // variant the generator script sees.  Empty selection (the first entry) runs with
+    // no variant override and matches the schematic's current variant.
+    if( wxSizer* topSizer = GetSizer() )
+    {
+        wxBoxSizer* variantRow = new wxBoxSizer( wxHORIZONTAL );
+
+        variantRow->Add( new wxStaticText( this, wxID_ANY, _( "Variant:" ) ), 0,
+                         wxALIGN_CENTER_VERTICAL | wxRIGHT, 5 );
+
+        m_variantChoice = new wxChoice( this, wxID_ANY );
+        m_variantChoice->Append( _( "(All / base)" ) );  // index 0 = no override
+
+        for( const wxString& v : m_parent->Schematic().GetVariantNamesForUI() )
+            m_variantChoice->Append( v );
+
+        m_variantChoice->SetSelection( 0 );
+        variantRow->Add( m_variantChoice, 1, wxALIGN_CENTER_VERTICAL );
+
+        // Insert just before the existing button row (the wxStdDialogButtonSizer is the
+        // last child in the top sizer).
+        const size_t insertAt = topSizer->GetItemCount() > 0 ? topSizer->GetItemCount() - 1 : 0;
+        topSizer->Insert( insertAt, variantRow, 0, wxEXPAND | wxALL, 5 );
+    }
 
     SetupStandardButtons( { { wxID_OK,     _( "Generate" ) },
                             { wxID_CANCEL, _( "Close" )    } } );
@@ -292,11 +321,28 @@ void DIALOG_BOM::OnRunGenerator( wxCommandEvent& event )
         m_parent->SetExecFlags( wxEXEC_SHOW_CONSOLE );
 #endif
 
+    // If the user picked a variant in the dropdown (index > 0 = real variant name),
+    // temporarily switch the schematic to that variant for the netlist write, then
+    // restore.  Index 0 means "no override" and we skip the swap.
+    SCHEMATIC& schematic = m_parent->Schematic();
+    wxString   prevVariant;
+    bool       variantOverridden = false;
+
+    if( m_variantChoice && m_variantChoice->GetSelection() > 0 )
+    {
+        prevVariant = schematic.GetCurrentVariant();
+        schematic.SetCurrentVariant( m_variantChoice->GetStringSelection() );
+        variantOverridden = true;
+    }
+
     bool status = false;
 
     if( m_parent->ReadyToNetlist( _( "Generating BOM requires a fully annotated schematic." ) ) )
         status = m_parent->WriteNetListFile( NET_TYPE_BOM, fullfilename,
                                              GNL_OPT_BOM | GNL_ALL, &reporter );
+
+    if( variantOverridden )
+        schematic.SetCurrentVariant( prevVariant );
 
     if( !status )
         DisplayErrorMessage( this, _( "Failed to create file." ) );

@@ -546,6 +546,10 @@ void PCB_EDIT_FRAME::SetCurrentVariant( const wxString& aVariantName )
             ds->SetVariantDesc( variantDesc.ToStdString() );
         }
     }
+
+    // Reflect the active variant in the window title (C2d).  Keeps the indicator visible
+    // even when the toolbar is hidden or scrolled out of view.
+    UpdateTitle();
 }
 
 

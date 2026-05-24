@@ -370,6 +370,7 @@ void SCH_EDIT_FRAME::onVariantSelected( wxCommandEvent& aEvent )
     Schematic().SetCurrentVariant( selectedVariant );
     UpdateProperties();
     HardRedraw();
+    updateTitle();   // Reflect active variant in window title (C2d)
 
     // Refresh message panel for current selection
     SCH_SELECTION_TOOL* selTool = m_toolManager->GetTool<SCH_SELECTION_TOOL>();
@@ -497,5 +498,6 @@ void SCH_EDIT_FRAME::SetCurrentVariant( const wxString& aVariantName )
 
         UpdateProperties();
         HardRedraw();
+        updateTitle();   // Reflect active variant in window title (C2d)
     }
 }

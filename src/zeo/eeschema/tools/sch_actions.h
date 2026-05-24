@@ -147,6 +147,7 @@ public:
     static TOOL_ACTION toTextBox;
     static TOOL_ACTION breakWire;
     static TOOL_ACTION slice;
+    static TOOL_ACTION markAsDiffPair;
     static TOOL_ACTION pointEditorAddCorner;
     static TOOL_ACTION pointEditorRemoveCorner;
 
@@ -214,6 +215,7 @@ public:
     static TOOL_ACTION addVariant;
     static TOOL_ACTION removeVariant;
     static TOOL_ACTION editVariantDescription;
+    static TOOL_ACTION compareVariants;
 
     // Attribute Toggles
     static TOOL_ACTION setExcludeFromBOM;

@@ -46,6 +46,7 @@
 #include <connection_graph.h>
 #include <design_block.h>
 #include <dialogs/dialog_symbol_fields_table.h>
+#include <dialogs/dialog_variant_diff.h>
 #include <dialogs/dialog_eeschema_page_settings.h>
 #include <dialogs/dialog_paste_special.h>
 #include <dialogs/dialog_plot_schematic.h>
@@ -4370,6 +4371,19 @@ int SCH_EDITOR_CONTROL::AddVariant( const TOOL_EVENT& aEvent )
 }
 
 
+int SCH_EDITOR_CONTROL::CompareVariants( const TOOL_EVENT& aEvent )
+{
+    SCH_EDIT_FRAME* editFrame = dynamic_cast<SCH_EDIT_FRAME*>( m_frame );
+
+    if( !editFrame )
+        return 1;
+
+    DIALOG_VARIANT_DIFF dlg( editFrame );
+    dlg.ShowModal();
+    return 0;
+}
+
+
 int SCH_EDITOR_CONTROL::RemoveVariant( const TOOL_EVENT& aEvent )
 {
     SCH_EDIT_FRAME* editFrame = dynamic_cast<SCH_EDIT_FRAME*>( m_frame );
@@ -4512,4 +4526,5 @@ void SCH_EDITOR_CONTROL::setTransitions()
     Go( &SCH_EDITOR_CONTROL::AddVariant,              SCH_ACTIONS::addVariant.MakeEvent() );
     Go( &SCH_EDITOR_CONTROL::RemoveVariant,           SCH_ACTIONS::removeVariant.MakeEvent() );
     Go( &SCH_EDITOR_CONTROL::EditVariantDescription,  SCH_ACTIONS::editVariantDescription.MakeEvent() );
+    Go( &SCH_EDITOR_CONTROL::CompareVariants,         SCH_ACTIONS::compareVariants.MakeEvent() );
 }

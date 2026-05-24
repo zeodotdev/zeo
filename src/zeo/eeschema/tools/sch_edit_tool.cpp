@@ -33,6 +33,10 @@
 #include <tools/sch_drawing_tools.h>
 #include <confirm.h>
 #include <connection_graph.h>
+#include <project.h>
+#include <project/project_file.h>
+#include <sch_connection.h>
+#include <wx/choicdlg.h>
 #include <sch_actions.h>
 #include <sch_tool_utils.h>
 #include <increment.h>
@@ -872,6 +876,18 @@ bool SCH_EDIT_TOOL::Init()
     selToolMenu.AddMenu( makeConvertToMenu(),          toChangeCondition, 200 );
 
     selToolMenu.AddItem( SCH_ACTIONS::cleanupSheetPins, sheetHasUndefinedPins, 250 );
+
+    // Make existing cross-board diff-pair declaration reachable from the schematic context
+    // menu for labels and wires (B2 — MOON-1425).  The underlying API is
+    // PROJECT_FILE::AddCrossBoardDiffPair (project_file.cpp:1900).
+    static const std::vector<KICAD_T> diffPairCapableTypes = { SCH_LABEL_T,
+                                                                SCH_GLOBAL_LABEL_T,
+                                                                SCH_HIER_LABEL_T,
+                                                                SCH_DIRECTIVE_LABEL_T,
+                                                                SCH_LINE_T };
+
+    auto markAsDiffPairCondition = S_C::Count( 1 ) && S_C::OnlyTypes( diffPairCapableTypes );
+    selToolMenu.AddItem( SCH_ACTIONS::markAsDiffPair, markAsDiffPairCondition, 250 );
 
     selToolMenu.AddSeparator( 300 );
     selToolMenu.AddItem( ACTIONS::cut,                 S_C::IdleSelection, 300 );
@@ -3716,6 +3732,108 @@ void SCH_EDIT_TOOL::FixERCError( const std::shared_ptr<RC_ITEM>& aERCItem )
 }
 
 
+int SCH_EDIT_TOOL::MarkAsDiffPair( const TOOL_EVENT& aEvent )
+{
+    SCH_SELECTION& selection = m_selectionTool->GetSelection();
+
+    if( selection.GetSize() != 1 )
+        return 0;
+
+    SCH_ITEM* item = dynamic_cast<SCH_ITEM*>( selection.GetItem( 0 ) );
+
+    if( !item )
+        return 0;
+
+    SCH_CONNECTION* connection = item->Connection( &m_frame->GetCurrentSheet() );
+
+    if( !connection )
+    {
+        m_frame->ShowInfoBarError(
+                _( "Could not resolve a net for this selection. Select a label or routed wire." ) );
+        return 0;
+    }
+
+    const wxString netA = connection->Name();
+
+    if( netA.IsEmpty() )
+    {
+        m_frame->ShowInfoBarError( _( "Selected item is not on a named net." ) );
+        return 0;
+    }
+
+    PROJECT_FILE& projectFile = m_frame->Prj().GetProjectFile();
+
+    // If this net is already declared in a diff pair, surface the existing partner and
+    // offer to remove the pairing instead of forcing the user to dig through the picker.
+    wxString existingPartner;
+
+    for( const auto& [a, b] : projectFile.GetCrossBoardDiffPairs() )
+    {
+        if( a == netA ) { existingPartner = b; break; }
+        if( b == netA ) { existingPartner = a; break; }
+    }
+
+    if( !existingPartner.IsEmpty() )
+    {
+        const wxString msg = wxString::Format(
+                _( "'%s' is already declared as a diff pair with '%s'.\n\n"
+                   "Remove this diff-pair declaration?" ),
+                UnescapeString( netA ), UnescapeString( existingPartner ) );
+
+        if( wxMessageBox( msg, _( "Diff Pair" ), wxYES_NO | wxICON_QUESTION, m_frame ) == wxYES )
+        {
+            projectFile.RemoveCrossBoardDiffPair( netA, existingPartner );
+            m_frame->GetSettingsManager()->SaveProject();
+            m_frame->OnModify();
+            m_frame->ShowInfoBarMsg(
+                    wxString::Format( _( "Diff pair removed: %s ↔ %s" ),
+                                      UnescapeString( netA ), UnescapeString( existingPartner ) ) );
+        }
+
+        return 0;
+    }
+
+    // Otherwise: collect every other named net for the second-net picker.
+    const NET_MAP& netMap = m_frame->Schematic().ConnectionGraph()->GetNetMap();
+    wxArrayString  netChoices;
+
+    for( const auto& [code, subgraphs] : netMap )
+    {
+        if( code.Name.IsEmpty() || code.Name == netA )
+            continue;
+
+        netChoices.Add( UnescapeString( code.Name ) );
+    }
+
+    if( netChoices.IsEmpty() )
+    {
+        m_frame->ShowInfoBarError( _( "No other named nets are available to pair with." ) );
+        return 0;
+    }
+
+    netChoices.Sort();
+
+    const wxString prompt = wxString::Format( _( "Pair net '%s' with:" ), UnescapeString( netA ) );
+    const wxString netB   = wxGetSingleChoice( prompt, _( "Mark as Diff Pair" ), netChoices, m_frame );
+
+    if( netB.IsEmpty() )
+        return 0;  // user cancelled
+
+    projectFile.AddCrossBoardDiffPair( netA, EscapeString( netB, CTX_NETNAME ) );
+
+    // Persist the .kicad_pro immediately — OnModify only marks the schematic dirty, but
+    // m_crossBoardDiffPairs lives in the project file.
+    m_frame->GetSettingsManager()->SaveProject();
+    m_frame->OnModify();
+
+    m_frame->ShowInfoBarMsg(
+            wxString::Format( _( "Diff pair declared: %s ↔ %s (saved to project)" ),
+                              UnescapeString( netA ), netB ) );
+
+    return 0;
+}
+
+
 void SCH_EDIT_TOOL::setTransitions()
 {
     // clang-format off
@@ -3766,6 +3884,7 @@ void SCH_EDIT_TOOL::setTransitions()
     Go( &SCH_EDIT_TOOL::CleanupSheetPins,   SCH_ACTIONS::cleanupSheetPins.MakeEvent() );
     Go( &SCH_EDIT_TOOL::GlobalEdit,         SCH_ACTIONS::editTextAndGraphics.MakeEvent() );
     Go( &SCH_EDIT_TOOL::EditPageNumber,     SCH_ACTIONS::editPageNumber.MakeEvent() );
+    Go( &SCH_EDIT_TOOL::MarkAsDiffPair,     SCH_ACTIONS::markAsDiffPair.MakeEvent() );
 
     Go( &SCH_EDIT_TOOL::DdAppendFile,       SCH_ACTIONS::ddAppendFile.MakeEvent() );
     Go( &SCH_EDIT_TOOL::DdAddImage,        SCH_ACTIONS::ddAddImage.MakeEvent() );

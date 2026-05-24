@@ -329,6 +329,8 @@ void SCH_EDIT_FRAME::doReCreateMenuBar()
     submenuVariants->Add( SCH_ACTIONS::addVariant );
     submenuVariants->Add( SCH_ACTIONS::removeVariant );
     submenuVariants->Add( SCH_ACTIONS::editVariantDescription );
+    submenuVariants->AppendSeparator();
+    submenuVariants->Add( SCH_ACTIONS::compareVariants );
     toolsMenu->Add( submenuVariants );
 
 #ifdef KICAD_IPC_API

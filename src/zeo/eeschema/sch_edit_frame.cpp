@@ -2242,6 +2242,16 @@ void SCH_EDIT_FRAME::updateTitle()
 
         if( unsaved )
             title += wxS( " " ) + _( "[Unsaved]" );
+
+        // Reflect the active variant in the title (C2d) \u2014 keeps the indicator visible
+        // when the toolbar selector isn't in view.
+        if( m_schematic )
+        {
+            const wxString variant = m_schematic->GetCurrentVariant();
+
+            if( !variant.IsEmpty() )
+                title += wxString::Format( wxS( " [%s: %s]" ), _( "Variant" ), variant );
+        }
     }
     else
     {

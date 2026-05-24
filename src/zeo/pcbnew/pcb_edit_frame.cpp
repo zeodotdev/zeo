@@ -2386,6 +2386,16 @@ void PCB_EDIT_FRAME::UpdateTitle()
     if( unsaved )
         title += wxS( " " ) + _( "[Unsaved]" );
 
+    // Show the active variant in the window title so the user can tell at a glance which
+    // variant they're editing without having to glance at the toolbar.  C2d polish.
+    if( GetBoard() )
+    {
+        const wxString variant = GetBoard()->GetCurrentVariant();
+
+        if( !variant.IsEmpty() )
+            title += wxString::Format( wxS( " [%s: %s]" ), _( "Variant" ), variant );
+    }
+
     title += wxT( " \u2014 " ) + _( "PCB Editor" );
 
     SetTitle( title );

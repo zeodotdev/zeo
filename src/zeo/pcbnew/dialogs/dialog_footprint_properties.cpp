@@ -169,6 +169,28 @@ DIALOG_FOOTPRINT_PROPERTIES::DIALOG_FOOTPRINT_PROPERTIES( PCB_EDIT_FRAME* aParen
 
     SetupStandardButtons();
 
+    // C2a: prominent banner reminding the user that edits create variant-specific
+    // overrides under an active variant — mirrors dialog_symbol_properties.cpp.
+    const wxString activeVariant = m_frame->GetBoard() ? m_frame->GetBoard()->GetCurrentVariant()
+                                                       : wxString();
+
+    if( !activeVariant.IsEmpty() )
+    {
+        SetTitle( GetTitle() + wxS( " - " ) + activeVariant + _( " Design Variant" ) );
+
+        wxStaticText* banner = new wxStaticText(
+                this, wxID_ANY,
+                wxString::Format( _( "Editing variant '%s' — changes to fields below "
+                                      "create variant-specific overrides." ),
+                                  activeVariant ) );
+        banner->SetForegroundColour( wxColour( 0xB0, 0x60, 0x00 ) );
+        wxFont font = banner->GetFont();
+        font.MakeBold();
+        banner->SetFont( font );
+
+        m_GeneralBoxSizer->Insert( 0, banner, 0, wxEXPAND | wxALL, 8 );
+    }
+
     // The 3D model tab was added after the base dtor.  The final dialog size needs to be set
     // accordingly.
 	SetSizer( m_GeneralBoxSizer );

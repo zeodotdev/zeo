@@ -72,6 +72,7 @@ public:
 
     int CleanupSheetPins( const TOOL_EVENT& aEvent );
     int GlobalEdit( const TOOL_EVENT& aEvent );
+    int MarkAsDiffPair( const TOOL_EVENT& aEvent );
 
     ///< Delete the selected items, or the item under the cursor.
     int DoDelete( const TOOL_EVENT& aEvent );

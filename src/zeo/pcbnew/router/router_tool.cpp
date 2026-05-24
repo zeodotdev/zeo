@@ -36,6 +36,9 @@ using namespace std::placeholders;
 #include <board_design_settings.h>
 #include <board_stackup_manager/impedance_calculator.h>
 #include <board_item.h>
+#include <drc/drc_engine.h>
+#include <drc/drc_rule.h>
+#include <netinfo.h>
 #include <collectors.h>
 #include <footprint.h>
 #include <geometry/geometry_utils.h>
@@ -2127,6 +2130,7 @@ void ROUTER_TOOL::performDragging( int aMode )
 
                         ROUTER_STATUS_VIEW_ITEM* statusItem = new ROUTER_STATUS_VIEW_ITEM();
                         statusItem->SetMessage( _( "Track violates DRC." )
+                                                + buildDrcViolationDetail()
                                                 + buildImpedanceStatus() );
                         statusItem->SetHint( hint );
                         statusItem->SetPosition( frame()->GetToolManager()->GetMousePosition() );
@@ -2690,6 +2694,7 @@ int ROUTER_TOOL::InlineDrag( const TOOL_EVENT& aEvent )
 
                         ROUTER_STATUS_VIEW_ITEM* statusItem = new ROUTER_STATUS_VIEW_ITEM();
                         statusItem->SetMessage( _( "Track violates DRC." )
+                                                + buildDrcViolationDetail()
                                                 + buildImpedanceStatus() );
                         statusItem->SetHint( hint );
                         statusItem->SetPosition( frame()->GetToolManager()->GetMousePosition() );
@@ -3046,6 +3051,123 @@ void ROUTER_TOOL::UpdateMessagePanel()
         frame()->SetMsgPanel( board() );
         return;
     }
+}
+
+
+wxString ROUTER_TOOL::buildDrcViolationDetail() const
+{
+    BOARD* brd = board();
+
+    if( !brd || !m_router )
+        return wxEmptyString;
+
+    DRC_ENGINE* drcEngine = brd->GetDesignSettings().m_DRCEngine.get();
+
+    if( !drcEngine )
+        return wxEmptyString;
+
+    const PCB_LAYER_ID layer = m_iface->GetBoardLayerFromPNSLayer( m_router->GetCurrentLayer() );
+
+    if( layer == UNDEFINED_LAYER || !IsCopperLayer( layer ) )
+        return wxEmptyString;
+
+    NETINFO_ITEM* netItem = nullptr;
+    {
+        std::vector<PNS::NET_HANDLE> nets = m_router->GetCurrentNets();
+
+        if( !nets.empty() && nets[0] )
+            netItem = static_cast<NETINFO_ITEM*>( nets[0] );
+    }
+
+    std::vector<wxString> details;
+
+    // TRACK_WIDTH_CONSTRAINT — primary spike case from B1a.
+    if( const int width = m_router->Sizes().TrackWidth(); width > 0 )
+    {
+        PCB_TRACK dummy( brd );
+        dummy.SetLayer( layer );
+        dummy.SetWidth( width );
+        if( netItem )
+            dummy.SetNet( netItem );
+
+        DRC_CONSTRAINT wc = drcEngine->EvalRules( TRACK_WIDTH_CONSTRAINT, &dummy, nullptr, layer );
+
+        if( !wc.IsNull() )
+        {
+            const MINOPTMAX<int>& v         = wc.m_Value;
+            const bool            tooNarrow = v.HasMin() && width < v.Min();
+            const bool            tooWide   = v.HasMax() && width > v.Max();
+
+            if( tooNarrow || tooWide )
+            {
+                const wxString widthStr = frame()->MessageTextFromValue( width );
+                const wxString boundStr = frame()->MessageTextFromValue( tooNarrow ? v.Min() : v.Max() );
+                const wxString op       = tooNarrow ? wxT( "<" ) : wxT( ">" );
+                const wxString rule     = wc.GetName().IsEmpty() ? wxString( wxT( "rule" ) ) : wc.GetName();
+                details.push_back( wxString::Format( wxT( "(%s: width %s %s %s)" ),
+                                                     rule, widthStr, op, boundStr ) );
+            }
+        }
+    }
+
+    // VIA_DIAMETER_CONSTRAINT — evaluated even if PNS isn't currently placing a via;
+    // shows the binding rule's via-size limits for the user's current via settings.
+    if( const int viaSize = m_router->Sizes().ViaDiameter(); viaSize > 0 )
+    {
+        PCB_VIA dummyVia( brd );
+        dummyVia.SetWidth( viaSize );  // PCB_VIA::SetWidth(int) overrides PCB_TRACK
+        if( netItem )
+            dummyVia.SetNet( netItem );
+
+        DRC_CONSTRAINT vc = drcEngine->EvalRules( VIA_DIAMETER_CONSTRAINT, &dummyVia, nullptr, layer );
+
+        if( !vc.IsNull() )
+        {
+            const MINOPTMAX<int>& v        = vc.m_Value;
+            const bool            tooSmall = v.HasMin() && viaSize < v.Min();
+            const bool            tooBig   = v.HasMax() && viaSize > v.Max();
+
+            if( tooSmall || tooBig )
+            {
+                const wxString viaStr   = frame()->MessageTextFromValue( viaSize );
+                const wxString boundStr = frame()->MessageTextFromValue( tooSmall ? v.Min() : v.Max() );
+                const wxString op       = tooSmall ? wxT( "<" ) : wxT( ">" );
+                const wxString rule     = vc.GetName().IsEmpty() ? wxString( wxT( "rule" ) ) : vc.GetName();
+                details.push_back( wxString::Format( wxT( "(%s: via %s %s %s)" ),
+                                                     rule, viaStr, op, boundStr ) );
+            }
+        }
+    }
+
+    // DISALLOW_CONSTRAINT — flags "no tracks on this layer" / "no vias here" rules.  The
+    // mask bit tells us which item kinds are disallowed; surface that to the user so the
+    // rule that's actually binding is visible.
+    {
+        PCB_TRACK dummy( brd );
+        dummy.SetLayer( layer );
+        dummy.SetWidth( std::max( 1, m_router->Sizes().TrackWidth() ) );
+        if( netItem )
+            dummy.SetNet( netItem );
+
+        DRC_CONSTRAINT dc = drcEngine->EvalRules( DISALLOW_CONSTRAINT, &dummy, nullptr, layer );
+
+        if( !dc.IsNull() && ( dc.m_DisallowFlags & DRC_DISALLOW_TRACKS ) )
+        {
+            const wxString rule = dc.GetName().IsEmpty() ? wxString( wxT( "rule" ) ) : dc.GetName();
+            details.push_back( wxString::Format( wxT( "(%s: tracks disallowed on %s)" ),
+                                                 rule, brd->GetLayerName( layer ) ) );
+        }
+    }
+
+    if( details.empty() )
+        return wxEmptyString;
+
+    wxString out;
+
+    for( const wxString& d : details )
+        out += wxT( "\n" ) + d;
+
+    return out;
 }
 
 

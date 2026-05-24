@@ -1025,6 +1025,12 @@ TOOL_ACTION SCH_ACTIONS::slice( TOOL_ACTION_ARGS()
         .Tooltip( _( "Divide into unconnected segments" ) )
         .Icon( BITMAPS::slice_line ) );
 
+TOOL_ACTION SCH_ACTIONS::markAsDiffPair( TOOL_ACTION_ARGS()
+        .Name( "eeschema.InteractiveEdit.markAsDiffPair" )
+        .Scope( AS_GLOBAL )
+        .FriendlyName( _( "Mark as Diff Pair..." ) )
+        .Tooltip( _( "Declare a differential pair between this net and another net" ) ) );
+
 // SCH_EDITOR_CONTROL
 //
 TOOL_ACTION SCH_ACTIONS::restartMove( TOOL_ACTION_ARGS()
@@ -1885,10 +1891,16 @@ TOOL_ACTION SCH_ACTIONS::removeVariant( TOOL_ACTION_ARGS()
         .FriendlyName( _( "Remove Design Variant..." ) )
         .Tooltip( _( "Remove an existing design variant from the schematic." ) ) );
 
-TOOL_ACTION SCH_ACTIONS::editVariantDescription( TOOL_ACTION_ARGS()                                                   
+TOOL_ACTION SCH_ACTIONS::editVariantDescription( TOOL_ACTION_ARGS()
         .Name( "eeschema.EditorControl.editVariantDescription" )
         .Scope( AS_GLOBAL )
         .FriendlyName( _( "Edit Variant Description..." ) )
         .Tooltip( _( "Edit the description of an existing design variant." ) ) );
+
+TOOL_ACTION SCH_ACTIONS::compareVariants( TOOL_ACTION_ARGS()
+        .Name( "eeschema.EditorControl.compareVariants" )
+        .Scope( AS_GLOBAL )
+        .FriendlyName( _( "Compare Variants..." ) )
+        .Tooltip( _( "Show field-level diff between two design variants." ) ) );
 
 // clang-format on

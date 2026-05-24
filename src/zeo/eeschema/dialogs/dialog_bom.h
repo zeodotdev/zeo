@@ -45,6 +45,10 @@ private:
 
     HTML_MESSAGE_BOX*   m_helpWindow;
 
+    /// Programmatic variant selector — the FBP base dialog has no variant control.  Empty
+    /// label "(All variants / base)" maps to running the netlist with no variant override.
+    wxChoice*           m_variantChoice = nullptr;
+
 public:
     DIALOG_BOM( SCH_EDIT_FRAME* parent );
     ~DIALOG_BOM();

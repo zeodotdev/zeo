@@ -1,0 +1,31 @@
+{
+  "cli_version": "0.6.1",
+  "checkpoint_id": "626d356656b5",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 4,
+  "files_touched": [
+    "dev/utils/mac_fast.sh",
+    "dev/win_build_fast.ps1",
+    "dev/win_build_installer.ps1",
+    "packaging/kicad-appimage/scripts/bundle_kipy.sh",
+    "packaging/kicad-win-builder/KiBuild/KiBuild.psm1",
+    "packaging/kicad-win-builder/build.ps1",
+    "packaging/kicad-win-builder/rebuild_agent.ps1"
+  ],
+  "sessions": [
+    {
+      "metadata": "/62/6d356656b5/0/metadata.json",
+      "transcript": "/62/6d356656b5/0/full.jsonl",
+      "content_hash": "/62/6d356656b5/0/content_hash.txt",
+      "prompt": "/62/6d356656b5/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 2950,
+    "cache_creation_tokens": 5308568,
+    "cache_read_tokens": 160691685,
+    "output_tokens": 426598,
+    "api_call_count": 499
+  }
+}

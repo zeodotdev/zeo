@@ -1,6 +1,6 @@
 # Copyright (C) 2026, Zeo <team@zeo.dev>
 
-set( ZEO_SEMANTIC_VERSION "0.2.2" )
+set( ZEO_SEMANTIC_VERSION "0.2.3" )
 
 # Default the version to the semantic version.
 # This could be overridden by git tags in the future.

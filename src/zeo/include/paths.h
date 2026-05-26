@@ -147,6 +147,17 @@ public:
     static wxString GetStockTemplatesPath();
 
     /**
+     * Search platform-standard install locations for a co-installed KiCad's
+     * stock EDA library root (the SharedSupport / share/kicad directory
+     * containing template/, symbols/, footprints/, 3dmodels/, blocks/).
+     * Returns the first existing path with a trailing separator, or empty
+     * if none found. Used as a defensive fallback when Zeo's own bundle is
+     * missing library content — rather than fail with "Nested table not
+     * found", we transparently use libraries from an existing KiCad install.
+     */
+    static wxString FindExternalKiCadLibraryRoot();
+
+    /**
      * Gets the locales translation data path
      */
     static wxString GetLocaleDataPath();

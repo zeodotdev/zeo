@@ -19,8 +19,8 @@ param(
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $WorkspaceDir = Split-Path -Parent $ScriptDir
 
-$KicadSourceDir = "$WorkspaceDir\code\zeo"
-$KicadPythonDir = "$WorkspaceDir\code\zeo-python"
+$KicadSourceDir = "$WorkspaceDir\src\zeo"
+$KicadPythonDir = "$WorkspaceDir\src\zeo-python"
 $BuilderDir = "$WorkspaceDir\packaging\kicad-win-builder"
 $LibrariesDir = "$WorkspaceDir\libraries"
 

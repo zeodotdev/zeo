@@ -406,10 +406,19 @@ VERSIONEOF
     echo "KICAD_API_VERSION = \"$GIT_VERSION\"" >> "$KICAD_PYTHON_DIR/kipy/kicad_api_version.py"
     log "Generated kicad_api_version.py with version: $GIT_VERSION"
 
-    # Install dependencies (including kiutils which the scripting console needs)
+    # Install dependencies (including kiutils which the scripting console needs).
+    # Don't silence pip — a silent failure here ships a kipy that ImportErrors at
+    # runtime (e.g. missing pynng surfaces as MCP -32000 / agent tool error).
     log "Installing kicad-python dependencies..."
-    python3 -m pip install --target "$INTREE_SITE_PKG" --upgrade kiutils 2>/dev/null || true
-    python3 -m pip install --target "$INTREE_SITE_PKG" --upgrade --python-version 3.10 --only-binary=:all: "protobuf>=6.33" "pynng>=0.8.0" typing_extensions matplotlib mcp textual 2>/dev/null || true
+    if ! python3 -m pip install --target "$INTREE_SITE_PKG" --upgrade kiutils; then
+        echo "Error: pip install kiutils failed" >&2
+        exit 1
+    fi
+    if ! python3 -m pip install --target "$INTREE_SITE_PKG" --upgrade --python-version 3.10 \
+            --only-binary=:all: "protobuf>=6.33" "pynng>=0.8.0" typing_extensions matplotlib mcp textual; then
+        echo "Error: pip install kipy dependencies failed" >&2
+        exit 1
+    fi
 
     # Copy kipy directly (bypasses poetry-core which excludes gitignored generated files)
     # This ensures _pb2.py files and kicad_api_version.py are included
@@ -417,13 +426,33 @@ VERSIONEOF
     rm -rf "$INTREE_SITE_PKG/kipy"
     cp -R "$KICAD_PYTHON_DIR/kipy" "$INTREE_SITE_PKG/"
 
-    # Also install kipy dependencies to the user's Python for CLI tools (zeo shell/tool)
-    # These run outside the Zeo bundle using system Python
+    # Smoke test: confirm the bundled site-packages actually imports. Mirrors
+    # the import chain zeo-mcp / agent run_shell use at runtime.
+    log "Verifying kipy import chain..."
+    BUNDLED_PY="$INTREE_APP/Contents/Frameworks/Python.framework/Versions/3.10/bin/python3"
+    if [ ! -x "$BUNDLED_PY" ]; then
+        echo "Error: bundled python not found at $BUNDLED_PY" >&2
+        exit 1
+    fi
+    if ! "$BUNDLED_PY" -c "
+import sys
+sys.path.insert(0, '$INTREE_SITE_PKG')
+import kipy
+from kipy.client import KiCadClient
+from kipy.mcp.server import run
+print('OK: kipy at', kipy.__file__)
+"; then
+        echo "Error: kipy smoke test failed — bundled site-packages at $INTREE_SITE_PKG is not importable" >&2
+        exit 1
+    fi
+
+    # Also install kipy dependencies to the user's Python for CLI tools (zeo shell/tool).
+    # These run outside the Zeo bundle using system Python.
     log "Installing kipy dependencies to user Python (for zeo CLI tools)..."
     python3 -m pip install --break-system-packages --upgrade "protobuf>=6.33" "pynng>=0.8.0" typing_extensions
     python3 -m pip install --break-system-packages --no-deps -e "$KICAD_PYTHON_DIR"
 
-    log "kicad-python installed."
+    log "kicad-python installed and verified."
 }
 
 if $DO_PYTHON; then
@@ -431,8 +460,13 @@ if $DO_PYTHON; then
     install_kipy
     # Kill the MCP server so Claude Code auto-restarts it with fresh modules
     pkill -f "kipy.mcp" 2>/dev/null && log "Killed MCP server (will auto-restart)." || true
-elif [ ! -d "$INTREE_SITE_PKG/kipy" ]; then
-    # Auto-install if kipy is missing
+elif [ ! -d "$INTREE_SITE_PKG/kipy" ] \
+     || [ ! -d "$INTREE_SITE_PKG/pynng" ] \
+     || [ ! -d "$INTREE_SITE_PKG/google/protobuf" ]; then
+    # Auto-install if kipy OR any of its required runtime deps are missing.
+    # A previous build whose pip step silently failed leaves kipy/ on disk
+    # but pynng/protobuf gone — that combination breaks imports, so re-run.
+    log "kipy bundle incomplete (kipy/pynng/protobuf check failed); reinstalling..."
     install_kipy
 fi
 

@@ -11,7 +11,7 @@ summary = {
     'zones': 0,
     'nets': [],
     'layers': [],
-    'board_outline': None
+    'board_outline': None,
 }
 
 # Get footprints using correct API
@@ -47,6 +47,63 @@ except Exception:
 try:
     layers = board.get_enabled_layers()
     summary['layers'] = [BoardLayer.Name(l).replace('BL_', '').replace('_', '.') for l in layers] if layers else []
+except Exception:
+    pass
+
+# Board outline lives on Edge.Cuts as a set of graphic shapes (segments, arcs,
+# circles, rectangles, polygons). Surface a count + bounding box in mm so the
+# agent can tell the outline exists and roughly where it is — previously this
+# field was hardcoded to None, which made the LLM report "no outline" even
+# when one was clearly present.
+try:
+    edge_shapes = [s for s in board.get_shapes() if getattr(s, 'layer', None) == BoardLayer.BL_Edge_Cuts]
+
+    if edge_shapes:
+        xs, ys = [], []
+
+        for s in edge_shapes:
+            for attr in ('start', 'end', 'mid', 'center', 'top_left', 'bottom_right'):
+                v = getattr(s, attr, None)
+                if v is not None and hasattr(v, 'x') and hasattr(v, 'y'):
+                    xs.append(v.x)
+                    ys.append(v.y)
+
+            # Circle: include the full extent via radius, not just the center.
+            try:
+                if callable(getattr(s, 'radius', None)) and hasattr(s, 'center'):
+                    r = int(s.radius() + 0.5)
+                    c = s.center
+                    xs.extend([c.x - r, c.x + r])
+                    ys.extend([c.y - r, c.y + r])
+            except Exception:
+                pass
+
+            # Polygon: walk outline nodes from each PolygonWithHoles.
+            try:
+                for poly in getattr(s, 'polygons', []) or []:
+                    for node in poly.outline.nodes:
+                        if getattr(node, 'has_point', False):
+                            p = node.point
+                            xs.append(p.x)
+                            ys.append(p.y)
+            except Exception:
+                pass
+
+        bbox = None
+        if xs and ys:
+            bbox = {
+                'x_min_mm': min(xs) / 1000000,
+                'y_min_mm': min(ys) / 1000000,
+                'x_max_mm': max(xs) / 1000000,
+                'y_max_mm': max(ys) / 1000000,
+                'width_mm': (max(xs) - min(xs)) / 1000000,
+                'height_mm': (max(ys) - min(ys)) / 1000000,
+            }
+
+        summary['board_outline'] = {
+            'edge_cut_shape_count': len(edge_shapes),
+            'bounding_box': bbox,
+        }
 except Exception:
     pass
 

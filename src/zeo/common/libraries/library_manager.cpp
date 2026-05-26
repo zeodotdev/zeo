@@ -424,7 +424,14 @@ bool LIBRARY_MANAGER::CreateGlobalTable( LIBRARY_TABLE_TYPE aType, bool aPopulat
         chained.SetType( LIBRARY_TABLE_ROW::TABLE_TYPE_NAME );
         chained.SetNickname( wxT( "KiCad" ) );
         chained.SetDescription( _( "KiCad Default Libraries" ) );
-        chained.SetURI( defaultLib.GetFullPath() );
+        // Write the URI as ${KICAD<n>_TEMPLATE_DIR}/<filename> rather than the
+        // resolved absolute path. The absolute form burns the install path in,
+        // so it stops resolving as soon as the user moves the app, reinstalls,
+        // or switches between the in-tree dev build and a packaged install.
+        // The env-var form re-resolves through COMMON_SETTINGS on each launch.
+        chained.SetURI( wxString::Format( wxT( "${%s}/%s" ),
+                                          ENV_VAR::GetVersionedEnvVarName( wxT( "TEMPLATE_DIR" ) ),
+                                          tableFileName( aType ) ) );
     }
 
     try
@@ -442,6 +449,82 @@ bool LIBRARY_MANAGER::CreateGlobalTable( LIBRARY_TABLE_TYPE aType, bool aPopulat
 }
 
 
+void LIBRARY_MANAGER::seedGlobalTables( std::initializer_list<LIBRARY_TABLE_TYPE> aTypes )
+{
+    std::vector<LIBRARY_TABLE_TYPE> types( aTypes );
+
+    if( types.empty() )
+    {
+        types = { LIBRARY_TABLE_TYPE::SYMBOL,
+                  LIBRARY_TABLE_TYPE::FOOTPRINT,
+                  LIBRARY_TABLE_TYPE::DESIGN_BLOCK };
+    }
+
+    const wxString envVarName = ENV_VAR::GetVersionedEnvVarName( wxT( "TEMPLATE_DIR" ) );
+
+    for( LIBRARY_TABLE_TYPE type : types )
+    {
+        const wxString filename = tableFileName( type );
+        wxFileName destFile( DefaultGlobalTablePath( type ) );
+
+        // Case A: file missing (fresh install). Create from CreateGlobalTable,
+        // which writes the portable env-var URI.
+        if( !destFile.FileExists() )
+        {
+            wxLogInfo( wxT( "Seeding global %s from bundled template (first run)" ), filename );
+            CreateGlobalTable( type, /* aPopulateDefaultLibraries */ true );
+            continue;
+        }
+
+        // Case B: file present but unparseable or empty (0.2.x upgrade where
+        // init was broken). Rebuild it.
+        LIBRARY_TABLE existing( destFile, LIBRARY_TABLE_SCOPE::GLOBAL );
+
+        if( !existing.IsOk() || existing.Rows().empty() )
+        {
+            wxLogInfo( wxT( "Replacing empty/invalid global %s with bundled template" ),
+                       filename );
+            CreateGlobalTable( type, /* aPopulateDefaultLibraries */ true );
+            continue;
+        }
+
+        // Case C: file present and populated. If the "KiCad" chained row uses
+        // an absolute URI from a prior version, rewrite to the portable env-var
+        // form so the install survives app moves / reinstalls. Preserves any
+        // user-added rows.
+        const wxString portableURI = wxString::Format( wxT( "${%s}/%s" ), envVarName, filename );
+        bool repaired = false;
+
+        for( LIBRARY_TABLE_ROW& row : existing.Rows() )
+        {
+            if( row.Type() != LIBRARY_TABLE_ROW::TABLE_TYPE_NAME )
+                continue;
+
+            if( row.Nickname() != wxT( "KiCad" ) )
+                continue;
+
+            if( row.URI().StartsWith( wxT( "${" ) ) )
+                continue;
+
+            wxLogInfo( wxT( "Migrating global %s 'KiCad' chained URI '%s' -> '%s'" ),
+                       filename, row.URI(), portableURI );
+            row.SetURI( portableURI );
+            repaired = true;
+        }
+
+        if( repaired )
+        {
+            existing.Save().map_error(
+                    [&]( const LIBRARY_ERROR& aError )
+                    {
+                        wxLogWarning( wxT( "Failed to save migrated global %s: %s" ),
+                                      filename, aError.message );
+                    } );
+        }
+    }
+}
+
+
 void LIBRARY_MANAGER::LoadGlobalTables( std::initializer_list<LIBRARY_TABLE_TYPE> aTablesToLoad )
 {
     // Cancel any in-progress load
@@ -451,6 +534,12 @@ void LIBRARY_MANAGER::LoadGlobalTables( std::initializer_list<LIBRARY_TABLE_TYPE
         for( const std::unique_ptr<LIBRARY_MANAGER_ADAPTER>& adapter : m_adapters | std::views::values )
             adapter->GlobalTablesChanged( aTablesToLoad );
     }
+
+    // Ensure the user's global lib-tables exist and use portable URIs before
+    // we try to load them. Handles fresh install, broken-upgrade, and stale
+    // absolute URIs from prior versions in one pass. Idempotent for healthy
+    // installs.
+    seedGlobalTables( aTablesToLoad );
 
     loadTables( PATHS::GetUserSettingsPath(), LIBRARY_TABLE_SCOPE::GLOBAL, aTablesToLoad );
 

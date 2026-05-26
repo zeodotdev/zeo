@@ -387,11 +387,43 @@ wxString PATHS::GetStockScriptingPath()
 wxString PATHS::GetStockTemplatesPath()
 {
     wxFileName fn;
-    
+
     fn.AssignDir( GetStockEDALibraryPath() );
     fn.AppendDir( "template" );
 
     return fn.GetPathWithSep();
+}
+
+
+wxString PATHS::FindExternalKiCadLibraryRoot()
+{
+    // Platform-standard locations to probe for a co-installed KiCad's EDA
+    // library root. The presence of the template/sym-lib-table file (rather
+    // than just the directory) is the marker we test against — a half-broken
+    // KiCad install shouldn't mask Zeo's bundled templates if those exist.
+    static const wxString candidates[] = {
+#if defined( __WXMAC__ )
+        wxT( "/Applications/KiCad/KiCad.app/Contents/SharedSupport" ),
+#elif defined( __WXMSW__ )
+        wxT( "C:\\Program Files\\KiCad\\10.0\\share\\kicad" ),
+        wxT( "C:\\Program Files\\KiCad\\9.0\\share\\kicad" ),
+#else
+        wxT( "/usr/share/kicad" ),
+        wxT( "/usr/local/share/kicad" ),
+        wxT( "/opt/kicad/share/kicad" ),
+#endif
+    };
+
+    for( const wxString& root : candidates )
+    {
+        wxFileName marker( root, wxT( "sym-lib-table" ) );
+        marker.AppendDir( wxT( "template" ) );
+
+        if( marker.FileExists() )
+            return wxFileName( root, wxEmptyString ).GetPathWithSep();
+    }
+
+    return wxEmptyString;
 }
 
 

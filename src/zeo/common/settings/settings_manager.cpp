@@ -1438,13 +1438,36 @@ const PROJECT& SETTINGS_MANAGER::resolveProject( const PROJECT* aProject ) const
 
 PROJECT* SETTINGS_MANAGER::GetProjectForPath( const wxString& aProjectPath ) const
 {
-    if( !IsProjectOpen() )
+    if( !IsProjectOpen() || aProjectPath.IsEmpty() )
         return nullptr;
 
-    wxString activePath = Prj().GetProjectPath();
+    // Multi-board container projects load peer sub-projects via
+    // LoadProject(..., aSetActive=false), so they live in m_projects but
+    // aren't returned by Prj(). Walking the map (not just Prj()) lets
+    // autosave/history/backup callers resolve a per-sub-project storage
+    // root — without this, all peer PCB frames' autosaves get keyed off
+    // the top-level container project and land at the same global root.
+    auto normalize =
+            []( const wxString& aPath ) -> wxString
+            {
+                if( aPath.IsEmpty() || aPath.EndsWith( wxFILE_SEP_PATH ) )
+                    return aPath;
 
-    if( activePath.IsSameAs( aProjectPath ) || activePath.IsSameAs( aProjectPath + wxFILE_SEP_PATH ) )
-        return &Prj();
+                return aPath + wxFILE_SEP_PATH;
+            };
+
+    const wxString needle = normalize( aProjectPath );
+
+    for( const std::pair<const wxString, PROJECT*>& pair : m_projects )
+    {
+        PROJECT* project = pair.second;
+
+        if( !project )
+            continue;
+
+        if( normalize( project->GetProjectPath() ).IsSameAs( needle ) )
+            return project;
+    }
 
     return nullptr;
 }

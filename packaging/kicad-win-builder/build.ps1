@@ -1,4 +1,4 @@
-#  Copyright (C) 2021-2022 Mark Roszko <mark.roszko@gmail.com>
+﻿#  Copyright (C) 2021-2022 Mark Roszko <mark.roszko@gmail.com>
 #  Copyright (C) 2021-2022 KiCad Developers
 #
 #  This program is free software; you can redistribute it and/or modify

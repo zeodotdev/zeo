@@ -27,14 +27,19 @@ echo "[bundle_kipy] KIPY_SOURCE_DIR: $KIPY_SOURCE_DIR"
 echo "[bundle_kipy] KICAD_SOURCE_DIR: $KICAD_SOURCE_DIR"
 echo "[bundle_kipy] PYTHON_VERSION: $PYTHON_VERSION"
 
-# Validate source directories
+# Validate source directories. We refuse to ship an AppImage that omits kipy:
+# the resulting binary would crash on first MCP launch / agent tool call with
+# an opaque ImportError, and the build would not have flagged the problem.
 if [ ! -d "$KIPY_SOURCE_DIR" ]; then
-    echo "[bundle_kipy] WARNING: kicad-python source not found at $KIPY_SOURCE_DIR, skipping"
-    exit 0
+    echo "[bundle_kipy] ERROR: kicad-python source not found at $KIPY_SOURCE_DIR" >&2
+    echo "[bundle_kipy] Pass KIPY_SOURCE_DIR explicitly or set ENABLE_KIPY_BUNDLE=0 to skip kipy." >&2
+    exit 1
 fi
 
-if [ ! -d "$KICAD_SOURCE_DIR" ]; then
-    echo "[bundle_kipy] WARNING: KiCad source not found at $KICAD_SOURCE_DIR, skipping proto copy"
+if [ ! -d "$KICAD_SOURCE_DIR/api/proto" ]; then
+    echo "[bundle_kipy] ERROR: KiCad proto sources not found at $KICAD_SOURCE_DIR/api/proto" >&2
+    echo "[bundle_kipy] kipy needs these to generate its protobuf bindings." >&2
+    exit 1
 fi
 
 # Determine site-packages location
@@ -95,16 +100,31 @@ if [ -d "$KIPY_SOURCE_DIR/kipy/proto" ]; then
     echo "[bundle_kipy] Copied $PB2_COUNT proto files to $SITE_PACKAGES/kipy/proto/"
 fi
 
-# Verify installation
-echo "[bundle_kipy] Verifying installation..."
-if [ -d "$SITE_PACKAGES/kipy" ]; then
-    echo "[bundle_kipy] SUCCESS: kipy package installed to $SITE_PACKAGES/kipy"
-elif [ -d "$SITE_PACKAGES/kicad" ]; then
-    echo "[bundle_kipy] SUCCESS: kicad package installed to $SITE_PACKAGES/kicad"
-else
-    echo "[bundle_kipy] WARNING: Could not verify kipy/kicad package installation"
-    echo "[bundle_kipy] Contents of $SITE_PACKAGES:"
-    ls -la "$SITE_PACKAGES" || true
+# Verify the bundle is actually importable. A "kipy directory exists" check
+# isn't enough — pip can leave kipy in place while silently failing to install
+# pynng/protobuf, which crashes the user at runtime. Mirror the import chain
+# zeo-mcp / agent run_shell perform on launch so any breakage fails the build.
+echo "[bundle_kipy] Verifying kipy import chain..."
+if [ ! -d "$SITE_PACKAGES/kipy" ]; then
+    echo "[bundle_kipy] ERROR: kipy not staged at $SITE_PACKAGES/kipy" >&2
+    ls -la "$SITE_PACKAGES" >&2 || true
+    exit 1
+fi
+
+if ! PYTHONPATH="$SITE_PACKAGES:$LOCAL_SITE_PACKAGES" python3 - <<PYEOF
+import sys
+sys.path.insert(0, "$SITE_PACKAGES")
+sys.path.insert(0, "$LOCAL_SITE_PACKAGES")
+import kipy
+from kipy.client import KiCadClient
+from kipy.mcp.server import run
+print(f"[bundle_kipy] OK: kipy at {kipy.__file__}")
+PYEOF
+then
+    echo "[bundle_kipy] ERROR: kipy smoke test failed — staged bundle is not importable" >&2
+    echo "[bundle_kipy] Contents of $SITE_PACKAGES:" >&2
+    ls -la "$SITE_PACKAGES" >&2 || true
+    exit 1
 fi
 
 # Update PYTHONPATH in the environment file

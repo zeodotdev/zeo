@@ -373,12 +373,25 @@ function Install-Kipy {
     $kipySource = "$KicadPythonDir\kipy"
     $protoInput = "$KicadSourceDir\api\proto"
 
-    # Generate protobuf Python files
-    if (-not (Test-Path "$kipySource\proto\common\envelope_pb2.py")) {
-        Log "Generating protobuf Python files..."
-        $protoFiles = Get-ChildItem -Path $protoInput -Filter "*.proto" -Recurse | Select-Object -ExpandProperty FullName
-        & $Protoc --python_out="$kipySource\proto" --proto_path=$protoInput @protoFiles
-        python -m protoletariat --dont-create-package --in-place --exclude-google-imports --python-out "$kipySource\proto" protoc --protoc-path $Protoc --proto-path $protoInput @protoFiles
+    if (-not (Test-Path $kipySource)) {
+        Log-Error "kipy package not found at $kipySource"
+        exit 1
+    }
+
+    # Always regenerate protos. Skipping based on a stale _pb2.py existing
+    # can ship outdated bindings against newer .proto definitions, which
+    # ImportErrors at runtime.
+    Log "Generating protobuf Python files..."
+    $protoFiles = Get-ChildItem -Path $protoInput -Filter "*.proto" -Recurse | Select-Object -ExpandProperty FullName
+    & $Protoc --python_out="$kipySource\proto" --proto_path=$protoInput @protoFiles
+    if ($LASTEXITCODE -ne 0) {
+        Log-Error "protoc failed (exit $LASTEXITCODE)"
+        exit 1
+    }
+    python -m protoletariat --dont-create-package --in-place --exclude-google-imports --python-out "$kipySource\proto" protoc --protoc-path $Protoc --proto-path $protoInput @protoFiles
+    if ($LASTEXITCODE -ne 0) {
+        Log-Error "protoletariat failed (exit $LASTEXITCODE)"
+        exit 1
     }
 
     # Copy kipy package
@@ -388,20 +401,43 @@ function Install-Kipy {
     New-Item -ItemType Directory -Path $sitePackages -Force | Out-Null
     Copy-Item -Recurse $kipySource "$sitePackages\kipy"
 
-    # Install Python dependencies if missing
+    # Install Python dependencies. Don't silence stderr — a silent pip failure
+    # here ships an installer with a kipy that ImportErrors on first launch
+    # (the bundled zeo-mcp.exe surfaces this as MCP -32000).
     if (-not (Test-Path "$sitePackages\google\protobuf")) {
         Log "Installing Python dependencies..."
-        python -m pip install --no-user --target $sitePackages "protobuf>=6.33" "pynng>=0.8.0,<0.9.0" typing_extensions matplotlib cairosvg 2>&1 | Out-Null
+        python -m pip install --no-user --target $sitePackages "protobuf>=6.33" "pynng>=0.8.0,<0.9.0" typing_extensions matplotlib cairosvg
+        if ($LASTEXITCODE -ne 0) {
+            Log-Error "pip install of kipy dependencies failed (exit $LASTEXITCODE)"
+            exit 1
+        }
     }
 
-    Log "kipy installed."
+    # Smoke test: confirm the bundle actually imports. Mirrors zeo-mcp.exe's
+    # import chain so a broken bundle fails the build, not the user.
+    Log "Verifying kipy import chain..."
+    $smokeTest = @"
+import sys
+sys.path.insert(0, r'$sitePackages')
+import kipy
+from kipy.client import KiCadClient
+from kipy.mcp.server import run
+print('OK: kipy at', kipy.__file__)
+"@
+    python -c $smokeTest
+    if ($LASTEXITCODE -ne 0) {
+        Log-Error "kipy smoke test failed — the staged bundle at $sitePackages is not importable"
+        exit 1
+    }
+    Log "kipy installed and verified."
 }
 
-if (Test-Path $KicadPythonDir) {
-    Install-Kipy
-} else {
-    Log "kipy source not found at $KicadPythonDir, skipping."
+if (-not (Test-Path $KicadPythonDir)) {
+    Log-Error "kipy source not found at $KicadPythonDir — refusing to build an installer without kipy"
+    exit 1
 }
+
+Install-Kipy
 
 # --- Phase 4: Create NSIS Installer ---
 

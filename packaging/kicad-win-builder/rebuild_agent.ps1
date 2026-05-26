@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    # Root of the zeo monorepo (the dir containing code\zeo and code\zeo-python).
+    # Root of the zeo monorepo (the dir containing src\zeo and src\zeo-python).
     # Auto-detected by walking up from this script if not specified — handles both
     # the dev layout (kicad-win-builder at repo root) and the prod layout (under packaging\).
     [string]$ZeoRoot,
@@ -37,13 +37,13 @@ if (-not $InstallDir) { $InstallDir = Join-Path $PSScriptRoot ".out\x64-windows-
 
 if (-not $ZeoRoot) {
     $candidate = $PSScriptRoot
-    while ($candidate -and -not (Test-Path (Join-Path $candidate "code\zeo"))) {
+    while ($candidate -and -not (Test-Path (Join-Path $candidate "src\zeo"))) {
         $parent = Split-Path -Parent $candidate
         if ($parent -eq $candidate) { break }
         $candidate = $parent
     }
-    if (-not $candidate -or -not (Test-Path (Join-Path $candidate "code\zeo"))) {
-        Write-Error "Could not auto-detect Zeo repo root (no code\zeo found above $PSScriptRoot). Pass -ZeoRoot explicitly."
+    if (-not $candidate -or -not (Test-Path (Join-Path $candidate "src\zeo"))) {
+        Write-Error "Could not auto-detect Zeo repo root (no src\zeo found above $PSScriptRoot). Pass -ZeoRoot explicitly."
         exit 1
     }
     $ZeoRoot = $candidate
@@ -131,10 +131,23 @@ Write-Host "Installing..." -ForegroundColor Cyan
 
 # Install kipy (KiCad Python bindings) and dependencies into embedded Python
 $sitePackages   = Join-Path $InstallDir   "bin\Lib\site-packages"
-$kicadPythonDir = Join-Path $ZeoRoot      "code\zeo-python"
+$kicadPythonDir = Join-Path $ZeoRoot      "src\zeo-python"
 $kipySource     = Join-Path $kicadPythonDir "kipy"
-$protoInput     = Join-Path $ZeoRoot      "code\zeo\api\proto"
+$protoInput     = Join-Path $ZeoRoot      "src\zeo\api\proto"
 $protoc         = Join-Path $PSScriptRoot "vcpkg\packages\protobuf_x64-windows\tools\protobuf\protoc.exe"
+
+# Hard-fail if the kipy source isn't where we expect. Without this guard the
+# script proceeds to copy a non-existent directory, the resulting installer
+# ships a zeo-mcp.exe that crashes on first launch with the opaque MCP -32000
+# error, and nobody knows the source was missing.
+if (-not (Test-Path $kicadPythonDir)) {
+    Write-Error "kipy source directory not found at $kicadPythonDir. Pass -ZeoRoot pointing at the monorepo root, or check the path migration."
+    exit 1
+}
+if (-not (Test-Path $kipySource)) {
+    Write-Error "kipy package not found at $kipySource."
+    exit 1
+}
 
 # Generate protobuf Python files (always regenerate to pick up proto changes)
 Write-Host "Generating kipy protobuf files..." -ForegroundColor Cyan
@@ -149,11 +162,11 @@ if ($protoExit -ne 0) {
 Write-Host "  Generated protobuf Python files" -ForegroundColor Gray
 
 # Generate kipy/kicad_api_version.py from `git describe`. This is what
-# code/zeo-python/build.py:36-39 does during a wheel build; rebuild_agent.ps1
+# src/zeo-python/build.py does during a wheel build; rebuild_agent.ps1
 # bypasses build.py entirely, so we replicate the step inline. Without this,
 # `from kipy.kicad_api_version import KICAD_API_VERSION` fails at runtime.
 Write-Host "Generating kipy/kicad_api_version.py..." -ForegroundColor Cyan
-$zeoSrcDir = Join-Path $ZeoRoot "code\zeo"
+$zeoSrcDir = Join-Path $ZeoRoot "src\zeo"
 $gitDescribe = (& git -C $zeoSrcDir describe --long 2>$null)
 if ([string]::IsNullOrWhiteSpace($gitDescribe)) {
     $shortSha = (& git -C $zeoSrcDir rev-parse --short HEAD).Trim()
@@ -203,12 +216,42 @@ if (-not (Test-Path "$sitePackages\mcp")) {
     Write-Host "  mcp SDK already present" -ForegroundColor Gray
 }
 
+# Smoke test: confirm the staged kipy bundle actually imports. Without this
+# guard a silently-broken install (missing pynng, stale protos, etc.) ships
+# in the installer and surfaces only at runtime as the MCP -32000 error.
+# Mirrors the import chain zeo-mcp.exe does on launch.
+Write-Host "Verifying kipy import chain..." -ForegroundColor Cyan
+$smokeTest = @"
+import sys
+sys.path.insert(0, r'$sitePackages')
+import kipy
+from kipy.client import KiCadClient
+from kipy.mcp.server import run
+print(f'OK: kipy at {kipy.__file__}')
+"@
+& $pythonBin -c $smokeTest
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "kipy smoke test FAILED. The bundled site-packages is missing modules or has broken protos." -ForegroundColor Red
+    Write-Host "  site-packages: $sitePackages" -ForegroundColor Red
+    exit 1
+}
+Write-Host "  kipy smoke test passed." -ForegroundColor Gray
+
 # Install KiCad symbol and footprint libraries.
-# Submodules live at $ZeoRoot directly (kicad-symbols/, kicad-footprints/, ...),
-# not under a libraries/ subdir.
-$libsBase    = $ZeoRoot
+# After the monorepo reorg the submodules live under libraries/ (not at the
+# repo root). Without this path fix Copy-Item targets non-existent source
+# paths, Get-Content on sym-lib-table returns $null, and Set-Content writes
+# an EMPTY template file — meaning the installer ships an empty
+# share/kicad/template/sym-lib-table, the user's first-run library setup
+# fails, and the symbol/footprint viewers come up blank.
+$libsBase    = Join-Path $ZeoRoot "libraries"
 $shareDir    = Join-Path $InstallDir "share\kicad"
 $templateDir = Join-Path $shareDir   "template"
+
+if (-not (Test-Path $libsBase)) {
+    Write-Error "libraries directory not found at $libsBase. Did the monorepo reorg get rolled back, or is -ZeoRoot pointing at the wrong place?"
+    exit 1
+}
 
 if (-not (Test-Path "$shareDir\symbols\Device.kicad_sym")) {
     Write-Host "Installing KiCad symbol libraries..." -ForegroundColor Cyan
@@ -234,10 +277,31 @@ if (-not (Test-Path "$shareDir\footprints")) {
 # PS5.1 Set-Content defaults to UTF-16 LE (BOM); KiCad's parser expects UTF-8,
 # so always pass -Encoding utf8.
 Write-Host "Patching lib-table templates (KICAD9_* -> KICAD10_*)..." -ForegroundColor Cyan
-$symTable = Get-Content "$libsBase\kicad-symbols\sym-lib-table" -Raw
+$symTableSrc = Join-Path $libsBase "kicad-symbols\sym-lib-table"
+$fpTableSrc  = Join-Path $libsBase "kicad-footprints\fp-lib-table"
+
+if (-not (Test-Path $symTableSrc)) {
+    Write-Error "sym-lib-table source not found at $symTableSrc. The installer would ship an empty template and break global library init on fresh installs."
+    exit 1
+}
+if (-not (Test-Path $fpTableSrc)) {
+    Write-Error "fp-lib-table source not found at $fpTableSrc. The installer would ship an empty template and break global library init on fresh installs."
+    exit 1
+}
+
+$symTable = Get-Content $symTableSrc -Raw
+if ([string]::IsNullOrWhiteSpace($symTable)) {
+    Write-Error "Read empty content from $symTableSrc; refusing to write an empty template."
+    exit 1
+}
 $symTable = $symTable -replace 'KICAD9_', 'KICAD10_'
 Set-Content "$templateDir\sym-lib-table" $symTable -NoNewline -Encoding utf8
-$fpTable = Get-Content "$libsBase\kicad-footprints\fp-lib-table" -Raw
+
+$fpTable = Get-Content $fpTableSrc -Raw
+if ([string]::IsNullOrWhiteSpace($fpTable)) {
+    Write-Error "Read empty content from $fpTableSrc; refusing to write an empty template."
+    exit 1
+}
 $fpTable = $fpTable -replace 'KICAD9_', 'KICAD10_'
 Set-Content "$templateDir\fp-lib-table" $fpTable -NoNewline -Encoding utf8
 Write-Host "  Patched sym-lib-table + fp-lib-table" -ForegroundColor Gray

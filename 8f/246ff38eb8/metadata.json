@@ -3,7 +3,7 @@
   "checkpoint_id": "8f246ff38eb8",
   "strategy": "manual-commit",
   "branch": "ganesh/patch-0.2.2-bugs",
-  "checkpoints_count": 2,
+  "checkpoints_count": 3,
   "files_touched": [
     "src/zeo/agent/tools/python/pcb/pcb_get_summary.py"
   ],
@@ -13,13 +13,19 @@
       "transcript": "/8f/246ff38eb8/0/full.jsonl",
       "content_hash": "/8f/246ff38eb8/0/content_hash.txt",
       "prompt": "/8f/246ff38eb8/0/prompt.txt"
+    },
+    {
+      "metadata": "/8f/246ff38eb8/1/metadata.json",
+      "transcript": "/8f/246ff38eb8/1/full.jsonl",
+      "content_hash": "/8f/246ff38eb8/1/content_hash.txt",
+      "prompt": "/8f/246ff38eb8/1/prompt.txt"
     }
   ],
   "token_usage": {
-    "input_tokens": 3971,
-    "cache_creation_tokens": 5600250,
-    "cache_read_tokens": 173783960,
-    "output_tokens": 448074,
-    "api_call_count": 547
+    "input_tokens": 3981,
+    "cache_creation_tokens": 6090980,
+    "cache_read_tokens": 175658841,
+    "output_tokens": 454288,
+    "api_call_count": 552
   }
 }

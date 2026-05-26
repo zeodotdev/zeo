@@ -1,0 +1,48 @@
+{
+  "cli_version": "0.6.1",
+  "checkpoint_id": "8f246ff38eb8",
+  "session_id": "c8807604-0459-403a-be78-a518044c92be",
+  "strategy": "manual-commit",
+  "created_at": "2026-05-26T20:02:48.534506Z",
+  "branch": "ganesh/patch-0.2.2-bugs",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "src/zeo/agent/tools/python/pcb/pcb_get_summary.py"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-opus-4-7[1m]",
+  "turn_id": "953ada7b9ce4",
+  "checkpoint_transcript_start": 1547,
+  "transcript_lines_at_start": 1547,
+  "token_usage": {
+    "input_tokens": 10,
+    "cache_creation_tokens": 490730,
+    "cache_read_tokens": 1874881,
+    "output_tokens": 6214,
+    "api_call_count": 5
+  },
+  "session_metrics": {
+    "turn_count": 15
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-05-26T20:02:48.455373Z",
+    "agent_lines": 58,
+    "agent_removed": 1,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 58,
+    "total_lines_changed": 59,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0
+    }
+  ]
+}

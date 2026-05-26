@@ -1,0 +1,25 @@
+{
+  "cli_version": "0.6.1",
+  "checkpoint_id": "430f6574e144",
+  "strategy": "manual-commit",
+  "branch": "ganesh/patch-0.2.2-bugs",
+  "checkpoints_count": 2,
+  "files_touched": [
+    "src/zeo/common/settings/settings_manager.cpp"
+  ],
+  "sessions": [
+    {
+      "metadata": "/43/0f6574e144/0/metadata.json",
+      "transcript": "/43/0f6574e144/0/full.jsonl",
+      "content_hash": "/43/0f6574e144/0/content_hash.txt",
+      "prompt": "/43/0f6574e144/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 4000,
+    "cache_creation_tokens": 5922773,
+    "cache_read_tokens": 181215239,
+    "output_tokens": 459112,
+    "api_call_count": 571
+  }
+}

@@ -1,4 +1,4 @@
-# Zeo Windows Installer Build Script (win_build_installer.ps1)
+﻿# Zeo Windows Installer Build Script (win_build_installer.ps1)
 # Creates an NSIS installer with Zeo, Agent, Terminal, libraries, and 3D models.
 # Parallel to mac_build.sh --package and appimage_build.sh --package.
 #
@@ -30,7 +30,7 @@ $InstallDir = "$BuilderDir\.out\x64-windows-Release"
 
 $Protoc = "$BuilderDir\vcpkg\packages\protobuf_x64-windows\tools\protobuf\protoc.exe"
 
-$NumCPU = (Get-CimInstance Win32_Processor).NumberOfLogicalProcessors
+$NumCPU = [int]$env:NUMBER_OF_PROCESSORS
 
 # --- Help ---
 

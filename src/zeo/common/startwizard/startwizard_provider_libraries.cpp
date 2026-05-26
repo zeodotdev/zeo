@@ -18,6 +18,7 @@
  * with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <env_vars.h>
 #include <pgm_base.h>
 #include <bitmaps/bitmaps_list.h>
 #include <bitmaps/bitmap_types.h>
@@ -26,6 +27,7 @@
 #include <paths.h>
 #include <startwizard/startwizard.h>
 #include <startwizard/startwizard_provider_libraries.h>
+#include <wildcards_and_files_ext.h>
 
 #include <magic_enum.hpp>
 #include <startwizard/startwizard_provider_settings.h>
@@ -247,10 +249,19 @@ void STARTWIZARD_PROVIDER_LIBRARIES::Finish()
 
     if( m_model->mode == STARTWIZARD_LIBRARIES_MODE::IMPORT && m_model->migrate_built_in_libraries )
     {
+        const wxString templateEnvVar =
+                ENV_VAR::GetVersionedEnvVarName( wxT( "TEMPLATE_DIR" ) );
+
         for( LIBRARY_TABLE_TYPE type : { LIBRARY_TABLE_TYPE::SYMBOL, LIBRARY_TABLE_TYPE::FOOTPRINT } )
         {
             wxString tablePath = LIBRARY_MANAGER::DefaultGlobalTablePath( type );
-            wxString stockPath = LIBRARY_MANAGER::StockTablePath( type );
+            wxString tableFileName = ( type == LIBRARY_TABLE_TYPE::SYMBOL )
+                    ? FILEEXT::SymbolLibraryTableFileName
+                    : FILEEXT::FootprintLibraryTableFileName;
+
+            // Portable URI form that re-resolves through COMMON_SETTINGS each
+            // launch, so the user's table survives app moves / reinstalls.
+            wxString stockURI = wxString::Format( wxT( "${%s}/%s" ), templateEnvVar, tableFileName );
 
             if( !LIBRARY_MANAGER::IsTableValid( tablePath ) )
                 continue;
@@ -279,25 +290,18 @@ void STARTWIZARD_PROVIDER_LIBRARIES::Finish()
                 {
                     insertStock = false;
 
-                    if( row.URI().Matches( stockPath ) )
+                    if( row.URI() == stockURI )
                     {
                         wxLogTrace( traceLibraries,
                                     wxT( "Libraries migration: migrated table already has latest stock setup" ) );
-                    }
-                    else if( LIBRARY_MANAGER::IsTableValid( row.URI() ) && !LIBRARY_MANAGER::IsTableValid( stockPath ) )
-                    {
-                        wxLogTrace( traceLibraries,
-                                    wxT( "Libraries migration: migrated table has working stock table at "
-                                         "'%s' but calculated stock path '%s' is missing or invalid.  Leaving alone." ),
-                                    row.URI(), stockPath );
                     }
                     else
                     {
                         wxLogTrace( traceLibraries,
                                     wxT( "Libraries migration: migrated chained table URI from '%s' to '%s'" ),
-                                    row.URI(), stockPath );
+                                    row.URI(), stockURI );
                         row.SetDescription( _( "KiCad Default Libraries" ) );
-                        row.SetURI( stockPath );
+                        row.SetURI( stockURI );
                     }
                 }
             }
@@ -317,7 +321,7 @@ void STARTWIZARD_PROVIDER_LIBRARIES::Finish()
                 chained.SetType( LIBRARY_TABLE_ROW::TABLE_TYPE_NAME );
                 chained.SetNickname( wxT( "KiCad" ) );
                 chained.SetDescription( _( "KiCad Default Libraries" ) );
-                chained.SetURI( stockPath );
+                chained.SetURI( stockURI );
                 table.Rows().insert( table.Rows().begin(), chained );
             }
 

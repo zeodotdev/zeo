@@ -863,13 +863,51 @@ void COMMON_SETTINGS::InitializeEnvironment()
             }
         };
 
-    addVar( ENV_VAR::GetVersionedEnvVarName( wxS( "FOOTPRINT_DIR" ) ), PATHS::GetStockFootprintsPath() );
-    addVar( ENV_VAR::GetVersionedEnvVarName( wxS( "3DMODEL_DIR" ) ), PATHS::GetStock3dmodelsPath() );
-    addVar( ENV_VAR::GetVersionedEnvVarName( wxS( "TEMPLATE_DIR" ) ), PATHS::GetStockTemplatesPath() );
+    // If Zeo's bundled stock templates are missing (e.g. partial install, broken
+    // bundle on a packaged build that didn't run the library steps), but a
+    // co-installed KiCad is present, route all the stock library env vars at
+    // the KiCad install instead of Zeo's own paths. The user's lib-table chain
+    // uses these env vars, so this transparently makes the symbol/footprint
+    // viewers work without forcing the user to reinstall or hand-edit settings.
+    // Externally-defined env vars still win via the addVar logic below.
+    wxString externalRoot;
+    wxFileName zeoStockSymTbl( PATHS::GetStockTemplatesPath(), wxT( "sym-lib-table" ) );
+
+    if( !zeoStockSymTbl.FileExists() )
+    {
+        externalRoot = PATHS::FindExternalKiCadLibraryRoot();
+
+        if( !externalRoot.IsEmpty() )
+        {
+            wxLogWarning( wxS( "Zeo's bundled library templates are missing; using libraries "
+                               "from existing KiCad install at %s" ), externalRoot );
+        }
+    }
+
+    auto stockPath =
+        [&]( const wxString& aZeoPath, const wxString& aSubdir ) -> wxString
+        {
+            if( externalRoot.IsEmpty() )
+                return aZeoPath;
+
+            wxFileName fn;
+            fn.AssignDir( externalRoot );
+            fn.AppendDir( aSubdir );
+            return fn.GetPathWithSep();
+        };
+
+    addVar( ENV_VAR::GetVersionedEnvVarName( wxS( "FOOTPRINT_DIR" ) ),
+            stockPath( PATHS::GetStockFootprintsPath(), wxT( "footprints" ) ) );
+    addVar( ENV_VAR::GetVersionedEnvVarName( wxS( "3DMODEL_DIR" ) ),
+            stockPath( PATHS::GetStock3dmodelsPath(), wxT( "3dmodels" ) ) );
+    addVar( ENV_VAR::GetVersionedEnvVarName( wxS( "TEMPLATE_DIR" ) ),
+            stockPath( PATHS::GetStockTemplatesPath(), wxT( "template" ) ) );
     addVar( wxT( "KICAD_USER_TEMPLATE_DIR" ), PATHS::GetUserTemplatesPath() );
     addVar( ENV_VAR::GetVersionedEnvVarName( wxS( "3RD_PARTY" ) ), PATHS::GetDefault3rdPartyPath() );
-    addVar( ENV_VAR::GetVersionedEnvVarName( wxS( "SYMBOL_DIR" ) ), PATHS::GetStockSymbolsPath() );
-    addVar( ENV_VAR::GetVersionedEnvVarName( wxS( "DESIGN_BLOCK_DIR" ) ), PATHS::GetStockDesignBlocksPath() );
+    addVar( ENV_VAR::GetVersionedEnvVarName( wxS( "SYMBOL_DIR" ) ),
+            stockPath( PATHS::GetStockSymbolsPath(), wxT( "symbols" ) ) );
+    addVar( ENV_VAR::GetVersionedEnvVarName( wxS( "DESIGN_BLOCK_DIR" ) ),
+            stockPath( PATHS::GetStockDesignBlocksPath(), wxT( "blocks" ) ) );
 }
 
 

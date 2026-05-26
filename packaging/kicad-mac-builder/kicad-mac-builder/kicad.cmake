@@ -108,8 +108,30 @@ ExternalProject_Add_Step(
     DEPENDS templates
     DEPENDEES install
     COMMAND mkdir -p ${KICAD_INSTALL_DIR}/Zeo.app/Contents/SharedSupport/
-    COMMAND rm -rf ${KICAD_INSTALL_DIR}/Zeo.app/Contents/SharedSupport/template
+    # Do NOT `rm -rf template/` here. install-symbols-into-app and
+    # install-footprints-into-app run earlier and write template/sym-lib-table
+    # and template/fp-lib-table. Wiping the dir before this cp would leave
+    # an empty stock template at runtime, breaking first-run library setup.
+    # templates_INSTALL_DIR has disjoint content (Project subdirs + .kicad_wks),
+    # so cp -r merges cleanly.
     COMMAND cp -r ${templates_INSTALL_DIR}/. ${KICAD_INSTALL_DIR}/Zeo.app/Contents/SharedSupport/
+)
+
+# The upstream kicad-symbols/kicad-footprints repos still tag their sym-lib-table
+# and fp-lib-table with ${KICAD9_*_DIR} env vars. Zeo (and KiCad 10) only sets
+# ${KICAD10_*_DIR}, so without this rewrite the chained tables fail to resolve
+# on first run and the symbol/footprint viewers come up empty. Mirrors the
+# equivalent search-replace in packaging/kicad-win-builder/build.ps1.
+ExternalProject_Add_Step(
+    kicad
+    rewrite-lib-tables-kicad9-to-kicad10
+    COMMENT "Rewriting KICAD9_* -> KICAD10_* in stock lib-tables for Zeo"
+    DEPENDEES install-symbols-into-app install-footprints-into-app install-templates-into-app
+    COMMAND ${CMAKE_COMMAND} -E echo "Rewriting KICAD9_* -> KICAD10_* in stock lib-tables"
+    COMMAND sed -i.bak "s/KICAD9_/KICAD10_/g" ${KICAD_INSTALL_DIR}/Zeo.app/Contents/SharedSupport/template/sym-lib-table
+    COMMAND sed -i.bak "s/KICAD9_/KICAD10_/g" ${KICAD_INSTALL_DIR}/Zeo.app/Contents/SharedSupport/template/fp-lib-table
+    COMMAND rm -f ${KICAD_INSTALL_DIR}/Zeo.app/Contents/SharedSupport/template/sym-lib-table.bak
+    COMMAND rm -f ${KICAD_INSTALL_DIR}/Zeo.app/Contents/SharedSupport/template/fp-lib-table.bak
 )
 
 ExternalProject_Add_Step(
@@ -138,7 +160,7 @@ ExternalProject_Add_Step(
     kicad
     fix-ngspice-symlinks
     COMMENT "Fixing ngspice symlinks for code signing"
-    DEPENDEES install-docs-into-app install collect-licenses install-footprints-into-app install-symbols-into-app install-templates-into-app install-packages3d-into-app install-freerouting-into-app
+    DEPENDEES install-docs-into-app install collect-licenses install-footprints-into-app install-symbols-into-app install-templates-into-app install-packages3d-into-app install-freerouting-into-app rewrite-lib-tables-kicad9-to-kicad10
     COMMAND "${BIN_DIR}/fix-ngspice-symlinks.sh" "${KICAD_INSTALL_DIR}/Zeo.app"
 )
 

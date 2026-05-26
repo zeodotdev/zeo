@@ -443,6 +443,17 @@ private:
 
     void createEmptyTable( LIBRARY_TABLE_TYPE aType, LIBRARY_TABLE_SCOPE aScope );
 
+    /// Ensure the requested global lib-tables exist in the user's settings dir
+    /// and reference the stock template via a portable env-var URI. Runs every
+    /// LoadGlobalTables(), idempotent on healthy tables. Handles:
+    ///   (a) fresh install — file missing → create from CreateGlobalTable
+    ///   (b) 0.2.x upgrade with empty/unparseable file → recreate
+    ///   (c) stale chained URIs from prior versions (absolute paths that
+    ///       no longer resolve, or paths burned in from in-tree dev builds)
+    ///       → rewrite the "KiCad" row's URI to env-var form, preserving
+    ///         any user-added rows
+    void seedGlobalTables( std::initializer_list<LIBRARY_TABLE_TYPE> aTypes );
+
     std::map<LIBRARY_TABLE_TYPE, std::unique_ptr<LIBRARY_TABLE>> m_tables;
 
     /// Map of full URI to table object for tables that are referenced by global or project tables

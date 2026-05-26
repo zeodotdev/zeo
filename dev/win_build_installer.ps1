@@ -1,4 +1,4 @@
-# Zeo Windows Installer Build Script (win_build_installer.ps1)
+﻿# Zeo Windows Installer Build Script (win_build_installer.ps1)
 # Creates an NSIS installer with Zeo, Agent, Terminal, libraries, and 3D models.
 # Parallel to mac_build.sh --package and appimage_build.sh --package.
 #
@@ -10,6 +10,7 @@
 param(
     [string]$Release,
     [switch]$Light,
+    [switch]$SkipBuild,
     [switch]$Help
 )
 
@@ -30,7 +31,17 @@ $InstallDir = "$BuilderDir\.out\x64-windows-Release"
 
 $Protoc = "$BuilderDir\vcpkg\packages\protobuf_x64-windows\tools\protobuf\protoc.exe"
 
-$NumCPU = (Get-CimInstance Win32_Processor).NumberOfLogicalProcessors
+$NumCPU = [int]$env:NUMBER_OF_PROCESSORS
+
+# Resolve a real Python interpreter, skipping the Microsoft Store 0-byte stub
+# at %LOCALAPPDATA%\Microsoft\WindowsApps\python.exe which silently
+# pops the install dialog and returns exit 9009.
+$PythonExe = Get-Command python -All -ErrorAction SilentlyContinue |
+    Where-Object { $_.Source -notlike '*\WindowsApps\*' } |
+    Select-Object -First 1 -ExpandProperty Source
+if (-not $PythonExe) {
+    $PythonExe = (Get-Command py -ErrorAction SilentlyContinue).Source
+}
 
 # --- Help ---
 
@@ -45,12 +56,14 @@ Options:
   (default)              Full clean build + installer
   -Release <name>        Set release name (e.g., "1.0", "beta")
   -Light                 Build light version without 3D models (~300MB vs ~1.1GB)
+  -SkipBuild             Skip cmake reconfigure/clean/build/install (reuse prior Phase 1 output)
   -Help                  Show this help message
 
 Examples:
   .\dev\win_build_installer.ps1                          # Full build + installer
   .\dev\win_build_installer.ps1 -Release "1.0"           # Release installer
   .\dev\win_build_installer.ps1 -Light                   # Light installer (no 3D models)
+  .\dev\win_build_installer.ps1 -SkipBuild -Release "1.0" # Re-package without rebuilding
 "@
     exit 0
 }
@@ -165,50 +178,58 @@ Quit-Zeo
 
 # --- Phase 1: Clean Build ---
 
-Write-Host ""
-Write-Host "=========================================="
-Write-Host "PHASE 1: Building KiCad/Zeo (clean)"
-Write-Host "=========================================="
-
-# Named releases get -DZEO_RELEASE=ON so ZEO_BASE_URL points at https://www.zeo.dev
-# (see src/zeo/include/zeo/zeo_constants.h). Since this installer script reuses
-# the existing build tree, we reconfigure to inject (or clear) the flag explicitly,
-# preventing a stale cache value from silently producing a non-release binary.
-if ($Release) {
-    Log "Reconfiguring cmake with -DZEO_RELEASE=ON (production URLs)..."
-    & $CmakeExe $BuildDir -DZEO_RELEASE=ON
+if ($SkipBuild) {
+    Write-Host ""
+    Write-Host "=========================================="
+    Write-Host "PHASE 1: SKIPPED (-SkipBuild)"
+    Write-Host "=========================================="
+    Log "Reusing existing build output at $InstallDir"
 } else {
-    Log "Reconfiguring cmake with -DZEO_RELEASE=OFF (staging URLs)..."
-    & $CmakeExe $BuildDir -DZEO_RELEASE=OFF
+    Write-Host ""
+    Write-Host "=========================================="
+    Write-Host "PHASE 1: Building KiCad/Zeo (clean)"
+    Write-Host "=========================================="
+
+    # Named releases get -DZEO_RELEASE=ON so ZEO_BASE_URL points at https://www.zeo.dev
+    # (see src/zeo/include/zeo/zeo_constants.h). Since this installer script reuses
+    # the existing build tree, we reconfigure to inject (or clear) the flag explicitly,
+    # preventing a stale cache value from silently producing a non-release binary.
+    if ($Release) {
+        Log "Reconfiguring cmake with -DZEO_RELEASE=ON (production URLs)..."
+        & $CmakeExe $BuildDir -DZEO_RELEASE=ON
+    } else {
+        Log "Reconfiguring cmake with -DZEO_RELEASE=OFF (staging URLs)..."
+        & $CmakeExe $BuildDir -DZEO_RELEASE=OFF
+    }
+    if ($LASTEXITCODE -ne 0) {
+        Log-Error "cmake reconfigure failed"
+        exit 1
+    }
+
+    # Clean build to avoid stale cached artifacts (icons, templates, etc.)
+    Log "Cleaning previous build..."
+    & $CmakeExe --build $BuildDir --target clean 2>$null
+
+    # Build all targets (not just specific ones, so resources like images.tar.gz are included)
+    Log "Building all targets..."
+    & $CmakeExe --build $BuildDir --config Release --parallel $NumCPU
+    if ($LASTEXITCODE -ne 0) {
+        Log-Error "Build failed"
+        exit 1
+    }
+
+    Log "Build complete."
+
+    # --- cmake --install ---
+
+    Log "Running cmake --install..."
+    & $CmakeExe --install $BuildDir --prefix $InstallDir
+    if ($LASTEXITCODE -ne 0) {
+        Log-Error "cmake --install failed"
+        exit 1
+    }
+    Log "cmake --install complete."
 }
-if ($LASTEXITCODE -ne 0) {
-    Log-Error "cmake reconfigure failed"
-    exit 1
-}
-
-# Clean build to avoid stale cached artifacts (icons, templates, etc.)
-Log "Cleaning previous build..."
-& $CmakeExe --build $BuildDir --target clean 2>$null
-
-# Build all targets (not just specific ones, so resources like images.tar.gz are included)
-Log "Building all targets..."
-& $CmakeExe --build $BuildDir --config Release --parallel $NumCPU
-if ($LASTEXITCODE -ne 0) {
-    Log-Error "Build failed"
-    exit 1
-}
-
-Log "Build complete."
-
-# --- cmake --install ---
-
-Log "Running cmake --install..."
-& $CmakeExe --install $BuildDir --prefix $InstallDir
-if ($LASTEXITCODE -ne 0) {
-    Log-Error "cmake --install failed"
-    exit 1
-}
-Log "cmake --install complete."
 
 # --- Phase 2: Install Libraries ---
 
@@ -370,6 +391,12 @@ $sitePackages = "$InstallDir\bin\Lib\site-packages"
 function Install-Kipy {
     Log "Installing kipy (KiCad Python bindings)..."
 
+    if (-not $PythonExe) {
+        Log-Error "Python interpreter not found on PATH (Microsoft Store stub doesn't count). Install Python or add it to PATH."
+        exit 1
+    }
+    Log "Using Python: $PythonExe"
+
     $kipySource = "$KicadPythonDir\kipy"
     $protoInput = "$KicadSourceDir\api\proto"
 
@@ -388,7 +415,10 @@ function Install-Kipy {
         Log-Error "protoc failed (exit $LASTEXITCODE)"
         exit 1
     }
-    python -m protoletariat --dont-create-package --in-place --exclude-google-imports --python-out "$kipySource\proto" protoc --protoc-path $Protoc --proto-path $protoInput @protoFiles
+    # protoletariat runs shlex.split() on --protoc-path, which strips Windows
+    # backslashes (so "C:\..." becomes "C:..."). Feed it forward-slashes to dodge that.
+    $ProtocPosix = $Protoc -replace '\\', '/'
+    & $PythonExe -m protoletariat --dont-create-package --in-place --exclude-google-imports --python-out "$kipySource\proto" protoc --protoc-path $ProtocPosix --proto-path $protoInput @protoFiles
     if ($LASTEXITCODE -ne 0) {
         Log-Error "protoletariat failed (exit $LASTEXITCODE)"
         exit 1
@@ -401,21 +431,41 @@ function Install-Kipy {
     New-Item -ItemType Directory -Path $sitePackages -Force | Out-Null
     Copy-Item -Recurse $kipySource "$sitePackages\kipy"
 
+    # Generate kicad_api_version.py from git describe (normally done by
+    # src/zeo-python/build.py:pre_build; replicated here since we skip Poetry).
+    Push-Location $KicadSourceDir
+    $gitDesc = (git describe --long 2>$null).Trim()
+    Pop-Location
+    if (-not $gitDesc) { $gitDesc = "unknown" }
+    $versionFile = Join-Path "$sitePackages\kipy" "kicad_api_version.py"
+    Set-Content -Path $versionFile -Encoding UTF8 -Value @"
+# This file is automatically generated, do not modify it
+KICAD_API_VERSION = "$gitDesc"
+"@
+    Log "Wrote kicad_api_version.py (KICAD_API_VERSION = `"$gitDesc`")"
+
     # Install Python dependencies. Don't silence stderr — a silent pip failure
     # here ships an installer with a kipy that ImportErrors on first launch
     # (the bundled zeo-mcp.exe surfaces this as MCP -32000).
+    # Use the BUNDLED python (cp311) so installed wheels match what the
+    # installer actually ships — installing with the system python (e.g. cp314)
+    # produces .pyd files the bundled interpreter can't load.
+    $bundledPython = "$InstallDir\bin\python.exe"
+    if (-not (Test-Path $bundledPython)) {
+        Log-Error "Bundled python not found at $bundledPython. Run -PreparePackage via packaging/kicad-win-builder/build.ps1 first."
+        exit 1
+    }
     if (-not (Test-Path "$sitePackages\google\protobuf")) {
-        Log "Installing Python dependencies..."
-        python -m pip install --no-user --target $sitePackages "protobuf>=6.33" "pynng>=0.8.0,<0.9.0" typing_extensions matplotlib cairosvg
+        Log "Installing Python dependencies (via bundled $bundledPython)..."
+        & $bundledPython -m pip install --no-user --target $sitePackages "protobuf>=6.33" "pynng>=0.8.0,<0.9.0" typing_extensions matplotlib cairosvg
         if ($LASTEXITCODE -ne 0) {
             Log-Error "pip install of kipy dependencies failed (exit $LASTEXITCODE)"
             exit 1
         }
     }
 
-    # Smoke test: confirm the bundle actually imports. Mirrors zeo-mcp.exe's
-    # import chain so a broken bundle fails the build, not the user.
-    Log "Verifying kipy import chain..."
+    # Smoke test with the bundled python so we catch ABI/cp-version mismatches.
+    Log "Verifying kipy import chain (via bundled $bundledPython)..."
     $smokeTest = @"
 import sys
 sys.path.insert(0, r'$sitePackages')
@@ -424,7 +474,7 @@ from kipy.client import KiCadClient
 from kipy.mcp.server import run
 print('OK: kipy at', kipy.__file__)
 "@
-    python -c $smokeTest
+    & $bundledPython -c $smokeTest
     if ($LASTEXITCODE -ne 0) {
         Log-Error "kipy smoke test failed — the staged bundle at $sitePackages is not importable"
         exit 1
@@ -488,6 +538,22 @@ if (-not (Test-Path $nsisSource)) {
 }
 
 Copy-Item $nsisSource -Destination $InstallDir -Recurse -Container -Force
+
+# nsis/lang/English.nsh references "..\COPYRIGHT.txt" via LicenseLangString,
+# which makensis reads at compile time even though MUI_PAGE_LICENSE is commented out.
+# Zeo dropped COPYRIGHT.txt from the source tree but kept LICENSE files — stage LICENSE
+# as COPYRIGHT.txt so makensis can satisfy the reference.
+$copyrightDest = Join-Path $InstallDir "COPYRIGHT.txt"
+if (-not (Test-Path $copyrightDest)) {
+    $licenseSrc = Join-Path $KicadSourceDir "LICENSE"
+    if (Test-Path $licenseSrc) {
+        Copy-Item $licenseSrc $copyrightDest -Force
+        Log "Staged $licenseSrc -> COPYRIGHT.txt"
+    } else {
+        Set-Content -Path $copyrightDest -Value "Zeo - see LICENSE files in source tree." -Encoding UTF8
+        Log "Wrote placeholder COPYRIGHT.txt (no LICENSE found at $licenseSrc)"
+    }
+}
 
 # Get version info from KiCadVersion.cmake (same method as build.ps1)
 $kicadVersion = "0.1.0"

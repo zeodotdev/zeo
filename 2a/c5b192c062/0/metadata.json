@@ -1,0 +1,175 @@
+{
+  "cli_version": "0.6.1",
+  "checkpoint_id": "2ac5b192c062",
+  "session_id": "c5ac9990-eb4b-4087-a1e4-127782e8505d",
+  "strategy": "manual-commit",
+  "created_at": "2026-05-26T00:14:06.127808Z",
+  "branch": "main",
+  "checkpoints_count": 14,
+  "files_touched": [
+    "packaging/kicad-mac-builder/kicad-mac-builder/kicad.cmake",
+    "src/zeo/cmake/ZeoVersion.cmake",
+    "src/zeo/common/libraries/library_manager.cpp",
+    "src/zeo/common/paths.cpp",
+    "src/zeo/common/settings/common_settings.cpp",
+    "src/zeo/common/startwizard/startwizard_provider_libraries.cpp",
+    "src/zeo/include/libraries/library_manager.h",
+    "src/zeo/include/paths.h"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-opus-4-7[1m]",
+  "turn_id": "b41bf4e86eb4",
+  "token_usage": {
+    "input_tokens": 2889,
+    "cache_creation_tokens": 5260664,
+    "cache_read_tokens": 150224788,
+    "output_tokens": 400509,
+    "api_call_count": 453
+  },
+  "session_metrics": {
+    "turn_count": 27
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-05-26T00:14:06.015782Z",
+    "agent_lines": 0,
+    "agent_removed": 0,
+    "human_added": 45,
+    "human_modified": 208,
+    "human_removed": 0,
+    "total_committed": 45,
+    "total_lines_changed": 253,
+    "agent_percentage": 0,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 2,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0
+    },
+    {
+      "checkpoint_number": 3,
+      "user_lines_added": 1,
+      "user_lines_removed": 1,
+      "agent_lines_added": 169,
+      "agent_lines_removed": 46,
+      "user_added_per_file": {
+        "src/zeo/cmake/ZeoVersion.cmake": 1
+      },
+      "user_removed_per_file": {
+        "src/zeo/cmake/ZeoVersion.cmake": 1
+      }
+    },
+    {
+      "checkpoint_number": 4,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 297,
+      "agent_lines_removed": 51
+    },
+    {
+      "checkpoint_number": 5,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 297,
+      "agent_lines_removed": 51
+    },
+    {
+      "checkpoint_number": 6,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 305,
+      "agent_lines_removed": 52
+    },
+    {
+      "checkpoint_number": 7,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 305,
+      "agent_lines_removed": 52
+    },
+    {
+      "checkpoint_number": 8,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 380,
+      "agent_lines_removed": 64
+    },
+    {
+      "checkpoint_number": 9,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 514,
+      "agent_lines_removed": 65
+    },
+    {
+      "checkpoint_number": 10,
+      "user_lines_added": 48,
+      "user_lines_removed": 1,
+      "agent_lines_added": 514,
+      "agent_lines_removed": 65,
+      "user_added_per_file": {
+        "src/zeo/common/paths.cpp": 35,
+        "src/zeo/include/paths.h": 13
+      },
+      "user_removed_per_file": {
+        "src/zeo/common/paths.cpp": 1
+      }
+    },
+    {
+      "checkpoint_number": 11,
+      "user_lines_added": 204,
+      "user_lines_removed": 206,
+      "agent_lines_added": 223,
+      "agent_lines_removed": 14,
+      "user_added_per_file": {
+        "packaging/kicad-mac-builder/kicad-mac-builder/kicad.cmake": 24,
+        "src/zeo/common/libraries/library_manager.cpp": 85,
+        "src/zeo/common/paths.cpp": 20,
+        "src/zeo/common/settings/common_settings.cpp": 43,
+        "src/zeo/common/startwizard/startwizard_provider_libraries.cpp": 14,
+        "src/zeo/include/libraries/library_manager.h": 10,
+        "src/zeo/include/paths.h": 8
+      },
+      "user_removed_per_file": {
+        "packaging/kicad-mac-builder/kicad-mac-builder/kicad.cmake": 9,
+        "src/zeo/common/libraries/library_manager.cpp": 138,
+        "src/zeo/common/paths.cpp": 22,
+        "src/zeo/common/settings/common_settings.cpp": 5,
+        "src/zeo/common/startwizard/startwizard_provider_libraries.cpp": 15,
+        "src/zeo/include/libraries/library_manager.h": 7,
+        "src/zeo/include/paths.h": 10
+      }
+    },
+    {
+      "checkpoint_number": 12,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 228,
+      "agent_lines_removed": 21
+    },
+    {
+      "checkpoint_number": 13,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 228,
+      "agent_lines_removed": 21
+    },
+    {
+      "checkpoint_number": 14,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 228,
+      "agent_lines_removed": 21
+    },
+    {
+      "checkpoint_number": 15,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 229,
+      "agent_lines_removed": 22
+    }
+  ]
+}

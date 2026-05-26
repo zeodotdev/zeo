@@ -1,0 +1,32 @@
+{
+  "cli_version": "0.6.1",
+  "checkpoint_id": "2ac5b192c062",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 14,
+  "files_touched": [
+    "packaging/kicad-mac-builder/kicad-mac-builder/kicad.cmake",
+    "src/zeo/cmake/ZeoVersion.cmake",
+    "src/zeo/common/libraries/library_manager.cpp",
+    "src/zeo/common/paths.cpp",
+    "src/zeo/common/settings/common_settings.cpp",
+    "src/zeo/common/startwizard/startwizard_provider_libraries.cpp",
+    "src/zeo/include/libraries/library_manager.h",
+    "src/zeo/include/paths.h"
+  ],
+  "sessions": [
+    {
+      "metadata": "/2a/c5b192c062/0/metadata.json",
+      "transcript": "/2a/c5b192c062/0/full.jsonl",
+      "content_hash": "/2a/c5b192c062/0/content_hash.txt",
+      "prompt": "/2a/c5b192c062/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 2889,
+    "cache_creation_tokens": 5260664,
+    "cache_read_tokens": 150224788,
+    "output_tokens": 400509,
+    "api_call_count": 453
+  }
+}

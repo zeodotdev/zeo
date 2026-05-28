@@ -210,6 +210,7 @@ set( PCBNEW_DIALOGS
     dialogs/panel_setup_formatting_base.cpp
     dialogs/panel_setup_mask_and_paste.cpp
     dialogs/panel_setup_mask_and_paste_base.cpp
+    dialogs/panel_setup_impedance.cpp
     dialogs/panel_setup_layers.cpp
     dialogs/panel_setup_layers_base.cpp
     dialogs/panel_setup_rules.cpp

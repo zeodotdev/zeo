@@ -23,6 +23,7 @@
 #include <panel_setup_constraints.h>
 #include <panel_setup_tracks_and_vias.h>
 #include <panel_setup_mask_and_paste.h>
+#include <panel_setup_impedance.h>
 #include <panel_setup_zone_hatch_offsets.h>
 #include <../board_stackup_manager/panel_board_stackup.h>
 #include <../board_stackup_manager/panel_board_finish.h>
@@ -116,6 +117,13 @@ DIALOG_BOARD_SETUP::DIALOG_BOARD_SETUP( PCB_EDIT_FRAME* aFrame, wxWindow* aParen
                 m_boardFinish = RESOLVE_PAGE( PANEL_SETUP_BOARD_FINISH, m_boardFinishPage );
                 return new PANEL_SETUP_BOARD_STACKUP( aParent, m_frame, m_layers, m_boardFinish );
             },  _( "Physical Stackup" ) );
+
+    m_impedancePage = m_treebook->GetPageCount();
+    m_treebook->AddLazySubPage(
+            [this]( wxWindow* aParent ) -> wxWindow*
+            {
+                return new PANEL_SETUP_IMPEDANCE( aParent, m_frame );
+            }, _( "Impedance" ) );
 
     m_boardFinishPage = m_treebook->GetPageCount();
     m_treebook->AddLazySubPage(

@@ -34,6 +34,7 @@ class PANEL_SETUP_MASK_AND_PASTE;
 class PANEL_SETUP_ZONE_HATCH_OFFSETS;
 class PANEL_SETUP_BOARD_STACKUP;
 class PANEL_SETUP_BOARD_FINISH;
+class PANEL_SETUP_IMPEDANCE;
 class PANEL_SETUP_SEVERITIES;
 class PANEL_TEXT_VARIABLES;
 class PANEL_SETUP_TUNING_PROFILES;
@@ -62,6 +63,7 @@ private:
     size_t m_currentPage;              // the current page index
     size_t m_layersPage;
     size_t m_physicalStackupPage;
+    size_t m_impedancePage;
     size_t m_boardFinishPage;
     size_t m_defaultsPage;
     size_t m_formattingPage;

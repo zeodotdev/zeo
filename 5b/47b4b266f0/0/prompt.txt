@@ -331,3 +331,7 @@ I'd want to 1) look into what the doen by other softwares, 2) which makes more s
 ---
 
 Let's proce3ed with the Altium like model
+
+---
+
+Looks like it seemed to work. Let's proceed with adding a UI for our changes, let's discuss what would be the best course of action here

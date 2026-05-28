@@ -78,11 +78,6 @@ struct CONSTRAINT
     wxString        m_FromName;
     wxString        m_ToName;
     bool            m_IsTimeDomain;
-
-    /// Human-readable detail populated when a violation occurs ("track width 0.15mm < min
-    /// 0.2mm").  Empty for non-violations.  Used by the router status overlay to surface
-    /// per-rule detail instead of the generic "Track violates DRC."
-    wxString        m_ViolationDetail;
 };
 
 

@@ -791,6 +791,29 @@ public:
     /// Enable inclusion of stackup height in track length measurements and length tuning
     bool       m_UseHeightForLengthCalcs;
 
+    // --- Signal-integrity analysis parameters (Altium-style "Layer Stack Manager"
+    //     analysis settings). These feed the impedance / transmission-line calculation.
+    //     They are analysis inputs, not physical stackup geometry — the per-dielectric
+    //     Dk/Df and per-layer thickness remain in BOARD_STACKUP. ---
+
+    /// Reference frequency (Hz) at which impedance / loss is evaluated. Drives modal
+    /// dispersion + skin depth in the transline model and (with the dispersion model)
+    /// the frequency-dependent bulk Dk. Default 1 GHz, matching Altium's Layer Stack
+    /// Manager default.
+    double     m_SI_ReferenceFrequency;
+
+    /// Frequency (Hz) at which the stackup's datasheet Dk/Df values are specified. Used
+    /// as the reference point for the Djordjevic-Sarkar dispersion model. Default 1 GHz.
+    double     m_SI_DkMeasurementFrequency;
+
+    /// Conductor resistivity (ohm-metre) used for skin-effect / loss. Default copper at
+    /// 20 °C = 1.72e-8. Editable for plated / heavy / non-copper conductors.
+    double     m_SI_ConductorResistivity;
+
+    /// Copper foil RMS surface roughness (metres). Increases conductor loss and slightly
+    /// lowers impedance. Default 0 (perfectly smooth). Typical: 0.3–1.0 µm.
+    double     m_SI_ConductorRoughness;
+
 private:
     VECTOR2I   m_auxOrigin;  ///< origin for plot exports
     VECTOR2I   m_gridOrigin; ///< origin for grid offsets

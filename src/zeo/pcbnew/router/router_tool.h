@@ -93,16 +93,10 @@ private:
     bool finishInteractive();
     void saveRouterDebugLog();
 
-    /// Returns a "  Z₀ = X Ω (target Y…Z Ω)" suffix for the router status overlay, or empty
-    /// when the current routing layer/width has no impedance target rule or the stackup is
-    /// incomplete.  Leading-space-padded so callers can directly concatenate.
+    /// Returns a "  Z₀ = X Ω" suffix for the router status overlay / message panel, or empty
+    /// when the current routing layer/width yields no impedance (incomplete stackup, etc.).
+    /// Leading-space-padded so callers can directly concatenate.
     wxString buildImpedanceStatus() const;
-
-    /// Returns a per-rule violation breakdown for the router status overlay (e.g. "(rule
-    /// 'narrow' width 0.15mm &lt; min 0.2mm)").  Evaluates TRACK_WIDTH_CONSTRAINT against the
-    /// PNS state's current layer/width/net.  Empty when no rule is violated.  Spike scope
-    /// for B1a — extended to additional constraints in B1b.
-    wxString buildDrcViolationDetail() const;
 
 private:
     std::shared_ptr<ACTION_MENU> m_diffPairMenu;

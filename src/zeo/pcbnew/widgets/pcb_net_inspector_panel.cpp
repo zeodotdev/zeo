@@ -832,20 +832,6 @@ PCB_NET_INSPECTOR_PANEL::calculateNets( const std::vector<NETINFO_ITEM*>& aNetCo
     std::mutex   resultsMutex;
     thread_pool& tp = GetKiCadThreadPool();
 
-    // Precompute stackup once — used by per-thread IMPEDANCE_CALCULATOR instances below.
-    const BOARD_STACKUP stackup = m_board->GetStackupOrDefault();
-
-    // Group all PCB_TRACKs by net so each parallel task can compute length-weighted Z₀
-    // without serialising on the BOARD's track list.
-    std::unordered_map<int, std::vector<PCB_TRACK*>> netTracksMap;
-
-    for( PCB_TRACK* track : m_board->Tracks() )
-    {
-        if( !track || track->Type() == PCB_VIA_T )
-            continue;
-        netTracksMap[track->GetNetCode()].push_back( track );
-    }
-
     auto resultsFuture = tp.submit_loop(
             0, foundNets.size(),
             [&, this, calc]( const int i )
@@ -882,38 +868,65 @@ PCB_NET_INSPECTOR_PANEL::calculateNets( const std::vector<NETINFO_ITEM*>& aNetCo
                     if( m_showTimeDomainDetails )
                         new_item->SetLayerWireDelays( *lengthDetails.LayerDelays );
 
-                    // Compute length-weighted average Z₀ across this net's tracks.  Each
-                    // task gets its own calculator so the per-(layer, width) cache is
-                    // thread-local.  Tracks on the same layer/width hit the cache.
-                    if( auto trackIt = netTracksMap.find( netCode ); trackIt != netTracksMap.end() )
-                    {
-                        IMPEDANCE_CALCULATOR calc;
-                        int64_t              weightedSum = 0;
-                        int64_t              totalLen    = 0;
-
-                        for( PCB_TRACK* track : trackIt->second )
-                        {
-                            const int    z0  = calc.ComputeOhms( stackup, track->GetLayer(),
-                                                                 track->GetWidth() );
-                            const double len = track->GetLength();
-
-                            if( z0 > 0 && len > 0 )
-                            {
-                                weightedSum += static_cast<int64_t>( z0 * len );
-                                totalLen += static_cast<int64_t>( len );
-                            }
-                        }
-
-                        if( totalLen > 0 )
-                            new_item->SetAvgImpedance( static_cast<int>( weightedSum / totalLen ) );
-                    }
-
                     std::scoped_lock lock( resultsMutex );
                     results.emplace_back( std::move( new_item ) );
                 }
             } );
 
     resultsFuture.get();
+
+    // Length-weighted average Z₀ per net.  Computed serially on the main thread AFTER the
+    // length-calc parallel work to avoid contending with the existing iteration over BOARD
+    // items, and because the impedance calc itself is cheap (cached per layer+width).
+    const BOARD_STACKUP              stackup = m_board->GetStackupOrDefault();
+    IMPEDANCE_CALCULATOR             impCalc;
+    std::unordered_map<int, int64_t> weightedSum;
+    std::unordered_map<int, int64_t> totalLen;
+
+    for( PCB_TRACK* track : m_board->Tracks() )
+    {
+        if( !track || track->Type() == PCB_VIA_T )
+            continue;
+
+        const PCB_LAYER_ID layer = track->GetLayer();
+
+        if( !IsCopperLayer( layer ) )
+            continue;
+
+        // Wrap per-track so one bad track (e.g. exotic stackup that breaks Analyse())
+        // doesn't lose the impedance contribution of every other track.
+        int    z0  = 0;
+        double len = 0.0;
+
+        try
+        {
+            z0  = impCalc.ComputeOhms( stackup, layer, track->GetWidth() );
+            len = track->GetLength();
+        }
+        catch( const std::exception& )
+        {
+            continue;
+        }
+
+        if( z0 <= 0 || len <= 0 )
+            continue;
+
+        const int netCode = track->GetNetCode();
+        weightedSum[netCode] += static_cast<int64_t>( z0 * len );
+        totalLen[netCode] += static_cast<int64_t>( len );
+    }
+
+    for( auto& item : results )
+    {
+        if( !item )
+            continue;
+
+        const int netCode = item->GetNetCode();
+        auto      lenIt   = totalLen.find( netCode );
+
+        if( lenIt != totalLen.end() && lenIt->second > 0 )
+            item->SetAvgImpedance( static_cast<int>( weightedSum[netCode] / lenIt->second ) );
+    }
 
     return results;
 }

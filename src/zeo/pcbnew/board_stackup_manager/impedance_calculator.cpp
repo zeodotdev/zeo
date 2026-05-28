@@ -21,10 +21,15 @@
 #include "impedance_calculator.h"
 
 #include <board.h>
+#include <board_design_settings.h>
 #include <board_stackup_manager/board_stackup.h>
 #include <transline_calculations/microstrip.h>
 #include <transline_calculations/stripline.h>
 #include <transline_calculations/units_scales.h>
+#include <trace_helpers.h>
+#include <wx/log.h>
+
+static const wxChar IMPEDANCE_TRACE[] = wxT( "IMPEDANCE" );
 
 namespace
 {
@@ -48,13 +53,27 @@ namespace
     }
 
 
-    // Walk towards a side and accumulate dielectric height and weighted-average Dk
-    // until the next copper layer.  Returns {0, 0} on failure.  Height in metres.
-    std::pair<double, double> collectDielectricToReference(
+    /// Result of walking the dielectric stack from a signal layer to its reference plane.
+    struct DIELECTRIC_SPAN
+    {
+        double heightM = 0.0;   ///< total dielectric height, metres
+        double dk      = 0.0;   ///< thickness-weighted average dielectric constant (εr)
+        double df      = 0.0;   ///< thickness-weighted average loss tangent (tan δ)
+
+        bool valid() const { return heightM > 0.0 && dk > 0.0; }
+    };
+
+
+    // Walk towards a side and accumulate dielectric height + thickness-weighted Dk/Df until
+    // the next copper layer.  Iterates every dielectric SUBLAYER (a single dielectric region
+    // may hold multiple sublayers with distinct Dk/Df in microwave stackups), so the average
+    // reflects the true composite rather than only sublayer 0.
+    DIELECTRIC_SPAN collectDielectricToReference(
             const std::vector<BOARD_STACKUP_ITEM*>& aLayers, int aSignalIdx, int aDirection )
     {
         double totalThicknessIU = 0.0;
-        double weightedDk = 0.0;
+        double weightedDk        = 0.0;
+        double weightedDf        = 0.0;
 
         for( int i = aSignalIdx + aDirection; i >= 0 && i < (int) aLayers.size(); i += aDirection )
         {
@@ -69,24 +88,32 @@ namespace
             if( item->GetType() != BS_ITEM_TYPE_DIELECTRIC )
                 continue;
 
-            const int t = item->GetThickness();
+            for( int sub = 0; sub < item->GetSublayersCount(); ++sub )
+            {
+                const int t = item->GetThickness( sub );
 
-            if( t <= 0 )
-                continue;
+                if( t <= 0 )
+                    continue;
 
-            totalThicknessIU += t;
-            weightedDk += t * item->GetEpsilonR();
+                totalThicknessIU += t;
+                weightedDk += t * item->GetEpsilonR( sub );
+                weightedDf += t * item->GetLossTangent( sub );
+            }
         }
 
         if( totalThicknessIU <= 0 )
-            return { 0.0, 0.0 };
+            return {};
 
-        return { totalThicknessIU / 1e9, weightedDk / totalThicknessIU };
+        return { totalThicknessIU / 1e9, weightedDk / totalThicknessIU,
+                 weightedDf / totalThicknessIU };
     }
 
 
-    int analyseMicrostrip( double aWidthM, double aSignalThicknessM, double aHeightM, double aDk )
+    int analyseMicrostrip( double aWidthM, double aSignalThicknessM, double aHeightM, double aDk,
+                           double aDf, const IMPEDANCE_PARAMS& aParams )
     {
+        const double rho = aParams.conductorRho > 0.0 ? aParams.conductorRho : 1.72e-8;
+
         MICROSTRIP ms;
         ms.SetParameter( TRANSLINE_PARAMETERS::PHYS_WIDTH, aWidthM );
         ms.SetParameter( TRANSLINE_PARAMETERS::T, aSignalThicknessM );
@@ -95,10 +122,10 @@ namespace
         ms.SetParameter( TRANSLINE_PARAMETERS::EPSILONR, aDk );
         ms.SetParameter( TRANSLINE_PARAMETERS::MUR, 1.0 );
         ms.SetParameter( TRANSLINE_PARAMETERS::MURC, 1.0 );
-        ms.SetParameter( TRANSLINE_PARAMETERS::FREQUENCY, 1e9 );
-        ms.SetParameter( TRANSLINE_PARAMETERS::TAND, 0.0 );
-        ms.SetParameter( TRANSLINE_PARAMETERS::ROUGH, 0.0 );
-        ms.SetParameter( TRANSLINE_PARAMETERS::SIGMA, 1.0 / COPPER_RHO );
+        ms.SetParameter( TRANSLINE_PARAMETERS::FREQUENCY, aParams.frequencyHz );
+        ms.SetParameter( TRANSLINE_PARAMETERS::TAND, aDf );
+        ms.SetParameter( TRANSLINE_PARAMETERS::ROUGH, aParams.roughnessM );
+        ms.SetParameter( TRANSLINE_PARAMETERS::SIGMA, 1.0 / rho );
         ms.SetParameter( TRANSLINE_PARAMETERS::PHYS_LEN, 1.0 );
         ms.SetParameter( TRANSLINE_PARAMETERS::ANG_L, 1.0 );
 
@@ -115,19 +142,23 @@ namespace
 
 
     int analyseStripline( double aWidthM, double aSignalThicknessM, double aTopH, double aBotH,
-                          double aDk )
+                          double aDk, double aDf, const IMPEDANCE_PARAMS& aParams )
     {
+        const double rho = aParams.conductorRho > 0.0 ? aParams.conductorRho : 1.72e-8;
+
+        // STRIPLINE's m_parameters map does NOT include MUR or ROUGH — SetParameter uses
+        // unordered_map::at() and throws std::out_of_range if we pass unsupported keys.
+        // Roughness therefore can't be modelled for striplines yet (tracked as Phase 2).
         STRIPLINE sl;
         sl.SetParameter( TRANSLINE_PARAMETERS::PHYS_WIDTH, aWidthM );
         sl.SetParameter( TRANSLINE_PARAMETERS::T, aSignalThicknessM );
         sl.SetParameter( TRANSLINE_PARAMETERS::H, aTopH + aBotH + aSignalThicknessM );
         sl.SetParameter( TRANSLINE_PARAMETERS::STRIPLINE_A, aTopH );
         sl.SetParameter( TRANSLINE_PARAMETERS::EPSILONR, aDk );
-        sl.SetParameter( TRANSLINE_PARAMETERS::MUR, 1.0 );
         sl.SetParameter( TRANSLINE_PARAMETERS::MURC, 1.0 );
-        sl.SetParameter( TRANSLINE_PARAMETERS::FREQUENCY, 1e9 );
-        sl.SetParameter( TRANSLINE_PARAMETERS::TAND, 0.0 );
-        sl.SetParameter( TRANSLINE_PARAMETERS::SIGMA, 1.0 / COPPER_RHO );
+        sl.SetParameter( TRANSLINE_PARAMETERS::FREQUENCY, aParams.frequencyHz );
+        sl.SetParameter( TRANSLINE_PARAMETERS::TAND, aDf );
+        sl.SetParameter( TRANSLINE_PARAMETERS::SIGMA, 1.0 / rho );
         sl.SetParameter( TRANSLINE_PARAMETERS::PHYS_LEN, 1.0 );
         sl.SetParameter( TRANSLINE_PARAMETERS::ANG_L, 1.0 );
 
@@ -149,6 +180,19 @@ int IMPEDANCE_CALCULATOR::ComputeOhms( BOARD* aBoard, PCB_LAYER_ID aLayer, int a
     if( !aBoard )
         return 0;
 
+    // Pull the board's signal-integrity analysis parameters (frequency, conductor
+    // properties) so the computation reflects the user's configured settings rather than
+    // hardcoded defaults.
+    const BOARD_DESIGN_SETTINGS& bds = aBoard->GetDesignSettings();
+
+    IMPEDANCE_PARAMS params;
+    params.frequencyHz         = bds.m_SI_ReferenceFrequency > 0.0 ? bds.m_SI_ReferenceFrequency : 1.0e9;
+    params.dkMeasurementFreqHz = bds.m_SI_DkMeasurementFrequency > 0.0 ? bds.m_SI_DkMeasurementFrequency : 1.0e9;
+    params.conductorRho        = bds.m_SI_ConductorResistivity > 0.0 ? bds.m_SI_ConductorResistivity : 1.72e-8;
+    params.roughnessM          = bds.m_SI_ConductorRoughness >= 0.0 ? bds.m_SI_ConductorRoughness : 0.0;
+
+    SetParams( params );
+
     const BOARD_STACKUP stackup = aBoard->GetStackupOrDefault();
     return ComputeOhms( stackup, aLayer, aWidthIU );
 }
@@ -166,8 +210,29 @@ int IMPEDANCE_CALCULATOR::ComputeOhms( const BOARD_STACKUP& aStackup, PCB_LAYER_
     const std::vector<BOARD_STACKUP_ITEM*>& layers = aStackup.GetList();
     const int signalIdx = findStackupCopperIndex( layers, aLayer );
 
+    wxLogTrace( IMPEDANCE_TRACE, "ComputeOhms: layer=%d width=%d signalIdx=%d stackupSize=%zu",
+                (int) aLayer, aWidthIU, signalIdx, layers.size() );
+
     if( signalIdx < 0 || aWidthIU <= 0 )
     {
+        wxLogTrace( IMPEDANCE_TRACE,
+                    "  → early-out (signalIdx<0 or width<=0).  Dumping stackup:" );
+
+        for( size_t i = 0; i < layers.size(); ++i )
+        {
+            BOARD_STACKUP_ITEM* item = layers[i];
+            if( !item )
+            {
+                wxLogTrace( IMPEDANCE_TRACE, "    [%zu] null", i );
+                continue;
+            }
+            wxLogTrace( IMPEDANCE_TRACE,
+                        "    [%zu] type=%d enabled=%d brdLayerId=%d thickness=%d dk=%.3f",
+                        i, (int) item->GetType(), (int) item->IsEnabled(),
+                        (int) item->GetBrdLayerId(), item->GetThickness(),
+                        item->HasEpsilonRValue() ? item->GetEpsilonR() : -1.0 );
+        }
+
         m_cache[key] = 0;
         return 0;
     }
@@ -180,24 +245,38 @@ int IMPEDANCE_CALCULATOR::ComputeOhms( const BOARD_STACKUP& aStackup, PCB_LAYER_
 
     if( aLayer == F_Cu || aLayer == B_Cu )
     {
-        auto [heightM, dk] = collectDielectricToReference( layers, signalIdx,
-                                                           ( aLayer == F_Cu ) ? +1 : -1 );
+        const DIELECTRIC_SPAN span = collectDielectricToReference( layers, signalIdx,
+                                                                   ( aLayer == F_Cu ) ? +1 : -1 );
 
-        if( heightM > 0.0 && dk > 0.0 )
-            z0Ohms = analyseMicrostrip( widthM, signalThicknessM, heightM, dk );
+        wxLogTrace( IMPEDANCE_TRACE,
+                    "  microstrip: signalT=%.6f widthM=%.6f heightM=%.6f dk=%.3f df=%.4f",
+                    signalThicknessM, widthM, span.heightM, span.dk, span.df );
+
+        if( span.valid() )
+            z0Ohms = analyseMicrostrip( widthM, signalThicknessM, span.heightM, span.dk, span.df,
+                                        m_params );
     }
     else
     {
-        auto [topH, topDk] = collectDielectricToReference( layers, signalIdx, -1 );
-        auto [botH, botDk] = collectDielectricToReference( layers, signalIdx, +1 );
+        const DIELECTRIC_SPAN top = collectDielectricToReference( layers, signalIdx, -1 );
+        const DIELECTRIC_SPAN bot = collectDielectricToReference( layers, signalIdx, +1 );
 
-        if( topH > 0.0 && botH > 0.0 )
+        wxLogTrace( IMPEDANCE_TRACE,
+                    "  stripline: signalT=%.6f widthM=%.6f topH=%.6f topDk=%.3f "
+                    "botH=%.6f botDk=%.3f",
+                    signalThicknessM, widthM, top.heightM, top.dk, bot.heightM, bot.dk );
+
+        if( top.heightM > 0.0 && bot.heightM > 0.0 )
         {
-            const double totalH = topH + botH;
-            const double dk     = ( topH * topDk + botH * botDk ) / totalH;
-            z0Ohms              = analyseStripline( widthM, signalThicknessM, topH, botH, dk );
+            const double totalH = top.heightM + bot.heightM;
+            const double dk     = ( top.heightM * top.dk + bot.heightM * bot.dk ) / totalH;
+            const double df     = ( top.heightM * top.df + bot.heightM * bot.df ) / totalH;
+            z0Ohms              = analyseStripline( widthM, signalThicknessM, top.heightM,
+                                                    bot.heightM, dk, df, m_params );
         }
     }
+
+    wxLogTrace( IMPEDANCE_TRACE, "  → z0=%d Ω", z0Ohms );
 
     m_cache[key] = z0Ohms;
     return z0Ohms;

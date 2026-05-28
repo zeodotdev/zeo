@@ -215,6 +215,13 @@ BOARD_DESIGN_SETTINGS::BOARD_DESIGN_SETTINGS( JSON_SETTINGS* aParent, const std:
     m_ZoneKeepExternalFillets = false;
     m_UseHeightForLengthCalcs = true;
 
+    // Signal-integrity analysis defaults (see header). Defaults reproduce the prior
+    // hardcoded behaviour: 1 GHz, copper, smooth foil, datasheet Dk taken at 1 GHz.
+    m_SI_ReferenceFrequency     = 1.0e9;
+    m_SI_DkMeasurementFrequency = 1.0e9;
+    m_SI_ConductorResistivity   = 1.72e-8;
+    m_SI_ConductorRoughness     = 0.0;
+
     // Global mask margins:
     m_SolderMaskExpansion = pcbIUScale.mmToIU( DEFAULT_SOLDERMASK_EXPANSION );
     m_SolderMaskMinWidth = pcbIUScale.mmToIU( DEFAULT_SOLDERMASK_MIN_WIDTH );
@@ -264,6 +271,17 @@ BOARD_DESIGN_SETTINGS::BOARD_DESIGN_SETTINGS( JSON_SETTINGS* aParent, const std:
 
     m_params.emplace_back( new PARAM<bool>( "rules.use_height_for_length_calcs",
             &m_UseHeightForLengthCalcs, true ) );
+
+    // Signal-integrity analysis parameters (impedance / loss). Frequencies in Hz,
+    // resistivity in ohm-metre, roughness in metres.
+    m_params.emplace_back( new PARAM<double>( "signal_integrity.reference_frequency",
+            &m_SI_ReferenceFrequency, 1.0e9 ) );
+    m_params.emplace_back( new PARAM<double>( "signal_integrity.dk_measurement_frequency",
+            &m_SI_DkMeasurementFrequency, 1.0e9 ) );
+    m_params.emplace_back( new PARAM<double>( "signal_integrity.conductor_resistivity",
+            &m_SI_ConductorResistivity, 1.72e-8 ) );
+    m_params.emplace_back( new PARAM<double>( "signal_integrity.conductor_roughness",
+            &m_SI_ConductorRoughness, 0.0 ) );
 
     m_params.emplace_back( new PARAM_SCALED<int>( "rules.min_clearance",
             &m_MinClearance, pcbIUScale.mmToIU( DEFAULT_MINCLEARANCE ),
@@ -1169,6 +1187,10 @@ void BOARD_DESIGN_SETTINGS::initFromOther( const BOARD_DESIGN_SETTINGS& aOther )
     m_gridOrigin               = aOther.m_gridOrigin;
     m_HasStackup               = aOther.m_HasStackup;
     m_UseHeightForLengthCalcs  = aOther.m_UseHeightForLengthCalcs;
+    m_SI_ReferenceFrequency     = aOther.m_SI_ReferenceFrequency;
+    m_SI_DkMeasurementFrequency = aOther.m_SI_DkMeasurementFrequency;
+    m_SI_ConductorResistivity   = aOther.m_SI_ConductorResistivity;
+    m_SI_ConductorRoughness     = aOther.m_SI_ConductorRoughness;
 
     m_trackWidthIndex     = aOther.m_trackWidthIndex;
     m_viaSizeIndex        = aOther.m_viaSizeIndex;
@@ -1274,6 +1296,10 @@ bool BOARD_DESIGN_SETTINGS::operator==( const BOARD_DESIGN_SETTINGS& aOther ) co
     if( m_gridOrigin               != aOther.m_gridOrigin ) return false;
     if( m_HasStackup               != aOther.m_HasStackup ) return false;
     if( m_UseHeightForLengthCalcs  != aOther.m_UseHeightForLengthCalcs ) return false;
+    if( m_SI_ReferenceFrequency     != aOther.m_SI_ReferenceFrequency ) return false;
+    if( m_SI_DkMeasurementFrequency != aOther.m_SI_DkMeasurementFrequency ) return false;
+    if( m_SI_ConductorResistivity   != aOther.m_SI_ConductorResistivity ) return false;
+    if( m_SI_ConductorRoughness     != aOther.m_SI_ConductorRoughness ) return false;
     if( m_trackWidthIndex          != aOther.m_trackWidthIndex ) return false;
     if( m_viaSizeIndex             != aOther.m_viaSizeIndex ) return false;
     if( m_diffPairIndex            != aOther.m_diffPairIndex ) return false;

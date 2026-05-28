@@ -29,6 +29,22 @@ class BOARD_STACKUP;
 
 
 /**
+ * Signal-integrity analysis inputs that are NOT part of the physical stackup geometry.
+ *
+ * Defaults reproduce the legacy hardcoded behaviour (1 GHz, copper, smooth foil), so an
+ * unconfigured board computes exactly as before.  Populated from BOARD_DESIGN_SETTINGS'
+ * m_SI_* fields by the BOARD overload of ComputeOhms().
+ */
+struct IMPEDANCE_PARAMS
+{
+    double frequencyHz         = 1.0e9;    ///< analysis frequency (modal dispersion + skin depth)
+    double dkMeasurementFreqHz = 1.0e9;    ///< frequency the stackup Dk/Df are specified at
+    double conductorRho        = 1.72e-8;  ///< conductor resistivity, ohm-metre (copper @20°C)
+    double roughnessM          = 0.0;      ///< conductor RMS surface roughness, metres
+};
+
+
+/**
  * Single-ended characteristic impedance Z₀ calculation for tracks on a copper layer.
  *
  * Microstrip is used for outer copper layers (F.Cu / B.Cu); stripline for inner copper
@@ -57,9 +73,20 @@ public:
 
     /**
      * Same as ComputeOhms but accepts a pre-fetched stackup so callers iterating many
-     * tracks don't pay the per-call GetStackupOrDefault() cost.
+     * tracks don't pay the per-call GetStackupOrDefault() cost.  Uses the SI params most
+     * recently set via SetParams() (default: legacy 1 GHz / copper / smooth).
      */
     int ComputeOhms( const BOARD_STACKUP& aStackup, PCB_LAYER_ID aLayer, int aWidthIU );
+
+    /// Set the signal-integrity analysis parameters (frequency, conductor properties).
+    /// Clears the cache, since cached results depend on these.
+    void SetParams( const IMPEDANCE_PARAMS& aParams )
+    {
+        m_params = aParams;
+        m_cache.clear();
+    }
+
+    const IMPEDANCE_PARAMS& GetParams() const { return m_params; }
 
     void ClearCache() { m_cache.clear(); }
 
@@ -82,6 +109,8 @@ private:
     };
 
     std::unordered_map<CACHE_KEY, int, CACHE_KEY_HASH> m_cache;
+
+    IMPEDANCE_PARAMS m_params;
 };
 
 

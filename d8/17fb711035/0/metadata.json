@@ -1,0 +1,50 @@
+{
+  "cli_version": "0.6.1",
+  "checkpoint_id": "d817fb711035",
+  "session_id": "c8807604-0459-403a-be78-a518044c92be",
+  "strategy": "manual-commit",
+  "created_at": "2026-05-28T23:10:31.545829Z",
+  "branch": "ganesh/zeo-impedence-constraint",
+  "checkpoints_count": 2,
+  "files_touched": [
+    "src/zeo/pcbnew/CMakeLists.txt",
+    "src/zeo/pcbnew/dialogs/dialog_board_setup.cpp",
+    "src/zeo/pcbnew/dialogs/dialog_board_setup.h",
+    "src/zeo/pcbnew/dialogs/panel_setup_impedance.cpp",
+    "src/zeo/pcbnew/dialogs/panel_setup_impedance.h"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-opus-4-8[1m]",
+  "turn_id": "458b48146be2",
+  "token_usage": {
+    "input_tokens": 57878,
+    "cache_creation_tokens": 4982010,
+    "cache_read_tokens": 202184824,
+    "output_tokens": 367644,
+    "api_call_count": 512
+  },
+  "session_metrics": {
+    "turn_count": 29
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-05-28T23:10:31.392619Z",
+    "agent_lines": 267,
+    "agent_removed": 0,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 267,
+    "total_lines_changed": 267,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 2,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0
+    }
+  ]
+}

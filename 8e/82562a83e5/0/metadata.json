@@ -1,0 +1,96 @@
+{
+  "cli_version": "0.6.1",
+  "checkpoint_id": "8e82562a83e5",
+  "session_id": "c8807604-0459-403a-be78-a518044c92be",
+  "strategy": "manual-commit",
+  "created_at": "2026-05-30T21:19:23.215586Z",
+  "branch": "ganesh/zeo-impedence-constraint",
+  "checkpoints_count": 8,
+  "files_touched": [
+    "src/zeo/common/CMakeLists.txt",
+    "src/zeo/common/transline_calculations/coplanar.cpp",
+    "src/zeo/common/transline_calculations/coplanar.h",
+    "src/zeo/pcbnew/board_stackup_manager/impedance_calculator.cpp",
+    "src/zeo/pcbnew/board_stackup_manager/impedance_calculator.h",
+    "src/zeo/pcbnew/dialogs/dialog_track_via_properties.cpp",
+    "src/zeo/pcbnew/dialogs/dialog_track_via_properties.h",
+    "src/zeo/pcbnew/drc/drc_test_provider_impedance.cpp",
+    "src/zeo/pcbnew/widgets/pcb_net_inspector_panel.cpp"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-opus-4-8",
+  "turn_id": "b2b72deca60b",
+  "token_usage": {
+    "input_tokens": 100563,
+    "cache_creation_tokens": 5945264,
+    "cache_read_tokens": 230282851,
+    "output_tokens": 526608,
+    "api_call_count": 619
+  },
+  "session_metrics": {
+    "turn_count": 36
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-05-30T21:19:23.046323Z",
+    "agent_lines": 1044,
+    "agent_removed": 45,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 1044,
+    "total_lines_changed": 1089,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 2,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0
+    },
+    {
+      "checkpoint_number": 3,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 74,
+      "agent_lines_removed": 7
+    },
+    {
+      "checkpoint_number": 4,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 74,
+      "agent_lines_removed": 7
+    },
+    {
+      "checkpoint_number": 5,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 74,
+      "agent_lines_removed": 7
+    },
+    {
+      "checkpoint_number": 6,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 863,
+      "agent_lines_removed": 24
+    },
+    {
+      "checkpoint_number": 7,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 863,
+      "agent_lines_removed": 24
+    },
+    {
+      "checkpoint_number": 8,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 1044,
+      "agent_lines_removed": 45
+    }
+  ]
+}

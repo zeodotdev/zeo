@@ -877,8 +877,7 @@ PCB_NET_INSPECTOR_PANEL::calculateNets( const std::vector<NETINFO_ITEM*>& aNetCo
 
     // Length-weighted average Z₀ per net.  Computed serially on the main thread AFTER the
     // length-calc parallel work to avoid contending with the existing iteration over BOARD
-    // items, and because the impedance calc itself is cheap (cached per layer+width).
-    const BOARD_STACKUP              stackup = m_board->GetStackupOrDefault();
+    // items.  ComputeForTrack reads the board's stackup + SI parameters internally.
     IMPEDANCE_CALCULATOR             impCalc;
     std::unordered_map<int, int64_t> weightedSum;
     std::unordered_map<int, int64_t> totalLen;
@@ -900,7 +899,15 @@ PCB_NET_INSPECTOR_PANEL::calculateNets( const std::vector<NETINFO_ITEM*>& aNetCo
 
         try
         {
-            z0  = impCalc.ComputeOhms( stackup, layer, track->GetWidth() );
+            // Model-aware: differential pairs report their differential impedance, coplanar
+            // traces their CPWG impedance, everything else single-ended Z₀.
+            const IMPEDANCE_RESULT imp = impCalc.ComputeForTrack( m_board, track );
+
+            if( imp.isDifferential() && imp.differentialOhms > 0 )
+                z0 = imp.differentialOhms;
+            else
+                z0 = imp.singleEndedOhms;
+
             len = track->GetLength();
         }
         catch( const std::exception& )

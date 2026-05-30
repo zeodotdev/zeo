@@ -34,8 +34,10 @@
     and height) and verify it falls inside the IMPEDANCE_TARGET_CONSTRAINT's min/max
     range.
 
-    Single-ended only (microstrip on outer layers, stripline on inner). Differential
-    pair impedance is a separate constraint (deferred to 0.2.3).
+    The model is chosen per track by IMPEDANCE_CALCULATOR::ComputeForTrack(): coupled
+    microstrip / stripline for differential pairs (checked against the differential target),
+    (grounded) coplanar where adjacent ground copper is detected, otherwise single-ended
+    microstrip (outer) / stripline (inner).
 
     Errors generated:
     - DRCE_IMPEDANCE_OUT_OF_RANGE
@@ -138,11 +140,19 @@ bool DRC_TEST_PROVIDER_IMPEDANCE::Run()
                 if( constraint.IsNull() || constraint.GetSeverity() == RPT_SEVERITY_IGNORE )
                     return true;
 
-                const int width = track->GetWidth();
-                const int z0    = m_calculator.ComputeOhms( stackup, track->GetLayer(), width );
+                const IMPEDANCE_RESULT imp = m_calculator.ComputeForTrack( board, track );
+
+                if( !imp.valid() )
+                    return true;  // stackup didn't yield a usable impedance — skip silently
+
+                // Differential pairs are checked against the differential target; all other
+                // models against the single-ended Z₀.
+                const bool     isDiff = imp.isDifferential() && imp.differentialOhms > 0;
+                const int      z0     = isDiff ? imp.differentialOhms : imp.singleEndedOhms;
+                const wxString label  = isDiff ? _( "differential impedance" ) : _( "impedance" );
 
                 if( z0 <= 0 )
-                    return true;  // stackup didn't yield a usable impedance — skip silently
+                    return true;
 
                 const auto& mom = constraint.m_Value;
 
@@ -159,13 +169,13 @@ bool DRC_TEST_PROVIDER_IMPEDANCE::Run()
 
                 if( tooLow )
                 {
-                    msg = wxString::Format( _( "(%s impedance %d Ω below minimum %d Ω)" ),
-                                            src, z0, mom.Min() );
+                    msg = wxString::Format( _( "(%s %s %d Ω below minimum %d Ω)" ),
+                                            src, label, z0, mom.Min() );
                 }
                 else
                 {
-                    msg = wxString::Format( _( "(%s impedance %d Ω above maximum %d Ω)" ),
-                                            src, z0, mom.Max() );
+                    msg = wxString::Format( _( "(%s %s %d Ω above maximum %d Ω)" ),
+                                            src, label, z0, mom.Max() );
                 }
 
                 drcItem->SetErrorDetail( msg );

@@ -127,6 +127,18 @@ DIALOG_TRACK_VIA_PROPERTIES::DIALOG_TRACK_VIA_PROPERTIES( PCB_BASE_EDIT_FRAME* a
         trackGrid->Add( m_impedanceUnit, wxGBPosition( 3, 2 ), wxGBSpan( 1, 1 ),
                         wxALIGN_CENTER_VERTICAL, 5 );
 
+        // Insertion-loss readout (dB/inch at the board reference frequency) below it.
+        m_lossLabel = new wxStaticText( parent, wxID_ANY, _( "Insertion loss:" ) );
+        m_lossValue = new wxStaticText( parent, wxID_ANY, wxT( "—" ) );
+        m_lossUnit  = new wxStaticText( parent, wxID_ANY, wxT( "dB/in" ) );
+
+        trackGrid->Add( m_lossLabel, wxGBPosition( 4, 0 ), wxGBSpan( 1, 1 ),
+                        wxALIGN_CENTER_VERTICAL, 5 );
+        trackGrid->Add( m_lossValue, wxGBPosition( 4, 1 ), wxGBSpan( 1, 1 ),
+                        wxALIGN_CENTER_VERTICAL | wxEXPAND, 5 );
+        trackGrid->Add( m_lossUnit, wxGBPosition( 4, 2 ), wxGBSpan( 1, 1 ),
+                        wxALIGN_CENTER_VERTICAL, 5 );
+
         m_TrackLayerCtrl->Bind( wxEVT_CHOICE,
                                 [this]( wxCommandEvent& aEvt )
                                 {
@@ -885,6 +897,9 @@ bool DIALOG_TRACK_VIA_PROPERTIES::TransferDataToWindow()
         m_impedanceLabel->Show( m_tracks );
         m_impedanceValue->Show( m_tracks );
         m_impedanceUnit->Show( m_tracks );
+        m_lossLabel->Show( m_tracks );
+        m_lossValue->Show( m_tracks );
+        m_lossUnit->Show( m_tracks );
     }
 
     updateImpedanceDisplay();
@@ -1713,6 +1728,11 @@ void DIALOG_TRACK_VIA_PROPERTIES::updateImpedanceDisplay()
     if( !m_impedanceValue )
         return;
 
+    // Loss is shown only when a single track resolves to a concrete model (set below);
+    // default to blank for the multi-select / invalid cases.
+    if( m_lossValue )
+        m_lossValue->SetLabel( wxT( "—" ) );
+
     BOARD* brd = m_frame->GetBoard();
 
     if( !brd || !m_tracks )
@@ -1734,9 +1754,52 @@ void DIALOG_TRACK_VIA_PROPERTIES::updateImpedanceDisplay()
 
     if( !IsCopperLayer( layer ) )
     {
+        m_impedanceLabel->SetLabel( _( "Impedance Z₀:" ) );
         m_impedanceValue->SetLabel( wxT( "—" ) );
         return;
     }
+
+    // If exactly one track is selected, use the model-aware calculation so a differential
+    // pair shows its differential impedance and a coplanar trace its CPWG impedance, plus the
+    // insertion loss.  (These use the track's actual geometry / gap; the single-ended preview
+    // below tracks the width being edited for the common microstrip / stripline case.)
+    PCB_TRACK* singleTrack = nullptr;
+    int        trackCount  = 0;
+
+    for( EDA_ITEM* item : m_items )
+    {
+        if( PCB_TRACK* t = dynamic_cast<PCB_TRACK*>( item ) )
+        {
+            ++trackCount;
+            singleTrack = t;
+        }
+    }
+
+    if( trackCount == 1 && singleTrack )
+    {
+        const IMPEDANCE_RESULT imp = m_impedanceCalc.ComputeForTrack( brd, singleTrack );
+
+        if( m_lossValue && imp.valid() && imp.totalLossDbPerInch() > 0.0 )
+            m_lossValue->SetLabel( wxString::Format( wxT( "%.3f" ), imp.totalLossDbPerInch() ) );
+
+        if( imp.isDifferential() && imp.differentialOhms > 0 )
+        {
+            m_impedanceLabel->SetLabel( _( "Differential Z:" ) );
+            m_impedanceValue->SetLabel( wxString::Format( wxT( "%d" ), imp.differentialOhms ) );
+            return;
+        }
+
+        if( ( imp.model == IMPEDANCE_MODEL::GROUNDED_COPLANAR
+              || imp.model == IMPEDANCE_MODEL::COPLANAR )
+            && imp.singleEndedOhms > 0 )
+        {
+            m_impedanceLabel->SetLabel( _( "Impedance Z₀ (CPW):" ) );
+            m_impedanceValue->SetLabel( wxString::Format( wxT( "%d" ), imp.singleEndedOhms ) );
+            return;
+        }
+    }
+
+    m_impedanceLabel->SetLabel( _( "Impedance Z₀:" ) );
 
     const int z0 = m_impedanceCalc.ComputeOhms( brd, layer, *widthOpt );
 

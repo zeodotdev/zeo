@@ -110,9 +110,13 @@ private:
     std::map<int, PCB_LAYER_ID> m_editLayerCtrlMap;
     bool                        m_padstackDirty;
 
-    /// Read-only Z₀ display widgets, added programmatically below the track-width row.
+    /// Read-only Z₀ + insertion-loss display widgets, added programmatically below the
+    /// track-width row.
     wxStaticText* m_impedanceLabel = nullptr;
     wxStaticText* m_impedanceValue = nullptr;
     wxStaticText* m_impedanceUnit  = nullptr;
+    wxStaticText* m_lossLabel      = nullptr;
+    wxStaticText* m_lossValue      = nullptr;
+    wxStaticText* m_lossUnit       = nullptr;
     IMPEDANCE_CALCULATOR m_impedanceCalc;
 };

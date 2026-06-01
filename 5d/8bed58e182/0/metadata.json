@@ -1,0 +1,61 @@
+{
+  "cli_version": "0.6.1",
+  "checkpoint_id": "5d8bed58e182",
+  "session_id": "c8807604-0459-403a-be78-a518044c92be",
+  "strategy": "manual-commit",
+  "created_at": "2026-06-01T02:46:05.92155Z",
+  "branch": "ganesh/zeo-impedence-constraint",
+  "checkpoints_count": 2,
+  "files_touched": [
+    "src/zeo/common/transline_calculations/coupled_stripline.cpp",
+    "src/zeo/common/transline_calculations/coupled_stripline.h",
+    "src/zeo/pcbnew/board_stackup_manager/impedance_calculator.cpp",
+    "src/zeo/qa/tests/common/CMakeLists.txt"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-opus-4-8",
+  "turn_id": "7d560764bc88",
+  "token_usage": {
+    "input_tokens": 104595,
+    "cache_creation_tokens": 8023894,
+    "cache_read_tokens": 239916468,
+    "output_tokens": 600756,
+    "api_call_count": 648
+  },
+  "session_metrics": {
+    "turn_count": 37
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-06-01T02:46:05.742046Z",
+    "agent_lines": 0,
+    "agent_removed": 0,
+    "human_added": 272,
+    "human_modified": 67,
+    "human_removed": 0,
+    "total_committed": 272,
+    "total_lines_changed": 339,
+    "agent_percentage": 0,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 2,
+      "user_lines_added": 339,
+      "user_lines_removed": 67,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        "src/zeo/common/transline_calculations/coupled_stripline.cpp": 132,
+        "src/zeo/common/transline_calculations/coupled_stripline.h": 23,
+        "src/zeo/pcbnew/board_stackup_manager/impedance_calculator.cpp": 21,
+        "src/zeo/qa/tests/common/CMakeLists.txt": 1,
+        "src/zeo/qa/tests/common/test_coupled_stripline.cpp": 162
+      },
+      "user_removed_per_file": {
+        "src/zeo/common/transline_calculations/coupled_stripline.cpp": 31,
+        "src/zeo/common/transline_calculations/coupled_stripline.h": 9,
+        "src/zeo/pcbnew/board_stackup_manager/impedance_calculator.cpp": 27
+      }
+    }
+  ]
+}

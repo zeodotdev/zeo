@@ -1,0 +1,28 @@
+{
+  "cli_version": "0.6.1",
+  "checkpoint_id": "5d8bed58e182",
+  "strategy": "manual-commit",
+  "branch": "ganesh/zeo-impedence-constraint",
+  "checkpoints_count": 2,
+  "files_touched": [
+    "src/zeo/common/transline_calculations/coupled_stripline.cpp",
+    "src/zeo/common/transline_calculations/coupled_stripline.h",
+    "src/zeo/pcbnew/board_stackup_manager/impedance_calculator.cpp",
+    "src/zeo/qa/tests/common/CMakeLists.txt"
+  ],
+  "sessions": [
+    {
+      "metadata": "/5d/8bed58e182/0/metadata.json",
+      "transcript": "/5d/8bed58e182/0/full.jsonl",
+      "content_hash": "/5d/8bed58e182/0/content_hash.txt",
+      "prompt": "/5d/8bed58e182/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 104595,
+    "cache_creation_tokens": 8023894,
+    "cache_read_tokens": 239916468,
+    "output_tokens": 600756,
+    "api_call_count": 648
+  }
+}

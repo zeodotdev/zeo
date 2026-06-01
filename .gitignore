@@ -24,3 +24,4 @@ build.log
 **/.opencode/*.db
 **/.opencode/*.db-shm
 **/.opencode/*.db-wal
+squashfs-root/

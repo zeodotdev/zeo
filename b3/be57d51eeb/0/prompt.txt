@@ -1,0 +1,25 @@
+Read thorugh the current agent system: this means how the agent is prompted, how it creates tool calls to make changes, etc. Give me a brief summary of what you read
+
+---
+
+There is a large problem with this system: the agent is really bad at spatial awareness. To fix this, we want the agent to write a DSL, likely a fork of https://github.com/diodeinc/pcb, which you can read in ../../pcb and use a compiler that we prototyped in a project called zeo1 (../zeo1). The idea of this change is that the agent writes all the nets and pins in a DSL where we can include other options in that DSL for the agent to enforce constraints, breakpoints to declare what groups should be together on a schematic, etc. Read thorugh all of these and let's think about the implementation and what we would need to change. Note Zeo, has a rust API under zeo-rust, but it has not updated like zeo-python to have full control over the entire system. If we are using a DSL, we may not even need that full control, so let's think about what needs to happen for this to work. Also note that this is a full roudtrip system. When a user edits a schamtiatc, those edits are also made to the DSL as well as diffed so an agent can keep track of changes.
+
+---
+
+Interesting note on the zeo-rust/zeo-python problem. We build out zeo-python to allow it to have full schamtic communication. The IPC hooks in application already exist so the question is would wiring up zeo-rust to those hooks be a trivial problem. There is also this rust package: https://github.com/Milind220/kicad-ipc-rs which seems to be al alternative to the rust ipc library. I would prefer to use zeo-rust as that makes it easer to merge back into KiCad, but this is also an option
+
+---
+
+no changes to the code for now, just planning - we will plan in detail on linear and then proceed to implementation. The next thing to discuss are the changes to the Zener language itself. The idea is to reduce the amount of tool calls made with questionable feedback to the model and instead try and declaure everything in the code files. This includes seperate boards, seperate sheets, groups of symbols together, contraints, impedence control values, etc. LEt's go through the current features of the languauge and see where we will need to expand it for our use
+
+---
+
+Let's compare this to .zeo. I prefer to use Zener since its being actively developed unlike .zeo which was a prototype, but a place where we considered a lot of these problems. It is however, not a fully fluched out languange. LEt's see if the .zeo answers some of the open design questions for us
+
+---
+
+proceed
+
+---
+
+If we were to fork pcb, could we make all the additions from .zeo in pcb? .zeo was inspired by pcb in the first place

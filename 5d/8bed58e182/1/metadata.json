@@ -1,0 +1,61 @@
+{
+  "cli_version": "0.6.1",
+  "checkpoint_id": "5d8bed58e182",
+  "session_id": "e7ce8928-090f-4742-9975-7ce230da987b",
+  "strategy": "manual-commit",
+  "created_at": "2026-06-01T02:46:06.011417Z",
+  "branch": "ganesh/zeo-impedence-constraint",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "src/zeo/common/transline_calculations/coupled_stripline.cpp",
+    "src/zeo/common/transline_calculations/coupled_stripline.h",
+    "src/zeo/pcbnew/board_stackup_manager/impedance_calculator.cpp",
+    "src/zeo/qa/tests/common/CMakeLists.txt"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-opus-4-8[1m]",
+  "turn_id": "6be5259a7015",
+  "token_usage": {
+    "input_tokens": 3868,
+    "cache_creation_tokens": 10177,
+    "cache_read_tokens": 154132,
+    "output_tokens": 3022,
+    "api_call_count": 7
+  },
+  "session_metrics": {
+    "turn_count": 1
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-06-01T02:46:06.009577Z",
+    "agent_lines": 0,
+    "agent_removed": 0,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 67,
+    "total_committed": 0,
+    "total_lines_changed": 67,
+    "agent_percentage": 0,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 339,
+      "user_lines_removed": 67,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        "src/zeo/common/transline_calculations/coupled_stripline.cpp": 132,
+        "src/zeo/common/transline_calculations/coupled_stripline.h": 23,
+        "src/zeo/pcbnew/board_stackup_manager/impedance_calculator.cpp": 21,
+        "src/zeo/qa/tests/common/CMakeLists.txt": 1,
+        "src/zeo/qa/tests/common/test_coupled_stripline.cpp": 162
+      },
+      "user_removed_per_file": {
+        "src/zeo/common/transline_calculations/coupled_stripline.cpp": 31,
+        "src/zeo/common/transline_calculations/coupled_stripline.h": 9,
+        "src/zeo/pcbnew/board_stackup_manager/impedance_calculator.cpp": 27
+      }
+    }
+  ]
+}

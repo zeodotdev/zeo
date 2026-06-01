@@ -41,30 +41,75 @@ void COUPLED_STRIPLINE::Analyse()
     SetParameter( TCP::SKIN_DEPTH, SkinDepth() );
 
     // Get analysis parameters
-    double       w = GetParameter( TCP::PHYS_WIDTH );
-    double       t = GetParameter( TCP::T );
-    double       s = GetParameter( TCP::PHYS_S );
-    double       h = GetParameter( TCP::H );
+    const double w  = GetParameter( TCP::PHYS_WIDTH );
+    const double t  = GetParameter( TCP::T );
+    const double s  = GetParameter( TCP::PHYS_S );
+    const double H  = GetParameter( TCP::H );
     const double er = GetParameter( TCP::EPSILONR );
 
-    calcZeroThicknessCoupledImpedances( h, w, s, er );
+    // STRIPLINE_A is the gap from one reference plane to the strip.  When unset (0) or out of
+    // range the strip is treated as centred between the planes — reproducing the symmetric
+    // Cohn result of the original model exactly.
+    double     a      = GetParameter( TCP::STRIPLINE_A );
+    const bool offset = ( a > 0.0 && ( a + t ) < H );
 
-    // We've got the impedances now for an infinitely thin line
-    if( t == 0.0 )
+    if( !offset )
+        a = ( H - t ) / 2.0;
+
+    if( offset )
     {
-        SetParameter( TCP::Z0_E, Z0_e_w_h_0_s_h );
-        SetParameter( TCP::Z0_O, Z0_o_w_h_0_s_h );
+        // Image / partial-capacitance method: an offset stripline is the parallel combination
+        // of two symmetric striplines, each formed by mirroring the strip about one plane
+        // (ground-plane separations 2a+t for the near plane and 2(H-a)-t for the far plane).
+        // Applied independently to the even- and odd-mode admittances.  Reduces exactly to the
+        // symmetric Cohn result when a = (H-t)/2 (h1 = h2 = H).
+        const double h1 = 2.0 * a + t;
+        const double h2 = 2.0 * ( H - a ) - t;
+
+        double z0e1, z0o1, z0e2, z0o2;
+        calcSymmetricCoupled( h1, w, s, t, er, z0e1, z0o1 );
+        calcSymmetricCoupled( h2, w, s, t, er, z0e2, z0o2 );
+
+        const double z0e = 2.0 / ( 1.0 / z0e1 + 1.0 / z0e2 );
+        const double z0o = 2.0 / ( 1.0 / z0o1 + 1.0 / z0o2 );
+
+        SetParameter( TCP::Z0_E, z0e );
+        SetParameter( TCP::Z0_O, z0o );
+        SetParameter( TCP::Z_DIFF, 2.0 * z0o );
     }
     else
     {
-        calcSingleStripImpedances();
-        calcFringeCapacitances( h, t, er );
-        calcZ0EvenMode();
-        calcZ0OddMode( t, s );
+        double z0e, z0o;
+        calcSymmetricCoupled( H, w, s, t, er, z0e, z0o );
+
+        SetParameter( TCP::Z0_E, z0e );
+        SetParameter( TCP::Z0_O, z0o );
+        SetParameter( TCP::Z_DIFF, 2.0 * z0o );
     }
 
-    calcLosses();
+    calcLosses( a );
     calcDielectrics();
+}
+
+
+void COUPLED_STRIPLINE::calcSymmetricCoupled( const double h, const double w, const double s,
+                                              const double t, const double er, double& aZ0e,
+                                              double& aZ0o )
+{
+    calcZeroThicknessCoupledImpedances( h, w, s, er );
+
+    // Infinitely thin line — the zero-thickness coupled impedances are the answer directly.
+    if( t == 0.0 )
+    {
+        aZ0e = Z0_e_w_h_0_s_h;
+        aZ0o = Z0_o_w_h_0_s_h;
+        return;
+    }
+
+    calcSingleStripImpedances( h );
+    calcFringeCapacitances( h, t, er );
+    aZ0e = calcZ0EvenMode();
+    aZ0o = calcZ0OddMode( t, s );
 }
 
 
@@ -215,6 +260,10 @@ void COUPLED_STRIPLINE::SetAnalysisResults()
     SetAnalysisResult( TCP::UNIT_PROP_DELAY_EVEN, unit_prop_delay_e );
     SetAnalysisResult( TCP::UNIT_PROP_DELAY_ODD, unit_prop_delay_o );
     SetAnalysisResult( TCP::SKIN_DEPTH, GetParameter( TCP::SKIN_DEPTH ) );
+    SetAnalysisResult( TCP::ATTEN_COND_EVEN, atten_cond_e );
+    SetAnalysisResult( TCP::ATTEN_COND_ODD, atten_cond_o );
+    SetAnalysisResult( TCP::ATTEN_DILECTRIC_EVEN, atten_diel_e );
+    SetAnalysisResult( TCP::ATTEN_DILECTRIC_ODD, atten_diel_o );
 
     const double Z0_E = GetParameter( TCP::Z0_E );
     const double Z0_O = GetParameter( TCP::Z0_O );
@@ -301,14 +350,13 @@ void COUPLED_STRIPLINE::calcZeroThicknessCoupledImpedances( const double h, cons
 }
 
 
-void COUPLED_STRIPLINE::calcSingleStripImpedances()
+void COUPLED_STRIPLINE::calcSingleStripImpedances( const double h )
 {
     const double er = GetParameter( TCP::EPSILONR );
-    const double h = GetParameter( TCP::H );
     const double w = GetParameter( TCP::PHYS_WIDTH );
 
-    // Finite-thickness single strip impedance
-    Z0_w_h_t_h = calcZ0SymmetricStripline();
+    // Finite-thickness single strip impedance (strip centred in separation h)
+    Z0_w_h_t_h = calcZ0SymmetricStripline( h );
 
     // Zero-thickness single strip impedance
     // Reference [1], Eqs. 5 - 6 (corrected for sqrt(e_r))
@@ -319,16 +367,14 @@ void COUPLED_STRIPLINE::calcSingleStripImpedances()
 }
 
 
-void COUPLED_STRIPLINE::calcZ0EvenMode()
+double COUPLED_STRIPLINE::calcZ0EvenMode()
 {
     // Reference [2], Eq. 18
-    const double Z_e =
-            1.0 / ( ( 1.0 / Z0_w_h_t_h ) - ( C_f_t_h / C_f_0 ) * ( ( 1.0 / Z0_w_h_0 ) - ( 1.0 / Z0_e_w_h_0_s_h ) ) );
-    SetParameter( TCP::Z0_E, Z_e );
+    return 1.0 / ( ( 1.0 / Z0_w_h_t_h ) - ( C_f_t_h / C_f_0 ) * ( ( 1.0 / Z0_w_h_0 ) - ( 1.0 / Z0_e_w_h_0_s_h ) ) );
 }
 
 
-void COUPLED_STRIPLINE::calcZ0OddMode( const double t, const double s )
+double COUPLED_STRIPLINE::calcZ0OddMode( const double t, const double s )
 {
     // Reference [2], Eq. 20
     const double Z_o_1 =
@@ -340,15 +386,69 @@ void COUPLED_STRIPLINE::calcZ0OddMode( const double t, const double s )
             / ( ( 1.0 / Z0_o_w_h_0_s_h ) + ( ( 1.0 / Z0_w_h_t_h ) - ( 1.0 / Z0_w_h_0 ) )
                 - ( 2.0 / TC::ZF0 ) * ( C_f_t_h / TC::E0 - C_f_0 / TC::E0 ) + ( 2.0 * t ) / ( TC::ZF0 * s ) );
 
-    const double Z_o = s / t >= 5.0 ? Z_o_1 : Z_o_2;
-
-    SetParameter( TCP::Z0_O, Z_o );
-    SetParameter( TCP::Z_DIFF, 2.0 * Z_o );
+    return s / t >= 5.0 ? Z_o_1 : Z_o_2;
 }
 
 
-void COUPLED_STRIPLINE::calcLosses()
+void COUPLED_STRIPLINE::calcLosses( const double a )
 {
+    const double er    = GetParameter( TCP::EPSILONR );
+    const double t     = GetParameter( TCP::T );
+    const double w     = GetParameter( TCP::PHYS_WIDTH );
+    const double H     = GetParameter( TCP::H );
+    const double f     = GetParameter( TCP::FREQUENCY );
+    const double L     = GetParameter( TCP::PHYS_LEN );
+    const double tand  = GetParameter( TCP::TAND );
+    const double rough = GetParameter( TCP::ROUGH );
+    const double sigma = GetParameter( TCP::SIGMA );
+
+    // Dielectric loss (homogeneous medium → identical for even and odd modes), matching the
+    // single-stripline formulation.  dB over PHYS_LEN.
+    atten_diel_e = atten_diel_o = ( tand > 0.0 && f > 0.0 )
+                                          ? TC::LOG2DB * L * ( M_PI / TC::C0 ) * f * std::sqrt( er ) * tand
+                                          : 0.0;
+
+    // Conductor loss: an isolated single stripline at the actual offset gives the baseline
+    // attenuation (it already sums the loss to both reference planes); scale per mode by the
+    // impedance ratio (alpha_c ∝ 1/Z0 for a fixed current distribution).  Roughness is applied
+    // via the Hammerstad-Jensen correction.
+    atten_cond_e = atten_cond_o = 0.0;
+
+    if( sigma <= 0.0 || f <= 0.0 )
+        return;
+
+    m_striplineCalc.SetParameter( TCP::EPSILONR, er );
+    m_striplineCalc.SetParameter( TCP::T, t );
+    m_striplineCalc.SetParameter( TCP::STRIPLINE_A, a );
+    m_striplineCalc.SetParameter( TCP::H, H );
+    m_striplineCalc.SetParameter( TCP::PHYS_WIDTH, w );
+    m_striplineCalc.SetParameter( TCP::PHYS_LEN, L );
+    m_striplineCalc.SetParameter( TCP::FREQUENCY, f );
+    m_striplineCalc.SetParameter( TCP::TAND, 0.0 );  // dielectric loss handled above
+    m_striplineCalc.SetParameter( TCP::SIGMA, sigma );
+    m_striplineCalc.SetParameter( TCP::MURC, GetParameter( TCP::MURC ) );
+    m_striplineCalc.SetParameter( TCP::ANG_L, 0.0 );
+    m_striplineCalc.Analyse();
+
+    double       condSingle = m_striplineCalc.GetParameter( TCP::LOSS_CONDUCTOR );
+    const double zSingle    = m_striplineCalc.GetParameter( TCP::Z0 );
+
+    if( !std::isfinite( condSingle ) || condSingle < 0.0 || zSingle <= 0.0 )
+        return;
+
+    const double skin = GetParameter( TCP::SKIN_DEPTH );
+
+    if( rough > 0.0 && skin > 0.0 )
+    {
+        const double r = rough / skin;
+        condSingle *= 1.0 + ( 2.0 / M_PI ) * std::atan( 1.4 * r * r );
+    }
+
+    const double zE = GetParameter( TCP::Z0_E );
+    const double zO = GetParameter( TCP::Z0_O );
+
+    atten_cond_e = ( zE > 0.0 ) ? condSingle * ( zSingle / zE ) : condSingle;
+    atten_cond_o = ( zO > 0.0 ) ? condSingle * ( zSingle / zO ) : condSingle;
 }
 
 
@@ -374,12 +474,13 @@ void COUPLED_STRIPLINE::calcDielectrics()
 }
 
 
-double COUPLED_STRIPLINE::calcZ0SymmetricStripline()
+double COUPLED_STRIPLINE::calcZ0SymmetricStripline( const double h )
 {
+    // Single strip centred in a cavity of ground-plane separation h (STRIPLINE_A = h/2).
     m_striplineCalc.SetParameter( TRANSLINE_PARAMETERS::EPSILONR, GetParameter( TCP::EPSILONR ) );
     m_striplineCalc.SetParameter( TRANSLINE_PARAMETERS::T, GetParameter( TCP::T ) );
-    m_striplineCalc.SetParameter( TRANSLINE_PARAMETERS::STRIPLINE_A, GetParameter( TCP::H ) / 2.0 );
-    m_striplineCalc.SetParameter( TRANSLINE_PARAMETERS::H, GetParameter( TCP::H ) );
+    m_striplineCalc.SetParameter( TRANSLINE_PARAMETERS::STRIPLINE_A, h / 2.0 );
+    m_striplineCalc.SetParameter( TRANSLINE_PARAMETERS::H, h );
     m_striplineCalc.SetParameter( TRANSLINE_PARAMETERS::PHYS_LEN, GetParameter( TCP::PHYS_LEN ) );
     m_striplineCalc.SetParameter( TRANSLINE_PARAMETERS::FREQUENCY, GetParameter( TCP::FREQUENCY ) );
     m_striplineCalc.SetParameter( TRANSLINE_PARAMETERS::TAND, 0.0 );

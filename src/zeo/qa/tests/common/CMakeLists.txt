@@ -42,6 +42,7 @@ set( QA_COMMON_SRCS
     test_color4d.cpp
     test_commit.cpp
     test_coroutine.cpp
+    test_coupled_stripline.cpp
     test_eda_shape.cpp
     test_eda_text.cpp
     test_embedded_file_compress.cpp

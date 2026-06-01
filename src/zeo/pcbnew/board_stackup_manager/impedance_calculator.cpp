@@ -354,22 +354,26 @@ namespace
     }
 
 
-    COUPLED_RESULT analyseCoupledStripline( double aWidthM, double aSignalThicknessM,
-                                            double aTotalHeightM, double aDk, double aDf,
-                                            double aGapM, const IMPEDANCE_PARAMS& aParams )
+    COUPLED_RESULT analyseCoupledStripline( double aWidthM, double aSignalThicknessM, double aTopH,
+                                            double aBotH, double aDk, double aDf, double aGapM,
+                                            const IMPEDANCE_PARAMS& aParams )
     {
         const double rho = aParams.conductorRho > 0.0 ? aParams.conductorRho : 1.72e-8;
 
-        // COUPLED_STRIPLINE's parameter map registers neither TAND nor ROUGH (SetParameter
-        // throws on unsupported keys), and it emits no loss outputs; it models a symmetric
-        // (centred) coupled stripline.  We take Z_diff / Z0_O from it and estimate per-line
-        // loss from an equivalent centred single stripline of the same width (below).
+        // Full ground-plane separation and the strip's offset from the top plane.  The model
+        // handles the offset (image / partial-capacitance method) and now emits native odd-mode
+        // conductor + dielectric loss; STRIPLINE_A = top gap (== centred when top == bottom).
+        const double totalH = aTopH + aBotH + aSignalThicknessM;
+
         COUPLED_STRIPLINE sl;
         sl.SetParameter( TRANSLINE_PARAMETERS::PHYS_WIDTH, aWidthM );
         sl.SetParameter( TRANSLINE_PARAMETERS::PHYS_S, aGapM );
         sl.SetParameter( TRANSLINE_PARAMETERS::T, aSignalThicknessM );
-        sl.SetParameter( TRANSLINE_PARAMETERS::H, aTotalHeightM );
+        sl.SetParameter( TRANSLINE_PARAMETERS::H, totalH );
+        sl.SetParameter( TRANSLINE_PARAMETERS::STRIPLINE_A, aTopH );
         sl.SetParameter( TRANSLINE_PARAMETERS::EPSILONR, aDk );
+        sl.SetParameter( TRANSLINE_PARAMETERS::TAND, aDf );
+        sl.SetParameter( TRANSLINE_PARAMETERS::ROUGH, aParams.roughnessM );
         sl.SetParameter( TRANSLINE_PARAMETERS::MURC, 1.0 );
         sl.SetParameter( TRANSLINE_PARAMETERS::FREQUENCY, aParams.frequencyHz );
         sl.SetParameter( TRANSLINE_PARAMETERS::SIGMA, 1.0 / rho );
@@ -393,20 +397,8 @@ namespace
             out.lineOhms = static_cast<int>( it->second.first + 0.5 );
         }
 
-        // Estimate per-line loss from an equivalent centred single stripline (same width, full
-        // plate separation) — the coupled-stripline model itself emits no loss terms.  This is
-        // a close first-order approximation; coupling perturbs the current distribution only
-        // slightly at the gaps used for controlled impedance.
-        const double half = ( aTotalHeightM - aSignalThicknessM ) * 0.5;
-
-        if( half > 0.0 )
-        {
-            const LINE_RESULT eq =
-                    analyseStripline( aWidthM, aSignalThicknessM, half, half, aDk, aDf, aParams );
-            out.condLossDbPerM = eq.condLossDbPerM;
-            out.dielLossDbPerM = eq.dielLossDbPerM;
-        }
-
+        out.condLossDbPerM = resultValue( results, TRANSLINE_PARAMETERS::ATTEN_COND_ODD );
+        out.dielLossDbPerM = resultValue( results, TRANSLINE_PARAMETERS::ATTEN_DILECTRIC_ODD );
         return out;
     }
 
@@ -769,16 +761,18 @@ IMPEDANCE_RESULT IMPEDANCE_CALCULATOR::ComputeForTrack( BOARD* aBoard, const PCB
 
                     if( top.heightM > 0.0 && bot.heightM > 0.0 )
                     {
-                        const double sumH   = top.heightM + bot.heightM;
-                        const double totalH = sumH + signalThicknessM;
-                        const double dk0    = ( top.heightM * top.dk + bot.heightM * bot.dk ) / sumH;
-                        const double df0    = ( top.heightM * top.df + bot.heightM * bot.df ) / sumH;
+                        const double sumH = top.heightM + bot.heightM;
+                        const double dk0  = ( top.heightM * top.dk + bot.heightM * bot.dk ) / sumH;
+                        const double df0  = ( top.heightM * top.df + bot.heightM * bot.df ) / sumH;
 
                         auto [dk, df] = djordjevicSarkar( dk0, df0, params.dkMeasurementFreqHz,
                                                           params.frequencyHz );
 
+                        // Pass the real top/bottom dielectric heights so the model captures the
+                        // strip's offset between its reference planes (not just the symmetric case).
                         COUPLED_RESULT cr = analyseCoupledStripline( widthM, signalThicknessM,
-                                                                     totalH, dk, df, gapM, params );
+                                                                     top.heightM, bot.heightM, dk, df,
+                                                                     gapM, params );
 
                         if( cr.diffOhms > 0 )
                         {

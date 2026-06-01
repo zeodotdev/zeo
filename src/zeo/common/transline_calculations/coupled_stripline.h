@@ -41,7 +41,8 @@ public:
     COUPLED_STRIPLINE() :
             TRANSLINE_CALCULATION_BASE( { TCP::SKIN_DEPTH, TCP::Z0_E, TCP::Z0_O, TCP::Z_DIFF, TCP::PHYS_WIDTH,
                                           TCP::FREQUENCY, TCP::PHYS_LEN, TCP::H, TCP::PHYS_S, TCP::T, TCP::EPSILONR,
-                                          TCP::MURC, TCP::SIGMA, TCP::ANG_L } )
+                                          TCP::MURC, TCP::SIGMA, TCP::ANG_L, TCP::STRIPLINE_A, TCP::TAND,
+                                          TCP::ROUGH } )
     {
     }
 
@@ -58,26 +59,34 @@ private:
     /// Sets the output values and status following synthesis
     void SetSynthesisResults() override;
 
-    /// Calculates the impedance of a finite-width single strip
-    double calcZ0SymmetricStripline();
+    /**
+     * Computes the symmetric (centred) even/odd-mode impedances for a ground-plane separation
+     * @p h using the Cohn shielded coupled-strip formulation (refs [1],[2]).  Offset geometries
+     * are handled by Analyse() combining two of these (image / partial-capacitance method).
+     */
+    void calcSymmetricCoupled( double h, double w, double s, double t, double er, double& aZ0e,
+                               double& aZ0o );
+
+    /// Calculates the impedance of a finite-width single strip centred in separation @p h
+    double calcZ0SymmetricStripline( double h );
 
     /// Calculate the coupling fringe capacitances
     void calcFringeCapacitances( double h, double t, double er );
 
-    /// Calculates impedances of finite- and zero-thickness single strips
-    void calcSingleStripImpedances();
+    /// Calculates impedances of finite- and zero-thickness single strips for separation @p h
+    void calcSingleStripImpedances( double h );
 
     /// Calculates zero-thickness coupled strip impedances
     void calcZeroThicknessCoupledImpedances( double h, double w, double s, double er );
 
     /// Calculates even mode Z0
-    void calcZ0EvenMode();
+    double calcZ0EvenMode();
 
     /// Calculates odd mode Z0
-    void calcZ0OddMode( double t, double s );
+    double calcZ0OddMode( double t, double s );
 
-    /// Calculates conductor and dielectric losses
-    void calcLosses();
+    /// Calculates conductor and dielectric losses for the given strip-to-near-plane gap @p a
+    void calcLosses( double a );
 
     /// Calculate dialectric and propagation parameters
     void calcDielectrics();
@@ -95,6 +104,11 @@ private:
     double ang_l{ 0.0 };             ///< Angular length (rad)
     double unit_prop_delay_e{ 0.0 }; ///< Even mode unit propagation delay (ps/cm)
     double unit_prop_delay_o{ 0.0 }; ///< Odd mode unit propagation delay (ps/cm)
+
+    double atten_cond_e{ 0.0 };      ///< Even mode conductor loss (dB over PHYS_LEN)
+    double atten_cond_o{ 0.0 };      ///< Odd mode conductor loss (dB over PHYS_LEN)
+    double atten_diel_e{ 0.0 };      ///< Even mode dielectric loss (dB over PHYS_LEN)
+    double atten_diel_o{ 0.0 };      ///< Odd mode dielectric loss (dB over PHYS_LEN)
 
     /// Calculator used to determine single stripline values
     STRIPLINE m_striplineCalc;

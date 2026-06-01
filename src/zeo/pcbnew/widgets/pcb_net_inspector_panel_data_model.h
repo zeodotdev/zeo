@@ -283,6 +283,16 @@ public:
         m_avg_impedance = aValue;
     }
 
+    /// Total insertion loss in dB across this net's routed length at the board reference
+    /// frequency.  0 when no tracks are routed (or impedance can't be computed).
+    double GetInsertionLoss() const { return m_insertion_loss; }
+
+    void SetInsertionLoss( double aValue )
+    {
+        m_column_changed[COLUMN_INSERTION_LOSS] |= ( m_insertion_loss != aValue );
+        m_insertion_loss = aValue;
+    }
+
     void SetLayerWireLength( const int64_t aValue, PCB_LAYER_ID aLayer )
     {
         auto it = m_layer_wire_length.find( aLayer );
@@ -505,6 +515,7 @@ private:
     int64_t       m_pad_die_length = 0;
     int64_t       m_pad_die_delay = 0;
     int           m_avg_impedance = 0;       ///< Length-weighted Z₀ across this net's tracks (ohms).
+    double        m_insertion_loss = 0.0;    ///< Total insertion loss across this net (dB at ref freq).
 
     std::map<PCB_LAYER_ID, int64_t> m_layer_wire_length{};
     std::map<PCB_LAYER_ID, int64_t> m_layer_wire_delay{};
@@ -956,6 +967,11 @@ protected:
                 const int z0 = i->GetAvgImpedance();
                 aOutValue = z0 > 0 ? wxString::Format( wxT( "%d Ω" ), z0 ) : wxString();
             }
+            else if( aCol == COLUMN_INSERTION_LOSS )
+            {
+                const double loss = i->GetInsertionLoss();
+                aOutValue = loss > 0.0 ? wxString::Format( wxT( "%.2f dB" ), loss ) : wxString();
+            }
             else if( aCol > COLUMN_LAST_STATIC_COL && aCol <= m_parent.m_columns.size() )
             {
                 if( m_show_time_domain_details )
@@ -1061,6 +1077,12 @@ protected:
         else if( aCol == COLUMN_AVG_IMPEDANCE && i1.GetAvgImpedance() != i2.GetAvgImpedance() )
         {
             return compareUInt( i1.GetAvgImpedance(), i2.GetAvgImpedance(), aAsc );
+        }
+        else if( aCol == COLUMN_INSERTION_LOSS && i1.GetInsertionLoss() != i2.GetInsertionLoss() )
+        {
+            // Scale to milli-dB so the integer comparator orders the double losses.
+            return compareUInt( static_cast<int64_t>( i1.GetInsertionLoss() * 1000.0 ),
+                                static_cast<int64_t>( i2.GetInsertionLoss() * 1000.0 ), aAsc );
         }
         else if( aCol > COLUMN_LAST_STATIC_COL && aCol < m_parent.m_columns.size() )
         {

@@ -20,6 +20,7 @@
 
 #include "impedance_calculator.h"
 
+#include <advanced_config.h>
 #include <board.h>
 #include <board_design_settings.h>
 #include <board_stackup_manager/board_stackup.h>
@@ -435,11 +436,9 @@ namespace
 
         out.z0Ohms = static_cast<int>( z0 + 0.5 );
 
-        // The ported coplanar model computes loss from SIGMA / TAND but not roughness; apply
-        // the Hammerstad-Jensen correction to the conductor loss here for consistency.
-        const double skin = resultValue( results, TRANSLINE_PARAMETERS::SKIN_DEPTH );
-        out.condLossDbPerM = resultValue( results, TRANSLINE_PARAMETERS::LOSS_CONDUCTOR )
-                             * roughnessLossFactor( aParams.roughnessM, skin );
+        // The coplanar model now applies the Hammerstad-Jensen roughness correction to the
+        // conductor loss internally, so read it directly.
+        out.condLossDbPerM = resultValue( results, TRANSLINE_PARAMETERS::LOSS_CONDUCTOR );
         out.dielLossDbPerM = resultValue( results, TRANSLINE_PARAMETERS::LOSS_DIELECTRIC );
         return out;
     }
@@ -481,6 +480,37 @@ namespace
     }
 
 
+    // A net usable as a coplanar reference: unconnected / bare copper, or a recognised ground /
+    // power net (by name).  Used so a nearby *signal* net is not mistaken for a coplanar return,
+    // which would wrongly reclassify an ordinary trace as CPW.
+    bool isReferenceNet( BOARD* aBoard, int aNetCode )
+    {
+        if( aNetCode <= 0 )
+            return true;
+
+        NETINFO_ITEM* net = aBoard->FindNet( aNetCode );
+
+        if( !net )
+            return true;
+
+        const wxString name = net->GetNetname().Upper();
+
+        static const wxChar* const tokens[] = { wxT( "GND" ),  wxT( "GROUND" ), wxT( "VSS" ),
+                                                 wxT( "VEE" ),  wxT( "AGND" ),  wxT( "DGND" ),
+                                                 wxT( "PGND" ), wxT( "EARTH" ), wxT( "VCC" ),
+                                                 wxT( "VDD" ),  wxT( "VBAT" ),  wxT( "VPP" ),
+                                                 wxT( "PWR" ),  wxT( "POWER" ) };
+
+        for( const wxChar* tok : tokens )
+        {
+            if( name.Contains( tok ) )
+                return true;
+        }
+
+        return false;
+    }
+
+
     struct COPLANAR_GEOMETRY
     {
         bool   found = false;
@@ -488,10 +518,15 @@ namespace
     };
 
 
-    // Conservative coplanar detection: ground copper (a zone on a different net) must lie
-    // within ~3 trace widths (capped at 1 mm) of the trace edge on BOTH sides, with roughly
-    // symmetric gaps.  Otherwise we return "not coplanar" and the caller falls back to the
-    // microstrip / stripline model — so ordinary plane-referenced traces are unaffected.
+    // Geometric coplanar (CPW / CPWG) detection.  Recognised ground/reference copper — a zone
+    // fill or a ground/power track on the same layer — must sit close to the trace on BOTH sides
+    // with roughly symmetric gaps before the trace is treated as coplanar; otherwise the caller
+    // falls back to microstrip / stripline, so ordinary plane-referenced traces are unaffected.
+    // The proximity window (as a multiple of width) and symmetry tolerance are ADVANCED_CFG knobs.
+    //
+    // The coplanar model assumes equal side gaps: for moderate asymmetry the mean gap is used,
+    // and strongly-asymmetric copper is rejected (fall back) rather than mismodelled.  Explicit
+    // per-net CPW selection will arrive with impedance profiles (IP1).
     COPLANAR_GEOMETRY findCoplanarGround( BOARD* aBoard, const PCB_TRACK* aTrack )
     {
         const SEG seg( aTrack->GetStart(), aTrack->GetEnd() );
@@ -499,19 +534,64 @@ namespace
         if( seg.A == seg.B )
             return {};
 
-        const PCB_LAYER_ID layer = aTrack->GetLayer();
-        const int          width = aTrack->GetWidth();
+        const PCB_LAYER_ID layer   = aTrack->GetLayer();
+        const int          width   = aTrack->GetWidth();
+        const int          netCode = aTrack->GetNetCode();
 
-        const long long maxGapIU = std::min<long long>( (long long) width * 3, 1000000 );  // 1 mm
+        const ADVANCED_CFG& cfg = ADVANCED_CFG::GetCfg();
+        const double widthRatio = cfg.m_CoplanarGapWidthRatio > 0.0 ? cfg.m_CoplanarGapWidthRatio : 3.0;
+        const double symTol = cfg.m_CoplanarGapSymmetryRatio >= 1.0 ? cfg.m_CoplanarGapSymmetryRatio : 2.5;
+
+        const long long maxGapIU = static_cast<long long>( (double) width * widthRatio );
+
+        if( maxGapIU <= 0 )
+            return {};
 
         long long leftGap = -1, rightGap = -1;
 
+        auto consider = [&]( long long aGap, const VECTOR2I& aNear )
+        {
+            if( aGap < 0 )
+                aGap = 0;
+
+            if( aGap > maxGapIU )
+                return;
+
+            const long long side = seg.LineDistance( aNear, true );
+
+            if( side >= 0 )
+            {
+                if( rightGap < 0 || aGap < rightGap )
+                    rightGap = aGap;
+            }
+            else
+            {
+                if( leftGap < 0 || aGap < leftGap )
+                    leftGap = aGap;
+            }
+        };
+
+        // Segment bounding box (expanded by the window) for cheap candidate rejection.
+        const int ex     = (int) maxGapIU + width;
+        const int bbMinX = std::min( seg.A.x, seg.B.x ) - ex;
+        const int bbMaxX = std::max( seg.A.x, seg.B.x ) + ex;
+        const int bbMinY = std::min( seg.A.y, seg.B.y ) - ex;
+        const int bbMaxY = std::max( seg.A.y, seg.B.y ) + ex;
+
+        auto bboxNear = [&]( const VECTOR2I& a, const VECTOR2I& b, int halfW )
+        {
+            return !( std::min( a.x, b.x ) - halfW > bbMaxX || std::max( a.x, b.x ) + halfW < bbMinX
+                      || std::min( a.y, b.y ) - halfW > bbMaxY
+                      || std::max( a.y, b.y ) + halfW < bbMinY );
+        };
+
+        // Zone fills are the usual coplanar reference.
         for( ZONE* zone : aBoard->Zones() )
         {
-            if( !zone || !zone->IsOnLayer( layer ) )
+            if( !zone || !zone->IsOnLayer( layer ) || zone->GetNetCode() == netCode )
                 continue;
 
-            if( zone->GetNetCode() == aTrack->GetNetCode() )
+            if( !isReferenceNet( aBoard, zone->GetNetCode() ) )
                 continue;
 
             std::shared_ptr<SHAPE_POLY_SET> polys = zone->GetFilledPolysList( layer );
@@ -521,43 +601,42 @@ namespace
 
             VECTOR2I          nearest;
             const SEG::ecoord dsq = polys->SquaredDistanceToSeg( seg, &nearest );
-            const long long   d   = (long long) std::sqrt( (double) dsq );
-            long long         gap = d - width / 2;
+            consider( (long long) std::sqrt( (double) dsq ) - width / 2, nearest );
+        }
 
-            if( gap < 0 )
-                gap = 0;
-
-            if( gap > maxGapIU )
+        // Ground / power tracks on the same layer (e.g. coplanar guard traces).
+        for( PCB_TRACK* t : aBoard->Tracks() )
+        {
+            if( ( t->Type() != PCB_TRACE_T && t->Type() != PCB_ARC_T ) || t->GetLayer() != layer
+                || t->GetNetCode() == netCode )
                 continue;
 
-            // Signed perpendicular position of the nearest copper relative to the trace.
-            const long long side = seg.LineDistance( nearest, true );
+            if( !bboxNear( t->GetStart(), t->GetEnd(), t->GetWidth() / 2 ) )
+                continue;
 
-            if( side >= 0 )
-            {
-                if( rightGap < 0 || gap < rightGap )
-                    rightGap = gap;
-            }
-            else
-            {
-                if( leftGap < 0 || gap < leftGap )
-                    leftGap = gap;
-            }
+            if( !isReferenceNet( aBoard, t->GetNetCode() ) )
+                continue;
+
+            const SEG       segB( t->GetStart(), t->GetEnd() );
+            const long long d = seg.Distance( segB );
+            const VECTOR2I  mid( ( t->GetStartX() + t->GetEndX() ) / 2,
+                                 ( t->GetStartY() + t->GetEndY() ) / 2 );
+            consider( d - ( width + t->GetWidth() ) / 2, mid );
         }
 
         if( leftGap < 0 || rightGap < 0 )
-            return {};  // need ground on both sides to be coplanar
+            return {};  // need reference copper on both sides to be coplanar
 
         const long long lo = std::min( leftGap, rightGap );
         const long long hi = std::max( leftGap, rightGap );
 
-        // Require rough symmetry: wider gap ≤ 2.5× narrower (+ 50 µm slack).
-        if( hi > lo * 5 / 2 + 50000 )
+        // Symmetry gate (configurable): reject strongly-asymmetric copper.
+        if( hi > (long long) ( (double) lo * symTol ) + 50000 )
             return {};
 
         COPLANAR_GEOMETRY out;
         out.found = true;
-        out.gapM  = ( ( leftGap + rightGap ) / 2.0 ) / 1e9;
+        out.gapM  = ( ( leftGap + rightGap ) / 2.0 ) / 1e9;  // symmetric-model effective gap
         return out;
     }
 }
@@ -683,13 +762,8 @@ int IMPEDANCE_CALCULATOR::ComputeOhms( const BOARD_STACKUP& aStackup, PCB_LAYER_
 }
 
 
-IMPEDANCE_RESULT IMPEDANCE_CALCULATOR::ComputeForTrack( BOARD* aBoard, const PCB_TRACK* aTrack )
+void IMPEDANCE_CALCULATOR::applyBoardParams( BOARD* aBoard )
 {
-    IMPEDANCE_RESULT result;
-
-    if( !aBoard || !aTrack )
-        return result;
-
     const BOARD_DESIGN_SETTINGS& bds = aBoard->GetDesignSettings();
 
     IMPEDANCE_PARAMS params;
@@ -699,138 +773,85 @@ IMPEDANCE_RESULT IMPEDANCE_CALCULATOR::ComputeForTrack( BOARD* aBoard, const PCB
     params.roughnessM          = bds.m_SI_ConductorRoughness >= 0.0 ? bds.m_SI_ConductorRoughness : 0.0;
 
     SetParams( params );
+}
 
-    const PCB_LAYER_ID layer = aTrack->GetLayer();
-    const int          width = aTrack->GetWidth();
 
-    if( width <= 0 || !IsCopperLayer( layer ) )
-        return result;
+IMPEDANCE_RESULT IMPEDANCE_CALCULATOR::computeGeometry( const BOARD_STACKUP& aStackup,
+                                                        PCB_LAYER_ID aLayer, int aWidthIU,
+                                                        int aGapIU )
+{
+    IMPEDANCE_RESULT result;
 
-    const BOARD_STACKUP                     stackup = aBoard->GetStackupOrDefault();
-    const std::vector<BOARD_STACKUP_ITEM*>& layers  = stackup.GetList();
-    const int signalIdx = findStackupCopperIndex( layers, layer );
+    const std::vector<BOARD_STACKUP_ITEM*>& layers = aStackup.GetList();
+    const int signalIdx = findStackupCopperIndex( layers, aLayer );
 
-    if( signalIdx < 0 )
+    if( signalIdx < 0 || aWidthIU <= 0 )
         return result;
 
     BOARD_STACKUP_ITEM* signal           = layers[signalIdx];
     const double        signalThicknessM = signal->GetThickness() / 1e9;
-    const double        widthM           = width / 1e9;
-    const bool          outer            = ( layer == F_Cu || layer == B_Cu );
-    const int           dir              = ( layer == F_Cu ) ? +1 : -1;
+    const double        widthM           = aWidthIU / 1e9;
+    const bool          outer            = ( aLayer == F_Cu || aLayer == B_Cu );
+    const int           dir              = ( aLayer == F_Cu ) ? +1 : -1;
+    const double        gapM             = aGapIU > 0 ? aGapIU / 1e9 : 0.0;
 
-    // 1) Differential pair — the track's net has a coupled complement and we can find the
-    //    partner track on this layer to measure the gap.
-    if( aTrack->GetNetCode() > 0 )
+    // Differential pair (coupled microstrip / stripline) when a gap is supplied.
+    if( gapM > 0.0 )
     {
-        if( NETINFO_ITEM* coupled = aBoard->DpCoupledNet( aTrack->GetNet() ) )
-        {
-            const double gapM = findDiffPairGapM( aBoard, aTrack, coupled->GetNetCode() );
-
-            if( gapM > 0.0 )
-            {
-                if( outer )
-                {
-                    const DIELECTRIC_SPAN span =
-                            collectDielectricToReference( layers, signalIdx, dir );
-
-                    if( span.valid() )
-                    {
-                        auto [dk, df] = djordjevicSarkar( span.dk, span.df,
-                                                          params.dkMeasurementFreqHz,
-                                                          params.frequencyHz );
-                        COUPLED_RESULT cr = analyseCoupledMicrostrip( widthM, signalThicknessM,
-                                                                      span.heightM, dk, df, gapM,
-                                                                      params );
-
-                        if( cr.diffOhms > 0 )
-                        {
-                            result.model                  = IMPEDANCE_MODEL::COUPLED_MICROSTRIP;
-                            result.differentialOhms       = cr.diffOhms;
-                            result.singleEndedOhms        = cr.lineOhms;
-                            result.conductorLossDbPerInch = cr.condLossDbPerM * M_PER_INCH;
-                            result.dielectricLossDbPerInch = cr.dielLossDbPerM * M_PER_INCH;
-                            return result;
-                        }
-                    }
-                }
-                else
-                {
-                    const DIELECTRIC_SPAN top = collectDielectricToReference( layers, signalIdx, -1 );
-                    const DIELECTRIC_SPAN bot = collectDielectricToReference( layers, signalIdx, +1 );
-
-                    if( top.heightM > 0.0 && bot.heightM > 0.0 )
-                    {
-                        const double sumH = top.heightM + bot.heightM;
-                        const double dk0  = ( top.heightM * top.dk + bot.heightM * bot.dk ) / sumH;
-                        const double df0  = ( top.heightM * top.df + bot.heightM * bot.df ) / sumH;
-
-                        auto [dk, df] = djordjevicSarkar( dk0, df0, params.dkMeasurementFreqHz,
-                                                          params.frequencyHz );
-
-                        // Pass the real top/bottom dielectric heights so the model captures the
-                        // strip's offset between its reference planes (not just the symmetric case).
-                        COUPLED_RESULT cr = analyseCoupledStripline( widthM, signalThicknessM,
-                                                                     top.heightM, bot.heightM, dk, df,
-                                                                     gapM, params );
-
-                        if( cr.diffOhms > 0 )
-                        {
-                            result.model                  = IMPEDANCE_MODEL::COUPLED_STRIPLINE;
-                            result.differentialOhms       = cr.diffOhms;
-                            result.singleEndedOhms        = cr.lineOhms;
-                            result.conductorLossDbPerInch = cr.condLossDbPerM * M_PER_INCH;
-                            result.dielectricLossDbPerInch = cr.dielLossDbPerM * M_PER_INCH;
-                            return result;
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // 2) Coplanar — adjacent ground copper on both sides (conservative geometric test).
-    if( COPLANAR_GEOMETRY cpg = findCoplanarGround( aBoard, aTrack ); cpg.found )
-    {
-        // Use the (nearer) reference plane height as the coplanar substrate height; with a
-        // plane present this is grounded-coplanar (CPWG), the common PCB case.
-        DIELECTRIC_SPAN refSpan;
-
         if( outer )
         {
-            refSpan = collectDielectricToReference( layers, signalIdx, dir );
+            const DIELECTRIC_SPAN span = collectDielectricToReference( layers, signalIdx, dir );
+
+            if( span.valid() )
+            {
+                auto [dk, df] = djordjevicSarkar( span.dk, span.df, m_params.dkMeasurementFreqHz,
+                                                  m_params.frequencyHz );
+                COUPLED_RESULT cr = analyseCoupledMicrostrip( widthM, signalThicknessM,
+                                                              span.heightM, dk, df, gapM, m_params );
+
+                if( cr.diffOhms > 0 )
+                {
+                    result.model                   = IMPEDANCE_MODEL::COUPLED_MICROSTRIP;
+                    result.differentialOhms        = cr.diffOhms;
+                    result.singleEndedOhms         = cr.lineOhms;
+                    result.conductorLossDbPerInch  = cr.condLossDbPerM * M_PER_INCH;
+                    result.dielectricLossDbPerInch = cr.dielLossDbPerM * M_PER_INCH;
+                }
+            }
         }
         else
         {
             const DIELECTRIC_SPAN top = collectDielectricToReference( layers, signalIdx, -1 );
             const DIELECTRIC_SPAN bot = collectDielectricToReference( layers, signalIdx, +1 );
 
-            if( top.valid() && ( !bot.valid() || top.heightM <= bot.heightM ) )
-                refSpan = top;
-            else
-                refSpan = bot;
-        }
-
-        if( refSpan.valid() )
-        {
-            auto [dk, df] = djordjevicSarkar( refSpan.dk, refSpan.df, params.dkMeasurementFreqHz,
-                                              params.frequencyHz );
-            const LINE_RESULT cp = analyseCoplanar( widthM, signalThicknessM, refSpan.heightM, dk,
-                                                    df, cpg.gapM, /*grounded*/ true, params );
-
-            if( cp.z0Ohms > 0 )
+            if( top.heightM > 0.0 && bot.heightM > 0.0 )
             {
-                result.model                  = IMPEDANCE_MODEL::GROUNDED_COPLANAR;
-                result.singleEndedOhms        = cp.z0Ohms;
-                result.conductorLossDbPerInch = cp.condLossDbPerM * M_PER_INCH;
-                result.dielectricLossDbPerInch = cp.dielLossDbPerM * M_PER_INCH;
-                return result;
+                const double sumH = top.heightM + bot.heightM;
+                const double dk0  = ( top.heightM * top.dk + bot.heightM * bot.dk ) / sumH;
+                const double df0  = ( top.heightM * top.df + bot.heightM * bot.df ) / sumH;
+
+                auto [dk, df] = djordjevicSarkar( dk0, df0, m_params.dkMeasurementFreqHz,
+                                                  m_params.frequencyHz );
+
+                // Real top/bottom heights → the model captures the strip's offset.
+                COUPLED_RESULT cr = analyseCoupledStripline( widthM, signalThicknessM, top.heightM,
+                                                             bot.heightM, dk, df, gapM, m_params );
+
+                if( cr.diffOhms > 0 )
+                {
+                    result.model                   = IMPEDANCE_MODEL::COUPLED_STRIPLINE;
+                    result.differentialOhms        = cr.diffOhms;
+                    result.singleEndedOhms         = cr.lineOhms;
+                    result.conductorLossDbPerInch  = cr.condLossDbPerM * M_PER_INCH;
+                    result.dielectricLossDbPerInch = cr.dielLossDbPerM * M_PER_INCH;
+                }
             }
         }
+
+        return result;
     }
 
-    // 3) Single-ended fallback (microstrip / stripline) — computed directly so we also capture
-    //    the conductor / dielectric loss (ComputeOhms returns only Z₀).
+    // Single-ended (microstrip / stripline).
     LINE_RESULT line;
 
     if( outer )
@@ -839,9 +860,9 @@ IMPEDANCE_RESULT IMPEDANCE_CALCULATOR::ComputeForTrack( BOARD* aBoard, const PCB
 
         if( span.valid() )
         {
-            auto [dk, df] = djordjevicSarkar( span.dk, span.df, params.dkMeasurementFreqHz,
-                                              params.frequencyHz );
-            line = analyseMicrostrip( widthM, signalThicknessM, span.heightM, dk, df, params );
+            auto [dk, df] = djordjevicSarkar( span.dk, span.df, m_params.dkMeasurementFreqHz,
+                                              m_params.frequencyHz );
+            line = analyseMicrostrip( widthM, signalThicknessM, span.heightM, dk, df, m_params );
         }
     }
     else
@@ -855,20 +876,134 @@ IMPEDANCE_RESULT IMPEDANCE_CALCULATOR::ComputeForTrack( BOARD* aBoard, const PCB
             const double dk0  = ( top.heightM * top.dk + bot.heightM * bot.dk ) / sumH;
             const double df0  = ( top.heightM * top.df + bot.heightM * bot.df ) / sumH;
 
-            auto [dk, df] = djordjevicSarkar( dk0, df0, params.dkMeasurementFreqHz,
-                                              params.frequencyHz );
+            auto [dk, df] = djordjevicSarkar( dk0, df0, m_params.dkMeasurementFreqHz,
+                                              m_params.frequencyHz );
             line = analyseStripline( widthM, signalThicknessM, top.heightM, bot.heightM, dk, df,
-                                     params );
+                                     m_params );
         }
     }
 
     if( line.z0Ohms > 0 )
     {
-        result.model                  = outer ? IMPEDANCE_MODEL::MICROSTRIP : IMPEDANCE_MODEL::STRIPLINE;
-        result.singleEndedOhms        = line.z0Ohms;
-        result.conductorLossDbPerInch = line.condLossDbPerM * M_PER_INCH;
+        result.model                   = outer ? IMPEDANCE_MODEL::MICROSTRIP : IMPEDANCE_MODEL::STRIPLINE;
+        result.singleEndedOhms         = line.z0Ohms;
+        result.conductorLossDbPerInch  = line.condLossDbPerM * M_PER_INCH;
         result.dielectricLossDbPerInch = line.dielLossDbPerM * M_PER_INCH;
     }
+
+    return result;
+}
+
+
+IMPEDANCE_RESULT IMPEDANCE_CALCULATOR::ComputeForTrack( BOARD* aBoard, const PCB_TRACK* aTrack )
+{
+    IMPEDANCE_RESULT result;
+
+    if( !aBoard || !aTrack )
+        return result;
+
+    applyBoardParams( aBoard );
+
+    const PCB_LAYER_ID layer = aTrack->GetLayer();
+    const int          width = aTrack->GetWidth();
+
+    if( width <= 0 || !IsCopperLayer( layer ) )
+        return result;
+
+    const BOARD_STACKUP stackup = aBoard->GetStackupOrDefault();
+
+    // 1) Differential pair — the track's net has a coupled complement and the partner track is
+    //    routed on this layer so the gap can be measured.
+    if( aTrack->GetNetCode() > 0 )
+    {
+        if( NETINFO_ITEM* coupled = aBoard->DpCoupledNet( aTrack->GetNet() ) )
+        {
+            const double gapM = findDiffPairGapM( aBoard, aTrack, coupled->GetNetCode() );
+
+            if( gapM > 0.0 )
+            {
+                result = computeGeometry( stackup, layer, width,
+                                          static_cast<int>( gapM * 1e9 + 0.5 ) );
+
+                if( result.valid() )
+                    return result;
+            }
+        }
+    }
+
+    // 2) Coplanar — adjacent ground copper on both sides (needs the placed track to detect).
+    if( COPLANAR_GEOMETRY cpg = findCoplanarGround( aBoard, aTrack ); cpg.found )
+    {
+        const std::vector<BOARD_STACKUP_ITEM*>& layers = stackup.GetList();
+        const int                               signalIdx = findStackupCopperIndex( layers, layer );
+
+        if( signalIdx >= 0 )
+        {
+            BOARD_STACKUP_ITEM* signal           = layers[signalIdx];
+            const double        signalThicknessM = signal->GetThickness() / 1e9;
+            const double        widthM           = width / 1e9;
+            const bool          outer            = ( layer == F_Cu || layer == B_Cu );
+            const int           dir              = ( layer == F_Cu ) ? +1 : -1;
+            // Use the (nearer) reference plane height as the coplanar substrate height; with a
+            // plane present this is grounded-coplanar (CPWG), the common PCB case.
+            DIELECTRIC_SPAN refSpan;
+
+            if( outer )
+            {
+                refSpan = collectDielectricToReference( layers, signalIdx, dir );
+            }
+            else
+            {
+                const DIELECTRIC_SPAN top = collectDielectricToReference( layers, signalIdx, -1 );
+                const DIELECTRIC_SPAN bot = collectDielectricToReference( layers, signalIdx, +1 );
+
+                if( top.valid() && ( !bot.valid() || top.heightM <= bot.heightM ) )
+                    refSpan = top;
+                else
+                    refSpan = bot;
+            }
+
+            if( refSpan.valid() )
+            {
+                auto [dk, df] = djordjevicSarkar( refSpan.dk, refSpan.df,
+                                                  m_params.dkMeasurementFreqHz, m_params.frequencyHz );
+                const LINE_RESULT cp = analyseCoplanar( widthM, signalThicknessM, refSpan.heightM,
+                                                        dk, df, cpg.gapM, /*grounded*/ true,
+                                                        m_params );
+
+                if( cp.z0Ohms > 0 )
+                {
+                    result.model                   = IMPEDANCE_MODEL::GROUNDED_COPLANAR;
+                    result.singleEndedOhms         = cp.z0Ohms;
+                    result.conductorLossDbPerInch  = cp.condLossDbPerM * M_PER_INCH;
+                    result.dielectricLossDbPerInch = cp.dielLossDbPerM * M_PER_INCH;
+                    return result;
+                }
+            }
+        }
+    }
+
+    // 3) Single-ended fallback (microstrip / stripline).
+    return computeGeometry( stackup, layer, width, 0 );
+}
+
+
+IMPEDANCE_RESULT IMPEDANCE_CALCULATOR::ComputeForGeometry( BOARD* aBoard, PCB_LAYER_ID aLayer,
+                                                           int aWidthIU, int aGapIU )
+{
+    if( !aBoard || aWidthIU <= 0 || !IsCopperLayer( aLayer ) )
+        return {};
+
+    applyBoardParams( aBoard );
+
+    const BOARD_STACKUP stackup = aBoard->GetStackupOrDefault();
+
+    IMPEDANCE_RESULT result = computeGeometry( stackup, aLayer, aWidthIU, aGapIU );
+
+    // If a differential result couldn't be produced (e.g. no valid dielectric span), fall back
+    // to single-ended so the router still shows a number.
+    if( !result.valid() && aGapIU > 0 )
+        result = computeGeometry( stackup, aLayer, aWidthIU, 0 );
 
     return result;
 }

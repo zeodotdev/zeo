@@ -139,9 +139,21 @@ void COPLANAR::Analyse()
     double sr_er_f = sr_er0;
     sr_er_f += ( sr_er - sr_er0 ) / ( 1 + G * std::pow( f / fte, -1.8 ) );
 
-    SetParameter( TCP::LOSS_CONDUCTOR, TC::LOG2DB * len * ac_factor * sr_er0
-                                               * std::sqrt( M_PI * TC::MU0 * f
-                                                            / GetParameter( TCP::SIGMA ) ) );
+    double condLoss = TC::LOG2DB * len * ac_factor * sr_er0
+                      * std::sqrt( M_PI * TC::MU0 * f / GetParameter( TCP::SIGMA ) );
+
+    // Surface-roughness correction (Hammerstad-Jensen), applied natively so callers don't have
+    // to scale conductor loss externally.  Δ = RMS roughness, δ = skin depth.
+    const double rough = GetParameter( TCP::ROUGH );
+    const double skin  = GetParameter( TCP::SKIN_DEPTH );
+
+    if( rough > 0.0 && skin > 0.0 )
+    {
+        const double ratio = rough / skin;
+        condLoss *= 1.0 + ( 2.0 / M_PI ) * std::atan( 1.4 * ratio * ratio );
+    }
+
+    SetParameter( TCP::LOSS_CONDUCTOR, condLoss );
     SetParameter( TCP::LOSS_DIELECTRIC, TC::LOG2DB * len * ad_factor * f
                                                 * ( sr_er_f * sr_er_f - 1 ) / sr_er_f );
 

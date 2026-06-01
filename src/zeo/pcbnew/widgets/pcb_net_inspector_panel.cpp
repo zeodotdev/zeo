@@ -166,6 +166,8 @@ void PCB_NET_INSPECTOR_PANEL::buildColumns()
                             _( "Cross-Board Length" ), CSV_COLUMN_DESC::CSV_NONE, true );
     m_columns.emplace_back( 10u, UNDEFINED_LAYER, _( "Avg Z₀" ),
                             _( "Average Impedance" ), CSV_COLUMN_DESC::CSV_NONE, false );
+    m_columns.emplace_back( 11u, UNDEFINED_LAYER, _( "Loss" ),
+                            _( "Insertion Loss" ), CSV_COLUMN_DESC::CSV_NONE, false );
 
     const std::vector<std::function<void( void )>> add_col{
         [&]()
@@ -237,6 +239,13 @@ void PCB_NET_INSPECTOR_PANEL::buildColumns()
         {
             m_netsList->AppendTextColumn( m_columns[COLUMN_AVG_IMPEDANCE].display_name,
                                           m_columns[COLUMN_AVG_IMPEDANCE],
+                                          wxDATAVIEW_CELL_INERT, -1, wxALIGN_CENTER,
+                                          wxDATAVIEW_COL_RESIZABLE|wxDATAVIEW_COL_REORDERABLE|wxDATAVIEW_COL_SORTABLE );
+        },
+        [&]()
+        {
+            m_netsList->AppendTextColumn( m_columns[COLUMN_INSERTION_LOSS].display_name,
+                                          m_columns[COLUMN_INSERTION_LOSS],
                                           wxDATAVIEW_CELL_INERT, -1, wxALIGN_CENTER,
                                           wxDATAVIEW_COL_RESIZABLE|wxDATAVIEW_COL_REORDERABLE|wxDATAVIEW_COL_SORTABLE );
         }
@@ -881,6 +890,7 @@ PCB_NET_INSPECTOR_PANEL::calculateNets( const std::vector<NETINFO_ITEM*>& aNetCo
     IMPEDANCE_CALCULATOR             impCalc;
     std::unordered_map<int, int64_t> weightedSum;
     std::unordered_map<int, int64_t> totalLen;
+    std::unordered_map<int, double>  lossSum;  ///< total insertion loss per net (dB)
 
     for( PCB_TRACK* track : m_board->Tracks() )
     {
@@ -894,8 +904,9 @@ PCB_NET_INSPECTOR_PANEL::calculateNets( const std::vector<NETINFO_ITEM*>& aNetCo
 
         // Wrap per-track so one bad track (e.g. exotic stackup that breaks Analyse())
         // doesn't lose the impedance contribution of every other track.
-        int    z0  = 0;
-        double len = 0.0;
+        int    z0          = 0;
+        double len         = 0.0;
+        double lossPerInch = 0.0;
 
         try
         {
@@ -908,7 +919,8 @@ PCB_NET_INSPECTOR_PANEL::calculateNets( const std::vector<NETINFO_ITEM*>& aNetCo
             else
                 z0 = imp.singleEndedOhms;
 
-            len = track->GetLength();
+            lossPerInch = imp.totalLossDbPerInch();
+            len         = track->GetLength();
         }
         catch( const std::exception& )
         {
@@ -921,6 +933,9 @@ PCB_NET_INSPECTOR_PANEL::calculateNets( const std::vector<NETINFO_ITEM*>& aNetCo
         const int netCode = track->GetNetCode();
         weightedSum[netCode] += static_cast<int64_t>( z0 * len );
         totalLen[netCode] += static_cast<int64_t>( len );
+
+        // Total loss = per-inch loss × routed length in inches (len is in nm → m → inch).
+        lossSum[netCode] += lossPerInch * ( len / 1e9 / 0.0254 );
     }
 
     for( auto& item : results )
@@ -933,6 +948,9 @@ PCB_NET_INSPECTOR_PANEL::calculateNets( const std::vector<NETINFO_ITEM*>& aNetCo
 
         if( lenIt != totalLen.end() && lenIt->second > 0 )
             item->SetAvgImpedance( static_cast<int>( weightedSum[netCode] / lenIt->second ) );
+
+        if( auto lossIt = lossSum.find( netCode ); lossIt != lossSum.end() )
+            item->SetInsertionLoss( lossIt->second );
     }
 
     return results;
@@ -1143,6 +1161,7 @@ void PCB_NET_INSPECTOR_PANEL::updateNets( const std::vector<NETINFO_ITEM*>& aNet
             curListItem->SetViaDelay( newListItem->GetViaDelay() );
             curListItem->SetLayerWireLengths( newListItem->GetLayerWireLengths() );
             curListItem->SetAvgImpedance( newListItem->GetAvgImpedance() );
+            curListItem->SetInsertionLoss( newListItem->GetInsertionLoss() );
 
             if( m_showTimeDomainDetails )
                 curListItem->SetLayerWireDelays( newListItem->GetLayerWireDelays() );

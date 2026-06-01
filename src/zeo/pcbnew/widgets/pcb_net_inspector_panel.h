@@ -318,7 +318,8 @@ private:
         COLUMN_CROSS_BOARD,            ///< "✓" when this net is part of an MBS cross-board net
         COLUMN_CROSS_BOARD_LENGTH,     ///< Sum of routed length across this board + every sibling sub-project
         COLUMN_AVG_IMPEDANCE,          ///< Length-weighted average Z₀ across all tracks on the net
-        COLUMN_LAST_STATIC_COL = COLUMN_AVG_IMPEDANCE
+        COLUMN_INSERTION_LOSS,         ///< Total insertion loss (dB) across the net at the reference frequency
+        COLUMN_LAST_STATIC_COL = COLUMN_INSERTION_LOSS
     };
 
     /// Popup menu item IDs

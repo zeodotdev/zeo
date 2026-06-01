@@ -192,6 +192,27 @@ public:
      */
     double m_SliverAngleTolerance;
 
+    /**
+     * Coplanar-waveguide auto-detection: how far (as a multiple of the track width) adjacent
+     * ground copper may sit from the track edge and still be treated as a coplanar reference.
+     *
+     * Setting name: "ImpedanceCoplanarGapWidthRatio"
+     * Valid values: 0.5 to 20
+     * Default value: 3.0
+     */
+    double m_CoplanarGapWidthRatio;
+
+    /**
+     * Coplanar-waveguide auto-detection: maximum ratio between the wider and narrower side gaps
+     * for a track to still be treated as (symmetric) coplanar.  Beyond this the track falls back
+     * to the microstrip / stripline model.
+     *
+     * Setting name: "ImpedanceCoplanarGapSymmetryRatio"
+     * Valid values: 1 to 10
+     * Default value: 2.5
+     */
+    double m_CoplanarGapSymmetryRatio;
+
 
     /**
      * Dimension used to calculate the actual hole size from the finish hole size.

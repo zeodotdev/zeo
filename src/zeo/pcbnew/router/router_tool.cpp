@@ -3044,12 +3044,12 @@ void ROUTER_TOOL::UpdateMessagePanel()
         // while routing without needing to commit and re-open a dialog.
         if( const wxString impStatus = buildImpedanceStatus(); !impStatus.IsEmpty() )
         {
-            // buildImpedanceStatus() returns "    Z₀ = N Ω"; strip the leading spacer for
-            // a clean row label, and drop the leading newline if present.
+            // buildImpedanceStatus() returns "    Z₀ = N Ω …" (or "Z_diff = …" for a pair, plus
+            // insertion loss); strip the leading spacer for a clean row value.
             wxString z0 = impStatus;
             z0.Trim( false );
 
-            items.emplace_back( _( "Impedance Z₀" ), z0 );
+            items.emplace_back( _( "Impedance" ), z0 );
         }
 
         frame()->SetMsgPanel( items );
@@ -3070,18 +3070,40 @@ wxString ROUTER_TOOL::buildImpedanceStatus() const
         return wxEmptyString;
 
     const PCB_LAYER_ID layer = m_iface->GetBoardLayerFromPNSLayer( m_router->GetCurrentLayer() );
-    const int          width = m_router->Sizes().TrackWidth();
 
-    if( layer == UNDEFINED_LAYER || width <= 0 || !IsCopperLayer( layer ) )
+    if( layer == UNDEFINED_LAYER || !IsCopperLayer( layer ) )
         return wxEmptyString;
 
-    IMPEDANCE_CALCULATOR calc;
-    const int            z0 = calc.ComputeOhms( brd, layer, width );
+    // When routing a differential pair the placer knows the pair width + gap, so we can model
+    // the coupled line and report the differential impedance live; otherwise single-ended Z₀.
+    const PNS::SIZES_SETTINGS sizes = m_router->Sizes();
+    const bool                diff  = ( m_router->Mode() == PNS::PNS_MODE_ROUTE_DIFF_PAIR );
+    const int                 width = diff ? sizes.DiffPairWidth() : sizes.TrackWidth();
+    const int                 gap   = diff ? sizes.DiffPairGap() : 0;
 
-    if( z0 <= 0 )
+    if( width <= 0 )
         return wxEmptyString;
 
-    return wxString::Format( wxT( "    Z₀ = %d Ω" ), z0 );
+    IMPEDANCE_CALCULATOR   calc;
+    const IMPEDANCE_RESULT imp = calc.ComputeForGeometry( brd, layer, width, gap );
+
+    if( !imp.valid() )
+        return wxEmptyString;
+
+    wxString status;
+
+    if( imp.isDifferential() && imp.differentialOhms > 0 )
+        status = wxString::Format( wxT( "    Z_diff = %d Ω" ), imp.differentialOhms );
+    else if( imp.singleEndedOhms > 0 )
+        status = wxString::Format( wxT( "    Z₀ = %d Ω" ), imp.singleEndedOhms );
+    else
+        return wxEmptyString;
+
+    // Append the live insertion loss (dB per inch at the board reference frequency).
+    if( const double loss = imp.totalLossDbPerInch(); loss > 0.0 )
+        status += wxString::Format( wxT( "   (%.2f dB/in)" ), loss );
+
+    return status;
 }
 
 

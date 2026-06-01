@@ -132,6 +132,16 @@ public:
      */
     IMPEDANCE_RESULT ComputeForTrack( BOARD* aBoard, const PCB_TRACK* aTrack );
 
+    /**
+     * Geometry-driven impedance for callers that have explicit (layer, width, gap) rather than
+     * a placed track — notably the PNS router while interactively routing.  @p aGapIU > 0 selects
+     * the differential (coupled microstrip / stripline) model and reports Z_diff; @p aGapIU <= 0
+     * gives single-ended microstrip / stripline.  Falls back to single-ended if a coupled result
+     * can't be produced.  (Coplanar detection needs a placed track and is not attempted here.)
+     */
+    IMPEDANCE_RESULT ComputeForGeometry( BOARD* aBoard, PCB_LAYER_ID aLayer, int aWidthIU,
+                                         int aGapIU );
+
     /// Set the signal-integrity analysis parameters (frequency, conductor properties).
     /// Clears the cache, since cached results depend on these.
     void SetParams( const IMPEDANCE_PARAMS& aParams )
@@ -145,6 +155,15 @@ public:
     void ClearCache() { m_cache.clear(); }
 
 private:
+    /// Populate m_params from the board's signal-integrity settings (with safe fallbacks).
+    void applyBoardParams( BOARD* aBoard );
+
+    /// Shared single-ended / differential model selection on a pre-fetched stackup, using the
+    /// current m_params.  @p aGapIU > 0 → coupled (differential); otherwise single-ended.
+    /// Returns a NONE-model result if the requested model can't be computed.
+    IMPEDANCE_RESULT computeGeometry( const BOARD_STACKUP& aStackup, PCB_LAYER_ID aLayer,
+                                      int aWidthIU, int aGapIU );
+
     struct CACHE_KEY
     {
         PCB_LAYER_ID layer;

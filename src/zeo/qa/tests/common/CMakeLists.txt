@@ -41,6 +41,7 @@ set( QA_COMMON_SRCS
     test_collector.cpp
     test_color4d.cpp
     test_commit.cpp
+    test_coplanar.cpp
     test_coroutine.cpp
     test_coupled_stripline.cpp
     test_eda_shape.cpp

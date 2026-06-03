@@ -1,0 +1,27 @@
+{
+  "cli_version": "0.6.1",
+  "checkpoint_id": "5a33af71575f",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "README.md",
+    "src/zeo/common/dialog_about/AboutDialog_main.cpp",
+    "src/zeo/vcpkg.json"
+  ],
+  "sessions": [
+    {
+      "metadata": "/5a/33af71575f/0/metadata.json",
+      "transcript": "/5a/33af71575f/0/full.jsonl",
+      "content_hash": "/5a/33af71575f/0/content_hash.txt",
+      "prompt": "/5a/33af71575f/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 5812,
+    "cache_creation_tokens": 24888,
+    "cache_read_tokens": 1130173,
+    "output_tokens": 14057,
+    "api_call_count": 13
+  }
+}

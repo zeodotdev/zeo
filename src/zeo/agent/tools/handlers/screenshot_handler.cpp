@@ -24,10 +24,10 @@
 
 
 // Max image dimension in pixels per Claude API limits.
-// Opus 4.7 supports native 2576px long edge (high-res); earlier models
+// Opus 4.7+ supports native 2576px long edge (high-res); earlier models
 // downsample to 1568px. Returning the correct ceiling for the active model
 // avoids wasting tokens on upscaled-then-downsampled pixels on older models
-// while preserving fidelity on 4.7.
+// while preserving fidelity on 4.7+.
 static const int MAX_IMAGE_DIMENSION_HIRES = 2576;
 static const int MAX_IMAGE_DIMENSION_DEFAULT = 1568;
 
@@ -35,11 +35,13 @@ static int MaxImageDimensionForCurrentModel()
 {
     const std::string& model = TOOL_REGISTRY::Instance().GetCurrentModel();
 
-    // Display names used in the UI (e.g. "Claude 4.7 Opus") and API IDs
-    // (e.g. "claude-opus-4-7") are both checked — handlers may see either
+    // Display names used in the UI (e.g. "Claude 4.8 Opus") and API IDs
+    // (e.g. "claude-opus-4-8") are both checked — handlers may see either
     // depending on the code path.
     if( model.find( "4.7" ) != std::string::npos
-        || model.find( "4-7" ) != std::string::npos )
+        || model.find( "4-7" ) != std::string::npos
+        || model.find( "4.8" ) != std::string::npos
+        || model.find( "4-8" ) != std::string::npos )
     {
         return MAX_IMAGE_DIMENSION_HIRES;
     }

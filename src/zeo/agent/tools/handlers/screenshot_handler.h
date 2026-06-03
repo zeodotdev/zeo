@@ -86,7 +86,7 @@ private:
      * Composites any alpha channel onto the given background color, scans for
      * content pixels that differ from the background, crops with padding, and
      * resizes so longest side <= the active model's max native dimension
-     * (2576px for Opus 4.7, 1568px for earlier models).
+     * (2576px for Opus 4.7+, 1568px for earlier models).
      * @param aPngPath Path to the PNG (modified in-place)
      * @param aBgR Background red component
      * @param aBgG Background green component

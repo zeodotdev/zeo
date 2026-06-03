@@ -22,16 +22,18 @@
 #include <cmath>
 
 
-// Opus 4.7 natively supports a 2576px long edge (vs 1568px on prior models).
+// Opus 4.7+ natively supports a 2576px long edge (vs 1568px on prior models).
 // Returning the correct ceiling for the active model avoids wasting tokens
 // on upscaled-then-downsampled pixels on older models while preserving
-// fidelity on 4.7.
+// fidelity on 4.7+.
 static int MaxImageDimensionForCurrentModel()
 {
     const std::string& model = TOOL_REGISTRY::Instance().GetCurrentModel();
 
     if( model.find( "4.7" ) != std::string::npos
-        || model.find( "4-7" ) != std::string::npos )
+        || model.find( "4-7" ) != std::string::npos
+        || model.find( "4.8" ) != std::string::npos
+        || model.find( "4-8" ) != std::string::npos )
     {
         return FileAttach::MAX_IMAGE_DIMENSION_HIRES;
     }

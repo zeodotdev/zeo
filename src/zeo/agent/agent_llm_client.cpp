@@ -181,9 +181,11 @@ void* LLM_REQUEST_THREAD::Entry()
     }
 
     // Map display name to API model ID
-    std::string apiModel = "claude-opus-4-7";
+    std::string apiModel = "claude-opus-4-8";
 
-    if( m_model == "Claude 4.6 Opus" )
+    if( m_model == "Claude 4.7 Opus" )
+        apiModel = "claude-opus-4-7";
+    else if( m_model == "Claude 4.6 Opus" )
         apiModel = "claude-opus-4-6";
     else if( m_model == "Claude 4.6 Sonnet" )
         apiModel = "claude-sonnet-4-6";

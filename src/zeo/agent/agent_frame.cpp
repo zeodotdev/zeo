@@ -711,7 +711,7 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     m_chatController->SetHasQueuedMessageFn(
         [this]() { return HasQueuedMessage(); } );
 
-    // Load persisted model preference (default to Claude 4.7 Opus)
+    // Load persisted model preference (default to Claude 4.8 Opus)
     m_currentModel = LoadModelPreference();
     m_chatController->SetModel( m_currentModel );
 
@@ -771,7 +771,7 @@ AGENT_FRAME::AGENT_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
         UpdateAuthUI();
 
         // Push model list — include Claude Code if available
-        std::vector<std::string> models = { "Claude 4.7 Opus", "Claude 4.6 Opus", "Claude 4.6 Sonnet" };
+        std::vector<std::string> models = { "Claude 4.8 Opus", "Claude 4.7 Opus", "Claude 4.6 Opus", "Claude 4.6 Sonnet" };
 
         // Check if claude CLI is installed
         {
@@ -7003,7 +7003,7 @@ std::string AGENT_FRAME::LoadModelPreference()
         catch( ... ) {}
     }
 
-    return "Claude 4.7 Opus";
+    return "Claude 4.8 Opus";
 }
 
 
@@ -7037,7 +7037,7 @@ void AGENT_FRAME::OnCcPromoAccept()
     DoModelChange( "Claude Code (Opus)" );
 
     // Rebuild model list to reflect new selection
-    std::vector<std::string> models = { "Claude 4.6 Opus", "Claude 4.6 Sonnet" };
+    std::vector<std::string> models = { "Claude 4.8 Opus", "Claude 4.7 Opus", "Claude 4.6 Opus", "Claude 4.6 Sonnet" };
 
     if( m_ccPromoClaudeCodeAvailable )
         models.push_back( "Claude Code (Opus)" );

@@ -54,7 +54,7 @@ void CC_CONTROLLER::Start( const std::string& aWorkingDir,
 
     m_subprocess = std::make_unique<CC_SUBPROCESS>( this );
 
-    if( !m_subprocess->Start( aWorkingDir, m_mcpConfigPath, "claude-opus-4-7" ) )
+    if( !m_subprocess->Start( aWorkingDir, m_mcpConfigPath, "claude-opus-4-8" ) )
     {
         wxLogError( "CC_CONTROLLER: Failed to start Claude Code subprocess" );
         ChatErrorData errData( "Claude Code is not installed. Install it from "
@@ -169,7 +169,7 @@ void CC_CONTROLLER::NewSession()
 
     m_subprocess = std::make_unique<CC_SUBPROCESS>( this );
 
-    if( !m_subprocess->Start( m_workingDir, m_mcpConfigPath, "claude-opus-4-7" ) )
+    if( !m_subprocess->Start( m_workingDir, m_mcpConfigPath, "claude-opus-4-8" ) )
     {
         wxLogError( "CC_CONTROLLER: Failed to start Claude Code subprocess (new session)" );
         ChatErrorData errData( "Claude Code is not installed. Install it from "
@@ -198,7 +198,7 @@ void CC_CONTROLLER::ResumeSession( const std::string& aSessionId )
 
     m_subprocess = std::make_unique<CC_SUBPROCESS>( this );
 
-    if( !m_subprocess->Start( m_workingDir, m_mcpConfigPath, "claude-opus-4-7", aSessionId ) )
+    if( !m_subprocess->Start( m_workingDir, m_mcpConfigPath, "claude-opus-4-8", aSessionId ) )
     {
         wxLogError( "CC_CONTROLLER: Failed to start Claude Code subprocess (resume)" );
         ChatErrorData errData( "Claude Code is not installed. Install it from "

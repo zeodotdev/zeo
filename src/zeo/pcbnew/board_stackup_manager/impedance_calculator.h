@@ -23,6 +23,7 @@
 
 #include <layer_ids.h>
 #include <unordered_map>
+#include <unordered_set>
 
 class BOARD;
 class BOARD_STACKUP;
@@ -184,6 +185,12 @@ private:
     std::unordered_map<CACHE_KEY, int, CACHE_KEY_HASH> m_cache;
 
     IMPEDANCE_PARAMS m_params;
+
+    /// Net codes that act as a return / reference conductor (power & ground nets, plane nets),
+    /// classified structurally rather than by net-name.  Built once per board and reused across
+    /// the many per-track queries the coplanar detector makes.
+    std::unordered_set<int> m_referenceNets;
+    const BOARD*            m_referenceNetsBoard = nullptr;
 };
 
 

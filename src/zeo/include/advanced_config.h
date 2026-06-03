@@ -213,6 +213,19 @@ public:
      */
     double m_CoplanarGapSymmetryRatio;
 
+    /**
+     * Coplanar-waveguide auto-detection: caps the proximity window at this multiple of the
+     * substrate height (distance to the nearer reference plane), in addition to the
+     * width-based window.  On thin dielectrics the back plane dominates and coplanar grounds
+     * only matter — and the CPW model only stays valid — within a few substrate heights, so
+     * the effective window is min(width-ratio x width, height-ratio x substrate height).
+     *
+     * Setting name: "ImpedanceCoplanarGapHeightRatio"
+     * Valid values: 1 to 40
+     * Default value: 4.0
+     */
+    double m_CoplanarGapHeightRatio;
+
 
     /**
      * Dimension used to calculate the actual hole size from the finish hole size.

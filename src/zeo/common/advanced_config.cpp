@@ -71,6 +71,7 @@ static const wxChar DRCSliverMinimumLength[] = wxT( "DRCSliverMinimumLength" );
 static const wxChar DRCSliverAngleTolerance[] = wxT( "DRCSliverAngleTolerance" );
 static const wxChar CoplanarGapWidthRatio[] = wxT( "ImpedanceCoplanarGapWidthRatio" );
 static const wxChar CoplanarGapSymmetryRatio[] = wxT( "ImpedanceCoplanarGapSymmetryRatio" );
+static const wxChar CoplanarGapHeightRatio[] = wxT( "ImpedanceCoplanarGapHeightRatio" );
 static const wxChar HoleWallThickness[] = wxT( "HoleWallPlatingThickness" );
 static const wxChar CoroutineStackSize[] = wxT( "CoroutineStackSize" );
 static const wxChar ShowRouterDebugGraphics[] = wxT( "ShowRouterDebugGraphics" );
@@ -251,6 +252,7 @@ ADVANCED_CFG::ADVANCED_CFG()
 
     m_CoplanarGapWidthRatio = 3.0;
     m_CoplanarGapSymmetryRatio = 2.5;
+    m_CoplanarGapHeightRatio = 4.0;
 
     m_HoleWallThickness = 0.020; // IPC-6012 says 15-18um; Cadence says at least
                                  // 0.020 for a Class 2 board and at least 0.025
@@ -431,6 +433,9 @@ void ADVANCED_CFG::loadSettings( wxConfigBase& aCfg )
 
     m_entries.push_back( std::make_unique<PARAM_CFG_DOUBLE>( true, AC_KEYS::CoplanarGapSymmetryRatio,
             &m_CoplanarGapSymmetryRatio, m_CoplanarGapSymmetryRatio, 1.0, 10.0 ) );
+
+    m_entries.push_back( std::make_unique<PARAM_CFG_DOUBLE>( true, AC_KEYS::CoplanarGapHeightRatio,
+            &m_CoplanarGapHeightRatio, m_CoplanarGapHeightRatio, 1.0, 40.0 ) );
 
     m_entries.push_back( std::make_unique<PARAM_CFG_DOUBLE>( true, AC_KEYS::HoleWallThickness, &m_HoleWallThickness,
                                                              m_HoleWallThickness, 0.0, 1.0 ) );

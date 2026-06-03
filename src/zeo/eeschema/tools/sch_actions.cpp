@@ -1025,12 +1025,6 @@ TOOL_ACTION SCH_ACTIONS::slice( TOOL_ACTION_ARGS()
         .Tooltip( _( "Divide into unconnected segments" ) )
         .Icon( BITMAPS::slice_line ) );
 
-TOOL_ACTION SCH_ACTIONS::markAsDiffPair( TOOL_ACTION_ARGS()
-        .Name( "eeschema.InteractiveEdit.markAsDiffPair" )
-        .Scope( AS_GLOBAL )
-        .FriendlyName( _( "Mark as Diff Pair..." ) )
-        .Tooltip( _( "Declare a differential pair between this net and another net" ) ) );
-
 // SCH_EDITOR_CONTROL
 //
 TOOL_ACTION SCH_ACTIONS::restartMove( TOOL_ACTION_ARGS()

@@ -147,7 +147,6 @@ public:
     static TOOL_ACTION toTextBox;
     static TOOL_ACTION breakWire;
     static TOOL_ACTION slice;
-    static TOOL_ACTION markAsDiffPair;
     static TOOL_ACTION pointEditorAddCorner;
     static TOOL_ACTION pointEditorRemoveCorner;
 

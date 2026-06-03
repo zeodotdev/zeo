@@ -222,6 +222,17 @@ public:
     int GetTrackLengthValue() const;
     int GetCrossBoardLengthValue() const;
 
+    /**
+     * Read-only, model-aware impedance / insertion-loss strings for the Properties Manager
+     * sidebar (mirroring the Track & Via Properties dialog).  Both compute via
+     * IMPEDANCE_CALCULATOR::ComputeForTrack() against the owning board's stackup + SI params,
+     * so the displayed model (microstrip / stripline / coupled / coplanar) is chosen
+     * automatically.  Return an empty string when no usable impedance can be produced (no
+     * stackup, non-copper, etc.) so the row renders blank rather than "0".
+     */
+    wxString GetImpedanceDisplay() const;
+    wxString GetInsertionLossDisplay() const;
+
     wxString GetItemDescription( UNITS_PROVIDER* aUnitsProvider, bool aFull ) const override;
 
     BITMAPS GetMenuImage() const override;

@@ -32,6 +32,7 @@
 #include <connectivity/connectivity_data.h>
 #include <board.h>
 #include <board_design_settings.h>
+#include <board_stackup_manager/impedance_calculator.h>
 #include <convert_basic_shapes_to_polygon.h>
 #include <base_units.h>
 #include <layer_range.h>
@@ -2377,6 +2378,51 @@ int PCB_TRACK::GetCrossBoardLengthValue() const
 }
 
 
+wxString PCB_TRACK::GetImpedanceDisplay() const
+{
+    const BOARD* board = GetBoard();
+
+    if( !board )
+        return wxEmptyString;
+
+    // ComputeForTrack only reads the board (stackup, SI params, pads/zones, neighbouring
+    // tracks); its cache lives on the local calculator instance.  const_cast is safe.
+    IMPEDANCE_CALCULATOR calc;
+    const IMPEDANCE_RESULT res = calc.ComputeForTrack( const_cast<BOARD*>( board ), this );
+
+    if( !res.valid() )
+        return wxEmptyString;
+
+    if( res.isDifferential() && res.differentialOhms > 0 )
+        return wxString::Format( _( "%d Ω (diff)" ), res.differentialOhms );
+
+    if( res.model == IMPEDANCE_MODEL::GROUNDED_COPLANAR || res.model == IMPEDANCE_MODEL::COPLANAR )
+        return wxString::Format( _( "%d Ω (CPW)" ), res.singleEndedOhms );
+
+    if( res.singleEndedOhms <= 0 )
+        return wxEmptyString;
+
+    return wxString::Format( _( "%d Ω" ), res.singleEndedOhms );
+}
+
+
+wxString PCB_TRACK::GetInsertionLossDisplay() const
+{
+    const BOARD* board = GetBoard();
+
+    if( !board )
+        return wxEmptyString;
+
+    IMPEDANCE_CALCULATOR calc;
+    const IMPEDANCE_RESULT res = calc.ComputeForTrack( const_cast<BOARD*>( board ), this );
+
+    if( !res.valid() || res.totalLossDbPerInch() <= 0.0 )
+        return wxEmptyString;
+
+    return wxString::Format( _( "%.3f dB/in" ), res.totalLossDbPerInch() );
+}
+
+
 void PCB_TRACK::GetMsgPanelInfo( EDA_DRAW_FRAME* aFrame, std::vector<MSG_PANEL_ITEM>& aList )
 {
     wxString  msg;
@@ -3264,6 +3310,17 @@ static struct TRACK_VIA_DESC
         propMgr.AddProperty( new PROPERTY<PCB_TRACK, int>( _HKI( "Cross-Board Length" ),
             NO_SETTER( PCB_TRACK, int ), &PCB_TRACK::GetCrossBoardLengthValue,
             PROPERTY_DISPLAY::PT_SIZE ), groupNetLengths );
+
+        // Model-aware impedance + insertion loss, mirroring the Track & Via Properties dialog.
+        // Read-only (NO_SETTER) string values so the panel renders "48 Ω" / "0.133 dB/in"
+        // directly (Ω and dB/in have no native units type), and a coupled/coplanar track can
+        // annotate its model ("99 Ω (diff)", "77 Ω (CPW)").
+        const wxString groupImpedance = _HKI( "Impedance" );
+
+        propMgr.AddProperty( new PROPERTY<PCB_TRACK, wxString>( _HKI( "Impedance Z₀" ),
+            NO_SETTER( PCB_TRACK, wxString ), &PCB_TRACK::GetImpedanceDisplay ), groupImpedance );
+        propMgr.AddProperty( new PROPERTY<PCB_TRACK, wxString>( _HKI( "Insertion Loss" ),
+            NO_SETTER( PCB_TRACK, wxString ), &PCB_TRACK::GetInsertionLossDisplay ), groupImpedance );
 
         // Arc
         REGISTER_TYPE( PCB_ARC );

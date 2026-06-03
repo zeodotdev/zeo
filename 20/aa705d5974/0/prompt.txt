@@ -1,0 +1,35 @@
+Zeo is a fork of KiCad which uses a GPLv3, we are going to lisence Zeo as AGPL. To my understanding, this should be allowed, what would be the correct way to establish this on the github
+
+---
+
+To review , the changes that matter right now: Root lisence for AGPLv3 (the the most recent/stanard) this applies to the creations/modifications of Zeo, all the other lisences remain the same.
+
+---
+
+The lisence.readme references itself multiple times. Do we need to enumerate all the specific liscnes/projects witin the project or can we generally point say each file eill have its own headers. We should add to all Zeo headers a pointer to the root lisence and lisence readme
+
+---
+
+are the three In-Review items and how to verify each. First: rebuild + install once — your current running build has
+  1472/1473 + the reference-net fix (that's what made image 9 read CPW), but not the microstrip-loss fix (1474), which I made
+  afterward. A fresh build gets all three on one binary.
+, the above below should be removed, just say it holds its original lsisence other than our changes
+
+---
+
+I want to keep the headers as simple, concise and clear as possible: This is good, but I ask if there is anyhting that can be cut from the new file header: /*
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ * Part of Zeo. See /LICENSE (AGPLv3) and /LICENSE.README.
+ */
+
+#ifndef AGENT_AUTH_H
+. This is the modified code header:  * Copyright (C) 2023 CERN (www.cern.ch)
+ * Copyright The KiCad Developers, see AUTHORS.txt for contributors.
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
+ * Zeo modifications: AGPL-3.0-or-later — see /LICENSE and /LICENSE.README.
+ *   Portions below remain under their original license (above).
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+. This is okay, but the above/below is verbose and not always correct depending on how it has been edited

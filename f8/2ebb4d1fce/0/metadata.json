@@ -1,0 +1,47 @@
+{
+  "cli_version": "0.6.1",
+  "checkpoint_id": "f82ebb4d1fce",
+  "session_id": "c8807604-0459-403a-be78-a518044c92be",
+  "strategy": "manual-commit",
+  "created_at": "2026-06-03T07:06:29.956074Z",
+  "branch": "ganesh/zeo-impedence-constraint",
+  "checkpoints_count": 2,
+  "files_touched": [
+    "src/zeo/pcbnew/pcb_track.cpp",
+    "src/zeo/pcbnew/pcb_track.h"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-opus-4-8[1m]",
+  "turn_id": "39d5a79bdb2c",
+  "token_usage": {
+    "input_tokens": 153223,
+    "cache_creation_tokens": 15756602,
+    "cache_read_tokens": 354330154,
+    "output_tokens": 1209837,
+    "api_call_count": 908
+  },
+  "session_metrics": {
+    "turn_count": 77
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-06-03T07:06:29.582942Z",
+    "agent_lines": 68,
+    "agent_removed": 0,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 68,
+    "total_lines_changed": 68,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 2,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0
+    }
+  ]
+}

@@ -1,4 +1,5 @@
 # Copyright (C) 2026, Zeo <team@zeo.dev>
+# SPDX-License-Identifier: AGPL-3.0-or-later
 
 if(NOT INPUT_FILE OR NOT OUTPUT_FILE)
     message(FATAL_ERROR "INPUT_FILE and OUTPUT_FILE must be defined")

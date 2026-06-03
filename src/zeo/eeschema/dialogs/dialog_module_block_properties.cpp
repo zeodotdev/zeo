@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2026, Zeo <team@zeo.dev>
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 #include "dialog_module_block_properties.h"

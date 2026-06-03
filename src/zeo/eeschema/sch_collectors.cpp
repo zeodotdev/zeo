@@ -4,6 +4,7 @@
  * Copyright (C) 2011 Wayne Stambaugh <stambaughw@gmail.com>
  * Copyright The KiCad Developers, see AUTHORS.txt for contributors.
  * Copyright (C) 2026, Zeo <team@zeo.dev>
+ * Zeo modifications licensed AGPL-3.0-or-later (see /LICENSE.README).
  * Copyright (C) 2019 CERN
  *
  * This program is free software; you can redistribute it and/or

@@ -1,4 +1,5 @@
 # Copyright (C) 2026, Zeo <team@zeo.dev>
+# SPDX-License-Identifier: AGPL-3.0-or-later
 
 find_package( Boost COMPONENTS unit_test_framework REQUIRED )
 find_package( wxWidgets 3.0.0 COMPONENTS core base REQUIRED )

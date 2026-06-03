@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2026, Zeo <team@zeo.dev>
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 #ifndef PREVIEW_DIFF_OVERLAY_ITEM__H_

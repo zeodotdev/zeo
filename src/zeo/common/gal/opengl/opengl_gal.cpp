@@ -4,6 +4,7 @@
  * Copyright (C) 2012 Torsten Hueter, torstenhtr <at> gmx.de
  * Copyright The KiCad Developers, see AUTHORS.txt for contributors.
  * Copyright (C) 2026, Zeo <team@zeo.dev>
+ * Zeo modifications licensed AGPL-3.0-or-later (see /LICENSE.README).
  * Copyright (C) 2013-2017 CERN
  * @author Maciej Suminski <maciej.suminski@cern.ch>
  *

@@ -1,4 +1,5 @@
 # Copyright (C) 2026, Zeo <team@zeo.dev>
+# SPDX-License-Identifier: AGPL-3.0-or-later
 
 """Tests for SpatialIndex, bboxes_overlap, and wire_segments_to_bboxes from bbox.py.
 

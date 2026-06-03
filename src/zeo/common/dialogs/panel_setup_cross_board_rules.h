@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2026, Zeo <team@zeo.dev>
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 #ifndef PANEL_SETUP_CROSS_BOARD_RULES_H

@@ -3,6 +3,7 @@
  *
  * Copyright The KiCad Developers, see AUTHORS.txt for contributors.
  * Copyright (C) 2026, Zeo <team@zeo.dev>
+ * Zeo modifications licensed AGPL-3.0-or-later (see /LICENSE.README).
  * @author Ian McInerney
  *
  * This program is free software; you can redistribute it and/or

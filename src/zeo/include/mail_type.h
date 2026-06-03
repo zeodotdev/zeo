@@ -4,6 +4,7 @@
  * Copyright (C) 2014 CERN
  * Copyright The KiCad Developers, see AUTHORS.TXT for contributors.
  * Copyright (C) 2025, Zeo <team@zeo.dev>
+ * Zeo modifications licensed AGPL-3.0-or-later (see /LICENSE.README).
  * @author Maciej Suminski <maciej.suminski@cern.ch>
  *
  * This program is free software; you can redistribute it and/or

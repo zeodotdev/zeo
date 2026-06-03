@@ -5,6 +5,7 @@
  * Copyright (C) 2009 Jean-Pierre Charras, jean-pierre.charras@inpg.fr
  * Copyright The KiCad Developers, see AUTHORS.txt for contributors.
  * Copyright (C) 2026, Zeo <team@zeo.dev>
+ * Zeo modifications licensed AGPL-3.0-or-later (see /LICENSE.README).
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License

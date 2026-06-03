@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # Copyright (C) 2026, Zeo <team@zeo.dev>
+# SPDX-License-Identifier: AGPL-3.0-or-later
 
 """
 KiCad API Test Script

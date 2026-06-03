@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2025, Zeo <team@zeo.dev>
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 #include "agent_frame.h"

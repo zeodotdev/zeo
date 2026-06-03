@@ -6,6 +6,7 @@
  *   Copyright (C) 2005, 2006 Stefan Jahn <stefan@lkcc.org>
  * Modified for KiCad: 2011 Jean-Pierre Charras
  * Copyright (C) 2026, Zeo <team@zeo.dev>
+ * Zeo modifications licensed AGPL-3.0-or-later (see /LICENSE.README).
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License

@@ -1,5 +1,6 @@
 
 # Copyright (C) 2026, Zeo <team@zeo.dev>
+# SPDX-License-Identifier: AGPL-3.0-or-later
 
 set( VCS_TEMPLATE_INPUT "${CMAKE_CURRENT_SOURCE_DIR}/vcs_template.html" )
 set( VCS_TEMPLATE_OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/vcs_html_template_embedded.h" )

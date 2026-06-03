@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2026, Zeo <team@zeo.dev>
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 #include <kicad_gl/kiglu.h>   // Must be included first — pulls in GL + GLU prototypes

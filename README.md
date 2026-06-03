@@ -49,5 +49,9 @@ in-submodule sync + pin-bump for submodules.
 
 ## License
 
-GPL-3.0, inherited from KiCad. See [`src/zeo/LICENSE*`](src/zeo/) and
-[`src/zeo/AUTHORS.txt`](src/zeo/AUTHORS.txt) for upstream contributors.
+Zeo as a whole is licensed under [AGPL-3.0-or-later](LICENSE). Zeo's own code
+and modifications are AGPLv3; incorporated upstream code (KiCad, freerouting,
+wxWidgets, and the vendored third-party libraries) retains its original
+license. See [`LICENSE.README`](LICENSE.README) for how the licenses combine,
+and [`src/zeo/LICENSE*`](src/zeo/) / [`src/zeo/AUTHORS.txt`](src/zeo/AUTHORS.txt)
+for upstream terms and contributors.

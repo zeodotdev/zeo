@@ -148,8 +148,8 @@ static void buildZeoAboutBanner( EDA_BASE_FRAME* aParent, ABOUT_APP_INFO& aInfo 
         << wxT( "<div align='center'>" )
         << HtmlNewline( 4 )
         << _( "Zeo is released under the" ) << HtmlNewline( 2 )
-        << HtmlHyperlink( wxS( "http://www.gnu.org/licenses" ),
-                          _( "GNU General Public License (GPL) version 3 or any later version" ) )
+        << HtmlHyperlink( wxS( "https://www.gnu.org/licenses/agpl-3.0.html" ),
+                          _( "GNU Affero General Public License (AGPL) version 3 or any later version" ) )
         << wxT( "</div>" );
 
     aInfo.SetLicense( license );

@@ -2,7 +2,7 @@
   "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
   "name": "kicad",
   "version": "8.99",
-  "license": "GPL-2.0+",
+  "license": "AGPL-3.0-or-later",
   "dependencies": [
     "boost-algorithm",
     "boost-bimap",

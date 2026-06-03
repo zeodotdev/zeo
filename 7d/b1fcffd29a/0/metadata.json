@@ -1,0 +1,68 @@
+{
+  "cli_version": "0.6.1",
+  "checkpoint_id": "7db1fcffd29a",
+  "session_id": "e4439f8d-7ee4-471d-a40a-bf184b4c2468",
+  "strategy": "manual-commit",
+  "created_at": "2026-06-03T18:54:27.815469Z",
+  "branch": "main",
+  "checkpoints_count": 3,
+  "files_touched": [
+    "src/zeo/CLAUDE.md",
+    "src/zeo/agent/agent_frame.cpp",
+    "src/zeo/agent/agent_llm_client.cpp",
+    "src/zeo/agent/claudecode/cc_controller.cpp",
+    "src/zeo/agent/claudecode/cc_subprocess.h",
+    "src/zeo/agent/tools/handlers/screenshot_handler.cpp",
+    "src/zeo/agent/tools/handlers/screenshot_handler.h",
+    "src/zeo/agent/view/file_attach.cpp",
+    "src/zeo/agent/view/file_attach.h"
+  ],
+  "agent": "Claude Code",
+  "model": "",
+  "turn_id": "b7e4a176ef16",
+  "token_usage": {
+    "input_tokens": 15695,
+    "cache_creation_tokens": 98261,
+    "cache_read_tokens": 2017255,
+    "output_tokens": 25379,
+    "api_call_count": 30
+  },
+  "session_metrics": {
+    "turn_count": 3
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-06-03T18:54:27.807399Z",
+    "agent_lines": 28,
+    "agent_removed": 22,
+    "human_added": 1,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 29,
+    "total_lines_changed": 52,
+    "agent_percentage": 96.15384615384616,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0
+    },
+    {
+      "checkpoint_number": 2,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 28,
+      "agent_lines_removed": 22
+    },
+    {
+      "checkpoint_number": 3,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 28,
+      "agent_lines_removed": 22
+    }
+  ]
+}

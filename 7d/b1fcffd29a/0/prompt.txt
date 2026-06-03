@@ -1,0 +1,9 @@
+The anget system currently uses Opus 4.7, we need to update it to use opus 4.8. When the model is thinking, we also do not see what it is thinking, we just see the wrod thinking. Is this a change from anthroipic or soemthing we need to fix? (This is issue ZEO-1479 on linear)
+
+---
+
+read thorugh ../web and see what changes need to be made to use the new model
+
+---
+
+Search the costs of 4.8 online and update the model costs

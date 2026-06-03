@@ -1,0 +1,33 @@
+{
+  "cli_version": "0.6.1",
+  "checkpoint_id": "7db1fcffd29a",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 3,
+  "files_touched": [
+    "src/zeo/CLAUDE.md",
+    "src/zeo/agent/agent_frame.cpp",
+    "src/zeo/agent/agent_llm_client.cpp",
+    "src/zeo/agent/claudecode/cc_controller.cpp",
+    "src/zeo/agent/claudecode/cc_subprocess.h",
+    "src/zeo/agent/tools/handlers/screenshot_handler.cpp",
+    "src/zeo/agent/tools/handlers/screenshot_handler.h",
+    "src/zeo/agent/view/file_attach.cpp",
+    "src/zeo/agent/view/file_attach.h"
+  ],
+  "sessions": [
+    {
+      "metadata": "/7d/b1fcffd29a/0/metadata.json",
+      "transcript": "/7d/b1fcffd29a/0/full.jsonl",
+      "content_hash": "/7d/b1fcffd29a/0/content_hash.txt",
+      "prompt": "/7d/b1fcffd29a/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 15695,
+    "cache_creation_tokens": 98261,
+    "cache_read_tokens": 2017255,
+    "output_tokens": 25379,
+    "api_call_count": 30
+  }
+}

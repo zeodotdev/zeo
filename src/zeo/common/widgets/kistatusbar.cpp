@@ -31,6 +31,7 @@
 #include <wx/statbmp.h>
 #include <wx/tokenzr.h>
 #include <fmt/format.h>
+#include <algorithm>
 #include <array>
 #include <ranges>
 #include <vector>
@@ -179,11 +180,19 @@ KISTATUSBAR::KISTATUSBAR( int aNumberFields, wxWindow* parent, wxWindowID id, ST
 
     if( showLabel )
     {
+        // No wxBU_EXACTFIT: we always SetSize() later anyway, and on GTK
+        // EXACTFIT causes GetBestSize() to undercount the chrome padding,
+        // clipping the label inside its own button.
         m_labelButton = new wxButton( this, wxID_ANY, _( "Sign In" ), wxDefaultPosition,
-                                      wxDefaultSize, wxBU_EXACTFIT | wxBORDER_NONE );
+                                      wxDefaultSize, wxBORDER_NONE );
 
         m_profileBitmap = new wxStaticBitmap( this, wxID_ANY, wxNullBitmap );
         m_profileBitmap->Hide();
+
+        // Size the LABEL field to fit the initial "Sign In" button. The 35px
+        // estimate above is for the (smaller) profile bitmap; without this
+        // call the button starts clipped on GTK until SessionManager runs.
+        SetLabelButtonText( _( "Sign In" ) );
     }
 
     Bind( wxEVT_SIZE, &KISTATUSBAR::onSize, this );
@@ -855,8 +864,16 @@ void KISTATUSBAR::SetLabelButtonText( const wxString& aText )
 
     m_labelButton->SetLabel( aText );
 
+    // Use the larger of (a) what the button thinks it needs and (b) the text
+    // width plus a generous chrome allowance. GTK's GetBestSize undercounts
+    // theme padding for borderless buttons, while text-extent alone misses
+    // platform chrome — taking the max keeps both platforms safe.
+    m_labelButton->InvalidateBestSize();
+    int bestWidth = m_labelButton->GetBestSize().GetWidth();
+
     wxClientDC dc( m_labelButton );
     dc.SetFont( m_labelButton->GetFont() );
-    int newWidth = dc.GetTextExtent( aText ).x + 30;
-    updateLabelFieldWidth( newWidth );
+    int textWidth = dc.GetTextExtent( aText ).x + 40;
+
+    updateLabelFieldWidth( std::max( bestWidth, textWidth ) );
 }

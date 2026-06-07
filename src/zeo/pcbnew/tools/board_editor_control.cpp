@@ -854,21 +854,24 @@ int BOARD_EDITOR_CONTROL::RepairBoard( const TOOL_EVENT& aEvent )
 
 int BOARD_EDITOR_CONTROL::UpdatePCBFromSchematic( const TOOL_EVENT& aEvent )
 {
-    NETLIST netlist;
-    bool    fetched = false;
-
+    // Run the netlist fetch AND the modal on the main stack. wxWebView
+    // instances (Agent panel, remote-symbol panel) execute JS via JSC, which
+    // records its stack bounds on first entry. If the modal pumps events on
+    // the tool coroutine stack and a webview fires a JS callback, JSC's
+    // sanitizeStackForVM aborts with SIGABRT. Wrapping the modal forces all
+    // event-pump-driven JS to happen on the same stack JSC was initialized on.
     RunMainStack(
             [&]()
             {
-                fetched = m_frame->FetchNetlistFromSchematic(
-                        netlist, _( "Updating PCB requires a fully annotated schematic." ) );
-            } );
+                NETLIST netlist;
 
-    if( fetched )
-    {
-        DIALOG_UPDATE_PCB updateDialog( m_frame, &netlist );
-        updateDialog.ShowModal();
-    }
+                if( m_frame->FetchNetlistFromSchematic(
+                            netlist, _( "Updating PCB requires a fully annotated schematic." ) ) )
+                {
+                    DIALOG_UPDATE_PCB updateDialog( m_frame, &netlist );
+                    updateDialog.ShowModal();
+                }
+            } );
 
     return 0;
 }

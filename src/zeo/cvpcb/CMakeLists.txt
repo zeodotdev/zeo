@@ -68,17 +68,39 @@ set_target_properties( cvpcb_kiface PROPERTIES
     PREFIX          ${KIFACE_PREFIX}
     SUFFIX          ${KIFACE_SUFFIX}
     )
-target_link_libraries( cvpcb_kiface
-    3d-viewer
-    pcbcommon
-    gal
-    common
-    kimath
-    markdown_lib
-    ${PCBNEW_IO_LIBRARIES}
-    Boost::headers
-    ${wxWidgets_LIBRARIES}
-    )
+if( UNIX AND NOT APPLE )
+    # GNU ld scans static archives in a single pass. pcb_base_frame.cpp (in
+    # pcbcommon) does dynamic_cast<EDA_3D_VIEWER_FRAME*>, whose typeinfo lives
+    # in 3d-viewer. Because cvpcb has no direct EDA_3D_VIEWER_FRAME reference,
+    # 3d-viewer is scanned before the typeinfo becomes undefined, and ld never
+    # revisits it — leaving _cvpcb.kiface with an undefined _ZTI19EDA_3D_VIEWER_FRAME
+    # that fails dlopen at runtime. --start-group forces a multi-pass scan.
+    target_link_libraries( cvpcb_kiface
+        -Wl,--start-group
+        3d-viewer
+        pcbcommon
+        -Wl,--end-group
+        gal
+        common
+        kimath
+        markdown_lib
+        ${PCBNEW_IO_LIBRARIES}
+        Boost::headers
+        ${wxWidgets_LIBRARIES}
+        )
+else()
+    target_link_libraries( cvpcb_kiface
+        3d-viewer
+        pcbcommon
+        gal
+        common
+        kimath
+        markdown_lib
+        ${PCBNEW_IO_LIBRARIES}
+        Boost::headers
+        ${wxWidgets_LIBRARIES}
+        )
+endif()
 
 # -lrt must follow Boost on Linux platforms
 target_link_libraries( cvpcb_kiface $<$<BOOL:${UNIX_NOT_APPLE}>:rt> )

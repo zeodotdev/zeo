@@ -36,6 +36,8 @@
 #include <board_commit.h>
 #include <board_connected_item.h>
 #include <board_design_settings.h>
+#include <board_stackup_manager/board_stackup.h>
+#include <board_stackup_manager/impedance_calculator.h>
 #include <footprint.h>
 #include <kicad_clipboard.h>
 #include <netinfo.h>
@@ -283,6 +285,18 @@ API_HANDLER_PCB::API_HANDLER_PCB( PCB_EDIT_FRAME* aFrame ) :
             &API_HANDLER_PCB::handleGetTuningProfiles );
     registerHandler<SetTuningProfiles, TuningProfilesResponse>(
             &API_HANDLER_PCB::handleSetTuningProfiles );
+
+    // Signal-integrity analysis parameter handlers
+    registerHandler<GetSignalIntegrityParams, SignalIntegrityParamsResponse>(
+            &API_HANDLER_PCB::handleGetSignalIntegrityParams );
+    registerHandler<SetSignalIntegrityParams, SignalIntegrityParamsResponse>(
+            &API_HANDLER_PCB::handleSetSignalIntegrityParams );
+
+    // Impedance readback handlers
+    registerHandler<GetNetImpedance, NetImpedanceResponse>(
+            &API_HANDLER_PCB::handleGetNetImpedance );
+    registerHandler<GetTrackImpedance, TrackImpedanceResponse>(
+            &API_HANDLER_PCB::handleGetTrackImpedance );
 
     // Component class settings handlers
     registerHandler<GetComponentClassSettings, ComponentClassSettingsResponse>(
@@ -3672,9 +3686,11 @@ HANDLER_RESULT<GraphicsDefaultsResponse> API_HANDLER_PCB::handleSetGraphicsDefau
     frame()->OnModify();
 
     // Return the updated graphics defaults
+    GetGraphicsDefaults getReq;
+    getReq.mutable_board()->CopyFrom( aCtx.Request.board() );
+
     return handleGetGraphicsDefaults(
-            HANDLER_CONTEXT<GetGraphicsDefaults>{ aCtx.ClientName,
-                                                   GetGraphicsDefaults() } );
+            HANDLER_CONTEXT<GetGraphicsDefaults>{ aCtx.ClientName, std::move( getReq ) } );
 }
 
 
@@ -5068,8 +5084,11 @@ HANDLER_RESULT<ZoneHatchOffsetsResponse> API_HANDLER_PCB::handleSetZoneHatchOffs
     frame()->OnModify();
 
     // Return updated offsets
+    GetZoneHatchOffsets getReq;
+    getReq.mutable_board()->CopyFrom( aCtx.Request.board() );
+
     return handleGetZoneHatchOffsets(
-            HANDLER_CONTEXT<GetZoneHatchOffsets>{ aCtx.ClientName, GetZoneHatchOffsets() } );
+            HANDLER_CONTEXT<GetZoneHatchOffsets>{ aCtx.ClientName, std::move( getReq ) } );
 }
 
 
@@ -5217,8 +5236,11 @@ HANDLER_RESULT<DimensionDefaultsResponse> API_HANDLER_PCB::handleSetDimensionDef
     frame()->OnModify();
 
     // Return updated defaults
+    GetDimensionDefaults getReq;
+    getReq.mutable_board()->CopyFrom( aCtx.Request.board() );
+
     return handleGetDimensionDefaults(
-            HANDLER_CONTEXT<GetDimensionDefaults>{ aCtx.ClientName, GetDimensionDefaults() } );
+            HANDLER_CONTEXT<GetDimensionDefaults>{ aCtx.ClientName, std::move( getReq ) } );
 }
 
 
@@ -5396,8 +5418,11 @@ HANDLER_RESULT<ZoneDefaultsResponse> API_HANDLER_PCB::handleSetZoneDefaults(
     frame()->OnModify();
 
     // Return updated defaults
+    GetZoneDefaults getReq;
+    getReq.mutable_board()->CopyFrom( aCtx.Request.board() );
+
     return handleGetZoneDefaults(
-            HANDLER_CONTEXT<GetZoneDefaults>{ aCtx.ClientName, GetZoneDefaults() } );
+            HANDLER_CONTEXT<GetZoneDefaults>{ aCtx.ClientName, std::move( getReq ) } );
 }
 
 
@@ -5519,8 +5544,11 @@ HANDLER_RESULT<PreDefinedSizesResponse> API_HANDLER_PCB::handleSetPreDefinedSize
     frame()->OnModify();
 
     // Return updated sizes
+    GetPreDefinedSizes getReq;
+    getReq.mutable_board()->CopyFrom( aCtx.Request.board() );
+
     return handleGetPreDefinedSizes(
-            HANDLER_CONTEXT<GetPreDefinedSizes>{ aCtx.ClientName, GetPreDefinedSizes() } );
+            HANDLER_CONTEXT<GetPreDefinedSizes>{ aCtx.ClientName, std::move( getReq ) } );
 }
 
 
@@ -5660,8 +5688,11 @@ HANDLER_RESULT<TeardropSettingsResponse> API_HANDLER_PCB::handleSetTeardropSetti
     frame()->OnModify();
 
     // Return updated settings
+    GetTeardropSettings getReq;
+    getReq.mutable_board()->CopyFrom( aCtx.Request.board() );
+
     return handleGetTeardropSettings(
-            HANDLER_CONTEXT<GetTeardropSettings>{ aCtx.ClientName, GetTeardropSettings() } );
+            HANDLER_CONTEXT<GetTeardropSettings>{ aCtx.ClientName, std::move( getReq ) } );
 }
 
 
@@ -5791,8 +5822,11 @@ HANDLER_RESULT<LengthTuningPatternSettingsResponse> API_HANDLER_PCB::handleSetLe
     frame()->OnModify();
 
     // Return updated settings
+    GetLengthTuningPatternSettings getReq;
+    getReq.mutable_board()->CopyFrom( aCtx.Request.board() );
+
     return handleGetLengthTuningPatternSettings(
-            HANDLER_CONTEXT<GetLengthTuningPatternSettings>{ aCtx.ClientName, GetLengthTuningPatternSettings() } );
+            HANDLER_CONTEXT<GetLengthTuningPatternSettings>{ aCtx.ClientName, std::move( getReq ) } );
 }
 
 
@@ -5988,9 +6022,295 @@ HANDLER_RESULT<TuningProfilesResponse> API_HANDLER_PCB::handleSetTuningProfiles(
 
     frame()->OnModify();
 
-    // Return updated profiles
+    // Return updated profiles. Carry the board specifier through so the delegated get
+    // passes validateDocument() (an empty DocumentSpecifier is rejected as AS_UNHANDLED).
+    GetTuningProfiles getReq;
+    getReq.mutable_board()->CopyFrom( aCtx.Request.board() );
+
     return handleGetTuningProfiles(
-            HANDLER_CONTEXT<GetTuningProfiles>{ aCtx.ClientName, GetTuningProfiles() } );
+            HANDLER_CONTEXT<GetTuningProfiles>{ aCtx.ClientName, std::move( getReq ) } );
+}
+
+
+HANDLER_RESULT<SignalIntegrityParamsResponse> API_HANDLER_PCB::handleGetSignalIntegrityParams(
+        const HANDLER_CONTEXT<GetSignalIntegrityParams>& aCtx )
+{
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.board() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    const BOARD_DESIGN_SETTINGS& bds = frame()->GetBoard()->GetDesignSettings();
+
+    SignalIntegrityParamsResponse response;
+    SignalIntegrityParams*        params = response.mutable_params();
+
+    params->set_reference_frequency_hz( bds.m_SI_ReferenceFrequency );
+    params->set_dk_measurement_frequency_hz( bds.m_SI_DkMeasurementFrequency );
+    params->set_conductor_resistivity_ohm_m( bds.m_SI_ConductorResistivity );
+    params->set_conductor_roughness_m( bds.m_SI_ConductorRoughness );
+
+    return response;
+}
+
+
+HANDLER_RESULT<SignalIntegrityParamsResponse> API_HANDLER_PCB::handleSetSignalIntegrityParams(
+        const HANDLER_CONTEXT<SetSignalIntegrityParams>& aCtx )
+{
+    if( std::optional<ApiResponseStatus> busy = checkForBusy() )
+        return tl::unexpected( *busy );
+
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.board() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    BOARD*                 board  = frame()->GetBoard();
+    BOARD_DESIGN_SETTINGS& bds    = board->GetDesignSettings();
+    const SignalIntegrityParams& params = aCtx.Request.params();
+
+    // Only update provided fields (proto3 optional). Frequencies and resistivity must be
+    // positive; roughness may legitimately be 0 (smooth foil).
+    if( params.has_reference_frequency_hz() && params.reference_frequency_hz() > 0.0 )
+        bds.m_SI_ReferenceFrequency = params.reference_frequency_hz();
+
+    if( params.has_dk_measurement_frequency_hz() && params.dk_measurement_frequency_hz() > 0.0 )
+        bds.m_SI_DkMeasurementFrequency = params.dk_measurement_frequency_hz();
+
+    if( params.has_conductor_resistivity_ohm_m() && params.conductor_resistivity_ohm_m() > 0.0 )
+        bds.m_SI_ConductorResistivity = params.conductor_resistivity_ohm_m();
+
+    if( params.has_conductor_roughness_m() && params.conductor_roughness_m() >= 0.0 )
+        bds.m_SI_ConductorRoughness = params.conductor_roughness_m();
+
+    board->SetModified();
+    frame()->OnModify();
+
+    // Return the full updated set. Carry the board specifier through so the delegated
+    // get passes its own validateDocument() — a default-constructed request has an empty
+    // DocumentSpecifier, which validateDocument rejects as AS_UNHANDLED.
+    GetSignalIntegrityParams getReq;
+    getReq.mutable_board()->CopyFrom( aCtx.Request.board() );
+
+    return handleGetSignalIntegrityParams(
+            HANDLER_CONTEXT<GetSignalIntegrityParams>{ aCtx.ClientName, std::move( getReq ) } );
+}
+
+
+// True if the board's active stackup declares at least one dielectric with Dk > 1.0.
+// Without it, the transmission-line model has nothing to work with and impedance is
+// meaningless — mirror the impedance DRC provider, which skips silently in that case.
+static bool stackupHasDielectric( const BOARD_STACKUP& aStackup )
+{
+    for( BOARD_STACKUP_ITEM* item : aStackup.GetList() )
+    {
+        if( item && item->IsEnabled() && item->GetType() == BS_ITEM_TYPE_DIELECTRIC
+            && item->GetEpsilonR() > 1.0 )
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+
+// Map the calculator's transmission-line model to the proto enum.
+static ImpedanceModel toProtoImpedanceModel( IMPEDANCE_MODEL aModel )
+{
+    switch( aModel )
+    {
+    case IMPEDANCE_MODEL::MICROSTRIP:         return IM_MICROSTRIP;
+    case IMPEDANCE_MODEL::STRIPLINE:          return IM_STRIPLINE;
+    case IMPEDANCE_MODEL::COPLANAR:           return IM_COPLANAR;
+    case IMPEDANCE_MODEL::GROUNDED_COPLANAR:  return IM_GROUNDED_COPLANAR;
+    case IMPEDANCE_MODEL::COUPLED_MICROSTRIP: return IM_COUPLED_MICROSTRIP;
+    case IMPEDANCE_MODEL::COUPLED_STRIPLINE:  return IM_COUPLED_STRIPLINE;
+    case IMPEDANCE_MODEL::NONE:               break;
+    }
+
+    return IM_NONE;
+}
+
+
+HANDLER_RESULT<NetImpedanceResponse> API_HANDLER_PCB::handleGetNetImpedance(
+        const HANDLER_CONTEXT<GetNetImpedance>& aCtx )
+{
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.board() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    BOARD*               board   = frame()->GetBoard();
+    const BOARD_STACKUP& stackup = board->GetStackupOrDefault();
+
+    NetImpedanceResponse response;
+    response.set_stackup_has_dk( stackupHasDielectric( stackup ) );
+
+    if( !response.stackup_has_dk() )
+        return response;
+
+    // Optional single-net filter.
+    int filterNetCode = -1;
+
+    if( aCtx.Request.has_net_name() && !aCtx.Request.net_name().empty() )
+    {
+        NETINFO_ITEM* net = board->FindNet( wxString::FromUTF8( aCtx.Request.net_name() ) );
+
+        if( !net )
+            return response;  // unknown net → empty result
+
+        filterNetCode = net->GetNetCode();
+    }
+
+    // Length-weighted average impedance per net, mirroring the Net Inspector column.
+    IMPEDANCE_CALCULATOR             impCalc;
+    std::unordered_map<int, int64_t> weightedSum;  ///< Σ (Z₀ × length)
+    std::unordered_map<int, int64_t> totalLen;     ///< Σ length
+    std::unordered_map<int, double>  lossSum;      ///< total insertion loss (dB)
+    std::unordered_map<int, bool>    isDiff;       ///< any segment modelled differential
+
+    for( PCB_TRACK* track : board->Tracks() )
+    {
+        if( !track || track->Type() == PCB_VIA_T )
+            continue;
+
+        if( !IsCopperLayer( track->GetLayer() ) )
+            continue;
+
+        const int netCode = track->GetNetCode();
+
+        if( filterNetCode >= 0 && netCode != filterNetCode )
+            continue;
+
+        int    z0          = 0;
+        double len         = 0.0;
+        double lossPerInch = 0.0;
+        bool   diff        = false;
+
+        try
+        {
+            const IMPEDANCE_RESULT imp = impCalc.ComputeForTrack( board, track );
+
+            if( imp.isDifferential() && imp.differentialOhms > 0 )
+            {
+                z0   = imp.differentialOhms;
+                diff = true;
+            }
+            else
+            {
+                z0 = imp.singleEndedOhms;
+            }
+
+            lossPerInch = imp.totalLossDbPerInch();
+            len         = track->GetLength();
+        }
+        catch( const std::exception& )
+        {
+            continue;
+        }
+
+        if( z0 <= 0 || len <= 0 )
+            continue;
+
+        weightedSum[netCode] += static_cast<int64_t>( z0 * len );
+        totalLen[netCode] += static_cast<int64_t>( len );
+        lossSum[netCode] += lossPerInch * ( len / 1e9 / 0.0254 );  // nm → m → inch
+        isDiff[netCode] = isDiff[netCode] || diff;
+    }
+
+    for( const auto& [netCode, lenSum] : totalLen )
+    {
+        if( lenSum <= 0 )
+            continue;
+
+        NETINFO_ITEM* net = board->FindNet( netCode );
+
+        NetImpedance* out = response.add_nets();
+        out->set_net_code( netCode );
+
+        if( net )
+            out->set_net_name( net->GetNetname().ToUTF8().data() );
+
+        out->set_average_impedance_ohms( static_cast<int>( weightedSum[netCode] / lenSum ) );
+        out->set_is_differential( isDiff[netCode] );
+        out->set_insertion_loss_db( lossSum[netCode] );
+        out->set_routed_length_nm( lenSum );
+    }
+
+    return response;
+}
+
+
+HANDLER_RESULT<TrackImpedanceResponse> API_HANDLER_PCB::handleGetTrackImpedance(
+        const HANDLER_CONTEXT<GetTrackImpedance>& aCtx )
+{
+    HANDLER_RESULT<bool> documentValidation = validateDocument( aCtx.Request.board() );
+
+    if( !documentValidation )
+        return tl::unexpected( documentValidation.error() );
+
+    BOARD*               board   = frame()->GetBoard();
+    const BOARD_STACKUP& stackup = board->GetStackupOrDefault();
+
+    TrackImpedanceResponse response;
+    response.set_stackup_has_dk( stackupHasDielectric( stackup ) );
+
+    if( !response.stackup_has_dk() )
+        return response;
+
+    // net_name is required: per-track output is bounded to a single net to avoid dumping
+    // every segment on a large board.
+    if( aCtx.Request.net_name().empty() )
+    {
+        ApiResponseStatus e;
+        e.set_status( ApiStatusCode::AS_BAD_REQUEST );
+        e.set_error_message( "net_name is required for per-track impedance" );
+        return tl::unexpected( e );
+    }
+
+    NETINFO_ITEM* net = board->FindNet( wxString::FromUTF8( aCtx.Request.net_name() ) );
+
+    if( !net )
+        return response;  // unknown net → empty result
+
+    const int           netCode = net->GetNetCode();
+    IMPEDANCE_CALCULATOR impCalc;
+
+    for( PCB_TRACK* track : board->Tracks() )
+    {
+        if( !track || track->Type() == PCB_VIA_T )
+            continue;
+
+        if( track->GetNetCode() != netCode || !IsCopperLayer( track->GetLayer() ) )
+            continue;
+
+        IMPEDANCE_RESULT imp;
+
+        try
+        {
+            imp = impCalc.ComputeForTrack( board, track );
+        }
+        catch( const std::exception& )
+        {
+            continue;
+        }
+
+        if( !imp.valid() )
+            continue;
+
+        TrackImpedance* out = response.add_tracks();
+        out->mutable_track_id()->set_value( track->m_Uuid.AsStdString() );
+        out->set_layer( ToProtoEnum<PCB_LAYER_ID, board::types::BoardLayer>( track->GetLayer() ) );
+        out->set_width_nm( track->GetWidth() );
+        out->set_length_nm( static_cast<int64_t>( track->GetLength() ) );
+        out->set_single_ended_ohms( imp.singleEndedOhms );
+        out->set_differential_ohms( imp.differentialOhms );
+        out->set_model( toProtoImpedanceModel( imp.model ) );
+        out->set_insertion_loss_db_per_inch( imp.totalLossDbPerInch() );
+    }
+
+    return response;
 }
 
 
@@ -6162,8 +6482,11 @@ HANDLER_RESULT<ComponentClassSettingsResponse> API_HANDLER_PCB::handleSetCompone
     frame()->OnModify();
 
     // Return updated settings
+    GetComponentClassSettings getReq;
+    getReq.mutable_board()->CopyFrom( aCtx.Request.board() );
+
     return handleGetComponentClassSettings(
-            HANDLER_CONTEXT<GetComponentClassSettings>{ aCtx.ClientName, GetComponentClassSettings() } );
+            HANDLER_CONTEXT<GetComponentClassSettings>{ aCtx.ClientName, std::move( getReq ) } );
 }
 
 
@@ -6276,6 +6599,9 @@ HANDLER_RESULT<CustomRulesResponse> API_HANDLER_PCB::handleSetCustomRules(
     frame()->OnModify();
 
     // Return updated rules
+    GetCustomRules getReq;
+    getReq.mutable_board()->CopyFrom( aCtx.Request.board() );
+
     return handleGetCustomRules(
-            HANDLER_CONTEXT<GetCustomRules>{ aCtx.ClientName, GetCustomRules() } );
+            HANDLER_CONTEXT<GetCustomRules>{ aCtx.ClientName, std::move( getReq ) } );
 }

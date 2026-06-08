@@ -1,7 +1,7 @@
 # Copyright (C) 2026, Zeo <team@zeo.dev>
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-set( ZEO_SEMANTIC_VERSION "0.3.0" )
+set( ZEO_SEMANTIC_VERSION "0.3.1" )
 
 # Default the version to the semantic version.
 # This could be overridden by git tags in the future.

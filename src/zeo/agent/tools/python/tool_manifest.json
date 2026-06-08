@@ -2631,7 +2631,7 @@
   },
   {
     "name": "pcb_inspect",
-    "description": "Inspect a specific section of the open PCB in detail. section='footprints' with include_pads:true returns per-pad info including is_connector_pad (multi-board metadata). section='connector_pads' returns just the list of pad UUIDs marked as connector pads on the board.",
+    "description": "Inspect a specific section of the open PCB in detail. section='footprints' with include_pads:true returns per-pad info including is_connector_pad (multi-board metadata). section='connector_pads' returns just the list of pad UUIDs marked as connector pads on the board. section='nets' includes computed average impedance per routed net; section='net_impedance' with filter=<net name> returns the per-track impedance breakdown for one net.",
     "input_schema": {
       "type": "object",
       "properties": {
@@ -2644,15 +2644,16 @@
             "zones",
             "drawings",
             "nets",
+            "net_impedance",
             "layers",
             "stackup",
             "connector_pads"
           ],
-          "description": "Section to read"
+          "description": "Section to read. 'nets' lists nets with computed average impedance; 'net_impedance' (with filter=<net name>) gives the per-track impedance breakdown for one net."
         },
         "filter": {
           "type": "string",
-          "description": "Optional filter by reference (e.g., 'U*'), net name, or layer"
+          "description": "Optional filter by reference (e.g., 'U*'), net name, or layer. For section='net_impedance' this is REQUIRED and must be an exact net name."
         },
         "include_pads": {
           "type": "boolean",
@@ -3550,6 +3551,10 @@
           "type": "boolean",
           "description": "Only return nets with unconnected pads (default: false)"
         },
+        "include_impedance": {
+          "type": "boolean",
+          "description": "Attach computed length-weighted average impedance (model-aware: Z_diff for diff pairs, CPW Z0 for coplanar, else Z0) to each routed net, plus a top-level stackup_has_dk flag. Default false. Requires a stackup with Dk > 1."
+        },
         "target": {
           "type": "object",
           "description": "On a multi-board container project (check_status -> is_multi_board_container == true), use this to specify which sub-project this tool call targets. Get sub_project_uuid from check_status -> sub_projects[].uuid. Omit on standalone single-board projects. Required when multiple sub-project editors of the matching doc type are open.",
@@ -3875,6 +3880,615 @@
             }
           }
         },
+        "signal_integrity": {
+          "type": "object",
+          "description": "Signal-integrity analysis parameters for the impedance/transmission-line calculation (Board Setup -> Board Stackup -> Impedance). Board-wide inputs, separate from the per-dielectric Dk/Df and layer thickness in physical_stackup. On set, only provided fields change.",
+          "properties": {
+            "reference_frequency_hz": {
+              "type": "number",
+              "description": "Frequency (Hz) impedance and loss are evaluated at. Default 1e9 (1 GHz)."
+            },
+            "dk_measurement_frequency_hz": {
+              "type": "number",
+              "description": "Frequency (Hz) the stackup's Dk/Df values were specified at (laminate datasheet). Default 1e9."
+            },
+            "conductor_resistivity_ohm_m": {
+              "type": "number",
+              "description": "Conductor resistivity in ohm-metres. Default 1.72e-8 (copper at 20C)."
+            },
+            "conductor_roughness_m": {
+              "type": "number",
+              "description": "RMS copper surface roughness in metres (increases conductor loss). Default 0 (smooth)."
+            }
+          }
+        },
+        "net_class_assignments": {
+          "type": "array",
+          "description": "Pattern -> net class assignments (project-level). REPLACE: pass the full desired list; an explicit empty array [] clears all assignments.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "pattern": {
+                "type": "string",
+                "description": "Net name pattern (e.g. '/USB_D+', 'GND', '/VBUS*')"
+              },
+              "netclass": {
+                "type": "string",
+                "description": "Net class name to assign"
+              }
+            }
+          }
+        },
+        "zone_hatch_offsets": {
+          "type": "array",
+          "description": "Per-copper-layer zone hatch fill offsets.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "layer": {
+                "type": "string",
+                "description": "Copper layer name (e.g. 'BL_F_Cu')"
+              },
+              "offset_x_nm": {
+                "type": "integer",
+                "description": "X offset in nm"
+              },
+              "offset_y_nm": {
+                "type": "integer",
+                "description": "Y offset in nm"
+              }
+            }
+          }
+        },
+        "text_and_graphics": {
+          "type": "object",
+          "description": "Default line and text attributes per layer class. Provide any subset of the layer-class keys.",
+          "properties": {
+            "silkscreen": {
+              "type": "object",
+              "properties": {
+                "line_thickness_nm": {
+                  "type": "integer"
+                },
+                "text_width_nm": {
+                  "type": "integer"
+                },
+                "text_height_nm": {
+                  "type": "integer"
+                },
+                "text_thickness_nm": {
+                  "type": "integer"
+                },
+                "italic": {
+                  "type": "boolean"
+                },
+                "keep_upright": {
+                  "type": "boolean"
+                }
+              }
+            },
+            "copper": {
+              "type": "object",
+              "properties": {
+                "line_thickness_nm": {
+                  "type": "integer"
+                },
+                "text_width_nm": {
+                  "type": "integer"
+                },
+                "text_height_nm": {
+                  "type": "integer"
+                },
+                "text_thickness_nm": {
+                  "type": "integer"
+                },
+                "italic": {
+                  "type": "boolean"
+                },
+                "keep_upright": {
+                  "type": "boolean"
+                }
+              }
+            },
+            "edges": {
+              "type": "object",
+              "properties": {
+                "line_thickness_nm": {
+                  "type": "integer"
+                },
+                "text_width_nm": {
+                  "type": "integer"
+                },
+                "text_height_nm": {
+                  "type": "integer"
+                },
+                "text_thickness_nm": {
+                  "type": "integer"
+                },
+                "italic": {
+                  "type": "boolean"
+                },
+                "keep_upright": {
+                  "type": "boolean"
+                }
+              }
+            },
+            "courtyard": {
+              "type": "object",
+              "properties": {
+                "line_thickness_nm": {
+                  "type": "integer"
+                },
+                "text_width_nm": {
+                  "type": "integer"
+                },
+                "text_height_nm": {
+                  "type": "integer"
+                },
+                "text_thickness_nm": {
+                  "type": "integer"
+                },
+                "italic": {
+                  "type": "boolean"
+                },
+                "keep_upright": {
+                  "type": "boolean"
+                }
+              }
+            },
+            "fabrication": {
+              "type": "object",
+              "properties": {
+                "line_thickness_nm": {
+                  "type": "integer"
+                },
+                "text_width_nm": {
+                  "type": "integer"
+                },
+                "text_height_nm": {
+                  "type": "integer"
+                },
+                "text_thickness_nm": {
+                  "type": "integer"
+                },
+                "italic": {
+                  "type": "boolean"
+                },
+                "keep_upright": {
+                  "type": "boolean"
+                }
+              }
+            },
+            "other": {
+              "type": "object",
+              "properties": {
+                "line_thickness_nm": {
+                  "type": "integer"
+                },
+                "text_width_nm": {
+                  "type": "integer"
+                },
+                "text_height_nm": {
+                  "type": "integer"
+                },
+                "text_thickness_nm": {
+                  "type": "integer"
+                },
+                "italic": {
+                  "type": "boolean"
+                },
+                "keep_upright": {
+                  "type": "boolean"
+                }
+              }
+            }
+          }
+        },
+        "dimension_defaults": {
+          "type": "object",
+          "description": "Default dimension (measurement) settings.",
+          "properties": {
+            "units_mode": {
+              "type": "string",
+              "enum": [
+                "automatic",
+                "inches",
+                "millimeters",
+                "mils"
+              ]
+            },
+            "units_format": {
+              "type": "string",
+              "enum": [
+                "bare_suffix",
+                "no_suffix",
+                "paren_suffix"
+              ]
+            },
+            "precision": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 5,
+              "description": "Decimal places (0-5)"
+            },
+            "suppress_zeroes": {
+              "type": "boolean"
+            },
+            "text_position": {
+              "type": "string",
+              "enum": [
+                "inline",
+                "manual",
+                "outside"
+              ]
+            },
+            "keep_text_aligned": {
+              "type": "boolean"
+            },
+            "arrow_length_nm": {
+              "type": "integer"
+            },
+            "extension_offset_nm": {
+              "type": "integer"
+            }
+          }
+        },
+        "zone_defaults": {
+          "type": "object",
+          "description": "Default zone (copper pour) settings.",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "locked": {
+              "type": "boolean"
+            },
+            "priority": {
+              "type": "integer"
+            },
+            "corner_smoothing": {
+              "type": "string",
+              "enum": [
+                "chamfer",
+                "fillet",
+                "none"
+              ]
+            },
+            "corner_radius_nm": {
+              "type": "integer"
+            },
+            "clearance_nm": {
+              "type": "integer"
+            },
+            "min_thickness_nm": {
+              "type": "integer"
+            },
+            "pad_connection": {
+              "type": "string",
+              "enum": [
+                "none",
+                "solid",
+                "thermal",
+                "tht_thermal"
+              ]
+            },
+            "thermal_gap_nm": {
+              "type": "integer"
+            },
+            "thermal_spoke_width_nm": {
+              "type": "integer"
+            },
+            "island_removal": {
+              "type": "string",
+              "enum": [
+                "always",
+                "area",
+                "never"
+              ]
+            },
+            "min_island_area_nm2": {
+              "type": "integer",
+              "description": "Min island area in nm^2 (used when island_removal='area')"
+            }
+          }
+        },
+        "predefined_sizes": {
+          "type": "object",
+          "description": "Predefined track widths, via sizes, and diff-pair dimensions (Board Setup -> Pre-defined Sizes). Provide a category to replace it; omit a category to keep it.",
+          "properties": {
+            "tracks": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "width_nm": {
+                    "type": "integer"
+                  }
+                }
+              }
+            },
+            "vias": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "diameter_nm": {
+                    "type": "integer"
+                  },
+                  "drill_nm": {
+                    "type": "integer"
+                  }
+                }
+              }
+            },
+            "diff_pairs": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "width_nm": {
+                    "type": "integer"
+                  },
+                  "gap_nm": {
+                    "type": "integer"
+                  },
+                  "via_gap_nm": {
+                    "type": "integer"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "teardrops": {
+          "type": "object",
+          "description": "Teardrop target selection and per-shape parameters.",
+          "properties": {
+            "target_vias": {
+              "type": "boolean"
+            },
+            "target_pth_pads": {
+              "type": "boolean"
+            },
+            "target_smd_pads": {
+              "type": "boolean"
+            },
+            "target_track_to_track": {
+              "type": "boolean"
+            },
+            "round_shapes_only": {
+              "type": "boolean"
+            },
+            "round_shapes": {
+              "type": "object",
+              "properties": {
+                "best_length_ratio": {
+                  "type": "number"
+                },
+                "max_length_nm": {
+                  "type": "integer"
+                },
+                "best_width_ratio": {
+                  "type": "number"
+                },
+                "max_width_nm": {
+                  "type": "integer"
+                },
+                "curved_edges": {
+                  "type": "boolean"
+                },
+                "allow_two_segments": {
+                  "type": "boolean"
+                },
+                "prefer_zone_connection": {
+                  "type": "boolean"
+                },
+                "track_width_limit_ratio": {
+                  "type": "number"
+                }
+              }
+            },
+            "rect_shapes": {
+              "type": "object",
+              "properties": {
+                "best_length_ratio": {
+                  "type": "number"
+                },
+                "max_length_nm": {
+                  "type": "integer"
+                },
+                "best_width_ratio": {
+                  "type": "number"
+                },
+                "max_width_nm": {
+                  "type": "integer"
+                },
+                "curved_edges": {
+                  "type": "boolean"
+                },
+                "allow_two_segments": {
+                  "type": "boolean"
+                },
+                "prefer_zone_connection": {
+                  "type": "boolean"
+                },
+                "track_width_limit_ratio": {
+                  "type": "number"
+                }
+              }
+            },
+            "track_to_track": {
+              "type": "object",
+              "properties": {
+                "best_length_ratio": {
+                  "type": "number"
+                },
+                "max_length_nm": {
+                  "type": "integer"
+                },
+                "best_width_ratio": {
+                  "type": "number"
+                },
+                "max_width_nm": {
+                  "type": "integer"
+                },
+                "curved_edges": {
+                  "type": "boolean"
+                },
+                "allow_two_segments": {
+                  "type": "boolean"
+                },
+                "prefer_zone_connection": {
+                  "type": "boolean"
+                },
+                "track_width_limit_ratio": {
+                  "type": "number"
+                }
+              }
+            }
+          }
+        },
+        "length_tuning_patterns": {
+          "type": "object",
+          "description": "Meander (length-tuning) pattern defaults per routing mode.",
+          "properties": {
+            "single_track": {
+              "type": "object",
+              "properties": {
+                "min_amplitude_nm": {
+                  "type": "integer"
+                },
+                "max_amplitude_nm": {
+                  "type": "integer"
+                },
+                "spacing_nm": {
+                  "type": "integer"
+                },
+                "corner_style": {
+                  "type": "string",
+                  "enum": [
+                    "round",
+                    "chamfer"
+                  ]
+                },
+                "corner_radius_percent": {
+                  "type": "integer"
+                },
+                "single_sided": {
+                  "type": "boolean"
+                }
+              }
+            },
+            "diff_pair": {
+              "type": "object",
+              "properties": {
+                "min_amplitude_nm": {
+                  "type": "integer"
+                },
+                "max_amplitude_nm": {
+                  "type": "integer"
+                },
+                "spacing_nm": {
+                  "type": "integer"
+                },
+                "corner_style": {
+                  "type": "string",
+                  "enum": [
+                    "round",
+                    "chamfer"
+                  ]
+                },
+                "corner_radius_percent": {
+                  "type": "integer"
+                },
+                "single_sided": {
+                  "type": "boolean"
+                }
+              }
+            },
+            "diff_pair_skew": {
+              "type": "object",
+              "properties": {
+                "min_amplitude_nm": {
+                  "type": "integer"
+                },
+                "max_amplitude_nm": {
+                  "type": "integer"
+                },
+                "spacing_nm": {
+                  "type": "integer"
+                },
+                "corner_style": {
+                  "type": "string",
+                  "enum": [
+                    "round",
+                    "chamfer"
+                  ]
+                },
+                "corner_radius_percent": {
+                  "type": "integer"
+                },
+                "single_sided": {
+                  "type": "boolean"
+                }
+              }
+            }
+          }
+        },
+        "component_classes": {
+          "type": "object",
+          "description": "Component class settings and assignment rules. REPLACE: assignments fully replace the existing set.",
+          "properties": {
+            "enable_sheet_component_classes": {
+              "type": "boolean"
+            },
+            "assignments": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "component_class": {
+                    "type": "string"
+                  },
+                  "operator": {
+                    "type": "string",
+                    "enum": [
+                      "all",
+                      "any"
+                    ],
+                    "description": "How conditions combine"
+                  },
+                  "conditions": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "reference",
+                            "footprint",
+                            "side",
+                            "rotation",
+                            "footprint_field",
+                            "custom",
+                            "sheet_name"
+                          ]
+                        },
+                        "primary_data": {
+                          "type": "string"
+                        },
+                        "secondary_data": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
         "design_rules": {
           "type": "object",
           "description": "Board design rules/constraints (all values in nanometers)",
@@ -4007,6 +4621,105 @@
             "rules_text": {
               "type": "string",
               "description": "Full text content of the custom DRC rules file. Must start with '(version 1)'. See KiCad DRC rules syntax for format."
+            }
+          }
+        },
+        "tuning_profiles": {
+          "type": "array",
+          "description": "Impedance/delay tuning profiles (Design Rules -> Tuning Profiles). SET REPLACES all profiles. Each profile pairs a target impedance with per-layer track geometry used by length/delay tuning. Distances in nanometers (nm).",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "Profile name"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "single",
+                  "differential"
+                ],
+                "description": "Single-ended or differential pair profile"
+              },
+              "target_impedance_ohms": {
+                "type": "number",
+                "description": "Target characteristic (single) or differential impedance in ohms"
+              },
+              "enable_time_domain_tuning": {
+                "type": "boolean",
+                "description": "Tune by propagation delay (time) instead of physical length"
+              },
+              "via_propagation_delay_ps": {
+                "type": "integer",
+                "description": "Default via propagation delay in picoseconds"
+              },
+              "track_entries": {
+                "type": "array",
+                "description": "Per-layer track geometry and delay",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "signal_layer": {
+                      "type": "integer",
+                      "description": "Signal layer ID"
+                    },
+                    "top_reference_layer": {
+                      "type": "integer",
+                      "description": "Top reference plane layer ID"
+                    },
+                    "bottom_reference_layer": {
+                      "type": "integer",
+                      "description": "Bottom reference plane layer ID"
+                    },
+                    "width_nm": {
+                      "type": "integer",
+                      "description": "Track width in nm"
+                    },
+                    "diff_pair_gap_nm": {
+                      "type": "integer",
+                      "description": "Differential pair gap in nm (0 for single-ended)"
+                    },
+                    "delay_ps_per_mm": {
+                      "type": "integer",
+                      "description": "Propagation delay in picoseconds per mm"
+                    },
+                    "enable_time_domain": {
+                      "type": "boolean",
+                      "description": "Enable time-domain tuning for this entry"
+                    }
+                  }
+                }
+              },
+              "via_overrides": {
+                "type": "array",
+                "description": "Per via-span propagation delay overrides",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "signal_layer_from": {
+                      "type": "integer",
+                      "description": "Signal start layer ID"
+                    },
+                    "signal_layer_to": {
+                      "type": "integer",
+                      "description": "Signal end layer ID"
+                    },
+                    "via_layer_from": {
+                      "type": "integer",
+                      "description": "Via start layer ID"
+                    },
+                    "via_layer_to": {
+                      "type": "integer",
+                      "description": "Via end layer ID"
+                    },
+                    "delay_ps": {
+                      "type": "integer",
+                      "description": "Delay in picoseconds"
+                    }
+                  }
+                }
+              }
             }
           }
         },

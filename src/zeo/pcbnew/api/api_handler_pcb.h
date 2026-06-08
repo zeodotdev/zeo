@@ -360,6 +360,20 @@ private:
     HANDLER_RESULT<TuningProfilesResponse> handleSetTuningProfiles(
             const HANDLER_CONTEXT<SetTuningProfiles>& aCtx );
 
+    // Signal-integrity analysis parameter handlers
+    HANDLER_RESULT<SignalIntegrityParamsResponse> handleGetSignalIntegrityParams(
+            const HANDLER_CONTEXT<GetSignalIntegrityParams>& aCtx );
+
+    HANDLER_RESULT<SignalIntegrityParamsResponse> handleSetSignalIntegrityParams(
+            const HANDLER_CONTEXT<SetSignalIntegrityParams>& aCtx );
+
+    // Impedance readback handlers
+    HANDLER_RESULT<NetImpedanceResponse> handleGetNetImpedance(
+            const HANDLER_CONTEXT<GetNetImpedance>& aCtx );
+
+    HANDLER_RESULT<TrackImpedanceResponse> handleGetTrackImpedance(
+            const HANDLER_CONTEXT<GetTrackImpedance>& aCtx );
+
     // Component class settings handlers
     HANDLER_RESULT<ComponentClassSettingsResponse> handleGetComponentClassSettings(
             const HANDLER_CONTEXT<GetComponentClassSettings>& aCtx );

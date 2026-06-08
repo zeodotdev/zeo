@@ -114,6 +114,12 @@ def _get():
     except Exception as e:
         result['design_rules'] = {'error': str(e)}
 
+    # Signal-integrity analysis parameters (impedance calculation inputs)
+    try:
+        result['signal_integrity'] = board.design_rules.get_signal_integrity_params()
+    except Exception as e:
+        result['signal_integrity'] = {'error': str(e)}
+
     # Solder Mask/Paste
     try:
         rules = board.design_rules.get()
@@ -825,9 +831,9 @@ def _set():
         except Exception as e:
             result['length_tuning_patterns_error'] = str(e)
 
-    # Tuning profiles
+    # Tuning profiles (REPLACE: an explicit empty list [] clears all profiles)
     tuning_profiles = TOOL_ARGS.get("tuning_profiles")
-    if tuning_profiles:
+    if tuning_profiles is not None:
         try:
             cmd = board_commands_pb2.SetTuningProfiles()
             cmd.board.CopyFrom(board._doc)
@@ -882,6 +888,20 @@ def _set():
             result['updated'].append('tuning_profiles')
         except Exception as e:
             result['tuning_profiles_error'] = str(e)
+
+    # Signal-integrity analysis parameters
+    signal_integrity = TOOL_ARGS.get("signal_integrity")
+    if signal_integrity:
+        try:
+            board.design_rules.set_signal_integrity_params(
+                reference_frequency_hz=signal_integrity.get('reference_frequency_hz'),
+                dk_measurement_frequency_hz=signal_integrity.get('dk_measurement_frequency_hz'),
+                conductor_resistivity_ohm_m=signal_integrity.get('conductor_resistivity_ohm_m'),
+                conductor_roughness_m=signal_integrity.get('conductor_roughness_m'),
+            )
+            result['updated'].append('signal_integrity')
+        except Exception as e:
+            result['signal_integrity_error'] = str(e)
 
     # Component classes
     component_classes = TOOL_ARGS.get("component_classes")
@@ -979,9 +999,9 @@ def _set():
         except Exception as e:
             result['drc_severities_error'] = str(e)
 
-    # Net classes
+    # Net classes (REPLACE: an explicit empty list [] reduces to just the Default class)
     net_classes = TOOL_ARGS.get("net_classes")
-    if net_classes:
+    if net_classes is not None:
         try:
             from kipy.common_types import Color
             project = board.get_project()
@@ -1025,9 +1045,9 @@ def _set():
         except Exception as e:
             result['net_classes_error'] = str(e)
 
-    # Net class assignments (pattern -> netclass mappings)
+    # Net class assignments (pattern -> netclass mappings; REPLACE: empty list [] clears all)
     net_class_assignments = TOOL_ARGS.get("net_class_assignments")
-    if net_class_assignments:
+    if net_class_assignments is not None:
         try:
             project = board.get_project()
             project.set_net_class_assignments(net_class_assignments)

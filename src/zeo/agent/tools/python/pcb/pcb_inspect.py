@@ -105,10 +105,53 @@ elif section == "zones":
     print(json.dumps(result, indent=2))
 
 elif section == "nets":
-    # Read nets
+    # Read nets, with computed length-weighted average impedance (model-aware) per
+    # routed net. Optional `filter` restricts by net name (fnmatch pattern).
+    import fnmatch
     nets = board.get_nets()
-    result = [{'name': n.name} for n in nets]
-    print(json.dumps(result, indent=2))
+
+    impedance_info = {}
+    stackup_has_dk = None
+    try:
+        imp = board.nets.get_net_impedance()
+        stackup_has_dk = imp['stackup_has_dk']
+        for entry in imp['nets']:
+            impedance_info[entry['net_name']] = entry
+    except Exception:
+        pass
+
+    result = []
+    for n in nets:
+        if filter_pattern and not fnmatch.fnmatch(n.name, filter_pattern):
+            continue
+        net_entry = {'name': n.name}
+        imp_entry = impedance_info.get(n.name)
+        if imp_entry:
+            net_entry['impedance'] = {
+                'average_ohms': imp_entry['average_impedance_ohms'],
+                'is_differential': imp_entry['is_differential'],
+                'insertion_loss_db': round(imp_entry['insertion_loss_db'], 4),
+                'routed_length_nm': imp_entry['routed_length_nm'],
+            }
+        result.append(net_entry)
+    print(json.dumps({'stackup_has_dk': stackup_has_dk, 'nets': result}, indent=2))
+
+elif section == "net_impedance":
+    # Per-track impedance breakdown for a single net. `filter` MUST be an exact net
+    # name (bounds output size). Reports each routed segment's model, Z0/Z_diff, and loss.
+    net_name = filter_pattern
+    if not net_name:
+        print(json.dumps({'error': "section='net_impedance' requires 'filter' set to a net name"}))
+    else:
+        try:
+            res = board.nets.get_track_impedance(net_name)
+            print(json.dumps({
+                'net': net_name,
+                'stackup_has_dk': res['stackup_has_dk'],
+                'tracks': res['tracks'],
+            }, indent=2))
+        except Exception as e:
+            print(json.dumps({'error': str(e)}))
 
 elif section == "layers":
     # Read layers

@@ -7,6 +7,7 @@ import fnmatch
 filter_pattern = TOOL_ARGS.get("filter", "")
 include_pads = TOOL_ARGS.get("include_pads", True)
 unrouted_only = TOOL_ARGS.get("unrouted_only", False)
+include_impedance = TOOL_ARGS.get("include_impedance", False)
 
 # Get all nets
 nets = board.get_nets()
@@ -41,6 +42,18 @@ except Exception as e:
     # Fallback if connectivity API unavailable
     pass
 
+# Computed per-net average impedance (model-aware), keyed by net name.
+impedance_info = {}
+stackup_has_dk = None
+if include_impedance:
+    try:
+        imp = board.nets.get_net_impedance()
+        stackup_has_dk = imp['stackup_has_dk']
+        for entry in imp['nets']:
+            impedance_info[entry['net_name']] = entry
+    except Exception:
+        pass
+
 for net in nets:
     if filter_pattern and not fnmatch.fnmatch(net.name, filter_pattern):
         continue
@@ -70,6 +83,22 @@ for net in nets:
         # Net not in unrouted list means it's complete (or single pad)
         net_info['is_complete'] = True
         net_info['unrouted_connections'] = 0
+
+    # Attach computed impedance for routed nets (only present when include_impedance).
+    if include_impedance:
+        entry = impedance_info.get(net.name)
+        if entry:
+            net_info['impedance'] = {
+                'average_ohms': entry['average_impedance_ohms'],
+                'is_differential': entry['is_differential'],
+                'insertion_loss_db': round(entry['insertion_loss_db'], 4),
+            }
+
     result_nets.append(net_info)
 
-print(json.dumps({'status': 'success', 'nets': result_nets}, indent=2))
+output = {'status': 'success', 'nets': result_nets}
+if include_impedance:
+    # False => stackup has no dielectric constants, so no impedance was computed.
+    output['stackup_has_dk'] = stackup_has_dk
+
+print(json.dumps(output, indent=2))

@@ -3,6 +3,8 @@
  *
  * Copyright (C) 2024 Jon Evans <jon@craftyjon.com>
  * Copyright (C) 2024 KiCad Developers, see AUTHORS.txt for contributors.
+ * Copyright (C) 2026, Zeo <team@zeo.dev>
+ * Zeo modifications licensed AGPL-3.0-or-later (see /LICENSE.README).
  *
  * This program is free software: you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -197,6 +199,20 @@ message SetBoardOrigin
   kiapi.common.types.Vector2 origin = 3;
 }
 
+message GetBoardLayerName
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+
+  kiapi.board.types.BoardLayer layer = 2;
+}
+
+message BoardLayerNameResponse
+{
+  // The name of the layer shown in the KiCad GUI, which may be a default value like "F.Cu" or may
+  // have been customized by the user.
+  string name = 1;
+}
+
 /*
  * Net management
  */
@@ -223,11 +239,15 @@ message GetItemsByNet
   // Specifies which document to query, which fields to return, etc.
   kiapi.common.types.ItemHeader header = 1;
 
-  // List of one or more types of items to retreive
+  // Optional list of item types to filter by.  If not provided, will return pads, vias,
+  // tracks, and zones.
   repeated kiapi.common.types.KiCadObjectType types = 2;
 
-  // A list of net codes to filter items by
-  repeated kiapi.board.types.NetCode net_codes = 3;
+  // Removed; NetCode was deprecated before a handler for this was written
+  // repeated kiapi.board.types.NetCode net_codes = 3;
+
+  // A list of nets to filter items by
+  repeated kiapi.board.types.Net nets = 4;
 }
 
 // Retrieve all the copper items belonging to a certain net class or set of net classes
@@ -237,11 +257,26 @@ message GetItemsByNetClass
   // Specifies which document to query, which fields to return, etc.
   kiapi.common.types.ItemHeader header = 1;
 
-  // List of one or more types of items to retreive
+  // Optional list of item types to filter by.  If not provided, will return pads, vias,
+  // tracks, and zones.
   repeated kiapi.common.types.KiCadObjectType types = 2;
 
   // A list of net class names to filter items by
   repeated string net_classes = 3;
+}
+
+// Retrieve all copper-connected items connected to one or more source items
+// returns kiapi.common.commands.GetItemsResponse
+message GetConnectedItems
+{
+  // Specifies which document to query, which fields to return, etc.
+  kiapi.common.types.ItemHeader header = 1;
+
+  // One or more item IDs used as the source set for connectivity queries
+  repeated kiapi.common.types.KIID items = 2;
+
+  // Optional list of item types to return. If empty, all connected item types are returned.
+  repeated kiapi.common.types.KiCadObjectType types = 3;
 }
 
 // A net may be part of multiple classes that have a priority ordering, which will result in a
@@ -338,6 +373,39 @@ message PadstackPresenceEntry
 message PadstackPresenceResponse
 {
   repeated PadstackPresenceEntry entries = 1;
+}
+
+// Connector-pad set: BOARD::m_connectorPads tags pads that connect to
+// other boards in a multi-board project. The set is a board-level property
+// (a std::set<KIID>), not part of the Pad proto, so it has its own commands.
+
+// Returns ConnectorPadsResponse listing every pad UUID currently marked
+// as a connector pad on the target board.
+message GetConnectorPads
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+}
+
+message ConnectorPadsResponse
+{
+  repeated kiapi.common.types.KIID pad_uuids = 1;
+}
+
+// Adds and/or removes pad UUIDs from the connector-pad set in one round
+// trip. Returns counts of items actually added/removed (UUIDs already in
+// the requested state are no-ops and not counted).
+message UpdateConnectorPadSet
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+
+  repeated kiapi.common.types.KIID add = 2;     // mark these pads as connector
+  repeated kiapi.common.types.KIID remove = 3;  // unmark these pads
+}
+
+message UpdateConnectorPadSetResponse
+{
+  int32 added = 1;
+  int32 removed = 2;
 }
 
 // DRC markers
@@ -524,6 +592,13 @@ message RunDRC
 
   // If true, test footprints against library footprints
   bool test_footprints = 4;
+
+  // If > 0, cancel the run after this many milliseconds of wall-clock time.
+  // The DRC engine polls IsCancelled() between test providers so cancellation
+  // is cooperative — the actual elapsed time may exceed the deadline by up
+  // to one provider's run length. Whatever violations were found before
+  // cancellation are still returned.
+  int32 cancel_after_ms = 5;
 }
 
 message RunDRCResponse
@@ -536,6 +611,9 @@ message RunDRCResponse
 
   // Number of exclusions (user-marked items to ignore)
   int32 exclusion_count = 3;
+
+  // True if the run was cut short by cancel_after_ms.
+  bool cancelled = 4;
 }
 
 // Get all current DRC violations/markers from the board
@@ -557,10 +635,10 @@ message DRCViolation
   // Severity of the violation
   DrcSeverity severity = 2;
 
-  // Error type/code
+  // Numeric DRCE_* error code (internal enum value; not stable across releases).
   int32 error_code = 3;
 
-  // Human-readable error type name
+  // Human-readable error type name (e.g. "Annular width")
   string error_type = 4;
 
   // Detailed error message
@@ -571,6 +649,12 @@ message DRCViolation
 
   // IDs of items involved in the violation
   repeated kiapi.common.types.KIID items = 7;
+
+  // Stable, machine-friendly identifier for the violation type
+  // (e.g. "annular_width", "cross_board_net_mismatch"). Sourced from
+  // the RC item's settings key so the test runner can assert structurally
+  // without text matching.
+  string error_type_code = 8;
 }
 
 message DRCViolationsResponse
@@ -1510,6 +1594,112 @@ message SetTuningProfiles
 {
   kiapi.common.types.DocumentSpecifier board = 1;
   TuningProfiles profiles = 2;
+}
+
+
+/*
+ * Signal-Integrity Analysis Parameters
+ * Board-wide analysis inputs for the impedance / transmission-line calculation
+ * (Board Setup -> Board Stackup -> Impedance). These are analysis inputs, not
+ * physical stackup geometry — per-dielectric Dk/Df and per-layer thickness live
+ * in BOARD_STACKUP. Fields are optional so a set can update a subset.
+ */
+message SignalIntegrityParams
+{
+  optional double reference_frequency_hz = 1;       // Frequency impedance/loss is evaluated at (default 1e9)
+  optional double dk_measurement_frequency_hz = 2;  // Frequency the stackup Dk/Df were specified at (default 1e9)
+  optional double conductor_resistivity_ohm_m = 3;  // Conductor resistivity, ohm-metres (default 1.72e-8, copper @ 20C)
+  optional double conductor_roughness_m = 4;        // RMS copper surface roughness, metres (default 0)
+}
+
+// Get signal-integrity analysis parameters
+// Returns SignalIntegrityParamsResponse
+message GetSignalIntegrityParams
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+}
+
+message SignalIntegrityParamsResponse
+{
+  SignalIntegrityParams params = 1;
+}
+
+// Set signal-integrity analysis parameters (only provided fields are updated)
+// Returns SignalIntegrityParamsResponse with the full updated set
+message SetSignalIntegrityParams
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+  SignalIntegrityParams params = 2;
+}
+
+
+/*
+ * Impedance readback (computed, not target)
+ * Characteristic/differential impedance and insertion loss for routed copper, from the
+ * transmission-line model (IMPEDANCE_CALCULATOR). Requires a stackup with at least one
+ * dielectric Dk > 1; otherwise stackup_has_dk is false and results are empty.
+ */
+enum ImpedanceModel
+{
+  IM_NONE = 0;
+  IM_MICROSTRIP = 1;          // single-ended, outer layer over a plane
+  IM_STRIPLINE = 2;           // single-ended, inner layer between planes
+  IM_COPLANAR = 3;            // coplanar waveguide (side grounds, no back plane)
+  IM_GROUNDED_COPLANAR = 4;   // grounded coplanar waveguide (side grounds + back plane)
+  IM_COUPLED_MICROSTRIP = 5;  // differential pair, outer layer
+  IM_COUPLED_STRIPLINE = 6;   // differential pair, inner layer
+}
+
+// Per-net length-weighted average impedance (mirrors the Net Inspector column).
+message NetImpedance
+{
+  int32 net_code = 1;
+  string net_name = 2;
+  int32 average_impedance_ohms = 3;  // model-aware: Z_diff for diff pairs, CPW Z0 for coplanar, else Z0
+  bool is_differential = 4;          // routing was modelled as a differential pair
+  double insertion_loss_db = 5;      // total insertion loss over the routed length
+  int64 routed_length_nm = 6;        // total routed copper length used for the average
+}
+
+// Get per-net average impedance for routed nets.
+// Returns NetImpedanceResponse. Nets with no usable impedance are omitted.
+message GetNetImpedance
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+  optional string net_name = 2;  // restrict to one net; empty = all routed nets
+}
+
+message NetImpedanceResponse
+{
+  repeated NetImpedance nets = 1;
+  bool stackup_has_dk = 2;  // false => stackup defines no dielectric constants; results empty
+}
+
+// Per-track impedance for the segments of a single net.
+message TrackImpedance
+{
+  kiapi.common.types.KIID track_id = 1;
+  kiapi.board.types.BoardLayer layer = 2;
+  int64 width_nm = 3;
+  int64 length_nm = 4;
+  int32 single_ended_ohms = 5;
+  int32 differential_ohms = 6;  // 0 unless a coupled model was used
+  ImpedanceModel model = 7;
+  double insertion_loss_db_per_inch = 8;
+}
+
+// Get per-track impedance for one net (net_name required, to bound output size).
+// Returns TrackImpedanceResponse.
+message GetTrackImpedance
+{
+  kiapi.common.types.DocumentSpecifier board = 1;
+  string net_name = 2;  // required: net whose track segments to report
+}
+
+message TrackImpedanceResponse
+{
+  repeated TrackImpedance tracks = 1;
+  bool stackup_has_dk = 2;
 }
 
 

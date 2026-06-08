@@ -99,3 +99,60 @@ class DesignRulesOperations:
         rules = self.get()
         rules.copper_edge_clearance = value
         self.set(rules)
+
+    # Signal-integrity analysis parameters (impedance / transmission-line calculation).
+    # Board-wide inputs distinct from the per-dielectric Dk/Df and per-layer thickness in
+    # the stackup. See Board Setup -> Board Stackup -> Impedance.
+
+    def get_signal_integrity_params(self) -> dict:
+        """Get the board's signal-integrity analysis parameters.
+
+        Returns:
+            dict with reference_frequency_hz, dk_measurement_frequency_hz,
+            conductor_resistivity_ohm_m, conductor_roughness_m
+        """
+        cmd = board_commands_pb2.GetSignalIntegrityParams()
+        cmd.board.CopyFrom(self._board._doc)
+        response = self._board._kicad.send(
+            cmd, board_commands_pb2.SignalIntegrityParamsResponse)
+        p = response.params
+        return {
+            "reference_frequency_hz": p.reference_frequency_hz,
+            "dk_measurement_frequency_hz": p.dk_measurement_frequency_hz,
+            "conductor_resistivity_ohm_m": p.conductor_resistivity_ohm_m,
+            "conductor_roughness_m": p.conductor_roughness_m,
+        }
+
+    def set_signal_integrity_params(
+        self,
+        reference_frequency_hz: "float | None" = None,
+        dk_measurement_frequency_hz: "float | None" = None,
+        conductor_resistivity_ohm_m: "float | None" = None,
+        conductor_roughness_m: "float | None" = None,
+    ) -> dict:
+        """Set signal-integrity analysis parameters. Only provided values are updated.
+
+        Returns:
+            dict of the full updated parameter set
+        """
+        cmd = board_commands_pb2.SetSignalIntegrityParams()
+        cmd.board.CopyFrom(self._board._doc)
+
+        if reference_frequency_hz is not None:
+            cmd.params.reference_frequency_hz = reference_frequency_hz
+        if dk_measurement_frequency_hz is not None:
+            cmd.params.dk_measurement_frequency_hz = dk_measurement_frequency_hz
+        if conductor_resistivity_ohm_m is not None:
+            cmd.params.conductor_resistivity_ohm_m = conductor_resistivity_ohm_m
+        if conductor_roughness_m is not None:
+            cmd.params.conductor_roughness_m = conductor_roughness_m
+
+        response = self._board._kicad.send(
+            cmd, board_commands_pb2.SignalIntegrityParamsResponse)
+        p = response.params
+        return {
+            "reference_frequency_hz": p.reference_frequency_hz,
+            "dk_measurement_frequency_hz": p.dk_measurement_frequency_hz,
+            "conductor_resistivity_ohm_m": p.conductor_resistivity_ohm_m,
+            "conductor_roughness_m": p.conductor_roughness_m,
+        }

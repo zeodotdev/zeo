@@ -1,0 +1,35 @@
+{
+  "cli_version": "0.6.1",
+  "checkpoint_id": "03d1bb0ef89e",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 10,
+  "files_touched": [
+    "src/zeo-python/kipy/board/design_rules.py",
+    "src/zeo-python/kipy/board/nets.py",
+    "src/zeo-python/kipy/proto/board/board_commands.proto",
+    "src/zeo/agent/tools/python/pcb/pcb_get_nets.py",
+    "src/zeo/agent/tools/python/pcb/pcb_inspect.py",
+    "src/zeo/agent/tools/python/pcb/pcb_setup.py",
+    "src/zeo/agent/tools/python/tool_manifest.json",
+    "src/zeo/api/proto/board/board_commands.proto",
+    "src/zeo/cmake/ZeoVersion.cmake",
+    "src/zeo/pcbnew/api/api_handler_pcb.cpp",
+    "src/zeo/pcbnew/api/api_handler_pcb.h"
+  ],
+  "sessions": [
+    {
+      "metadata": "/03/d1bb0ef89e/0/metadata.json",
+      "transcript": "/03/d1bb0ef89e/0/full.jsonl",
+      "content_hash": "/03/d1bb0ef89e/0/content_hash.txt",
+      "prompt": "/03/d1bb0ef89e/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 26051,
+    "cache_creation_tokens": 3518730,
+    "cache_read_tokens": 78660081,
+    "output_tokens": 274633,
+    "api_call_count": 253
+  }
+}

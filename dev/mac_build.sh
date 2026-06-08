@@ -85,9 +85,12 @@ run_hard() {
     $DEBUG   && args+=(--debug)
     $LLDB    && args+=(--lldb)
     $VERBOSE && args+=(--verbose)
-    # Release tag is only meaningful via --package's path; in hard mode itself
-    # we still pass --release to enable production URLs / clean version string.
-    [ -n "$RELEASE" ] && args+=(--release)
+    # Enable production URLs (ZEO_RELEASE=ON, see zeo_constants.h) for any
+    # distributable build: an explicit --release NAME, OR any --package build,
+    # so a packaged DMG can never accidentally ship staging URLs (ZEO-1480).
+    if [ -n "$RELEASE" ] || $PACKAGE; then
+        args+=(--release)
+    fi
     "$INTERNAL/mac_hard.sh" "${args[@]}"
 }
 

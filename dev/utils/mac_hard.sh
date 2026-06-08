@@ -241,9 +241,11 @@ KICAD_SENTRY_DSN="https://e79a97d4575365eec6ee3eed0a4281ce@o4511067051524096.ing
 SENTRY_ENABLED=true
 echo "Sentry:        ENABLED"
 
-if $RELEASE_BUILD; then
-    EXTRA_CMAKE_ARGS="$EXTRA_CMAKE_ARGS -DZEO_RELEASE=ON"
-fi
+# NOTE: ZEO_RELEASE is intentionally NOT added to --extra-kicad-cmake-args.
+# build.py mangles multi-arg cmake strings (they get jammed into a single inner
+# cache variable), so the flag never reaches the inner ZEO_RELEASE option and a
+# release build silently stays on staging URLs (ZEO-1480). It is injected
+# directly into the inner CMake cache after build.py runs — see below.
 
 ./build.py \
     --arch=$(uname -m) \
@@ -253,30 +255,47 @@ fi
 
 # --- Explicit Install Step ---
 
-# --- Inject Sentry into inner CMake cache ---
-# build.py's --extra-kicad-cmake-args mangles URLs, so we set these directly
-# in the inner CMake cache and re-run cmake to pick them up.
+# --- Inject Zeo flags into inner CMake cache ---
+# build.py's --extra-kicad-cmake-args mangles multi-arg strings (they get jammed
+# into a single cache variable), so flags passed that way don't reach the inner
+# cmake. We set them directly in the inner CMake cache and re-run cmake to pick
+# them up, then rebuild.
 INNER_BUILD_DIR="$(cd "$BUILDER_DIR/build/kicad/src/kicad-build" && pwd)"
 
-if $SENTRY_ENABLED && [ -d "$INNER_BUILD_DIR" ]; then
-    echo "Injecting Sentry config into inner CMake cache..."
-    # Edit the cache directly, then reconfigure in-place
-    sed -i '' 's/^KICAD_USE_SENTRY:BOOL=OFF/KICAD_USE_SENTRY:BOOL=ON/' "$INNER_BUILD_DIR/CMakeCache.txt"
-    if ! grep -q "^KICAD_SENTRY_DSN:" "$INNER_BUILD_DIR/CMakeCache.txt"; then
-        echo "KICAD_SENTRY_DSN:STRING=$KICAD_SENTRY_DSN" >> "$INNER_BUILD_DIR/CMakeCache.txt"
+if [ -d "$INNER_BUILD_DIR" ]; then
+    # ZEO_RELEASE drives production vs staging URLs (ZEO_BASE_URL in
+    # zeo_constants.h). Set it EXPLICITLY ON/OFF so a stale cached value can't
+    # silently ship the wrong URLs (ZEO-1480: a --release build was landing on
+    # staging because the flag never reached the inner cmake).
+    if $RELEASE_BUILD; then ZEO_RELEASE_VALUE=ON; else ZEO_RELEASE_VALUE=OFF; fi
+    echo "Injecting ZEO_RELEASE=$ZEO_RELEASE_VALUE into inner CMake cache ($([ "$ZEO_RELEASE_VALUE" = ON ] && echo 'production' || echo 'staging') URLs)..."
+    if grep -q "^ZEO_RELEASE:" "$INNER_BUILD_DIR/CMakeCache.txt"; then
+        sed -i '' "s/^ZEO_RELEASE:BOOL=.*/ZEO_RELEASE:BOOL=$ZEO_RELEASE_VALUE/" "$INNER_BUILD_DIR/CMakeCache.txt"
+    else
+        echo "ZEO_RELEASE:BOOL=$ZEO_RELEASE_VALUE" >> "$INNER_BUILD_DIR/CMakeCache.txt"
     fi
-    # Reconfigure from the build dir to pick up the new flags
+
+    if $SENTRY_ENABLED; then
+        echo "Injecting Sentry config into inner CMake cache..."
+        sed -i '' 's/^KICAD_USE_SENTRY:BOOL=OFF/KICAD_USE_SENTRY:BOOL=ON/' "$INNER_BUILD_DIR/CMakeCache.txt"
+        if ! grep -q "^KICAD_SENTRY_DSN:" "$INNER_BUILD_DIR/CMakeCache.txt"; then
+            echo "KICAD_SENTRY_DSN:STRING=$KICAD_SENTRY_DSN" >> "$INNER_BUILD_DIR/CMakeCache.txt"
+        fi
+    fi
+
+    # Reconfigure from the build dir to pick up the injected flags, then rebuild
     pushd "$INNER_BUILD_DIR" > /dev/null
     cmake .
     popd > /dev/null
-    # Rebuild with Sentry enabled
     make -C "$INNER_BUILD_DIR" -j$(sysctl -n hw.ncpu)
 
     # Copy crashpad_handler into the app bundle (required for Sentry to send events)
-    CRASHPAD_HANDLER="$INNER_BUILD_DIR/thirdparty/sentry-native/crashpad_build/handler/crashpad_handler"
-    if [ -f "$CRASHPAD_HANDLER" ]; then
-        echo "Copying crashpad_handler into app bundle..."
-        cp "$CRASHPAD_HANDLER" "$INNER_BUILD_DIR/kicad/Zeo.app/Contents/MacOS/"
+    if $SENTRY_ENABLED; then
+        CRASHPAD_HANDLER="$INNER_BUILD_DIR/thirdparty/sentry-native/crashpad_build/handler/crashpad_handler"
+        if [ -f "$CRASHPAD_HANDLER" ]; then
+            echo "Copying crashpad_handler into app bundle..."
+            cp "$CRASHPAD_HANDLER" "$INNER_BUILD_DIR/kicad/Zeo.app/Contents/MacOS/"
+        fi
     fi
 fi
 
